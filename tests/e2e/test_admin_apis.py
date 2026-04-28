@@ -27,15 +27,14 @@ and reproducibility.
 """
 
 # Standard
+import logging  # noqa: E402
+
 # Admin API + UI are enabled on demand via the `app_with_temp_db_admin`
 # fixture (tests/conftest.py), which reloads mcpgateway.main with the
 # admin router mounted. A2A stays on (default) because
 # test_admin_a2a_listing_continues_on_conversion_error exercises the
 # A2A listing endpoint.
 import os  # noqa: F401
-
-# Standard
-import logging  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
 from urllib.parse import quote  # noqa: E402
 import uuid  # noqa: E402
@@ -114,6 +113,9 @@ def _enable_admin_api(main_app_with_admin_api):
 async def client(app_with_temp_db):
     # First-Party
     from mcpgateway.auth import get_current_user
+
+    # Ensure tests use a strong JWT secret to avoid weak-key warnings.
+    from mcpgateway.config import settings
     from mcpgateway.db import get_db
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.utils.create_jwt_token import get_jwt_token
@@ -121,9 +123,6 @@ async def client(app_with_temp_db):
 
     # Local
     from tests.utils.rbac_mocks import create_mock_user_context
-
-    # Ensure tests use a strong JWT secret to avoid weak-key warnings.
-    from mcpgateway.config import settings
 
     original_jwt_secret = settings.jwt_secret_key
     if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
@@ -147,8 +146,10 @@ async def client(app_with_temp_db):
     # Admin UI endpoints enforce granular RBAC (allow_admin_bypass=False).
     # Seed a platform_admin-style role grant so /admin/* endpoints return 200
     # without patching RBAC decorators (which can leak under xdist).
+    # Third-Party
     from sqlalchemy import select
 
+    # First-Party
     from mcpgateway.db import EmailUser, Role, UserRole
 
     if test_db_session.get(EmailUser, "admin@example.com") is None:
@@ -688,6 +689,9 @@ class TestAdminResourceAPIs:
 
     async def test_admin_add_resource_rejects_disallowed_mime_type(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test that resources with disallowed MIME types are rejected with 415 status."""
+        # First-Party
+        from mcpgateway.config import settings
+
         # Configure a very restrictive MIME type list that excludes application/evil
         # We need to set both validation lists to ensure the error reaches ContentSecurityService
         allowed_types = [

@@ -1,0 +1,94 @@
+---
+# OCP Benchmark — trigger MCP benchmark
+# Equivalent to: make ocp-benchmark OCP_NS=<namespace>
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/benchmark.yml -i ansible/ocp/inventory/cluster.yml
+#   ansible-playbook ansible/ocp/playbooks/benchmark.yml -i ansible/ocp/inventory/cluster.yml -e bench_users=500 -e bench_spawn=50
+
+- name: Run MCP benchmark on OCP
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display benchmark config
+      ansible.builtin.debug:
+        msg: |
+          Starting MCP benchmark on OCP...
+             Namespace: {{ ocp_namespace }}
+             Config:    {{ bench_users }} users, {{ bench_spawn }}/s spawn, {{ bench_runtime }}
+
+    - name: Find Locust master pod
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "app={{ ocp_namespace }}-mcp-stack-locust"
+        field_selectors:
+          - "status.phase=Running"
+      register: locust_pods
+
+    - name: Verify Locust is running
+      ansible.builtin.assert:
+        that:
+          - locust_pods.resources | length > 0
+        fail_msg: "Locust master pod not found. Run benchmark-setup first."
+
+    - name: Trigger benchmark
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ locust_pods.resources[0].metadata.name }}"
+        container: locust
+        command: >
+          python3 -c "import urllib.request,urllib.parse;
+          urllib.request.urlopen(urllib.request.Request('http://localhost:8089/swarm',
+          urllib.parse.urlencode({'user_count':{{ bench_users }},'spawn_rate':{{ bench_spawn }},
+          'run_time':'{{ bench_runtime }}',
+          'host':'http://{{ ocp_namespace }}-mcp-stack-nginx'}).encode(), method='POST'))"
+      register: benchmark_trigger
+
+    - name: Benchmark started — waiting for completion
+      ansible.builtin.debug:
+        msg: "Benchmark running ({{ bench_runtime }}). Polling for results..."
+
+    - name: Wait for benchmark to finish
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ locust_pods.resources[0].metadata.name }}"
+        container: locust
+        command: >
+          python3 -c "import urllib.request,json;
+          d=json.loads(urllib.request.urlopen('http://localhost:8089/stats/requests').read());
+          exit(0 if d.get('state')=='stopped' else 1)"
+      register: poll_result
+      retries: "{{ ((bench_runtime | regex_replace('[^0-9]', '') | int) // 10) + 6 }}"
+      delay: 10
+      until: poll_result.rc == 0
+
+    - name: Fetch benchmark results
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ locust_pods.resources[0].metadata.name }}"
+        container: locust
+        command: >
+          python3 -c "import urllib.request,json;
+          d=json.loads(urllib.request.urlopen('http://localhost:8089/stats/requests').read());
+          a=next((s for s in d.get('stats',[]) if s.get('name')=='Aggregated'),{});
+          eps=sorted([s for s in d.get('stats',[]) if s.get('name')!='Aggregated' and s.get('num_requests',0)>0],key=lambda x:x['name']);
+          print('========================================');
+          print('Benchmark Results');
+          print('========================================');
+          [print('  %-4s %-50s %6d reqs  %3d fails  avg %6.0fms'%(e['method'],e['name'],e['num_requests'],e['num_failures'],e.get('avg_response_time',0))) for e in eps];
+          print('----------------------------------------');
+          nr=a.get('num_requests',0);nf=a.get('num_failures',0);fr=d.get('fail_ratio',0)*100;av=a.get('avg_response_time',0);rps=d.get('total_rps',0);
+          print('TOTAL: %s requests | %d failures (%.2f%%) | avg %.0fms | %.1f RPS'%(format(nr,','),nf,fr,av,rps));
+          print('========================================')"
+      register: results_output
+
+    - name: Display results
+      ansible.builtin.debug:
+        msg: "{{ results_output.stdout_lines }}"

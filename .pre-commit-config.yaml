@@ -18,7 +18,23 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+exclude: |
+  (?x)(
+    # Specific files (auto-generated or intentionally exempt)
+    (^|/)(
+      \.pre-commit-.*\.yaml          # transient pre-commit state/baselines
+      |normalize_special_characters\.py
+      |test_input_validation\.py
+      |ai_artifacts_normalizer\.py
+    )$
+    # Template trees (not real source)
+    |(^|/)mcp-servers/templates/
+    |(^|/)plugin_templates/
+    # Load tests (separate lifecycle)
+    |(^|/)tests/load/
+    # Jinja templates
+    |.*\.(jinja|j2)$
+  )
 fail_fast: true
 
 repos:
@@ -36,7 +52,7 @@ repos:
       - id: detect-private-key
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
-        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py
+        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils|tests/unit/mcpgateway/test_oauth_manager)\.py
         types: [text]
 
   # -----------------------------------------------------------------------------
@@ -347,10 +363,16 @@ repos:
 
       - id: name-tests-test
         name: 🐍 Python Tests Naming
-        description: Verifies test files in tests/ directories start with `test_`.
+        description: Verifies test files start with `test_` in unit, e2e, protocol_compliance, security, and playwright suites.
         language: python
-        files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load.*|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
+        files: ^tests/(unit|e2e|protocol_compliance|security|playwright)/.+\.py$
+        exclude: |
+          (?x)^(
+            # POM / helper / fixture / target support modules — by convention,
+            # any *.py under a helpers/, fixtures/, targets/, or pages/ dir is
+            # not a test file.
+            tests/(unit|e2e|protocol_compliance|security|playwright)/(.*/)?(helpers|fixtures|targets|pages)/.*\.py
+          )$
         args: [--pytest-test-first] # `test_.*\.py`
 
 
@@ -515,6 +537,61 @@ repos:
         files: ^mcpgateway/
 
   # -----------------------------------------------------------------------------
+  #  🔐 Security - Static Code Policy Checks
+  # -----------------------------------------------------------------------------
+  #  AST-based and text-based scans that enforce project-specific security and
+  #  architecture invariants.  See scripts/pre-commit/ for implementations.
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: check-sensitive-logging
+        name: 🔐 Check Sensitive Logging
+        description: Detects sensitive variable interpolation in logger calls.
+        entry: python3 scripts/pre-commit/check_sensitive_logging.py
+        language: system
+        types: [python]
+        files: ^mcpgateway/
+
+      - id: check-framework-imports
+        name: 🔐 Check Framework Import Isolation
+        description: Ensures plugin framework does not import from mcpgateway.common or mcpgateway.utils.
+        entry: python3 scripts/pre-commit/check_framework_imports.py
+        language: system
+        types: [python]
+        files: ^mcpgateway/plugins/framework/
+
+      - id: check-migration-patterns
+        name: 🔐 Check Migration Patterns
+        description: Verifies Alembic migration naming, hashes, and source patterns.
+        entry: python3 scripts/pre-commit/check_migration_patterns.py
+        language: system
+        files: ^mcpgateway/alembic/versions/.*\.py$
+
+      - id: check-rust-workspace
+        name: 🔐 Check Rust Workspace Layout
+        description: Verifies Rust workspace structure, Cargo.toml inheritance, and build config.
+        entry: python3 scripts/pre-commit/check_rust_workspace.py
+        language: system
+        pass_filenames: false
+        files: (Cargo\.toml|Makefile|Containerfile\.lite|\.dockerignore|deny\.toml)$
+
+      - id: check-ci-workflows
+        name: 🔐 Check CI Workflows
+        description: Verifies CI workflow YAML structure and SHA pinning.
+        entry: uv run --no-project --with pyyaml python3 scripts/pre-commit/check_ci_workflows.py
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/|^Makefile$
+
+      - id: check-logo-assets
+        name: 🔐 Check Logo Assets
+        description: Verifies logo and image asset references resolve to existing files.
+        entry: python3 scripts/pre-commit/check_logo_assets.py
+        language: system
+        pass_filenames: false
+        files: ^mcpgateway/(templates|static)/|^docs/|^README\.md$|Chart\.yaml$
+
+  # -----------------------------------------------------------------------------
   #  🔐 Security - Detect Secrets
   # -----------------------------------------------------------------------------
   #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
@@ -528,3 +605,13 @@ repos:
         description: Detects secrets within a repository using IBM's detect-secrets.
         args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
         types: [text]
+        # Keep in sync with DETECT_SECRETS_FILES_EXCLUDE in Makefile.
+        # (.secrets.baseline is auto-excluded by detect-secrets itself.)
+        exclude: |
+          (?x)(
+            package-lock\.json$
+            |Cargo\.lock$
+            |uv\.lock$
+            |go\.sum$
+            |mcpgateway/sri_hashes\.json$
+          )

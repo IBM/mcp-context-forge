@@ -7,12 +7,16 @@ in the OAuth Manager following TDD Red Phase.
 Tests will FAIL until implementation is complete.
 """
 
+# Standard
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
 import httpx
 import pytest
-from mcpgateway.services.oauth_manager import OAuthManager, OAuthError
+
+# First-Party
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 
 
 class TestPKCEGeneration:
@@ -71,6 +75,7 @@ class TestPKCEGeneration:
 
     def test_generate_pkce_params_challenge_is_sha256_of_verifier(self):
         """Test that code_challenge is SHA256 hash of code_verifier."""
+        # Standard
         import base64
         import hashlib
 
@@ -178,8 +183,11 @@ class TestValidateAndRetrieveState:
         state = "test-state"
 
         # Mock in-memory state storage
-        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
+        # Standard
         from datetime import datetime, timedelta, timezone
+
+        # First-Party
+        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
 
         state_key = f"oauth:state:{gateway_id}:{state}"
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -203,8 +211,11 @@ class TestValidateAndRetrieveState:
         gateway_id = "test-gateway-123"
         state = "test-state"
 
-        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
+        # Standard
         from datetime import datetime, timedelta, timezone
+
+        # First-Party
+        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
 
         state_key = f"oauth:state:{gateway_id}:{state}"
         expires_at = datetime.now(timezone.utc) - timedelta(seconds=60)  # Expired
@@ -224,8 +235,11 @@ class TestValidateAndRetrieveState:
         gateway_id = "test-gateway-123"
         state = "test-state"
 
-        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
+        # Standard
         from datetime import datetime, timedelta, timezone
+
+        # First-Party
+        from mcpgateway.services.oauth_manager import _oauth_states, _state_lock
 
         state_key = f"oauth:state:{gateway_id}:{state}"
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
@@ -517,6 +531,7 @@ def _make_response(*, status_code=200, headers=None, text="", json_data=None, js
 class TestOAuthManagerRedisClient:
     @pytest.mark.asyncio
     async def test_get_redis_client_cached(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
@@ -541,6 +556,7 @@ class TestOAuthManagerRedisClient:
 
     @pytest.mark.asyncio
     async def test_get_redis_client_error_falls_back(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
@@ -766,6 +782,7 @@ class TestOAuthManagerStateStorage:
 
     @pytest.mark.asyncio
     async def test_store_authorization_state_redis_failure_falls_back(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -781,6 +798,7 @@ class TestOAuthManagerStateStorage:
 
     @pytest.mark.asyncio
     async def test_store_authorization_state_memory_cleanup(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -804,9 +822,7 @@ class TestOAuthManagerStateStorage:
     async def test_validate_authorization_state_redis(self, monkeypatch):
         manager = OAuthManager()
         redis = AsyncMock()
-        redis.getdel = AsyncMock(
-            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}'
-        )
+        redis.getdel = AsyncMock(return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}')
         monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
         monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
 
@@ -821,13 +837,12 @@ class TestOAuthManagerStateStorage:
         monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
         assert await manager._validate_authorization_state("gw", "missing") is False
 
-        redis.getdel = AsyncMock(
-            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":true}'
-        )
+        redis.getdel = AsyncMock(return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":true}')
         assert await manager._validate_authorization_state("gw", "s") is False
 
     @pytest.mark.asyncio
     async def test_validate_authorization_state_in_memory_expired(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -846,9 +861,7 @@ class TestOAuthManagerStateStorage:
     async def test_validate_and_retrieve_state_redis(self, monkeypatch):
         manager = OAuthManager()
         redis = AsyncMock()
-        redis.getdel = AsyncMock(
-            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}'
-        )
+        redis.getdel = AsyncMock(return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}')
         monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
         monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
 
@@ -972,6 +985,7 @@ class TestGetRedisClientNonRedis:
 
     @pytest.mark.asyncio
     async def test_non_redis_cache_type(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
@@ -985,6 +999,7 @@ class TestGetRedisClientNonRedis:
     @pytest.mark.asyncio
     async def test_redis_returns_none_client(self, monkeypatch):
         """Redis factory returns None (line 68->76 partial: client is None)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
@@ -1133,6 +1148,7 @@ class TestInitiateFlowNoStorage:
 
     @pytest.mark.asyncio
     async def test_no_token_storage_skips_store(self):
+        # Third-Party
         from pydantic import SecretStr
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
@@ -1155,14 +1171,15 @@ class TestCompleteFlowHMACBranches:
     @pytest.mark.asyncio
     async def test_invalid_hmac_signature_falls_back(self):
         """Invalid HMAC triggers fallback to legacy format (line 570 via except)."""
+        # Standard
         import base64
 
+        # Third-Party
         from pydantic import SecretStr
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
             settings = MagicMock()
             settings.auth_encryption_secret = SecretStr("test-secret")
-            settings.oauth_default_timeout = 3600
             mock_settings.return_value = settings
 
             manager = OAuthManager(token_storage=None)
@@ -1172,28 +1189,34 @@ class TestCompleteFlowHMACBranches:
             bad_signature = b"\x00" * 32
             state = base64.urlsafe_b64encode(state_bytes + bad_signature).decode()
 
-            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+            with (
+                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
+                patch.object(manager, "_extract_user_id", return_value="user1"),
+            ):
                 result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
                 assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_gateway_mismatch_is_rejected(self):
         """Legacy state with mismatched gateway_id is rejected."""
+        # Standard
         import base64
         import hashlib
         import hmac as hmac_mod
 
+        # Third-Party
         from pydantic import SecretStr
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
             settings = MagicMock()
             settings.auth_encryption_secret = SecretStr("test-secret")
-            settings.oauth_default_timeout = 3600
             mock_settings.return_value = settings
 
             manager = OAuthManager(token_storage=None)
 
             # Create valid HMAC state but with different gateway_id
+            # Third-Party
             import orjson
 
             state_data = {"gateway_id": "other_gw", "app_user_email": "user@test.com", "nonce": "abc", "timestamp": "2025-01-01T00:00:00"}
@@ -1202,15 +1225,21 @@ class TestCompleteFlowHMACBranches:
             sig = hmac_mod.new(secret_key, state_bytes, hashlib.sha256).digest()
             state = base64.urlsafe_b64encode(state_bytes + sig).decode()
 
-            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+            with (
+                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
+                patch.object(manager, "_extract_user_id", return_value="user1"),
+            ):
                 with pytest.raises(OAuthError, match="gateway mismatch"):
                     await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
 
     @pytest.mark.asyncio
     async def test_no_email_with_storage_raises(self):
         """Token storage present but no email raises OAuthError (line 595)."""
+        # Standard
         import base64
 
+        # Third-Party
         from pydantic import SecretStr
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
@@ -1224,7 +1253,11 @@ class TestCompleteFlowHMACBranches:
             # Create invalid state that triggers fallback → app_user_email = None
             state = base64.urlsafe_b64encode(b"invalid_data_for_parsing").decode()
 
-            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+            with (
+                patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}),
+                patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}),
+                patch.object(manager, "_extract_user_id", return_value="user1"),
+            ):
                 with pytest.raises(OAuthError, match="User context required"):
                     await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
 
@@ -1235,11 +1268,15 @@ async def test_complete_flow_uses_server_side_user_context_without_state_decodin
     manager = OAuthManager(token_storage=MagicMock())
     manager.token_storage.store_tokens = AsyncMock(return_value=SimpleNamespace(expires_at=None))
 
-    with patch.object(
-        manager,
-        "_validate_and_retrieve_state",
-        return_value={"code_verifier": "v", "app_user_email": "user@test.com"},
-    ), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok", "expires_in": 3600}), patch.object(manager, "_extract_user_id", return_value="user-1"):
+    with (
+        patch.object(
+            manager,
+            "_validate_and_retrieve_state",
+            return_value={"code_verifier": "v", "app_user_email": "user@test.com"},
+        ),
+        patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok", "expires_in": 3600}),
+        patch.object(manager, "_extract_user_id", return_value="user-1"),
+    ):
         result = await manager.complete_authorization_code_flow(
             "gw1",
             "code",
@@ -1328,8 +1365,11 @@ async def test_resolve_gateway_id_from_state_database_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resolve_gateway_id_from_state_cleans_expired_in_memory_entries(monkeypatch):
-    import mcpgateway.services.oauth_manager as om
+    # Standard
     from datetime import datetime, timedelta, timezone
+
+    # First-Party
+    import mcpgateway.services.oauth_manager as om
 
     manager = OAuthManager()
     monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
@@ -1389,6 +1429,7 @@ class TestStoreStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_storage_failure_falls_back(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1412,6 +1453,7 @@ class TestValidateAuthorizationStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_datetime_fallback_parse(self, monkeypatch):
         """Datetime fromisoformat fails, fallback to strptime (lines 743-745)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1429,6 +1471,7 @@ class TestValidateAuthorizationStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_expired_state(self, monkeypatch):
         """Expired state in Redis (lines 753-754)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1444,6 +1487,7 @@ class TestValidateAuthorizationStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_naive_datetime(self, monkeypatch):
         """Naive datetime in Redis requires UTC assumption (branch 747->752)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1460,6 +1504,7 @@ class TestValidateAuthorizationStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_exception_falls_back_to_memory(self, monkeypatch):
         """Redis exception falls back (lines 763-764)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1479,6 +1524,7 @@ class TestValidateAuthorizationStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_valid_state(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1515,6 +1561,7 @@ class TestValidateAuthorizationStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_expired_state(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1536,6 +1583,7 @@ class TestValidateAuthorizationStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_used_state(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1556,6 +1604,7 @@ class TestValidateAuthorizationStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_naive_datetime(self, monkeypatch):
+        # Standard
         from datetime import datetime
 
         manager = OAuthManager()
@@ -1576,6 +1625,7 @@ class TestValidateAuthorizationStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_exception_falls_back(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1591,6 +1641,7 @@ class TestValidateAuthorizationStateMemoryUsed:
 
     @pytest.mark.asyncio
     async def test_memory_used_state(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1613,6 +1664,7 @@ class TestValidateAndRetrieveStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_datetime_fallback(self, monkeypatch):
         """Fallback datetime parse (lines 866-867)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1632,6 +1684,7 @@ class TestValidateAndRetrieveStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_expired(self, monkeypatch):
         """Expired state returns None (line 873)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1647,6 +1700,7 @@ class TestValidateAndRetrieveStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_naive_datetime(self, monkeypatch):
         """Naive datetime requires UTC assumption (branch 869->872)."""
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -1664,6 +1718,7 @@ class TestValidateAndRetrieveStateRedisEdgeCases:
     @pytest.mark.asyncio
     async def test_redis_exception(self, monkeypatch):
         """Redis exception falls back (lines 876-877)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1682,6 +1737,7 @@ class TestValidateAndRetrieveStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_valid(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1722,6 +1778,7 @@ class TestValidateAndRetrieveStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_expired(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1743,6 +1800,7 @@ class TestValidateAndRetrieveStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_used(self, monkeypatch):
+        # Standard
         from datetime import datetime, timezone
 
         manager = OAuthManager()
@@ -1763,6 +1821,7 @@ class TestValidateAndRetrieveStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_naive_datetime(self, monkeypatch):
+        # Standard
         from datetime import datetime
 
         manager = OAuthManager()
@@ -1787,6 +1846,7 @@ class TestValidateAndRetrieveStateDatabasePath:
 
     @pytest.mark.asyncio
     async def test_database_exception(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1802,6 +1862,7 @@ class TestValidateAndRetrieveStateMemoryNaiveDatetime:
 
     @pytest.mark.asyncio
     async def test_memory_naive_datetime(self, monkeypatch):
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -1825,14 +1886,26 @@ class TestCreateAuthUrlWithPKCEResource:
 
     def test_single_string_resource(self):
         manager = OAuthManager()
-        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": [], "resource": "https://api.example.com"}
+        credentials = {
+            "client_id": "cid",
+            "authorization_url": "https://auth.example.com/authorize",
+            "redirect_uri": "https://app.example.com/callback",
+            "scopes": [],
+            "resource": "https://api.example.com",
+        }
 
         url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
         assert "resource=https" in url
 
     def test_list_resource(self):
         manager = OAuthManager()
-        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": [], "resource": ["https://api1.example.com", "https://api2.example.com"]}
+        credentials = {
+            "client_id": "cid",
+            "authorization_url": "https://auth.example.com/authorize",
+            "redirect_uri": "https://app.example.com/callback",
+            "scopes": [],
+            "resource": ["https://api1.example.com", "https://api2.example.com"],
+        }
 
         url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
         assert "resource=" in url
@@ -1878,7 +1951,13 @@ class TestExchangeCodeForTokensEdgeCases:
     async def test_single_string_resource(self, monkeypatch):
         """Single string resource param (line 1065)."""
         manager = OAuthManager(max_retries=1)
-        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback", "resource": "https://api.example.com"}
+        credentials = {
+            "client_id": "cid",
+            "client_secret": "secret",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+            "resource": "https://api.example.com",
+        }
 
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
@@ -1894,7 +1973,12 @@ class TestExchangeCodeForTokensEdgeCases:
     async def test_resource_list_with_empty(self, monkeypatch):
         """Resource list with falsy entry (branch 1061->1060)."""
         manager = OAuthManager(max_retries=1)
-        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback", "resource": ["https://api1.example.com", "", "https://api2.example.com"]}
+        credentials = {
+            "client_id": "cid",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+            "resource": ["https://api1.example.com", "", "https://api2.example.com"],
+        }
 
         response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
         client = AsyncMock()
@@ -2164,6 +2248,7 @@ class TestRedisNoneFallthroughPaths:
     @pytest.mark.asyncio
     async def test_store_state_redis_none_falls_to_memory(self, monkeypatch):
         """_store_authorization_state: redis is None, falls through (branch 664->676)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -2177,6 +2262,7 @@ class TestRedisNoneFallthroughPaths:
     @pytest.mark.asyncio
     async def test_validate_state_redis_none_falls_to_memory(self, monkeypatch):
         """_validate_authorization_state: redis is None, falls through (branch 728->767)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -2189,6 +2275,7 @@ class TestRedisNoneFallthroughPaths:
     @pytest.mark.asyncio
     async def test_validate_and_retrieve_redis_none_falls_to_memory(self, monkeypatch):
         """_validate_and_retrieve_state: redis is None, falls through (branch 854->880)."""
+        # First-Party
         import mcpgateway.services.oauth_manager as om
 
         manager = OAuthManager()
@@ -2242,7 +2329,10 @@ class TestCWE287DenyPathRegressions:
         with self._patches(manager)[0], self._patches(manager)[1], self._patches(manager)[2]:
             with pytest.raises(OAuthError, match="User context required"):
                 await manager.complete_authorization_code_flow(
-                    "gw1", "code", "state-tok", {"client_id": "cid"},
+                    "gw1",
+                    "code",
+                    "state-tok",
+                    {"client_id": "cid"},
                 )
         manager.token_storage.store_tokens.assert_not_awaited()
 
@@ -2251,11 +2341,16 @@ class TestCWE287DenyPathRegressions:
         """When token_storage is None, missing email is acceptable (no binding risk)."""
         manager = OAuthManager(token_storage=None)
 
-        with patch.object(manager, "_validate_and_retrieve_state", return_value=self._state_without_email()), \
-             patch.object(manager, "_exchange_code_for_tokens", return_value=self._token_response()), \
-             patch.object(manager, "_extract_user_id", return_value="user-1"):
+        with (
+            patch.object(manager, "_validate_and_retrieve_state", return_value=self._state_without_email()),
+            patch.object(manager, "_exchange_code_for_tokens", return_value=self._token_response()),
+            patch.object(manager, "_extract_user_id", return_value="user-1"),
+        ):
             result = await manager.complete_authorization_code_flow(
-                "gw1", "code", "state-tok", {"client_id": "cid"},
+                "gw1",
+                "code",
+                "state-tok",
+                {"client_id": "cid"},
             )
         assert result["success"] is True
         assert result["expires_at"] is None
@@ -2272,8 +2367,10 @@ class TestLegacyStateGatewayMismatch:
     @pytest.mark.asyncio
     async def test_base64_legacy_state_gateway_mismatch_raises(self):
         """Legacy base64 state with different gateway_id must raise OAuthError."""
+        # Standard
         import base64
 
+        # Third-Party
         import orjson
 
         manager = OAuthManager(token_storage=AsyncMock())
@@ -2290,7 +2387,10 @@ class TestLegacyStateGatewayMismatch:
         ):
             with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
                 await manager.complete_authorization_code_flow(
-                    "gw1", "code", state, {"client_id": "cid"},
+                    "gw1",
+                    "code",
+                    state,
+                    {"client_id": "cid"},
                 )
 
     @pytest.mark.asyncio
@@ -2308,7 +2408,10 @@ class TestLegacyStateGatewayMismatch:
         ):
             with pytest.raises(OAuthError, match="State parameter gateway mismatch"):
                 await manager.complete_authorization_code_flow(
-                    "gw1", "code", state, {"client_id": "cid"},
+                    "gw1",
+                    "code",
+                    state,
+                    {"client_id": "cid"},
                 )
 
     @pytest.mark.asyncio
@@ -2317,8 +2420,10 @@ class TestLegacyStateGatewayMismatch:
 
         It should fall through to the missing-email guard instead.
         """
+        # Standard
         import base64
 
+        # Third-Party
         import orjson
 
         manager = OAuthManager(token_storage=AsyncMock())
@@ -2336,7 +2441,10 @@ class TestLegacyStateGatewayMismatch:
             # Should NOT raise "gateway mismatch"; should raise "User context required" instead
             with pytest.raises(OAuthError, match="User context required"):
                 await manager.complete_authorization_code_flow(
-                    "gw1", "code", state, {"client_id": "cid"},
+                    "gw1",
+                    "code",
+                    state,
+                    {"client_id": "cid"},
                 )
 
 
@@ -2349,8 +2457,10 @@ class TestLegacyStatePayloadStripsIdentity:
 
     def test_base64_payload_with_forged_email_is_stripped(self):
         """Crafted base64 legacy state with app_user_email must not return it."""
+        # Standard
         import base64
 
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -2367,8 +2477,10 @@ class TestLegacyStatePayloadStripsIdentity:
 
     def test_base64_payload_returns_none_for_identity_only(self):
         """If payload has only identity fields and no gateway_id, return None."""
+        # Standard
         import base64
 
+        # Third-Party
         import orjson
 
         manager = OAuthManager()
@@ -2391,8 +2503,10 @@ class TestLegacyStatePayloadStripsIdentity:
     @pytest.mark.asyncio
     async def test_complete_flow_ignores_forged_email_in_legacy_state(self):
         """complete_authorization_code_flow must not use email from unsigned legacy state."""
+        # Standard
         import base64
 
+        # Third-Party
         import orjson
 
         manager = OAuthManager(token_storage=MagicMock())
@@ -2405,20 +2519,27 @@ class TestLegacyStatePayloadStripsIdentity:
         fake_sig = b"\x00" * 32
         state = base64.urlsafe_b64encode(payload_bytes + fake_sig).decode()
 
-        with patch.object(
-            manager,
-            "_validate_and_retrieve_state",
-            return_value={"code_verifier": "v"},
-        ), patch.object(
-            manager,
-            "_exchange_code_for_tokens",
-            return_value={"access_token": "tok"},
-        ), patch.object(manager, "_extract_user_id", return_value="user1"):
+        with (
+            patch.object(
+                manager,
+                "_validate_and_retrieve_state",
+                return_value={"code_verifier": "v"},
+            ),
+            patch.object(
+                manager,
+                "_exchange_code_for_tokens",
+                return_value={"access_token": "tok"},
+            ),
+            patch.object(manager, "_extract_user_id", return_value="user1"),
+        ):
             # With token_storage set, missing app_user_email should raise,
             # proving the forged email was NOT accepted.
             with pytest.raises(OAuthError, match="User context required"):
                 await manager.complete_authorization_code_flow(
-                    "gw1", "code", state, {"client_id": "cid"},
+                    "gw1",
+                    "code",
+                    state,
+                    {"client_id": "cid"},
                 )
 
 

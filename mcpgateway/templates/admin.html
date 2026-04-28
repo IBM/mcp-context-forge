@@ -32,16 +32,7 @@
         };
       }
     </script>
-    <!-- HTMX for dynamic interactions -->
-    {% if ui_airgapped %}
-    <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
-    {% else %}
-    <script
-      src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js"
-      integrity="{{ sri_hashes.htmx }}"
-      crossorigin="anonymous">
-    </script>
-    {% endif %}
+    <!-- HTMX is now bundled in the main JS bundle -->
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
       document.addEventListener("htmx:beforeSwap", function (evt) {
@@ -66,7 +57,7 @@
       // Configure HTMX to include credentials and JWT tokens
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
-        evt.detail.credentials = "same-origin";
+        evt.detail.credentials = "same-origin"; // pragma: allowlist secret
         evt.detail.headers = evt.detail.headers || {};
 
         // Add JWT token from cookie if available
@@ -293,7 +284,7 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.8/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js"
       integrity="{{ sri_hashes.alpinejs }}"
       crossorigin="anonymous"
       defer
@@ -322,7 +313,7 @@
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.3.2/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
@@ -2995,7 +2986,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on::after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on:htmx:after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3067,7 +3058,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on:htmx:after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3134,7 +3125,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on:htmx:after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -7448,6 +7439,84 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 />
               </div>
 
+              <!-- UAID (Universal Agent ID) Section -->
+              <div class="sm:col-span-2 border-t border-gray-200 dark:border-gray-700 pt-6">
+                <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  Universal Agent ID (UAID) Settings
+                </h4>
+
+                <!-- Generate UAID Checkbox -->
+                <div class="flex items-start mb-4">
+                  <input
+                    type="checkbox"
+                    id="a2a-generate-uaid"
+                    name="generate_uaid"
+                    value="true"
+                    class="h-4 w-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-800 dark:border-gray-600"
+                    onchange="Admin.toggleUAIDFields('a2a', this.checked)"
+                  />
+                  <label for="a2a-generate-uaid" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                    Generate UAID for cross-gateway routing
+                    <span class="text-xs text-gray-500 dark:text-gray-400 block mt-1">
+                      Enables zero-config federation without manual peer setup. The UAID embeds endpoint URL, protocol, and registry for automatic discovery.
+                    </span>
+                  </label>
+                </div>
+
+                <!-- UAID Fields (shown when checkbox is checked) -->
+                <div id="uaid-fields-a2a" style="display: none;" class="space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+
+                  <!-- UAID Registry -->
+                  <div>
+                    <label for="a2a-uaid-registry" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                      Registry Name
+                    </label>
+                    <input
+                      type="text"
+                      id="a2a-uaid-registry"
+                      name="uaid_registry"
+                      value="context-forge"
+                      placeholder="context-forge"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Registry identifier (e.g., "context-forge", "hol-registry")
+                    </p>
+                  </div>
+
+                  <!-- UAID Protocol -->
+                  <div>
+                    <label for="a2a-uaid-protocol" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                      Protocol
+                    </label>
+                    <select
+                      id="a2a-uaid-protocol"
+                      name="uaid_protocol"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                    >
+                      <option value="a2a" selected>A2A</option>
+                      <option value="mcp">MCP</option>
+                      <option value="rest">REST</option>
+                      <option value="grpc">gRPC</option>
+                    </select>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Agent communication protocol
+                    </p>
+                  </div>
+
+                  <!-- Info Box -->
+                  <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+                    <p class="text-xs text-blue-700 dark:text-blue-300">
+                      <strong>ℹ️ About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
+                      The UAID embeds the endpoint URL, protocol, and registry info for automatic discovery.
+                      <br/><br/>
+                      <strong>Domain Allowlist:</strong> Set <code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded">UAID_ALLOWED_DOMAINS</code> in .env to control which domains can be used.
+                    </p>
+                  </div>
+
+                </div>
+              </div>
+
               <!-- Visibility -->
               <div class="sm:col-span-2">
                 <label
@@ -10786,6 +10855,84 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         />
                       </div>
 
+                      <!-- UAID (Universal Agent ID) Section -->
+                      <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                          Universal Agent ID (UAID) Settings
+                        </h4>
+
+                        <!-- Generate UAID Checkbox -->
+                        <div class="flex items-start mb-4">
+                          <input
+                            type="checkbox"
+                            id="a2a-generate-uaid-edit"
+                            name="generate_uaid"
+                            value="true"
+                            class="h-4 w-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-800 dark:border-gray-600"
+                            onchange="Admin.toggleUAIDFields('a2a-edit', this.checked)"
+                          />
+                          <label for="a2a-generate-uaid-edit" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                            Generate UAID for cross-gateway routing
+                            <span class="text-xs text-gray-500 dark:text-gray-400 block mt-1">
+                              Enables zero-config federation without manual peer setup. The UAID embeds endpoint URL, protocol, and registry for automatic discovery.
+                            </span>
+                          </label>
+                        </div>
+
+                        <!-- UAID Fields (shown when checkbox is checked) -->
+                        <div id="uaid-fields-a2a-edit" style="display: none;" class="space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+
+                          <!-- UAID Registry -->
+                          <div>
+                            <label for="a2a-uaid-registry-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                              Registry Name
+                            </label>
+                            <input
+                              type="text"
+                              id="a2a-uaid-registry-edit"
+                              name="uaid_registry"
+                              value="context-forge"
+                              placeholder="context-forge"
+                              class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            />
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              Registry identifier (e.g., "context-forge", "hol-registry")
+                            </p>
+                          </div>
+
+                          <!-- UAID Protocol -->
+                          <div>
+                            <label for="a2a-uaid-protocol-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                              Protocol
+                            </label>
+                            <select
+                              id="a2a-uaid-protocol-edit"
+                              name="uaid_protocol"
+                              class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                            >
+                              <option value="a2a" selected>A2A</option>
+                              <option value="mcp">MCP</option>
+                              <option value="rest">REST</option>
+                              <option value="grpc">gRPC</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              Agent communication protocol
+                            </p>
+                          </div>
+
+                          <!-- Info Box -->
+                          <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+                            <p class="text-xs text-blue-700 dark:text-blue-300">
+                              <strong>ℹ️ About UAIDs:</strong> Universal Agent IDs enable cross-gateway routing without manual configuration.
+                              The UAID embeds the endpoint URL, protocol, and registry info for automatic discovery.
+                              <br/><br/>
+                              <strong>Domain Allowlist:</strong> Set <code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-800 rounded">UAID_ALLOWED_DOMAINS</code> in .env to control which domains can be used.
+                            </p>
+                          </div>
+
+                        </div>
+                      </div>
+
                       <!-- Visibility -->
                       <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
@@ -11187,7 +11334,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on:htmx:after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11262,7 +11409,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on:htmx:after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11329,7 +11476,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on:htmx:after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -12444,7 +12591,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH || ""}/admin/logs/export?${params}`,
             {
               headers: headers,
-              credentials: "same-origin",
+              credentials: "same-origin", // pragma: allowlist secret
             },
           );
 
@@ -12495,7 +12642,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH || ""}/admin/logs/file`,
             {
               headers: headers,
-              credentials: "same-origin",
+              credentials: "same-origin", // pragma: allowlist secret
             },
           );
 
@@ -14608,7 +14755,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       // by Admin.initResourceSelect() and Admin.initPromptSelect() functions in admin.js.
       // Those functions properly fetch ALL IDs from the server and maintain state,
       // so items that load via pagination are also included in the selection.
-      // The handlers are attached via HTMX's hx-on::after-swap attribute.
+      // The handlers are attached via HTMX's hx-on:htmx:after-swap attribute.
 
       // Download sample JSON for bulk import
       function downloadSampleJSON() {

@@ -7,8 +7,13 @@ Authors: Mihai Criveti
 Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
-XSS, clickjacking, MIME sniffing, and cross-origin attacks.
+XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
+
 """
+
+# Standard
+import re
+from typing import Any, Callable, Set
 
 # Third-Party
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -33,10 +38,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - Referrer-Policy: Controls referrer information sent with requests
     - Content-Security-Policy: Prevents XSS and other code injection attacks
     - Strict-Transport-Security: Forces HTTPS connections (when appropriate)
+    - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private)
+    - Vary: Authorization - Prevents cache key collisions on authenticated endpoints
 
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
     - Server: Removes server version information
+
+    Web Cache Deception Protection:
+    Authenticated API endpoints receive Cache-Control: no-store, private to prevent
+    intermediary caching (CDN, reverse proxy, load balancer) that could expose
+    sensitive data to unauthenticated users. The Vary: Authorization header ensures
+    cache keys include authentication context.
 
     Examples:
         >>> middleware = SecurityHeadersMiddleware(None)
@@ -77,7 +90,77 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         'Accept-Encoding, Origin'
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    # Paths that should have strict no-cache headers (authenticated endpoints)
+    # These are API endpoints that return user-specific or sensitive data
+    PROTECTED_PATH_PATTERNS: Set[str] = {
+        r"^/tools(/.*)?$",
+        r"^/servers(/.*)?$",
+        r"^/resources(/.*)?$",
+        r"^/gateways(/.*)?$",
+        r"^/prompts(/.*)?$",
+        r"^/tags(/.*)?$",
+        r"^/roots(/.*)?$",
+        r"^/protocol(/.*)?$",
+        r"^/metrics(/.*)?$",
+        r"^/admin(/.*)?$",
+        r"^/api(/.*)?$",
+        r"^/_internal(/.*)?$",
+        r"^/mcp(/.*)?$",
+        r"^/auth(/.*)?$",
+        r"^/oauth(/.*)?$",
+        r"^/sso(/.*)?$",
+        r"^/teams(/.*)?$",
+        r"^/tokens(/.*)?$",
+        r"^/users(/.*)?$",
+        r"^/rbac(/.*)?$",
+        r"^/observability(/.*)?$",
+        r"^/llm(/.*)?$",
+        r"^/a2a(/.*)?$",
+    }
+
+    # Paths that can be cached (public, static content).
+    # NOTE: /docs, /redoc, /openapi.json are intentionally NOT here — they are
+    # auth-protected by DocsAuthMiddleware and must receive no-store/private.
+    EXEMPTED_PATH_PATTERNS: Set[str] = {
+        r"^/static/.*$",
+        r"^/health$",
+        r"^/ready$",
+        r"^/\.well-known/.*$",
+        r"^/servers/[^/]+/\.well-known/.*$",
+    }
+
+    def __init__(self, app: Any) -> None:
+        """Initialize the security headers middleware."""
+        super().__init__(app)
+        # Compile regex patterns for performance
+        self._protected_patterns = [re.compile(pattern) for pattern in self.PROTECTED_PATH_PATTERNS]
+        self._exempted_patterns = [re.compile(pattern) for pattern in self.EXEMPTED_PATH_PATTERNS]
+
+    def _is_protected_path(self, path: str) -> bool:
+        """
+        Check if the path should have strict no-cache headers.
+
+        Args:
+            path: The request path to check
+
+        Returns:
+            True if the path should have no-cache headers, False otherwise
+        """
+        # First check if path is exempted (can be cached)
+        for pattern in self._exempted_patterns:
+            if pattern.match(path):
+                return False
+
+        # Then check if path is protected (must not be cached)
+        for pattern in self._protected_patterns:
+            if pattern.match(path):
+                return True
+
+        # SECURITY: Hardened default - treat unmatched paths as protected (fail-secure).
+        # New endpoints inherit protection automatically until explicitly exempted.
+        return True
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
         """
         Process the request and add security headers to the response.
 
@@ -339,5 +422,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 existing_vary = response.headers.get("Vary")
                 vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
                 response.headers["Vary"] = vary_val
+
+        # Hardened Cache Control for Protected Endpoints
+        # Implements defense-in-depth caching policies
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
+
+        if self._is_protected_path(path):
+            # Strict cache control: no-store prevents intermediary caching, private restricts to user agent
+            response.headers["Cache-Control"] = "no-store, private"
+
+            # Legacy protocol compatibility for defense-in-depth
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+
+            # Cache variance control for proper request isolation
+            existing_vary = response.headers.get("Vary", "")
+            vary_parts = [v.strip() for v in existing_vary.split(",") if v.strip()] if existing_vary else []
+            if "Authorization" not in vary_parts:
+                vary_parts.append("Authorization")
+            response.headers["Vary"] = ", ".join(vary_parts)
 
         return response

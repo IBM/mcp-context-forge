@@ -21,7 +21,7 @@ theme:
     - announce.dismiss # Button to dismiss the current temporary announcement
     - content.action.edit
     - content.action.feedback
-    # - content.action.view
+    - content.action.view # Version switcher
     - content.code.annotate # Attach arbitrary content to specific sections of code blocks by adding numeric markers
     - content.code.copy # Button to allow the user to copy a code block's contents to the clipboard
     # - content.tabs.link

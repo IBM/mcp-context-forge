@@ -4,10 +4,15 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "mcpgateway/**"
-      - "plugins/**"
-      - "pyproject.toml"
-      - ".github/workflows/linting-full.yml"
+      - ".github/workflows/**"
+      - "charts/**"
+      - "mcp-servers/**/*.go"
+      - "mcp-servers/**/go.mod"
+      - "mcp-servers/**/go.sum"
+      - "a2a-agents/**/*.go"
+      - "a2a-agents/**/go.mod"
+      - "a2a-agents/**/go.sum"
+      - "Makefile"
   workflow_dispatch:
 
 concurrency:
@@ -21,7 +26,7 @@ jobs:
   linting-full:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: linting-full
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 30
 
     steps:
@@ -39,7 +44,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.25.8"
+          go-version: "1.26.2"
           cache-dependency-path: |
             a2a-agents/go/a2a-echo-agent/go.sum
             mcp-servers/go/benchmark-server/go.sum

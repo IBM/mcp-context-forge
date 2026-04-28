@@ -66,6 +66,7 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -104,7 +105,11 @@ from mcpgateway.schemas import (
     PaginationMeta,
     PluginDetail,
     PluginListResponse,
+    PluginModeUpdateRequest,
+    PluginModeUpdateResponse,
     PluginStatsResponse,
+    PluginToggleRequest,
+    PluginToggleResponse,
     PromptCreate,
     PromptMetrics,
     PromptRead,
@@ -125,7 +130,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -134,7 +139,6 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.performance_service import get_performance_service
@@ -2029,11 +2033,10 @@ async def get_overview_partial(
         resources_total = db.query(func.count(DbResource.id)).scalar() or 0  # pylint: disable=not-callable
         resources_active = db.query(func.count(DbResource.id)).filter(DbResource.enabled.is_(True)).scalar() or 0  # pylint: disable=not-callable
 
-        # Plugin stats
+        # Plugin stats — self-heal the cache so the overview reflects the live
+        # shared toggle even on a process that booted with plugins disabled.
         overview_plugin_service = get_plugin_service()
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            overview_plugin_service.set_plugin_manager(plugin_manager)
+        await _sync_plugin_service_from_runtime(request, overview_plugin_service)
         plugin_stats = await overview_plugin_service.get_plugin_statistics()
 
         # Infrastructure status (database, cache, uptime)
@@ -2378,61 +2381,6 @@ async def get_a2a_stats_cache_stats(
     return a2a_stats_cache.stats()
 
 
-@admin_router.get("/mcp-pool/metrics")
-@require_permission("admin.system_config", allow_admin_bypass=False)
-@rate_limit(requests_per_minute=60)
-async def get_mcp_session_pool_metrics(
-    request: Request,  # pylint: disable=unused-argument
-    _user=Depends(get_current_user_with_permissions),
-    _db: Session = Depends(get_db),
-) -> Dict[str, Any]:
-    """Get MCP session pool metrics.
-
-    Returns pool statistics including hits, misses, evictions, hit rate,
-    circuit breaker status, and per-pool details. Useful for monitoring
-    pool effectiveness and diagnosing connection issues.
-
-    Args:
-        request: HTTP request object (required by rate_limit decorator)
-        _user: Authenticated user
-        _db: Database session for permission checks.
-
-    Returns:
-        Dict with pool metrics including:
-        - hits: Number of pool hits (session reuse)
-        - misses: Number of pool misses (new session created)
-        - evictions: Number of sessions evicted due to TTL
-        - health_check_failures: Number of failed health checks
-        - circuit_breaker_trips: Number of circuit breaker activations
-        - pool_keys_evicted: Number of idle pool keys cleaned up
-        - sessions_reaped: Number of stale sessions closed by background reaper
-        - hit_rate: Ratio of hits to total requests (0.0-1.0)
-        - pool_key_count: Number of active pool keys
-        - pools: Per-pool statistics (available, active, max)
-        - circuit_breakers: Circuit breaker status per URL
-
-    Raises:
-        HTTPException: If session pool is not initialized
-
-    Examples:
-        >>> from mcpgateway.admin import get_mcp_session_pool_metrics
-        >>> get_mcp_session_pool_metrics.__name__
-        'get_mcp_session_pool_metrics'
-        >>> import inspect
-        >>> inspect.iscoroutinefunction(get_mcp_session_pool_metrics)
-        True
-    """
-    if not settings.mcp_session_pool_enabled:
-        return {"enabled": False, "message": "MCP session pool is disabled"}
-
-    try:
-        pool = get_mcp_session_pool()
-        metrics = pool.get_metrics()
-        return {"enabled": True, **metrics}
-    except RuntimeError as e:
-        return {"enabled": True, "error": str(e), "message": "Pool not yet initialized"}
-
-
 @admin_router.get("/config/settings")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_configuration_settings(
@@ -2647,10 +2595,10 @@ async def admin_servers_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = True,
-    render: Optional[str] = Query(None),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user_with_permissions),
@@ -2849,12 +2797,13 @@ async def admin_servers_partial_html(
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
 @require_permission("servers.read", allow_admin_bypass=False)
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -2873,7 +2822,8 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     """
     try:
         LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
-        server = await server_service.get_server(db, server_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return server.masked().model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -4683,6 +4633,40 @@ async def _admin_logout(request: Request) -> Response:
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = _resolve_root_path(request)
 
+    # Revoke JWT token in blocklist for immediate invalidation
+    cookies = getattr(request, "cookies", None)
+    if cookies and hasattr(cookies, "get"):
+        token = cookies.get("jwt_token")
+        if isinstance(token, str) and token:
+            try:
+                # First-Party
+                from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
+
+                payload = await verify_jwt_token_cached(token, request)
+                jti = payload.get("jti")
+                email = payload.get("email", "admin")
+
+                if jti:
+                    blocklist_service = get_token_blocklist_service()
+
+                    # Get token expiry from payload
+                    exp_ts = payload.get("exp")
+                    token_expiry = None
+                    if exp_ts:
+                        token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+
+                    # Get last activity if present
+                    last_activity = None
+                    last_activity_ts = payload.get("last_activity")
+                    if last_activity_ts:
+                        last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
+
+                    blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="admin_logout", token_expiry=token_expiry, last_activity=last_activity)
+                    LOGGER.info(f"Token revoked during admin logout: jti={jti}", extra={"security_event": "admin_logout_token_revoked", "security_severity": "low", "jti": jti, "user_id": email})
+            except Exception as revoke_error:
+                # Log but don't fail logout if token revocation fails
+                LOGGER.warning(f"Failed to revoke token during admin logout: {revoke_error}")
+
     # For GET requests, distinguish between browser navigation and OIDC front-channel logout
     if request.method == "GET":
         # Check if request is from a browser (Accept: text/html, HX-Request header, or admin referer)
@@ -5151,8 +5135,8 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 @require_permission("teams.read", allow_admin_bypass=False)
 async def admin_get_all_team_ids(
     include_inactive: bool = False,
-    visibility: Optional[str] = Query(None, description="Filter by visibility"),
-    q: Optional[str] = Query(None, description="Search query"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5218,10 +5202,10 @@ async def admin_get_all_team_ids(
 @admin_router.get("/teams/search", response_class=JSONResponse)
 @require_permission("teams.read", allow_admin_bypass=False)
 async def admin_search_teams(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5294,10 +5278,10 @@ async def admin_teams_partial_html(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = Query(False, description="Include inactive teams"),
-    visibility: Optional[str] = Query(None, description="Filter by visibility"),
-    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
-    q: Optional[str] = Query(None, description="Search query"),
-    relationship: Optional[str] = Query(None, description="Filter by relationship: owner, member, public"),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
+    q: Optional[str] = Query(None, max_length=500, description="Search query"),
+    relationship: Optional[str] = Query(None, pattern=r"^(owner|member|public)$", description="Filter by relationship: owner, member, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -5513,7 +5497,7 @@ async def admin_list_teams(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: Optional[str] = Query(None, description="Search query"),
+    q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     unified: bool = False,
@@ -7346,7 +7330,7 @@ async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7507,7 +7491,7 @@ async def admin_team_members_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    search: str = Query("", description="Search term to filter members by name or email"),
+    search: str = Query("", max_length=255, description="Search term to filter members by name or email"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -7598,7 +7582,7 @@ async def admin_team_non_members_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=50, description="Items per page (max 50 for non-members)"),
-    search: str = Query("", description="Search term to filter non-members by name or email"),
+    search: str = Query("", max_length=255, description="Search term to filter non-members by name or email"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
@@ -7702,7 +7686,7 @@ async def admin_team_non_members_partial_html(
 @admin_router.get("/users/search", response_class=JSONResponse)
 @require_any_permission(["admin.user_management", "teams.manage_members"], allow_admin_bypass=False)
 async def admin_search_users(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8386,11 +8370,11 @@ async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8629,7 +8613,7 @@ async def admin_tool_ops_partial(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8743,9 +8727,9 @@ async def admin_tool_ops_partial(
 @admin_router.get("/tools/ids", response_class=JSONResponse)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_get_all_tool_ids(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8845,11 +8829,11 @@ async def admin_get_all_tool_ids(
 @admin_router.get("/tools/search", response_class=JSONResponse)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_search_tools(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8983,11 +8967,11 @@ async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9221,10 +9205,10 @@ async def admin_gateways_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = True,
-    render: Optional[str] = Query(None),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9481,8 +9465,8 @@ async def admin_get_all_gateways_ids(
 @admin_router.get("/gateways/search", response_class=JSONResponse)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_search_gateways(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9656,8 +9640,8 @@ async def admin_get_all_server_ids(
 @admin_router.get("/servers/search", response_class=JSONResponse)
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_search_servers(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9766,11 +9750,11 @@ async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10003,9 +9987,9 @@ async def admin_resources_partial_html(
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_get_all_prompt_ids(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10101,9 +10085,9 @@ async def admin_get_all_prompt_ids(
 @admin_router.get("/resources/ids", response_class=JSONResponse)
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_get_all_resource_ids(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10199,11 +10183,11 @@ async def admin_get_all_resource_ids(
 @admin_router.get("/resources/search", response_class=JSONResponse)
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_search_resources(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10324,11 +10308,11 @@ async def admin_search_resources(
 @admin_router.get("/prompts/search", response_class=JSONResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_search_prompts(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10462,8 +10446,8 @@ async def admin_tokens_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None),
-    q: Optional[str] = Query(None, description="Search query for token name"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    q: Optional[str] = Query(None, max_length=500, description="Search query for token name"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -10626,7 +10610,7 @@ async def admin_tokens_partial_html(
 @admin_router.get("/tokens/search", response_class=JSONResponse)
 @require_permission("tokens.read", allow_admin_bypass=False)
 async def admin_search_tokens(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -10707,11 +10691,11 @@ async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -10978,8 +10962,8 @@ async def admin_get_all_agent_ids(
 @admin_router.get("/a2a/search", response_class=JSONResponse)
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_search_a2a_agents(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -11086,10 +11070,12 @@ async def admin_search_a2a_agents(
 @admin_router.get("/search", response_class=JSONResponse)
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
+    q: str = Query("", max_length=500, description="Search query"),
+    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
     entity_types: Optional[str] = Query(
         None,
+        max_length=200,
+        pattern=r"^[a-zA-Z,]*$",
         description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
     ),
     include_inactive: bool = False,
@@ -11100,7 +11086,7 @@ async def admin_unified_search(
         le=settings.pagination_max_page_size,
         description="Optional alias for per-entity result limit",
     ),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -11363,7 +11349,7 @@ async def admin_unified_search(
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
 @require_permission("tools.read", allow_admin_bypass=False)
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -11373,6 +11359,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
+        request (Request): Incoming FastAPI request (for visibility scope resolution).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -11390,11 +11377,19 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     _user_email = get_user_email(user)
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
+        tool = await tool_service.get_tool(
+            db,
+            tool_id,
+            requesting_user_email=auth_user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+            token_teams=auth_token_teams,
+        )
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -11996,11 +11991,12 @@ async def admin_set_tool_state(
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read", allow_admin_bypass=False)
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
     Args:
         gateway_id: Gateway ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -12019,7 +12015,8 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -12595,11 +12592,12 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 @admin_router.get("/resources/{resource_id}")
 @require_permission("resources.read", allow_admin_bypass=False)
-async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
         resource_id: Resource ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -12618,9 +12616,15 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_id(db, resource_id, include_inactive=True)
-        # content = await resource_service.read_resource(db, resource_id=resource_id)
-        return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        resource = await resource_service.get_resource_by_id(
+            db,
+            resource_id,
+            include_inactive=True,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
+        return {"resource": resource.model_dump(by_alias=True)}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -12993,11 +12997,12 @@ async def admin_set_resource_state(
 
 @admin_router.get("/prompts/{prompt_id}")
 @require_permission("prompts.read", allow_admin_bypass=False)
-async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
         prompt_id: Prompt ID.
+        request: Incoming FastAPI request (for visibility scope resolution).
         db: Database session.
         user: Authenticated user.
 
@@ -13016,7 +13021,13 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
     """
     LOGGER.info(f"User {get_user_email(user)} requested details for prompt ID {prompt_id}")
     try:
-        prompt_details = await prompt_service.get_prompt_details(db, prompt_id)
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        prompt_details = await prompt_service.get_prompt_details(
+            db,
+            prompt_id,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+        )
         prompt = PromptRead.model_validate(prompt_details)
         return prompt.model_dump(by_alias=True)
     except PromptNotFoundError as e:
@@ -13126,6 +13137,18 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_prompt: {ex}")
             return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+        if isinstance(ex, TemplateValidationError):
+            LOGGER.error(f"TemplateValidationError in admin_add_prompt: {ex}")
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "message": f"Template validation failed: {ex.reason}",
+                    "template_name": ex.template_name,
+                    "reason": ex.reason,
+                    "pattern": ex.pattern,
+                    "success": False,
+                },
+            )
 
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -13247,6 +13270,18 @@ async def admin_edit_prompt(
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_prompt: {ex}")
             return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+        if isinstance(ex, TemplateValidationError):
+            LOGGER.error(f"TemplateValidationError in admin_edit_prompt: {ex}")
+            return ORJSONResponse(
+                status_code=400,
+                content={
+                    "message": f"Template validation failed: {ex.reason}",
+                    "template_name": ex.template_name,
+                    "reason": ex.reason,
+                    "pattern": ex.pattern,
+                    "success": False,
+                },
+            )
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -13353,7 +13388,7 @@ async def admin_set_prompt_state(
 @admin_router.get("/roots/search", response_class=JSONResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_search_roots(
-    q: str = Query("", description="Search query"),
+    q: str = Query("", max_length=500, description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     user=Depends(get_current_user_with_permissions),
 ) -> dict:
@@ -13731,7 +13766,7 @@ async def get_aggregated_metrics(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_metrics_partial_html(
     request: Request,
-    entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
+    entity_type: str = Query("tools", pattern=r"^(tools|resources|prompts|servers)$", description="Entity type: tools, resources, prompts, or servers"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
@@ -13924,7 +13959,9 @@ async def admin_test_gateway(
                 # For Client Credentials flow, get token directly
                 try:
                     oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-                    access_token: str = await oauth_manager.get_access_token(gateway.oauth_config)
+                    access_token: str = await oauth_manager.get_access_token(
+                        gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+                    )
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
@@ -14808,7 +14845,7 @@ async def admin_get_log_file(
 @admin_router.get("/logs/export")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_logs(
-    export_format: str = Query("json", alias="format"),
+    export_format: str = Query("json", alias="format", pattern=r"^(json|csv|ndjson)$"),
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -15506,6 +15543,11 @@ async def admin_add_a2a_agent(
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
+        # Extract UAID fields from form
+        generate_uaid = form.get("generate_uaid") == "true"  # Checkbox sends "true" string
+        uaid_registry = str(form.get("uaid_registry", "context-forge"))
+        uaid_protocol = str(form.get("uaid_protocol", "a2a"))
+
         agent_data = A2AAgentCreate(
             name=form["name"],
             description=form.get("description"),
@@ -15527,6 +15569,10 @@ async def admin_add_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             passthrough_headers=passthrough_headers,
+            # UAID fields for cross-gateway routing
+            generate_uaid=generate_uaid,
+            uaid_registry=uaid_registry if generate_uaid else None,
+            uaid_protocol=uaid_protocol if generate_uaid else None,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -15754,6 +15800,12 @@ async def admin_edit_a2a_agent(
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
+        # Extract UAID generation fields - allow adding UAID to agents that don't have one
+        # UAID is immutable: once generated, it cannot be changed
+        generate_uaid = form.get("generate_uaid") == "true"
+        uaid_registry = str(form.get("uaid_registry", "")) if generate_uaid else None
+        uaid_protocol = str(form.get("uaid_protocol", "")) if generate_uaid else None
+
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
         if oauth_config and not auth_type_from_form:
@@ -15783,6 +15835,10 @@ async def admin_edit_a2a_agent(
             owner_email=user_email,
             capabilities=capabilities,  # Optional, not editable via UI
             config=config,  # Optional, not editable via UI
+            # UAID generation fields (only applies if agent doesn't have UAID yet)
+            generate_uaid=generate_uaid,
+            uaid_registry=uaid_registry,
+            uaid_protocol=uaid_protocol,
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
@@ -15984,19 +16040,8 @@ async def admin_test_a2a_agent(
 
         # Prepare test parameters based on agent type and endpoint
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC format for agents that expect it
-            test_params = {
-                "method": "message/send",
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "messageId": f"admin-test-{int(time.time())}",
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": user_query}],
-                    }
-                },
-            }
+            # Let the A2A protocol helper choose v1 or legacy wire format from the agent record.
+            test_params = {"query": user_query}
         else:
             # Generic test format
             test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
@@ -16583,6 +16628,42 @@ async def get_gateways_section(
 ####################
 
 
+async def _sync_plugin_service_from_runtime(request: Request, plugin_service) -> None:
+    """Self-heal the admin plugin cache from the live framework state.
+
+    The framework's ``get_plugin_manager`` is the single source of truth — it
+    reads the shared toggle (TTL-cached, so this is a cheap call) and returns
+    ``None`` when plugins are globally disabled, even when the disable came
+    from a *remote* node via the Redis toggle.
+
+    Every admin read mirrors that answer back into ``app.state.plugin_manager``
+    and the ``PluginService`` singleton. This closes three gaps:
+
+    1. Processes that booted with plugins disabled never had ``app.state`` set,
+       so admin views returned empty until restart even after the shared
+       toggle was flipped on.
+    2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
+       stale cache would persist forever — now the next GET repairs it.
+    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
+       worker) would leave this worker's ``app.state.plugin_manager``
+       populated from a prior enable, making admin views serve plugin
+       metadata the cluster had already turned off.
+
+    Best-effort: a failure logs a WARNING and leaves ``app.state`` alone. It
+    never raises, so it can't turn a read into a 500.
+    """
+    try:
+        # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.plugins import get_plugin_manager
+
+        plugin_manager = await get_plugin_manager()
+        request.app.state.plugin_manager = plugin_manager
+        plugin_service.set_plugin_manager(plugin_manager)
+    except Exception as sync_exc:
+        LOGGER.warning("Admin plugin-cache self-heal failed (%s) — view may render stale/empty", sync_exc)
+
+
 @admin_router.get("/plugins/partial")
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
@@ -16606,17 +16687,15 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         # Get plugin service and check if plugins are enabled
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available in app state
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache so the partial reflects the live shared toggle.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
         stats = await plugin_service.get_plugin_statistics()
 
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": _resolve_root_path(request)}
+        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_service.get_plugin_manager() is not None, "root_path": _resolve_root_path(request)}
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
@@ -16668,10 +16747,8 @@ async def list_plugins(
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get filtered plugins
         if any([search, mode, hook, tag]):
@@ -16704,12 +16781,73 @@ async def list_plugins(
             },
         )
 
-        return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
+        # First-Party
+        from mcpgateway.plugins import are_plugins_enabled_shared  # pylint: disable=import-outside-toplevel
+
+        return PluginListResponse(plugins_globally_enabled=await are_plugins_enabled_shared(), plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
         structured_logger.error("Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins", response_model=PluginToggleResponse)
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def toggle_plugins_global(
+    payload: PluginToggleRequest,
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+) -> PluginToggleResponse:
+    """Enable or disable the plugin subsystem globally and broadcast the change."""
+    # pylint: disable=import-outside-toplevel
+    # First-Party
+    from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins_shared, get_plugin_manager
+
+    redis_persisted = await enable_plugins_shared(payload.enabled)
+
+    # Sync the admin-side cache so ``GET /admin/plugins`` and
+    # ``GET /admin/plugins/{name}`` reflect the toggle on a process that
+    # started with plugins disabled (``app.state.plugin_manager`` stayed unset
+    # and ``PluginService`` was never wired). Without this, enabling plugins
+    # at runtime leaves the admin surfaces reading stale/empty metadata until
+    # the next restart; disabling likewise keeps the old manager visible.
+    #
+    # Treat the sync as best-effort: the shared toggle above already committed,
+    # so an exception here (e.g. factory build failure on a degraded node) must
+    # not turn into a 500 for a toggle that actually took effect. The admin
+    # surfaces will self-correct on the next request that re-reads the manager.
+    try:
+        plugin_service = get_plugin_service()
+        if payload.enabled:
+            plugin_manager = await get_plugin_manager()
+            if plugin_manager is not None:
+                plugin_service.set_plugin_manager(plugin_manager)
+                request.app.state.plugin_manager = plugin_manager
+        else:
+            plugin_service.set_plugin_manager(None)
+            request.app.state.plugin_manager = None
+    except Exception as sync_exc:
+        LOGGER.warning(
+            "Plugin global toggle applied (enabled=%s) but admin-cache sync failed (%s) — admin views will refresh on next request",
+            payload.enabled,
+            sync_exc,
+        )
+
+    LOGGER.info(f"Plugins globally {'enabled' if payload.enabled else 'disabled'} by {get_user_email(user)}")
+    structured_logger = get_structured_logger()
+    structured_logger.info(
+        f"Plugin subsystem globally {'enabled' if payload.enabled else 'disabled'}",
+        user_id=get_user_id(user),
+        user_email=get_user_email(user),
+        component="plugin_runtime",
+        category="security",
+        resource_type="plugin_global_toggle",
+        resource_action="update",
+        custom_fields={"enabled": payload.enabled, "redis_persisted": redis_persisted},
+    )
+
+    return PluginToggleResponse(plugins_enabled=await are_plugins_enabled_shared(), redis_persisted=redis_persisted)
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
@@ -16735,10 +16873,8 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get statistics
         stats = await plugin_service.get_plugin_statistics()
@@ -16797,10 +16933,8 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         # Get plugin service
         plugin_service = get_plugin_service()
 
-        # Check if plugin manager is available
-        plugin_manager = getattr(request.app.state, "plugin_manager", None)
-        if plugin_manager:
-            plugin_service.set_plugin_manager(plugin_manager)
+        # Self-heal the cache from the live framework state.
+        await _sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin details
         plugin = plugin_service.get_plugin_by_name(name)
@@ -16852,6 +16986,70 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.put("/plugins/{name}", response_model=PluginModeUpdateResponse)
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def update_plugin_mode(
+    name: str,
+    payload: PluginModeUpdateRequest,
+    _db: Session = Depends(get_db),  # required by rbac decorator's session lookup
+    user=Depends(get_current_user_with_permissions),
+) -> PluginModeUpdateResponse:
+    """Persist a per-plugin mode override in Redis and invalidate cached managers."""
+    # pylint: disable=import-outside-toplevel
+    # First-Party
+    from mcpgateway.plugins import invalidate_all_plugin_managers, list_configured_plugin_names, publish_plugin_mode_change
+
+    mode = payload.mode
+
+    # Validate against the *configured* plugin set, not the live manager. On a
+    # process that booted with plugins globally disabled, no manager is wired
+    # and ``PluginService.get_all_plugins()`` returns ``[]``; without this the
+    # handler 404s for every valid name and blocks operators from pre-staging
+    # a per-plugin mode before turning the subsystem on.
+    plugin_names = list_configured_plugin_names()
+    if name not in plugin_names:
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found. Available: {', '.join(plugin_names[:10])}")
+
+    # publish_plugin_mode_change always updates the in-process override map
+    # (so single-node-no-Redis deployments still work) and additionally
+    # attempts a Redis SET + publish. The Redis outcome is surfaced back to
+    # the caller as redis_persisted so they know whether the change reached
+    # other workers.
+    redis_persisted = await publish_plugin_mode_change(name, mode)
+    # The override is already stored (in-process map and/or Redis) by the line
+    # above. Treat the cache sweep as best-effort — if it raises, a background
+    # TTL refresh still reaches the new mode, and the operator must not see a
+    # 500 for an override that actually took effect.
+    try:
+        await invalidate_all_plugin_managers()
+    except Exception as invalidate_exc:
+        LOGGER.warning(
+            "Plugin '%s' mode override stored but cache invalidation failed (%s) — fresh managers will rebuild on next TTL expiry",
+            name,
+            invalidate_exc,
+        )
+
+    if redis_persisted:
+        LOGGER.info(f"Plugin '{name}' mode changed to '{mode}' by {get_user_email(user)} (Redis persisted, 24h TTL)")
+    else:
+        LOGGER.warning(f"Plugin '{name}' mode changed to '{mode}' by {get_user_email(user)} (this worker only — Redis unavailable)")
+
+    structured_logger = get_structured_logger()
+    structured_logger.info(
+        f"Plugin '{name}' mode changed to '{mode}'",
+        user_id=get_user_id(user),
+        user_email=get_user_email(user),
+        component="plugin_runtime",
+        category="security",
+        resource_type="plugin_mode",
+        resource_id=name,
+        resource_action="update",
+        custom_fields={"plugin_name": name, "new_mode": mode, "redis_persisted": redis_persisted},
+    )
+
+    return PluginModeUpdateResponse(plugin=name, mode=mode, redis_persisted=redis_persisted)
 
 
 ##################################################
@@ -17451,16 +17649,18 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_observability_traces(
     request: Request,
-    time_range: str = Query("24h"),
-    status_filter: str = Query("all"),
-    limit: int = Query(50),
-    min_duration: Optional[float] = Query(None),
-    max_duration: Optional[float] = Query(None),
-    http_method: Optional[str] = Query(None),
-    user_email: Optional[str] = Query(None),
-    name_search: Optional[str] = Query(None),
-    attribute_search: Optional[str] = Query(None),
-    tool_name: Optional[str] = Query(None),
+    time_range: str = Query("24h", pattern=r"^(1h|6h|12h|24h|7d|30d)$"),
+    status_filter: str = Query("all", pattern=r"^(all|ok|error)$"),
+    limit: int = Query(50, ge=1, le=1000),
+    min_duration: Optional[float] = Query(None, ge=0),
+    max_duration: Optional[float] = Query(None, ge=0),
+    http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"),
+    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
+    name_search: Optional[str] = Query(None, max_length=500),
+    attribute_search: Optional[str] = Query(None, max_length=500),
+    # tool_name pattern follows MCP SEP-986 (Specify Format for Tool Names), matching
+    # mcpgateway.config.Settings.validation_tool_name_pattern. Allows namespacing via '/'.
+    tool_name: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"),
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -19554,7 +19754,7 @@ async def get_performance_cache(
 @admin_router.get("/performance/history")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_history(
-    period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
+    period_type: str = Query("hourly", pattern=r"^(hourly|daily)$", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),

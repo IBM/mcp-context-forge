@@ -18,8 +18,9 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -185,3 +186,90 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
     except Exception as e:
         logger.error(f"Login error for {login_request.email or login_request.username}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
+
+
+@auth_router.post("/logout")
+async def logout(request: Request, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Logout user and revoke session token.
+
+    This endpoint implements server-side token revocation by adding the token
+    to the blocklist, providing immediate invalidation as recommended by X-Force Red.
+
+    Args:
+        request: FastAPI request object
+        current_user: Current authenticated user from dependency
+        db: Database session
+
+    Returns:
+        Success response confirming logout
+
+    Raises:
+        HTTPException: If logout fails
+
+    Security:
+        - Adds token to server-side blocklist
+        - Token cannot be reused after logout
+        - Supports audit trail for security monitoring
+    """
+    # First-Party
+    from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
+
+    try:
+        # User is already authenticated via dependency injection
+        user = current_user
+
+        # Extract JWT from Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No valid authorization token provided")
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Decode token to get JTI and expiry
+        # Third-Party
+        import jwt
+
+        # First-Party
+        from mcpgateway.config import settings
+
+        try:
+            # Handle both SecretStr and string types for jwt_secret_key
+            secret_key = settings.jwt_secret_key
+            if hasattr(secret_key, "get_secret_value"):
+                secret_key = secret_key.get_secret_value()
+
+            payload = jwt.decode(token, secret_key, algorithms=[settings.jwt_algorithm], options={"verify_signature": False})  # Already verified by get_current_user
+
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            last_activity = payload.get("last_activity", payload.get("iat"))
+
+            if not jti:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not support revocation (missing JTI)")
+
+            # Convert timestamps to datetime
+            # Standard
+            from datetime import datetime, timezone
+
+            token_expiry = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else None
+            last_activity_dt = datetime.fromtimestamp(last_activity, tz=timezone.utc) if last_activity else None
+
+            # Revoke token using blocklist service
+            blocklist_service = get_token_blocklist_service(db=db)
+            success = blocklist_service.revoke_token(jti=jti, revoked_by=user.email, reason="logout", token_expiry=token_expiry, last_activity=last_activity_dt)
+
+            if not success:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke token")
+
+            logger.info(f"User {user.email} logged out successfully", extra={"security_event": "logout", "user_email": user.email, "jti": jti})
+
+            return {"message": "Logged out successfully", "revoked_token": jti}
+
+        except jwt.DecodeError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token format")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Logout service error")

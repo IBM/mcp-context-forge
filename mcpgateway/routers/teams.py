@@ -144,7 +144,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
     limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
-    cursor: Optional[str] = Query(None, description="Pagination cursor"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Pagination cursor"),
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -461,7 +461,7 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
 @require_permission("teams.read")
 async def list_team_members(
     team_id: str,
-    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
     limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user: dict = Depends(get_current_user_with_permissions),

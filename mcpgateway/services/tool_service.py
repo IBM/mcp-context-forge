@@ -20,6 +20,7 @@ import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
+import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
 import os
 import re
@@ -51,7 +52,7 @@ from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -71,24 +72,32 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
+from cpex.framework import GlobalContext, HttpHeaderPayload, PluginContextTable, PluginError, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from mcpgateway.transports.context import UserContext
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.content_security import ContentSecurityService
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -121,6 +130,11 @@ def _get_registry_cache():
     return _REGISTRY_CACHE
 
 
+# NOTE: downstream session-id extraction lives in upstream_session_registry so
+# tool_service, prompt_service, and resource_service share one implementation.
+_downstream_session_id_from_request = downstream_session_id_from_request_context
+
+
 def _get_tool_lookup_cache():
     """Get tool lookup cache singleton lazily.
 
@@ -139,6 +153,41 @@ def _get_tool_lookup_cache():
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _extract_tenant_id_from_payload(team_id: Any) -> Optional[str]:
+    """Extract a valid tenant id from a raw tool payload team_id value.
+
+    Empty strings are treated as absent (None): a zero-length tenant prefix
+    would collapse tenant-scoped Redis keys onto the unscoped layout.
+    """
+    if team_id is not None and not isinstance(team_id, str):
+        logger.debug("Ignoring non-string team_id in tool payload: type=%s, value=%r", type(team_id).__name__, team_id)
+        return None
+    return team_id if team_id else None
+
+
+def _apply_tool_payload_to_global_context(
+    global_context: "GlobalContext",
+    tool_gateway_id: Optional[str],
+    app_user_email: Optional[str],
+    payload_tenant_id: Optional[str],
+) -> None:
+    """Enrich an existing GlobalContext with tool-payload-derived values without overwriting.
+
+    Populates server_id, user, and tenant_id on a GlobalContext that was
+    supplied by the plugin manager / middleware — filling gaps the upstream
+    propagation did not cover while never overwriting a value that was
+    already set there. Shared by the two tool-invocation call sites so they
+    stay in lockstep.
+    """
+    if tool_gateway_id and isinstance(tool_gateway_id, str):
+        global_context.server_id = tool_gateway_id
+    if not global_context.user and app_user_email and isinstance(app_user_email, str):
+        global_context.user = app_user_email
+    if not global_context.tenant_id and payload_tenant_id:
+        global_context.tenant_id = payload_tenant_id
+
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
@@ -167,6 +216,8 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
     re.compile(r"^content-length$", re.IGNORECASE),
     re.compile(r"^connection$", re.IGNORECASE),
     re.compile(r"^upgrade$", re.IGNORECASE),
+    # Prevent caller-controllable encoding dispatch via header_mapping (see #4139).
+    re.compile(r"^content-type$", re.IGNORECASE),
 )
 
 
@@ -294,6 +345,164 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
 
 
+#: Top-level keys that the MCP ``CallToolResult`` envelope admits (including
+#: the gateway's internal snake-case aliases). Any dict with keys outside
+#: this set is treated as a business payload rather than an MCP envelope.
+#: See :func:`_looks_like_mcp_envelope`.
+_MCP_ENVELOPE_KEYS: frozenset[str] = frozenset(
+    {
+        "content",
+        "isError",
+        "is_error",
+        "structuredContent",
+        "structured_content",
+        "_meta",
+        "meta",
+    }
+)
+
+
+def _looks_like_mcp_envelope(payload: dict) -> bool:
+    """Return ``True`` when a dict strongly resembles an MCP ``CallToolResult`` envelope.
+
+    Used by :meth:`ToolService._coerce_to_tool_result` to decide whether a
+    raw dict should be promoted to a ``ToolResult`` via
+    ``ToolResult.model_validate``. The check has two layers:
+
+    1. **No unknown top-level keys.** ``ToolResult`` inherits
+       ``BaseModelWithConfigDict``, which uses Pydantic's default
+       ``extra="ignore"`` — any sibling field not declared on the model
+       is **silently dropped** at validation time. Without this first
+       check, a REST payload like
+       ``{"content": [{"type": "text", "text": "ok"}], "isError": false,
+       "recognitionId": "rec-1"}`` would model-validate cleanly and lose
+       ``recognitionId`` without warning (Codex-flagged regression).
+       So we reject any dict whose keys aren't a subset of
+       :data:`_MCP_ENVELOPE_KEYS`.
+
+    2. **At least one positive MCP signal.** Even when the key set is a
+       valid subset, we require at least one MCP-specific marker —
+       either ``isError``/``is_error``, ``structuredContent``/
+       ``structured_content``, or ``content`` holding MCP ``ContentBlock``-
+       shaped items (dicts with a string ``type``). This stops a
+       minimal ``{"content": "plain text"}`` shape, which *could* be a
+       REST payload that coincidentally uses an allowed key name, from
+       being interpreted as MCP.
+
+    Both checks must pass. A REST business payload like
+    ``{"content": [{"widget": "x"}], "id": 1}`` fails check (1) (``id`` is
+    not an MCP envelope key); a minimal ``{"content": "hello"}`` fails
+    check (2) (no positive marker); both are therefore correctly treated
+    as opaque JSON by the caller.
+
+    Args:
+        payload: The dict candidate.
+
+    Returns:
+        ``True`` if the dict is confidently an MCP envelope and safe to
+        round-trip through ``ToolResult.model_validate`` without losing
+        sibling fields, else ``False``.
+    """
+    keys = payload.keys()
+    # Layer 1: reject if there are any keys outside the envelope schema.
+    # This is what guards against silent field-dropping for business payloads
+    # that happen to include ``content`` / ``isError`` among other fields.
+    if not keys <= _MCP_ENVELOPE_KEYS:
+        return False
+    # Layer 2: require a positive MCP signal so we don't misclassify
+    # anonymous REST bodies that merely happen to use a subset of allowed keys.
+    if "isError" in keys or "is_error" in keys:
+        return True
+    if "structuredContent" in keys or "structured_content" in keys:
+        return True
+    content = payload.get("content")
+    if isinstance(content, list) and content and all(isinstance(item, dict) and isinstance(item.get("type"), str) for item in content):
+        return True
+    return False
+
+
+def _safe_type_name(obj: Any) -> str:
+    """Return ``type(obj).__name__``, or a sentinel if that itself raises.
+
+    Used inside :meth:`ToolService._coerce_to_tool_result`'s last-resort
+    fallback so logging and diagnostic text on a pathological object
+    (broken proxy, ``__class__`` descriptor that raises, etc.) cannot
+    themselves raise and escape the "always returns a valid
+    ``ToolResult``" invariant.
+    """
+    try:
+        return type(obj).__name__
+    except Exception:  # pylint: disable=broad-except
+        return "<untypeable>"
+
+
+def _safe_text_repr(obj: Any, fallback_type: str) -> str:
+    """Coerce an arbitrary object to a non-raising text representation.
+
+    Tries ``str(obj)``, then ``repr(obj)``, then ``f"<{fallback_type}
+    object>"``, and finally a fixed sentinel. Used by the opaque-JSON
+    last-resort branch of
+    :meth:`ToolService._coerce_to_tool_result` — neither ``str`` nor
+    ``repr`` is guaranteed to succeed on arbitrary Python objects (a
+    class can override either to raise), and without this staged
+    fallback a malicious or simply buggy payload could escape the
+    helper and break the "never raises" contract downstream code relies
+    on.
+
+    Args:
+        obj: The payload to stringify.
+        fallback_type: Pre-computed type name used in the third-tier
+            sentinel; keeps ``type().__name__`` out of this function's
+            hot path since it has its own :func:`_safe_type_name`
+            guard upstream.
+
+    Returns:
+        A ``str``. Never raises.
+    """
+    try:
+        text = str(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+        pass
+    try:
+        text = repr(obj)
+        if isinstance(text, str):
+            return text
+    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+        pass
+    # ``fallback_type`` came from ``_safe_type_name`` so it's
+    # guaranteed to be a ``str`` already.
+    return f"<{fallback_type} object (unrepresentable)>"
+
+
+def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
+    """Handle JSON parsing failures with graceful fallback to raw text.
+
+    Args:
+        response: The HTTP response object with .text attribute
+        error: The exception that was raised during JSON parsing
+        is_error_response: If True, logs as "error response", else "response"
+
+    Returns:
+        Dictionary with response_text key containing the raw response text
+        (truncated to REST_RESPONSE_TEXT_MAX_LENGTH if longer to avoid exposing sensitive data),
+        or error details if response body is empty/None
+    """
+    msg = "error response" if is_error_response else "response"
+    if not response.text:
+        logger.warning(f"Failed to parse JSON {msg}: {error}. Response body was empty.")
+        return {"error": "Empty response body"}
+
+    max_length = settings.rest_response_text_max_length
+    text = response.text[:max_length] if len(response.text) > max_length else response.text
+    if len(response.text) > max_length:
+        logger.warning(f"Failed to parse JSON {msg}: {error}. Response truncated from {len(response.text)} to {max_length} characters.")
+    else:
+        logger.warning(f"Failed to parse JSON {msg}: {error}")
+    return {"response_text": text}
+
+
 @lru_cache(maxsize=256)
 def _compile_jq_filter(jq_filter: str):
     """Cache compiled jq filter program.
@@ -419,6 +628,18 @@ def extract_using_jq(data, jq_filter=""):
         {'a': 1}
     """
     if not jq_filter or jq_filter == "":
+        return data
+
+    # Validate that jq_filter looks like a valid jq expression
+    jq_filter_str = str(jq_filter).strip()
+    if not jq_filter_str:
+        return data
+
+    # Check if it looks like an email address (common mistake when jsonpath_filter
+    # field contains corrupted data). Intentionally simple regex to avoid false
+    # positives with valid jq expressions like .foo|.bar
+    if re.match(r"^[^.\[\]|]+@[^.\[\]|]+\.[^.\[\]|]+$", jq_filter_str):
+        logger.warning(f"Invalid jq filter (email address): {jq_filter_str}. Treating as empty filter.")
         return data
 
     # Track if input was originally a string (for error handling)
@@ -732,6 +953,7 @@ class ToolService(BaseService):
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
         )
+        self._content_security = ContentSecurityService()
 
     async def initialize(self) -> None:
         """Initialize the service.
@@ -939,10 +1161,13 @@ class ToolService(BaseService):
         if visibility == "public":
             return True
 
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
         if token_teams is None and user_email is None:
-            return True
+            return visibility != "private"
+        if token_teams is None and user_email and is_user_admin(db, user_email):
+            return visibility != "private" or tool_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public tools
         if not user_email:
@@ -1185,18 +1410,121 @@ class ToolService(BaseService):
                 error_message=error_message,
             )
 
-    def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
+    def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult") -> bool:
         """
         Extract structured content (if any) and validate it against ``tool.output_schema``.
+
+        This method is one of **three** output-schema validation layers the
+        gateway relies on. Understanding where each fires — and, crucially,
+        where each is *skipped* — is essential when reasoning about
+        ContextForge #4202 (https://github.com/IBM/mcp-context-forge/issues/4202)
+        and its successors. See
+        ``docs/docs/architecture/tool-invocation-and-validation.md`` for the
+        full flow diagram; a summary follows.
+
+        Tool invocation flow (downstream client → gateway → upstream tool → back):
+
+        1. **Downstream ingress (server SDK, inbound request)** — not a
+           validator; just decodes the ``tools/call`` JSON-RPC into
+           ``CallToolRequestParam`` and dispatches to the gateway's
+           handler at
+           ``mcpgateway/transports/streamablehttp_transport.py::call_tool``.
+
+        2. **Gateway dispatch** — ``call_tool`` routes based on the tool's
+           ``integration_type`` in the DB. Federation-backed MCP tools take
+           the MCP client SDK path (step 3). REST, OpenAPI, A2A and
+           admin-registered tools take the direct HTTP path (step 4).
+
+        3. **Validator A — MCP Python client SDK (federation only)**.
+           Upstream MCP calls go through ``mcp.ClientSession``, whose
+           ``ClientSession._validate_tool_result`` in the installed
+           ``mcp`` package
+           validates ``structuredContent`` against the *upstream-advertised*
+           output schema. Rules: (a) **skipped when ``isError=True``** —
+           this is what the MCP spec's "Error Handling" section mandates,
+           and why #4202 only surfaced on the gateway's own layer;
+           (b) raises ``RuntimeError`` on violation, which the gateway
+           catches at ``tool_service.py::invoke_tool`` and re-wraps as a
+           ``Tool invocation failed: ...`` error.
+
+        4. **Validator B — this method, ``_extract_and_validate_structured_content``**.
+           Currently invoked **only** from the REST branch of
+           ``invoke_tool`` (search for ``_extract_and_validate_structured_content(``).
+           The MCP federation branch relies on Validator A; the A2A
+           branch has **no gateway-side output-schema enforcement today**
+           — a known gap tracked alongside the option-B pipeline unification
+           refactor (see the issue below). Rules when Validator B does run:
+           - Skip when ``is_error=True`` or ``isError=True`` — the
+             ContextForge #4202 fix. Without this early return the gateway
+             would clobber the upstream's original error message with a
+             schema-mismatch dict.
+           - Require ``structured_content`` to be a JSON object when
+             explicitly set; reject lists, scalars and other shapes with a
+             structured ``invalid_structured_content_type`` error (per MCP
+             2025-11-25 "Output Schema").
+           - Otherwise best-effort promote the first parseable
+             ``TextContent`` item to ``structured_content`` (tolerates
+             both dict and Pydantic shapes, which matters because
+             ``_coerce_to_tool_result`` wraps REST JSON bodies into
+             Pydantic ``TextContent``).
+           - When no schema is declared, or no structured data can be
+             obtained and ``is_error=False``, return ``True`` — currently a
+             *lenient* deviation from the spec's "servers MUST provide
+             conforming structured output" rule, tracked in
+             https://github.com/IBM/mcp-context-forge/issues/4208.
+           - On schema violation, mutate ``tool_result`` in place:
+             replace ``content`` with a deterministic validation-error
+             TextContent and set ``is_error=True``.
+
+        5. **Validator C — MCP Python server SDK (downstream egress)**.
+           The gateway's ``call_tool`` handler in
+           ``mcpgateway/transports/streamablehttp_transport.py`` returns
+           either a raw ``list``/``tuple`` shape (success path) or a
+           fully-formed ``types.CallToolResult`` (``isError=True`` path).
+           The server SDK (``mcp.server.lowlevel.server``)
+           validates the list/tuple shape against the gateway's *own*
+           advertised output schema, but **short-circuits when the
+           handler returns a ``CallToolResult`` directly** (via the
+           ``isinstance(results, types.CallToolResult)`` check in its
+           ``_call_tool`` dispatch). We
+           exploit that short-circuit to preserve #4202 on the egress —
+           otherwise the server SDK's "Output validation error:
+           outputSchema defined but no structured output returned" message
+           would re-clobber the payload after Validator B had correctly
+           preserved it.
+
+        Net effect across paths:
+
+        - MCP-federated tool, success: Validators A + C both run; this
+          method does not.
+        - MCP-federated tool, error (``isError=True``): Validators A and C
+          both skip; this method does not run (no ingress invocation for
+          MCP branch).
+        - **REST** (incl. OpenAPI-imported) tool, success: this method
+          runs (B); Validator C runs on the way out.
+        - **REST** tool, error: this method skips (B early-return per
+          #4202); Validator C short-circuits because the egress handler
+          returns ``CallToolResult``.
+        - **A2A** tool, any outcome: this method is **not invoked**
+          today; Validator C runs (success) or short-circuits (error).
+          Wiring A2A through the unified post-invoke pipeline is part of
+          the option-B refactor and the A2A-specific validation gap.
+
+        End-to-end coverage for non-MCP paths (REST/OpenAPI/A2A) is
+        tracked in https://github.com/IBM/mcp-context-forge/issues/4207.
+        The A2A Validator B gap and the broader "single post-invoke
+        pipeline" refactor (option B) are tracked as a separate chore
+        issue — see ``docs/docs/architecture/tool-invocation-and-validation.md``
+        for the current per-path table.
 
         Args:
             tool: The tool with an optional output schema to validate against.
             tool_result: The tool result containing content to validate.
-            candidate: Optional structured payload to validate. If not provided, will attempt
-                      to parse the first TextContent item as JSON.
 
         Behavior:
-        - If ``candidate`` is provided it is used as the structured payload to validate.
+        - Per MCP specification, validation is skipped for error responses (isError: true).
+          Error responses with isError=true do not require structured content.
+        - When ``tool_result.structured_content`` is present it must be a JSON object and is used as the structured payload.
         - Otherwise the method will try to parse the first ``TextContent`` item in
             ``tool_result.content`` as JSON and use that as the candidate.
         - If no output schema is declared on the tool the method returns True (nothing to validate).
@@ -1229,7 +1557,8 @@ class ToolService(BaseService):
                 ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
                 ... )()
                 >>> r = ToolResult(content=[])
-                >>> service._extract_and_validate_structured_content(tool, r, candidate={"foo": "bar"})
+                >>> r = ToolResult(content=[], structured_content={"foo": "bar"})
+                >>> service._extract_and_validate_structured_content(tool, r)
                 True
                 >>> r.structured_content == {"foo": "bar"}
                 True
@@ -1241,7 +1570,8 @@ class ToolService(BaseService):
                 ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
                 ... )()
                 >>> r = ToolResult(content=[])
-                >>> ok = service._extract_and_validate_structured_content(tool, r, candidate={"foo": 123})
+                >>> r = ToolResult(content=[], structured_content={"foo": 123})
+                >>> ok = service._extract_and_validate_structured_content(tool, r)
                 >>> ok
                 False
                 >>> r.is_error
@@ -1251,21 +1581,60 @@ class ToolService(BaseService):
                 True
         """
         try:
+            # Error responses do not require structured content per MCP spec:
+            # https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling
+            is_error = getattr(tool_result, "is_error", False) or getattr(tool_result, "isError", False)
+            if is_error:
+                # Lazy %-formatting + SecurityValidator.sanitize_log_message to
+                # prevent log injection via tool names containing control
+                # characters. ``or "<unknown>"`` guards against explicit
+                # ``tool.name = None`` on partially-hydrated ORM rows — plain
+                # ``getattr(..., "<unknown>")`` would return ``None`` and the
+                # sanitizer would collapse it to an empty string, losing the
+                # diagnostic signal.
+                logger.debug(
+                    "Skipping output schema validation for error response from tool %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                )
+                return True
+
             output_schema = getattr(tool, "output_schema", None)
             # Nothing to do if the tool doesn't declare a schema
             if not output_schema:
                 return True
 
             structured: Optional[Any] = None
-            # Prefer explicit candidate
-            if candidate is not None:
-                structured = candidate
-            else:
-                # Try to parse first TextContent text payload as JSON
+            # Prefer normalized structured content already attached to the result
+            structured = getattr(tool_result, "structured_content", None)
+            if structured is None:
+                structured = getattr(tool_result, "structuredContent", None)
+
+            if structured is not None and not isinstance(structured, dict):
+                details = {
+                    "code": "invalid_structured_content_type",
+                    "expected": "object",
+                    "received": type(structured).__name__.lower(),
+                    "path": [],
+                    "message": "structured_content must be a JSON object",
+                }
+                try:
+                    tool_result.content = [TextContent(type="text", text=orjson.dumps(details).decode())]
+                except Exception:
+                    tool_result.content = [TextContent(type="text", text=str(details))]
+                tool_result.is_error = True
+                return False
+
+            if structured is None:
+                # Try to parse first TextContent text payload as JSON. Content
+                # items may be raw dicts (MCP wire shape) or pydantic objects
+                # (e.g. TextContent synthesized by _coerce_to_tool_result
+                # for REST responses); support both.
                 for c in getattr(tool_result, "content", []) or []:
                     try:
-                        if isinstance(c, dict) and "type" in c and c.get("type") == "text" and "text" in c:
-                            structured = orjson.loads(c.get("text") or "null")
+                        c_type = c.get("type") if isinstance(c, dict) else getattr(c, "type", None)
+                        c_text = c.get("text") if isinstance(c, dict) else getattr(c, "text", None)
+                        if c_type == "text" and c_text is not None:
+                            structured = orjson.loads(c_text)
                             break
                     except (orjson.JSONDecodeError, TypeError, ValueError):
                         # ignore JSON parse errors and continue
@@ -1275,32 +1644,19 @@ class ToolService(BaseService):
             if structured is None:
                 return True
 
-            # Try to normalize common wrapper shapes to match schema expectations
-            schema_type = None
-            try:
-                if isinstance(output_schema, dict):
-                    schema_type = output_schema.get("type")
-            except Exception:
-                schema_type = None
-
-            # Unwrap single-element list wrappers when schema expects object
-            if isinstance(structured, list) and len(structured) == 1 and schema_type == "object":
-                inner = structured[0]
-                # If inner is a TextContent-like dict with 'text' JSON string, parse it
-                if isinstance(inner, dict) and "text" in inner and "type" in inner and inner.get("type") == "text":
-                    try:
-                        structured = orjson.loads(inner.get("text") or "null")
-                    except Exception:
-                        # leave as-is if parsing fails
-                        structured = inner
-                else:
-                    structured = inner
-
-            # Attach structured content
+            # Attach structured content. A frozen or slotted ``tool_result``
+            # that refuses the assignment is a genuine contract violation —
+            # downstream code relies on ``structured_content`` being
+            # populated — so surface at WARNING with a stack trace rather
+            # than swallowing silently at DEBUG.
             try:
                 setattr(tool_result, "structured_content", structured)
             except Exception:
-                logger.debug("Failed to set structured_content on ToolResult")
+                logger.warning(
+                    "Failed to set structured_content on ToolResult for tool %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                    exc_info=True,
+                )
 
             # Validate using cached schema validator
             try:
@@ -1319,11 +1675,135 @@ class ToolService(BaseService):
                 except Exception:
                     tool_result.content = [TextContent(type="text", text=str(details))]
                 tool_result.is_error = True
-                logger.debug(f"structured_content validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+                logger.debug(
+                    "structured_content validation failed for tool %s: %s",
+                    SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                    details,
+                )
                 return False
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error(f"Error extracting/validating structured_content: {exc}")
+            # Defensive catch for unexpected validator failures (schema
+            # compilation crash, attribute errors on malformed ``tool_result``,
+            # orjson edge cases). Log with exc_info=True so the stack trace
+            # reaches ops — without it, the method just returns False with no
+            # diagnostic trail, which is a six-months-from-now debugging
+            # nightmare.
+            logger.error(
+                "Error extracting/validating structured_content for tool %s: %s",
+                SecurityValidator.sanitize_log_message(getattr(tool, "name", None) or "<unknown>"),
+                exc,
+                exc_info=True,
+            )
             return False
+
+    def _coerce_to_tool_result(self, payload: Any) -> ToolResult:
+        """Coerce any tool-result-shaped payload into the gateway's canonical ``ToolResult``.
+
+        Single source of truth for turning heterogeneous upstream
+        responses into one canonical internal type. Funnelling every
+        integration branch through here gives us uniform ``is_error`` and
+        ``structured_content`` semantics regardless of source, which is
+        the foundation of #4202's fix across multiple integration types
+        (see https://github.com/IBM/mcp-context-forge/issues/4202) and
+        the first structural step toward the option-B "single
+        canonical-ToolResult pipeline" refactor tracked separately.
+
+        Accepted inputs:
+
+        - ``ToolResult`` → returned as-is (fast path).
+        - MCP SDK ``CallToolResult`` (or any other Pydantic model whose
+          ``model_dump(by_alias=True)`` emits an MCP-shaped envelope) →
+          round-tripped through ``ToolResult.model_validate`` so
+          camelCase ``isError`` / ``structuredContent`` map cleanly onto
+          the gateway's snake-cased aliases. This path is what closes the
+          direct-proxy egress regression Codex flagged: previously the
+          egress ``is_error`` check only recognised snake-case and
+          silently re-clobbered error responses coming back from
+          ``session.call_tool(...)``.
+        - A raw dict that looks *strongly* like an MCP envelope —
+          presence of ``isError`` / ``is_error`` / ``structuredContent`` /
+          ``structured_content`` keys, or a ``content`` list whose items
+          carry a string ``type`` field (i.e. MCP ``ContentBlock`` shape).
+          A dict with merely a top-level ``content`` key is **not**
+          enough: a REST business payload like
+          ``{"content": [{"widget": "x"}], "recognitionId": "rec-1"}``
+          must not be reinterpreted as an MCP envelope with its sibling
+          fields silently discarded (Codex P2).
+        - Anything else → JSON-serialised into a single ``TextContent``.
+
+        Args:
+            payload: The upstream response in whatever shape the
+                integration branch happens to produce.
+
+        Returns:
+            A canonical ``ToolResult`` instance.
+        """
+        # Fast path — already canonical.
+        if isinstance(payload, ToolResult):
+            return payload
+
+        # MCP SDK CallToolResult (or any Pydantic model exposing
+        # MCP-shaped fields via by-alias dump). The MCP SDK emits
+        # ``isError`` / ``structuredContent`` in camelCase; our
+        # ``ToolResult`` declares those as aliases, so the dump feeds
+        # straight into ``model_validate`` without a bespoke mapper.
+        if isinstance(payload, BaseModel) and hasattr(payload, "content"):
+            try:
+                return ToolResult.model_validate(payload.model_dump(by_alias=True, mode="json"))
+            except ValidationError:
+                # User-visible reshape: an MCP-looking Pydantic upstream
+                # result is about to be downgraded to an opaque text blob.
+                # Log at WARNING so operators notice protocol or schema
+                # drift between the gateway and the upstream SDK.
+                logger.warning(
+                    "%s did not validate as ToolResult; falling back to text serialisation",
+                    type(payload).__name__,
+                    exc_info=True,
+                )
+
+        # Raw dict — only treat as MCP-shaped when strong markers are
+        # present. Without this guard a REST payload that coincidentally
+        # contains a top-level ``content`` field would be misread as an
+        # MCP envelope and its sibling business fields silently dropped
+        # (Codex P2 regression).
+        if isinstance(payload, dict) and _looks_like_mcp_envelope(payload):
+            try:
+                return ToolResult.model_validate(payload)
+            except ValidationError:
+                # User-visible reshape: the heuristic admitted a dict as
+                # an MCP envelope but the strict ToolResult model then
+                # rejected it. Surface at WARNING so the non-conforming
+                # upstream gets flagged in ops logs rather than silently
+                # downgraded to text.
+                logger.warning(
+                    "Dict payload matched MCP-envelope heuristics but failed ToolResult validation; falling back to text serialisation",
+                    exc_info=True,
+                )
+
+        # Last resort — opaque JSON body. Preserves the payload for the
+        # caller to inspect while keeping the rest of the pipeline on a
+        # uniform ``ToolResult`` contract. The helper's invariant is
+        # "always returns a valid ``ToolResult``, never raises", so every
+        # step below must be guarded — both ``BaseModel.model_dump`` and
+        # ``orjson.dumps`` can raise on pathological inputs (custom
+        # serialisers that throw, ``PydanticSerializationError`` —
+        # ``ValueError`` subclass, not ``TypeError`` — fields holding
+        # non-representable objects), and even ``str()`` / ``repr()`` /
+        # ``type().__name__`` can fail on sufficiently broken proxy
+        # objects.
+        payload_type = _safe_type_name(payload)
+        logger.debug("Coercing %s payload to opaque text content", payload_type)
+        try:
+            serializable_payload = payload.model_dump(mode="json", by_alias=True) if isinstance(payload, BaseModel) else payload
+            serialized = orjson.dumps(serializable_payload, option=orjson.OPT_INDENT_2)
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Payload of type %s could not be JSON-serialised; using textual fallback",
+                payload_type,
+                exc_info=True,
+            )
+            return ToolResult(content=[TextContent(type="text", text=_safe_text_repr(payload, payload_type))])
+        return ToolResult(content=[TextContent(type="text", text=serialized.decode())])
 
     async def register_tool(
         self,
@@ -1401,6 +1881,39 @@ class ToolService(BaseService):
 
             if visibility is None:
                 visibility = tool.visibility or "public"
+
+            # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
+            # Scan tool name, description, and inputSchema
+            # Convert to string to handle both string and non-string inputs
+            if tool.name:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.name),
+                    content_type="Tool name",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.description:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.description),
+                    content_type="Tool description",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.input_schema:
+                # Convert inputSchema to string for pattern scanning
+                # Handle both dict objects and test mocks gracefully
+                try:
+                    schema_str = orjson.dumps(tool.input_schema).decode()
+                    self._content_security.detect_malicious_patterns(
+                        content=schema_str,
+                        content_type="Tool inputSchema",
+                        user_email=owner_email or created_by,
+                        ip_address=created_from_ip,
+                    )
+                except (TypeError, ValueError):
+                    # Skip validation if schema is not JSON-serializable (e.g., test mocks)
+                    pass
+
             # Check for existing tool with the same name and visibility
             if visibility.lower() == "public":
                 # Check for existing public tool with the same name
@@ -1838,6 +2351,37 @@ class ToolService(BaseService):
                 and either "tool" (DbTool object) or "error" (error message).
         """
         try:
+            # Same three US-3 malicious-pattern scans that register_tool() runs.
+            # Keep these in lock-step with the single-tool path.
+            if tool.name:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.name),
+                    content_type="Tool name",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.description:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool.description),
+                    content_type="Tool description",
+                    user_email=owner_email or created_by,
+                    ip_address=created_from_ip,
+                )
+            if tool.input_schema:
+                try:
+                    schema_str = orjson.dumps(tool.input_schema).decode()
+                    self._content_security.detect_malicious_patterns(
+                        content=schema_str,
+                        content_type="Tool inputSchema",
+                        user_email=owner_email or created_by,
+                        ip_address=created_from_ip,
+                    )
+                except (TypeError, ValueError):
+                    # Mirror register_tool(): skip scan when inputSchema isn't JSON-serializable
+                    # (e.g. MagicMock in tests). Don't hide actual violations - only this narrow
+                    # pre-scan serialization step.
+                    pass
+
             # Extract auth information
             if tool.auth is None:
                 auth_type = None
@@ -2577,22 +3121,29 @@ class ToolService(BaseService):
         requesting_user_email: Optional[str] = None,
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> ToolRead:
         """
-        Retrieve a tool by its ID.
+        Retrieve a tool by its ID with access control.
 
         Args:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
-            requesting_user_email (Optional[str]): Email of the requesting user for header masking.
+            requesting_user_email (Optional[str]): Email of the requesting user for access control.
             requesting_user_is_admin (bool): Whether the requester is an admin.
             requesting_user_team_roles (Optional[Dict[str, str]]): {team_id: role} for the requester.
+                Used only for response masking (``convert_tool_to_read``), not for visibility.
+            token_teams (Optional[List[str]]): JWT-scoped team list used for visibility checks.
+                ``None`` means unrestricted admin (paired with ``requesting_user_email=None``).
+                ``[]`` means public-only scope. ``[...]`` means team-scoped.
+                This is kept separate from ``requesting_user_team_roles`` to avoid the Layer 1
+                visibility check silently widening a scoped token to full DB team membership.
 
         Returns:
             ToolRead: The tool object.
 
         Raises:
-            ToolNotFoundError: If the tool is not found.
+            ToolNotFoundError: If the tool is not found or access is denied.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -2608,6 +3159,34 @@ class ToolService(BaseService):
         """
         tool = db.get(DbTool, tool_id)
         if not tool:
+            raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+        # SECURITY (Layer 1): forward JWT-scoped token_teams; DO NOT widen to DB team roles.
+        is_admin_bypass = requesting_user_is_admin and requesting_user_email is None
+        access_user_email = None if is_admin_bypass else requesting_user_email
+        access_token_teams = None if is_admin_bypass else token_teams
+
+        tool_payload = {
+            "visibility": tool.visibility,
+            "team_id": tool.team_id,
+            "owner_email": tool.owner_email,
+        }
+
+        if not await self._check_tool_access(db, tool_payload, access_user_email, access_token_teams):
+            structured_logger.log(
+                level="INFO",
+                message="Tool access denied",
+                event_type="tool_access_denied",
+                component="tool_service",
+                resource_type="tool",
+                resource_id=str(tool.id),
+                team_id=getattr(tool, "team_id", None),
+                user_email=requesting_user_email,
+                custom_fields={
+                    "visibility": tool.visibility,
+                    "admin_bypass": is_admin_bypass,
+                },
+            )
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
         tool_read = self.convert_tool_to_read(
@@ -2683,6 +3262,11 @@ class ToolService(BaseService):
                 with pause_rollup_during_purge(reason=f"purge_tool:{tool_id}"):
                     delete_metrics_in_batches(db, ToolMetric, ToolMetric.tool_id, tool_id)
                     delete_metrics_in_batches(db, ToolMetricsHourly, ToolMetricsHourly.tool_id, tool_id)
+
+            # Clean up server_tool_association rows referencing this tool.
+            # The association table FK has no ondelete cascade, so rows must
+            # be removed explicitly before the tool row can be deleted.
+            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
             stmt = delete(DbTool).where(DbTool.id == tool_id)
@@ -2946,6 +3530,7 @@ class ToolService(BaseService):
         meta_data: Optional[Dict[str, Any]] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        user_context: Optional[UserContext] = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -2961,6 +3546,7 @@ class ToolService(BaseService):
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
+            user_context: Optional UserContext for identity propagation.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -2994,6 +3580,11 @@ class ToolService(BaseService):
                     header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
                     if header_value:
                         headers[header_name] = header_value
+
+            # Inject identity propagation headers
+            if user_context:
+                headers.update(build_identity_headers(user_context, gateway))
+                meta_data = build_identity_meta(user_context, meta_data, gateway)
 
             gateway_url = gateway.url
 
@@ -3262,7 +3853,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
@@ -3287,7 +3882,11 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
         if tool is None and has_gateway:
@@ -3328,6 +3927,12 @@ class ToolService(BaseService):
         if not gateway_url:
             return {"eligible": False, "fallbackReason": "missing-gateway-url"}
 
+        # Tracks whether we entered the OAuth authorization_code "no DB token" branch.
+        # When True, the auth requirement is deferred to AFTER tool_pre_invoke hooks
+        # run so plugins (e.g. Vault) can inject auth. The deny-path check below the
+        # plugin invocation enforces the requirement locally with an actionable error.
+        oauth_authcode_no_db_token = False
+
         if has_gateway and gateway_auth_type == "oauth" and isinstance(gateway_oauth_config, dict) and gateway_oauth_config:
             grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
             if grant_type == "authorization_code":
@@ -3344,13 +3949,23 @@ class ToolService(BaseService):
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
                     else:
-                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                        # No DB-stored OAuth token. Defer the auth requirement to after
+                        # tool_pre_invoke hooks run so plugins (e.g. Vault) can inject
+                        # auth headers. The post-hook check below enforces the requirement
+                        # locally with an actionable error if no plugin provides auth.
+                        oauth_authcode_no_db_token = True
+                        headers = {}
+                        logger.info(
+                            "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
+                            gateway_name,
+                            extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
+                        )
                 except Exception as e:
                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             else:
                 try:
-                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -3408,6 +4023,21 @@ class ToolService(BaseService):
                         if hk and hv:
                             runtime_headers[str(hk).lower()] = str(hv)
 
+        # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+        # headers. The Vault plugin removes this header when it processes the token,
+        # but stripping unconditionally prevents leakage when the plugin is disabled,
+        # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
+        runtime_headers = {hk: hv for hk, hv in runtime_headers.items() if hk.lower() != "x-vault-tokens"}
+
+        # OAuth authorization_code deny-path: if we entered the no-DB-token branch
+        # above and no plugin (or other auth source) injected an Authorization header,
+        # fail locally with an actionable error rather than relying on upstream 401.
+        # This restores the original UX directing the user to /oauth/authorize/{id}
+        # while still allowing legitimate plugin-injected auth (e.g. Vault) to satisfy
+        # the requirement.
+        if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in runtime_headers):
+            raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+
         runtime_headers = inject_trace_context_headers(runtime_headers)
 
         plan: Dict[str, Any] = {
@@ -3455,17 +4085,21 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        # Derive tenant_id from the tool payload so rate limiting and other
+        # tenant-scoped plugin behaviour works on the fallback path where
+        # middleware didn't run and _propagate_tenant_id never got a chance
+        # to fill it in. Non-string team_id values are ignored defensively.
+        payload_team_id = tool_payload.get("team_id") if tool_payload else None
+        hook_tenant_id = _extract_tenant_id_from_payload(payload_team_id)
+
         if plugin_global_context:
             hook_global_context = plugin_global_context
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                hook_global_context.server_id = tool_gateway_id
-            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                hook_global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(hook_global_context, tool_gateway_id, app_user_email, hook_tenant_id)
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
             content_type = request_headers.get("content-type") if request_headers else None
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=hook_tenant_id, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -3963,8 +4597,12 @@ class ToolService(BaseService):
             runtime_gateway_oauth_config = getattr(gateway, "oauth_config", None)
             if isinstance(runtime_gateway_oauth_config, dict):
                 gateway_oauth_config = runtime_gateway_oauth_config
+        # MCP invoke path: cert params come from the serialized gateway_payload dict
+        # (the ORM session that produced the gateway object may already be closed).
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
+        gateway_client_cert = gateway_payload.get("client_cert") if has_gateway else None
+        gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
 
@@ -4024,10 +4662,11 @@ class ToolService(BaseService):
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
-        # Use original_name (the MCP server's tool name, e.g. "echo_text") as the binding key,
-        # not the gateway-prefixed display name (e.g. "plugin-tools-echo_text").
-        # Users create bindings against the original name they see in the MCP server.
-        _binding_tool_name = tool_payload.get("original_name") or name
+        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
+        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
+        # team can share the same original_name — making it ambiguous as a binding key.
+        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
+        _binding_tool_name = tool_payload.get("name") or name
         plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         logger.debug("invoke_tool: plugin_context_id=%r plugin_manager=%r", plugin_context_id, plugin_manager)
@@ -4094,21 +4733,21 @@ class ToolService(BaseService):
 
         # Reuse existing global_context from middleware or create new one
         # IMPORTANT: Use local variables (tool_gateway_id) instead of ORM object access
+        # Derive tenant_id from the tool payload so by_tenant rate limiting
+        # and other tenant-scoped plugin behaviour works on the fallback
+        # path where middleware didn't run. Non-string values are ignored.
+        payload_tenant_id = _extract_tenant_id_from_payload(_tool_team_id)
+
         if plugin_global_context:
             global_context = plugin_global_context
-            # Update server_id using local variable (not ORM access)
-            if tool_gateway_id and isinstance(tool_gateway_id, str):
-                global_context.server_id = tool_gateway_id
-            # Propagate user email to global context for plugin access
-            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
-                global_context.user = app_user_email
+            _apply_tool_payload_to_global_context(global_context, tool_gateway_id, app_user_email, payload_tenant_id)
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
             content_type = request_headers.get("content-type") if request_headers else None
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
@@ -4178,7 +4817,14 @@ class ToolService(BaseService):
                     # Handle OAuth authentication for REST tools
                     if tool_auth_type == "oauth" and isinstance(tool_oauth_config, dict) and tool_oauth_config:
                         try:
-                            access_token = await self.oauth_manager.get_access_token(tool_oauth_config)
+                            # REST invoke path: gateway ORM object is still attached to the
+                            # active session, so attribute access is safe here.
+                            access_token = await self.oauth_manager.get_access_token(
+                                tool_oauth_config,
+                                ca_certificate=gateway.ca_certificate if gateway else None,
+                                client_cert=gateway.client_cert if gateway else None,
+                                client_key=gateway.client_key if gateway else None,
+                            )
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
                             logger.error(f"Failed to obtain OAuth access token for tool {tool_name_computed}: {e}")
@@ -4210,6 +4856,10 @@ class ToolService(BaseService):
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
+
+                    # Inject identity propagation headers for REST tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -4246,46 +4896,102 @@ class ToolService(BaseService):
                             else:
                                 raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    # --- Extract query params from URL (after substitution) ---
-                    parsed = urlparse(final_url)
-                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    # --- Extract query params from URL if query_mapping or header_mapping is used ---
+                    # When mappings are present (not None/empty), we strip query params from URL and apply transformations.
+                    # When mappings are absent (None/empty), preserve query params in URL for signed URLs.
+                    query_params = {}
+                    # Treat empty dict same as None (no mapping configured)
+                    has_query_mapping = tool_query_mapping is not None and tool_query_mapping != {}
+                    has_header_mapping = tool_header_mapping is not None and tool_header_mapping != {}
 
-                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    if has_query_mapping or has_header_mapping:
+                        parsed = urlparse(final_url)
+                        final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                        query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
-                    if tool_query_mapping:
-                        # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
-                        # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
-                        payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
-                        # Reject non-scalar values that would be inappropriate as query parameters.
-                        for qk, qv in payload.items():
-                            if isinstance(qv, (dict, list)):
-                                raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
+                        if tool_query_mapping:
+                            # Only mapped payload keys (renamed) are kept, merged on top of URL query params.
+                            # Unmapped payload keys are intentionally dropped (mapping acts as an allowlist).
+                            payload = apply_mapping_into_target(payload, tool_query_mapping, query_params)
+                            # Reject non-scalar values that would be inappropriate as query parameters.
+                            for qk, qv in payload.items():
+                                if isinstance(qv, (dict, list)):
+                                    raise ToolInvocationError(f"Tool '{name}': query_mapping produced non-scalar value for parameter '{qk}'")
 
-                    # Headers are mapped from the original arguments (not the path-param-reduced payload)
-                    # to preserve all available data for header injection.
-                    if tool_header_mapping:
-                        _validate_header_mapping_targets(tool_header_mapping, name)
-                        headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
-                        # Reject header values containing CRLF or null bytes to prevent header injection.
-                        for hdr_name, hdr_val in headers.items():
-                            if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
-                                raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
+                        # Headers are mapped from the original arguments (not the path-param-reduced payload)
+                        # to preserve all available data for header injection.
+                        if tool_header_mapping:
+                            _validate_header_mapping_targets(tool_header_mapping, name)
+                            headers = apply_mapping_into_target(arguments.copy(), tool_header_mapping, headers)
+                            # Reject header values containing CRLF or null bytes to prevent header injection.
+                            for hdr_name, hdr_val in headers.items():
+                                if isinstance(hdr_val, str) and _INVALID_HEADER_VALUE_CHARS.search(hdr_val):
+                                    raise ToolInvocationError(f"Tool '{name}': header_mapping produced value with illegal characters for header '{hdr_name}'")
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
+                    _url_query_params = query_params if not tool_query_mapping else None
+
+                    # Detect body encoding from the final Content-Type header (after auth/plugin/mapping modifications).
+                    # Supports application/x-www-form-urlencoded and multipart/form-data in addition to the default JSON.
+                    _ct_base = next((v for k, v in headers.items() if k.lower() == "content-type"), "").lower().split(";")[0].strip()
+
+                    # For non-GET form-urlencoded and multipart requests without mappings,
+                    # extract URL query params so they are forwarded via params= (query string)
+                    # rather than being silently embedded in the URL or lost.  GET has its own
+                    # extraction below; JSON POST intentionally preserves query params in the URL
+                    # for signed-URL support.
+                    if method != "GET" and not has_query_mapping and not has_header_mapping and _ct_base in ("application/x-www-form-urlencoded", "multipart/form-data"):
+                        parsed = urlparse(final_url)
+                        if parsed.query:
+                            final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                            _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
                         try:
                             if method == "GET":
-                                # For GET: merge extracted URL query params into payload; everything sent as query string
-                                if not tool_query_mapping:
-                                    payload.update(query_params)
+                                # For GET: Extract and merge URL query params with input arguments
+                                if not has_query_mapping and not has_header_mapping:
+                                    # When no mappings (None or empty), extract query params from URL
+                                    parsed = urlparse(final_url)
+                                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+                                    conflicts = set(payload.keys()) & set(query_params.keys())
+                                    if conflicts:
+                                        logger.warning(
+                                            f"REST tool GET request has conflicting parameters between URL and input arguments. "
+                                            f"URL query params will take precedence for: {', '.join(sorted(conflicts))}. "
+                                            f"Tool: {name}"
+                                        )
+
+                                payload.update(query_params)
                                 response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "application/x-www-form-urlencoded":
+                                # NOTE: Intentional asymmetry with the JSON/default path below.
+                                # Form-encoded bodies use params= to keep URL query params on the
+                                # query string (semantically correct for form encoding), whereas
+                                # the JSON path merges them into the body via payload.update() for
+                                # backward compatibility and signed-URL support.
+                                form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
+                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
+                            elif _ct_base == "multipart/form-data":
+                                # Strip Content-Type so httpx can set it with the correct boundary parameter.
+                                # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
+                                headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+                                files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
+                                response = await asyncio.wait_for(
+                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                )
                             else:
-                                # For POST/PUT/PATCH/DELETE: merge query params into the JSON body
-                                # (preserves backward compatibility with existing tool configurations)
-                                if not tool_query_mapping:
+                                # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
+                                if has_query_mapping or has_header_mapping:
+                                    # When mappings are used (not None/empty), query params were already extracted and mapped
+                                    # Merge them into the JSON body for backward compatibility with mapped tools
                                     payload.update(query_params)
+                                # else: No mappings (None or empty) - preserve query params in URL for signed URL support
+                                # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
                                 response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
@@ -4315,17 +5021,39 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
-                        response.raise_for_status()
+                        try:
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError:
+                            # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
+                            try:
+                                result = response.json()
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=True)
+                            if "error" in result:
+                                error_val = result["error"]
+                            elif "response_text" in result:
+                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
+                            else:
+                                error_val = f"HTTP {response.status_code}"
+                            tool_result = ToolResult(
+                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                is_error=True,
+                                structured_content={"status_code": response.status_code},
+                            )
+                            # Don't mark as successful — success remains False
 
                         # Handle 204 No Content responses that have no body
-                        if response.status_code == 204:
+                        if tool_result is not None and tool_result.is_error:
+                            pass  # Already handled by HTTPStatusError above
+                        elif response.status_code == 204:
                             tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
                             success = True
                         elif response.status_code not in [200, 201, 202, 206]:
+                            # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
                             try:
                                 result = response.json()
-                            except orjson.JSONDecodeError:
-                                result = {"response_text": response.text} if response.text else {}
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=True)
                             error_val = result["error"] if "error" in result else "Tool error encountered"
                             tool_result = ToolResult(
                                 content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
@@ -4335,8 +5063,8 @@ class ToolService(BaseService):
                         else:
                             try:
                                 result = response.json()
-                            except orjson.JSONDecodeError:
-                                result = {"response_text": response.text} if response.text else {}
+                            except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
+                                result = _handle_json_parse_error(response, e, is_error_response=False)
                             logger.debug(f"REST API tool response: {result}")
                             filtered_response = extract_using_jq(result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
@@ -4345,16 +5073,27 @@ class ToolService(BaseService):
                                 tool_result = ToolResult(content=filtered_response, is_error=True)
                                 success = False
                             else:
-                                # Success case - serialize the filtered response
-                                serialized = orjson.dumps(filtered_response, option=orjson.OPT_INDENT_2)
-                                tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
-                                success = True
-                            # If output schema is present, validate and attach structured content
+                                tool_result = self._coerce_to_tool_result(filtered_response)
+                            # If output schema is present, validate and attach structured content.
+                            # The validator skips for isError=true (per #4202) and, on validation
+                            # failure, mutates tool_result in place with is_error=True, so the
+                            # single post-validation read below covers all cases uniformly.
                             if tool_output_schema:
-                                valid = self._extract_and_validate_structured_content(tool_for_validation, tool_result, candidate=filtered_response)
-                                success = bool(valid)
+                                self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                            # ``success`` must reflect both upstream ``isError`` *and* any
+                            # validator-imposed error state. Previously this path set
+                            # ``success = bool(valid)``, which clobbered an upstream
+                            # ``is_error=True`` back to ``success=True`` because the
+                            # validator skips (returns True) for error responses.
+                            success = not getattr(tool_result, "is_error", False)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
+
+                    # Tracks whether we entered the OAuth authorization_code "no DB token" branch.
+                    # When True, the auth requirement is deferred to AFTER tool_pre_invoke hooks
+                    # run so plugins (e.g. Vault) can inject auth. The deny-path check below the
+                    # plugin invocation enforces the requirement locally with an actionable error.
+                    oauth_authcode_no_db_token = False
 
                     # Handle OAuth authentication for the gateway (using local variables)
                     # NOTE: Use has_gateway instead of gateway to avoid accessing detached ORM object
@@ -4380,15 +5119,26 @@ class ToolService(BaseService):
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
-                                    # User hasn't authorized this gateway yet
-                                    raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                                    # No DB-stored OAuth token. Defer the auth requirement to after
+                                    # tool_pre_invoke hooks run so plugins (e.g. Vault) can inject
+                                    # auth headers. The post-hook check below enforces the requirement
+                                    # locally with an actionable error if no plugin provides auth.
+                                    oauth_authcode_no_db_token = True
+                                    headers = {}
+                                    logger.info(
+                                        "OAuth authorization_code gateway '%s' invoked without DB-stored token; deferring auth check to allow plugin injection",
+                                        gateway_name,
+                                        extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
+                                    )
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
-                                access_token = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                access_token = await self.oauth_manager.get_access_token(
+                                    gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                                )
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -4413,6 +5163,11 @@ class ToolService(BaseService):
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+
+                    # Inject identity propagation headers and meta for MCP tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
@@ -4563,38 +5318,39 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # Prefer the registry when we have a downstream Mcp-Session-Id and
+                            # we're not inside a distributed trace (reused transports carry
+                            # pinned headers, so per-request traceparent can't propagate).
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                async with pool.session(
+                            if use_registry:
+                                # Registry path: 1:1 binding means upstream state is private to
+                                # this downstream session. Connection reuse still amortizes the
+                                # initialize cost across multiple tool calls in the same session.
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    # Registry not initialized (tests, early startup) — fall through.
+                                    use_registry = False
+
+                            if use_registry:
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), or
+                                # when a distributed trace needs per-request trace headers.
                                 with create_span(
                                     "mcp.client.call",
                                     {
@@ -4745,40 +5501,35 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # Use session pool if enabled for 10-20x latency improvement
+                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
+                            # See the SSE branch above for the full rationale.
                             tool_call_result = None
-                            use_pool = False
-                            pool = None
-                            if settings.mcp_session_pool_enabled and not tracing_active:
-                                try:
-                                    pool = get_mcp_session_pool()
-                                    use_pool = True
-                                except RuntimeError:
-                                    # Pool not initialized (e.g., in tests), fall back to per-call sessions
-                                    pass
+                            downstream_session_id = _downstream_session_id_from_request()
+                            use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
 
-                            if use_pool and pool is not None:
-                                # Pooled path: do NOT inject per-request trace headers
-                                # The pool reuses transports with pinned headers, so injecting
-                                # traceparent/X-Correlation-ID would cause the first request's
-                                # trace context to be replayed on later unrelated requests,
-                                # corrupting distributed traces and leaking correlation IDs.
-                                # Trade-off: pooled sessions gain 10-20x latency improvement
-                                # but lose distributed trace propagation to upstream servers.
-                                # Determine transport type based on current transport setting
-                                pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-                                async with pool.session(
+                            if use_registry:
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    use_registry = False
+
+                            if use_registry:
+                                registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+                                async with registry.acquire(
+                                    downstream_session_id=downstream_session_id,
+                                    gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=pool_transport_type,
+                                    transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
+                                ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
-                                # Fallback to per-call sessions when pool disabled or not initialized
+                                # Fallback: per-call session. Taken when no downstream session id
+                                # is available (admin UI test-invoke, internal /rpc callers), when
+                                # a distributed trace needs per-request trace headers, or when the
+                                # registry singleton isn't initialised (tests, early startup).
                                 with create_span(
                                     "mcp.client.call",
                                     {
@@ -4919,6 +5670,21 @@ class ToolService(BaseService):
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
+                    # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+                    # headers. The Vault plugin removes this header when it processes the token,
+                    # but stripping unconditionally prevents leakage when the plugin is disabled,
+                    # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
+                    headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "x-vault-tokens"}
+
+                    # OAuth authorization_code deny-path: if we entered the no-DB-token branch
+                    # above and no plugin (or other auth source) injected an Authorization header,
+                    # fail locally with an actionable error rather than relying on upstream 401.
+                    # This restores the original UX directing the user to /oauth/authorize/{id}
+                    # while still allowing legitimate plugin-injected auth (e.g. Vault) to satisfy
+                    # the requirement.
+                    if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in headers):
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                         if transport == "sse":
@@ -4926,10 +5692,15 @@ class ToolService(BaseService):
                         elif transport == "streamablehttp":
                             tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
 
-                        # In direct proxy mode, use the tool result as-is without splitting content
+                        # In direct proxy mode, preserve the upstream response verbatim
+                        # (no jsonpath filtering, no structured/unstructured split) but
+                        # still route through the canonical coercion so the egress sees
+                        # a ``ToolResult`` with snake-case ``is_error`` rather than a
+                        # raw MCP SDK ``CallToolResult`` with camelCase ``isError``
+                        # (#4202 egress regression on the direct-proxy path).
                         if is_direct_proxy:
-                            tool_result = tool_call_result
-                            success = not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False)
+                            tool_result = self._coerce_to_tool_result(tool_call_result)
+                            success = not tool_result.is_error
                             logger.debug(f"Direct proxy mode: using tool result as-is: {tool_result}")
                         else:
                             dump = tool_call_result.model_dump(by_alias=True, mode="json")
@@ -4969,63 +5740,40 @@ class ToolService(BaseService):
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
-                    # Build request data based on agent type
-                    endpoint_url = a2a_agent_endpoint_url
-                    if a2a_agent_type in ["generic", "jsonrpc"] or endpoint_url.endswith("/"):
-                        # JSONRPC agents: Convert flat query to nested message structure
-                        params = None
-                        if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
-                            message_id = f"admin-test-{int(time.time())}"
-                            # A2A v0.3.x: message.parts use "kind" (not "type").
-                            params = {
-                                "message": {
-                                    "kind": "message",
-                                    "messageId": message_id,
-                                    "role": "user",
-                                    "parts": [{"kind": "text", "text": arguments["query"]}],
-                                }
-                            }
-                            method = arguments.get("method", "message/send")
-                        else:
-                            params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
-                            method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
-                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                    else:
-                        # Custom agents: Pass parameters directly
-                        params = arguments if isinstance(arguments, dict) else {}
-                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
-
-                    # Add authentication
-                    if a2a_agent_auth_type in ("api_key", "basic", "bearer", "authheaders") and a2a_agent_auth_value:
-                        # Decrypt auth_value before using it
-                        if isinstance(a2a_agent_auth_value, str):
-                            try:
-                                auth_headers = decode_auth(a2a_agent_auth_value)
-                                headers.update(auth_headers)
-                            except Exception as e:
-                                logger.error(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}': {e}")
-                                raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}'")
-                        elif isinstance(a2a_agent_auth_value, dict):
-                            auth_headers = {str(k): str(v) for k, v in a2a_agent_auth_value.items()}
-                            headers.update(auth_headers)
-                    elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
-                        auth_query_params_decrypted: dict[str, str] = {}
-                        for param_key, encrypted_value in a2a_agent_auth_query_params.items():
-                            if encrypted_value:
-                                try:
-                                    decrypted = decode_auth(encrypted_value)
-                                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                                except Exception:
-                                    logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-                        if auth_query_params_decrypted:
-                            endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+                    prepared = prepare_a2a_invocation(
+                        agent_type=a2a_agent_type,
+                        endpoint_url=a2a_agent_endpoint_url,
+                        protocol_version=a2a_agent_protocol_version,
+                        parameters=arguments if isinstance(arguments, dict) else {},
+                        interaction_type=str(arguments.get("interaction_type", "query")) if isinstance(arguments, dict) else "query",
+                        auth_type=a2a_agent_auth_type,
+                        auth_value=a2a_agent_auth_value,
+                        auth_query_params=a2a_agent_auth_query_params,
+                        base_headers=headers,
+                        correlation_id=get_correlation_id(),
+                    )
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
-                        logger.info(f"Calling A2A agent '{a2a_agent_name}' at {endpoint_url}")
+                        logger.info(f"Calling A2A agent '{a2a_agent_name}' at {prepared.sanitized_endpoint_url}")
                         a2a_start_time = time.time()
                         try:
-                            http_response = await asyncio.wait_for(self._http_client.post(endpoint_url, json=request_data, headers=headers), timeout=effective_timeout)
+                            # First-Party
+                            from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+                            if should_delegate_a2a_to_rust():
+                                runtime_response = await get_rust_a2a_runtime_client().invoke(prepared, timeout_seconds=int(max(1, effective_timeout)))
+                                status_code = int(runtime_response.get("status_code", 200))
+                                response_data = runtime_response.get("json")
+                                response_text = str(runtime_response.get("text") or "")
+                            else:
+                                http_response = await asyncio.wait_for(
+                                    self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
+                                    timeout=effective_timeout,
+                                )
+                                status_code = http_response.status_code
+                                response_data = http_response.json() if status_code == 200 else None
+                                response_text = http_response.text
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
@@ -5051,18 +5799,23 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except RustA2ARuntimeError as e:
+                            status_code = 502
+                            response_data = None
+                            response_text = str(e)
 
-                        if http_response.status_code == 200:
-                            response_data = http_response.json()
+                        if status_code == 200:
                             if isinstance(response_data, dict) and "response" in response_data:
                                 val = response_data["response"]
                                 content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
-                            else:
+                            elif response_data is not None:
                                 content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
+                            else:
+                                content = [TextContent(type="text", text=response_text)]
                             tool_result = ToolResult(content=content, is_error=False)
                             success = True
                         else:
-                            error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+                            error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
                 else:
@@ -5292,6 +6045,15 @@ class ToolService(BaseService):
                     pass  # Duration already captured above
 
     @staticmethod
+    def _form_value_to_str(v: Any) -> str:
+        """Coerce a payload value to string for form/multipart encoding."""
+        if v is None:
+            return ""
+        if isinstance(v, (dict, list, bool)):
+            return orjson.dumps(v).decode()
+        return str(v)
+
+    @staticmethod
     def _check_tool_name_conflict(db: Session, custom_name: str, visibility: str, tool_id: str, team_id: Optional[str] = None, owner_email: Optional[str] = None) -> None:
         """Raise ToolNameConflictError if another tool with the same name exists in the target visibility scope.
 
@@ -5413,6 +6175,37 @@ class ToolService(BaseService):
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
                     raise PermissionError("Only the owner can update this tool")
+
+            # Validate tool content for malicious patterns (CWE-20 fix - Issue #6)
+            # Convert to string to handle both string and non-string inputs
+            if tool_update.name:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool_update.name),
+                    content_type="Tool name",
+                    user_email=user_email or modified_by,
+                    ip_address=modified_from_ip,
+                )
+            if tool_update.description:
+                self._content_security.detect_malicious_patterns(
+                    content=str(tool_update.description),
+                    content_type="Tool description",
+                    user_email=user_email or modified_by,
+                    ip_address=modified_from_ip,
+                )
+            if tool_update.input_schema:
+                # Convert inputSchema to string for pattern scanning
+                # Handle both dict objects and test mocks gracefully
+                try:
+                    schema_str = orjson.dumps(tool_update.input_schema).decode()
+                    self._content_security.detect_malicious_patterns(
+                        content=schema_str,
+                        content_type="Tool inputSchema",
+                        user_email=user_email or modified_by,
+                        ip_address=modified_from_ip,
+                    )
+                except (TypeError, ValueError):
+                    # Skip validation if schema is not JSON-serializable (e.g., test mocks)
+                    pass
 
             # Track whether a name change occurred (before tool.name is mutated)
             name_is_changing = bool(tool_update.name and tool_update.name != tool.name)
@@ -6176,81 +6969,37 @@ class ToolService(BaseService):
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
 
-        # Build request data based on agent type
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC agents: Convert flat query to nested message structure
-            params = None
-            if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
-                # Build the nested message object for JSONRPC protocol
-                message_id = f"admin-test-{int(time.time())}"
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                params = {
-                    "message": {
-                        "kind": "message",
-                        "messageId": message_id,
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": parameters["query"]}],
-                    }
-                }
-                method = parameters.get("method", "message/send")
-            else:
-                # Already in correct format or unknown, pass through
-                params = parameters.get("params", parameters)
-                method = parameters.get("method", "message/send")
+        prepared = prepare_a2a_invocation(
+            agent_type=agent.agent_type,
+            endpoint_url=agent.endpoint_url,
+            protocol_version=agent.protocol_version,
+            parameters=parameters,
+            interaction_type=str(parameters.get("interaction_type", "query")) if isinstance(parameters, dict) else "query",
+            auth_type=agent.auth_type,
+            auth_value=agent.auth_value,
+            auth_query_params=agent.auth_query_params,
+            correlation_id=get_correlation_id(),
+        )
+        logger.info(f"invoke tool request_data prepared: {prepared.request_data}")
 
-            try:
-                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
-                logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
-            except Exception as e:
-                logger.error(f"Error preparing JSONRPC request data: {e}")
-                raise
-        else:
-            # Custom agents: Pass parameters directly without JSONRPC message conversion
-            # Custom agents expect flat fields like {"query": "...", "message": "..."}
-            params = parameters if isinstance(parameters, dict) else {}
-            logger.info(f"invoke tool Using custom A2A format for A2A agent '{params}'")
-            request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
-        logger.info(f"invoke tool request_data prepared: {request_data}")
+        # First-Party
+        from mcpgateway.version import should_delegate_a2a_to_rust  # pylint: disable=import-outside-toplevel
+
+        if should_delegate_a2a_to_rust():
+            runtime_response = await get_rust_a2a_runtime_client().invoke(
+                prepared,
+                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
+            )
+            if int(runtime_response.get("status_code", 200)) == 200:
+                return runtime_response.get("json") if runtime_response.get("json") is not None else runtime_response.get("text")
+            raise Exception(f"HTTP {runtime_response.get('status_code')}: {runtime_response.get('text')}")
+
         # Make HTTP request to the agent endpoint using shared HTTP client
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
-        headers = {"Content-Type": "application/json"}
-
-        # Determine the endpoint URL (may be modified for query_param auth)
-        endpoint_url = agent.endpoint_url
-
-        # Add authentication if configured
-        if agent.auth_type in ("api_key", "basic", "bearer", "authheaders") and agent.auth_value:
-            # Decrypt auth_value and extract headers (matches a2a_service.py pattern)
-            if isinstance(agent.auth_value, str):
-                try:
-                    auth_headers = decode_auth(agent.auth_value)
-                    headers.update(auth_headers)
-                except Exception as e:
-                    logger.error(f"Failed to decrypt authentication for A2A agent '{agent.name}': {e}")
-                    raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{agent.name}'")
-            elif isinstance(agent.auth_value, dict):
-                auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
-                headers.update(auth_headers)
-        elif agent.auth_type == "query_param" and agent.auth_query_params:
-            # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
-            auth_query_params_decrypted: dict[str, str] = {}
-            for param_key, encrypted_value in agent.auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param for key '{param_key}'")
-            if auth_query_params_decrypted:
-                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
-                # Log sanitized URL to avoid credential leakage
-                sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
-                logger.debug(f"Applied query param auth to A2A agent endpoint: {sanitized_url}")
-
-        http_response = await client.post(endpoint_url, json=request_data, headers=headers)
+        http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
 
         if http_response.status_code == 200:
             return http_response.json()

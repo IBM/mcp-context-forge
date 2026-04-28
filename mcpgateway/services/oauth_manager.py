@@ -17,9 +17,10 @@ import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
+import re
 import secrets
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 # Third-Party
 import httpx
@@ -32,6 +33,7 @@ from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
 from mcpgateway.utils.redis_client import get_redis_client as _get_shared_redis_client
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 
 logger = logging.getLogger(__name__)
 
@@ -163,11 +165,14 @@ class OAuthManager:
 
         return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
 
-    async def get_access_token(self, credentials: Dict[str, Any]) -> str:
+    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Get access token based on grant type.
 
         Args:
             credentials: OAuth configuration containing grant_type and other params
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -180,7 +185,7 @@ class OAuthManager:
             Client credentials flow:
             >>> import asyncio
             >>> class TestMgr(OAuthManager):
-            ...     async def _client_credentials_flow(self, credentials):
+            ...     async def _client_credentials_flow(self, credentials, ca_certificate=None, client_cert=None, client_key=None):
             ...         return 'tok'
             >>> mgr = TestMgr()
             >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
@@ -208,9 +213,9 @@ class OAuthManager:
         logger.debug(f"Getting access token for grant type: {grant_type}")
 
         if grant_type == "client_credentials":
-            return await self._client_credentials_flow(credentials)
+            return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "password":
-            return await self._password_flow(credentials)
+            return await self._password_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
@@ -236,11 +241,182 @@ class OAuthManager:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
         return credentials
 
-    async def _client_credentials_flow(self, credentials: Dict[str, Any]) -> str:
+    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> httpx.Response:
+        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+
+        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
+        is created with the corresponding SSL context so that OAuth token
+        exchange works against self-signed or custom-CA upstream servers.
+        Otherwise the shared HTTP client (which respects the global
+        ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Args:
+            url: Token endpoint URL.
+            data: Form-encoded request body (dict or list of tuples for RFC 8707).
+            ca_certificate: Optional PEM-encoded CA certificate.
+            client_cert: Optional client certificate for mTLS.
+            client_key: Optional client private key for mTLS.
+
+        Returns:
+            The HTTP response from the token endpoint.
+        """
+        if ca_certificate:
+            ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+            async with httpx.AsyncClient(verify=ssl_context) as client:
+                return await client.post(url, data=data, timeout=self.request_timeout)
+        client = await self._get_client()
+        return await client.post(url, data=data, timeout=self.request_timeout)
+
+    # Keys whose values must never be echoed in error messages or logs.
+    _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
+
+    # Cap on raw_response excerpts and any other string values surfaced via
+    # OAuthError / logs (defense-in-depth against unbounded provider bodies).
+    _MAX_RAW_RESPONSE_LEN = 256
+
+    # OAuth parameter names per RFC 6749 are token-shaped (alphanumerics plus
+    # a few separators). A parsed key outside this shape means parse_qsl picked
+    # garbage out of an HTML body (e.g. <meta charset="utf-8">).
+    _OAUTH_KEY_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+    # Scrub URL/form-style ``key=value`` leaks inside arbitrary strings so that
+    # secrets embedded in HTML error pages or stack traces don't survive the
+    # length cap (the value can fit entirely inside the truncation window).
+    _LEAKY_PARAM_RE = re.compile(
+        r"(?i)\b(access_token|refresh_token|id_token|token|code|secret|key|password|api[_-]?key)=[^&\s\"'<>]+",
+    )
+
+    @staticmethod
+    def _safe_response_text(response: httpx.Response) -> str:
+        """Return ``response.text`` or a placeholder if the body is undecodable.
+
+        ``httpx.Response.text`` raises ``UnicodeDecodeError`` (or ``LookupError``
+        for an unknown charset) when the body bytes don't match the declared
+        encoding. The caller wants a string for diagnostics, not a crash.
+
+        Args:
+            response: HTTP response whose body we want as text.
+
+        Returns:
+            Decoded body, or a ``"<undecodable body, N bytes>"`` placeholder.
+        """
+        try:
+            return response.text
+        except (ValueError, LookupError):
+            return f"<undecodable body, {len(response.content)} bytes>"
+
+    @staticmethod
+    def _parse_token_response(response: httpx.Response) -> Dict[str, Any]:
+        """Parse an OAuth token response that may be JSON or form-encoded.
+
+        Per RFC 7231 §3.1.1.1, media type tokens are case-insensitive.
+        Form-encoded values are URL-decoded via ``urllib.parse.parse_qsl``.
+        Failures fall back to ``{"raw_response": <text>}`` so operators see
+        what the provider actually sent, in three cases: a JSON parse error
+        (``ValueError`` covering ``json.JSONDecodeError`` and
+        ``UnicodeDecodeError``), ``parse_qsl`` returning ``{}`` from a
+        non-empty body (e.g. an HTML error page served with a form-encoded
+        content-type), and ``response.text`` failing to decode the body
+        bytes.
+
+        Args:
+            response: HTTP response from the token endpoint.
+
+        Returns:
+            Parsed token payload, or ``{"raw_response": <text>}`` when the
+            body is neither valid JSON nor parseable as form-encoded.
+        """
+        raw_content_type = response.headers.get("content-type", "")
+        content_type = raw_content_type.lower()
+
+        if "application/x-www-form-urlencoded" in content_type:
+            text = OAuthManager._safe_response_text(response)
+            # parse_qsl drops malformed pairs (no "="); we deliberately do not
+            # set keep_blank_values=True so that garbage like an HTML error page
+            # parses to {} and falls through to the raw_response capture below.
+            parsed = dict(parse_qsl(text))
+            # An HTML body that happens to contain "=" (e.g. <meta charset="utf-8">)
+            # parses to a non-empty dict with garbage keys. Reject anything whose
+            # keys aren't OAuth parameter shaped so the leak is bounded by the
+            # raw_response truncation in _redact_token_response.
+            if parsed and not all(OAuthManager._OAUTH_KEY_RE.match(k) for k in parsed):
+                return {"raw_response": text}
+            if not parsed and text:
+                return {"raw_response": text}
+            return parsed
+
+        try:
+            return response.json()
+        except ValueError as exc:
+            # ValueError covers json.JSONDecodeError (malformed JSON) and
+            # UnicodeDecodeError (bad charset). Narrower than bare Exception,
+            # which would swallow httpx.ResponseNotRead, MemoryError, etc.
+            text = OAuthManager._safe_response_text(response)
+            logger.warning(
+                "Failed to parse OAuth token response as JSON: %s (status=%s, content-type=%r, body_bytes=%d)",
+                exc,
+                response.status_code,
+                raw_content_type,
+                len(response.content),
+                exc_info=True,
+            )
+            return {"raw_response": text}
+
+    @staticmethod
+    def _redact_token_response(token_response: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a log/error-safe copy of a token response.
+
+        Three layers of protection so that misbehaving providers, HTML error
+        pages, and verbose stack traces don't leak secrets via OAuthError or
+        log lines:
+
+        1. Replace values for known credential-bearing keys with
+           ``"[REDACTED]"``.
+        2. Scrub URL/form-style ``<key>=<secret>`` patterns inside any string
+           value (HTML hrefs, form actions, stack traces).
+        3. Cap any string value at ``_MAX_RAW_RESPONSE_LEN`` chars with a
+           ``... [truncated, N chars total]`` marker.
+
+        Args:
+            token_response: Parsed token payload (possibly containing tokens
+                or a captured raw body).
+
+        Returns:
+            New dict safe to interpolate into log lines and exception messages.
+        """
+        cap = OAuthManager._MAX_RAW_RESPONSE_LEN
+        redacted: Dict[str, Any] = {}
+        for key, value in token_response.items():
+            if key in OAuthManager._SENSITIVE_TOKEN_KEYS:
+                redacted[key] = "[REDACTED]"
+                continue
+            if isinstance(value, str):
+                # Scrub URL/form-style "<key>=<secret>" patterns first (HTML
+                # bodies often carry tokens in href / form action attributes
+                # that fit entirely inside the truncation window), then cap.
+                scrubbed = OAuthManager._LEAKY_PARAM_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", value)
+                if len(scrubbed) > cap:
+                    redacted[key] = f"{scrubbed[:cap]}... [truncated, {len(value)} chars total]"
+                else:
+                    redacted[key] = scrubbed
+            else:
+                redacted[key] = value
+        return redacted
+
+    async def _client_credentials_flow(
+        self,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> str:
         """Machine-to-machine authentication using client credentials.
 
         Args:
             credentials: OAuth configuration with client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -267,32 +443,13 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
@@ -306,7 +463,7 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to obtain access token after all retry attempts")
 
-    async def _password_flow(self, credentials: Dict[str, Any]) -> str:
+    async def _password_flow(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Resource Owner Password Credentials flow (RFC 6749 Section 4.3).
 
         This flow is used when the application can directly handle the user's credentials,
@@ -314,6 +471,9 @@ class OAuthManager:
 
         Args:
             credentials: OAuth configuration with client_id, optional client_secret, token_url, username, password
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Access token string
@@ -353,32 +513,13 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
-                # Handle both JSON and form-encoded responses
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("Successfully obtained access token via password grant")
                 return token_response["access_token"]
@@ -455,28 +596,10 @@ class OAuthManager:
                 response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully exchanged authorization code for access token""")
                 return token_response["access_token"]
@@ -489,6 +612,84 @@ class OAuthManager:
 
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
+
+    async def token_exchange(
+        self,
+        token_url: str,
+        subject_token: str,
+        client_id: str,
+        client_secret: str,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
+        requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
+    ) -> Dict[str, Any]:
+        """RFC 8693 token exchange for on-behalf-of flows.
+
+        Exchanges a subject token (e.g. the gateway's JWT) for a new token
+        scoped to a downstream service, enabling the downstream to act on
+        behalf of the original user.
+
+        Args:
+            token_url: Token endpoint of the authorization server.
+            subject_token: The original user's access token.
+            client_id: Client ID for the gateway.
+            client_secret: Client secret for the gateway.
+            audience: Intended audience for the exchanged token.
+            scope: Requested scope for the exchanged token.
+            requested_token_type: The type of token being requested.
+
+        Returns:
+            Dict with ``access_token``, ``token_type``, and optionally
+            ``expires_in`` and ``scope``.
+
+        Raises:
+            OAuthError: If token exchange fails after all retries.
+        """
+        # Decrypt client secret if encrypted
+        if client_secret:
+            try:
+                settings = get_settings()
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                if encryption.is_encrypted(client_secret):
+                    decrypted = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted:
+                        client_secret = decrypted
+            except Exception as e:
+                logger.warning(f"Failed to decrypt client secret for token exchange: {e}")
+
+        token_data: Dict[str, str] = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": requested_token_type,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if audience:
+            token_data["audience"] = audience
+        if scope:
+            token_data["scope"] = scope
+
+        for attempt in range(self.max_retries):
+            try:
+                client = await self._get_client()
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response.raise_for_status()
+
+                token_response = response.json()
+                if "access_token" not in token_response:
+                    raise OAuthError(f"No access_token in token exchange response: {token_response}")
+
+                logger.info("Successfully performed RFC 8693 token exchange")
+                return token_response
+
+            except httpx.HTTPError as e:
+                logger.warning(f"Token exchange attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
+                await asyncio.sleep(2**attempt)
+
+        raise OAuthError("Token exchange failed after all retry attempts")
 
     async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
@@ -524,7 +725,9 @@ class OAuthManager:
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
-    async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def complete_authorization_code_flow(
+        self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
@@ -532,6 +735,9 @@ class OAuthManager:
             code: Authorization code from callback
             state: State parameter for CSRF validation
             credentials: OAuth configuration
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Dict containing success status, user_id, and expiration info
@@ -566,10 +772,14 @@ class OAuthManager:
             logger.warning("User context (app_user_email) missing from OAuth state; no token_storage configured — proceeding without binding. gateway_id=%s", gateway_id)
 
         # Exchange code for tokens with PKCE code_verifier
-        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
+        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
 
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
+
+        # Extract audience from token (best-effort) for caller to persist as resource.
+        # This enables audience learning for IdPs that map resource to a different aud.
+        token_aud = self._extract_token_audience(token_response.get("access_token", ""))
 
         # Store tokens if storage service is available
         if self.token_storage:
@@ -579,12 +789,12 @@ class OAuthManager:
                 app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
-                expires_in=token_response.get("expires_in", self.settings.oauth_default_timeout),
+                expires_in=parse_expires_in(token_response),
                 scopes=token_response.get("scope", "").split(),
             )
 
-            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None}
-        return {"success": True, "user_id": user_id, "expires_at": None}
+            return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
+        return {"success": True, "user_id": user_id, "expires_at": None, "token_aud": token_aud}
 
     async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
@@ -1174,13 +1384,21 @@ class OAuthManager:
         query_string = urlencode(params, doseq=True)
         return f"{authorization_url}?{query_string}"
 
-    async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str, code_verifier: str = None) -> Dict[str, Any]:
+    async def _exchange_code_for_tokens(
+        self, credentials: Dict[str, Any], code: str, code_verifier: str = None, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Exchange authorization code for tokens with PKCE support.
 
         Args:
             credentials: OAuth configuration
             code: Authorization code from callback
             code_verifier: Optional PKCE code verifier (RFC 7636)
+            ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
+                When provided, creates an isolated HTTP client with custom SSL context
+                instead of using the shared client. This enables OAuth token exchange
+                with self-signed or custom CA upstream OAuth servers.
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Token response dictionary
@@ -1228,32 +1446,13 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 response.raise_for_status()
 
-                # GitHub returns form-encoded responses, not JSON
-                content_type = response.headers.get("content-type", "")
-                if "application/x-www-form-urlencoded" in content_type:
-                    # Parse form-encoded response
-                    text_response = response.text
-                    token_response = {}
-                    for pair in text_response.split("&"):
-                        if "=" in pair:
-                            key, value = pair.split("=", 1)
-                            token_response[key] = value
-                else:
-                    # Try JSON response
-                    try:
-                        token_response = response.json()
-                    except Exception as e:
-                        logger.warning(f"Failed to parse JSON response: {e}")
-                        # Fallback to text parsing
-                        text_response = response.text
-                        token_response = {"raw_response": text_response}
+                token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {token_response}")
+                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
 
                 logger.info("""Successfully exchanged authorization code for tokens""")
                 return token_response
@@ -1267,12 +1466,25 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    async def refresh_token(self, refresh_token: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def refresh_token(
+        self,
+        refresh_token: str,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Refresh an expired access token using a refresh token.
 
         Args:
             refresh_token: The refresh token to use
             credentials: OAuth configuration including client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate (PEM format or file path) to use
+                instead of system trust store. When provided, creates an isolated HTTP client
+                instead of using the shared client. This enables OAuth token refresh
+                with self-signed or custom CA upstream OAuth servers.
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Dict containing new access_token, optional refresh_token, and expires_in
@@ -1323,23 +1535,25 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
                 if response.status_code == 200:
-                    token_response = response.json()
+                    token_response = self._parse_token_response(response)
 
                     # Validate required fields
                     if "access_token" not in token_response:
-                        raise OAuthError("No access_token in refresh response")
+                        raise OAuthError(f"No access_token in refresh response: {self._redact_token_response(token_response)}")
 
                     logger.info("Successfully refreshed OAuth token")
                     return token_response
 
-                error_text = response.text
-                # If we get a 400/401, the refresh token is likely invalid
+                # Bound and redact the body before surfacing it. Some providers echo
+                # request parameters (including refresh_token / client_secret) in error
+                # responses, and HTML error pages can be unbounded — both leak via logs
+                # and OAuthError messages without this scrub.
+                error_payload = self._redact_token_response(self._parse_token_response(response))
                 if response.status_code in [400, 401]:
-                    raise OAuthError(f"Refresh token invalid or expired: {error_text}")
-                logger.warning(f"Token refresh failed with status {response.status_code}: {error_text}")
+                    raise OAuthError(f"Refresh token invalid or expired: {error_payload}")
+                logger.warning("Token refresh failed with status %s: %s", response.status_code, error_payload)
 
             except httpx.HTTPError as e:
                 logger.warning(f"Token refresh attempt {attempt + 1} failed: {str(e)}")
@@ -1380,6 +1594,34 @@ class OAuthManager:
 
         # Final fallback
         return "unknown_user"
+
+    @staticmethod
+    def _extract_token_audience(access_token: str) -> Any:
+        """Extract the ``aud`` claim from a JWT access token (best-effort).
+
+        Returns the raw ``aud`` value (string or list) or ``None`` for opaque
+        tokens or decode failures.  No signature verification is performed.
+
+        Args:
+            access_token: The raw access token string.
+
+        Returns:
+            The ``aud`` claim value, or None.
+        """
+        if not access_token:
+            return None
+        try:
+            # Third-Party
+            import jwt as pyjwt  # pylint: disable=import-outside-toplevel
+
+            claims = pyjwt.decode(
+                access_token,
+                options={"verify_signature": False, "verify_aud": False, "verify_iss": False, "verify_exp": False},
+                algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "HS256", "HS384", "HS512", "EdDSA"],
+            )
+            return claims.get("aud")
+        except Exception:  # noqa: BLE001
+            return None
 
 
 class OAuthError(Exception):
@@ -1450,3 +1692,68 @@ class OAuthEnforcementUnavailableError(OAuthError):
         """
         super().__init__(message)
         self.server_id = server_id
+
+
+def parse_expires_in(token_response: Dict[str, Any]) -> Optional[int]:
+    """Parse and validate the ``expires_in`` field from an OAuth token response.
+
+    RFC 6749 §5.1 marks ``expires_in`` as RECOMMENDED (not REQUIRED). When the
+    field is absent or null, the gateway records ``expires_at`` as ``None`` and
+    the token is treated as having no known local expiry, subject to the
+    stale-token cleanup policy in
+    :meth:`mcpgateway.services.token_storage_service.TokenStorageService.cleanup_expired_tokens`.
+
+    Args:
+        token_response: Raw OAuth token response dict from the provider.
+
+    Returns:
+        ``int`` lifetime in seconds when the provider supplied a non-negative
+        integer (or numeric string convertible to one), or ``None`` when the
+        field is absent or explicitly null.
+
+    Raises:
+        OAuthError: If ``expires_in`` is present but malformed (negative,
+            non-numeric, or a non-scalar type).
+
+    Examples:
+        >>> parse_expires_in({"expires_in": 3600})
+        3600
+        >>> parse_expires_in({"expires_in": "3600"})
+        3600
+        >>> parse_expires_in({"expires_in": 0})
+        0
+        >>> parse_expires_in({}) is None
+        True
+        >>> parse_expires_in({"expires_in": None}) is None
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": -1})
+        ... except OAuthError as exc:
+        ...     "negative" in str(exc)
+        True
+        >>> try:
+        ...     parse_expires_in({"expires_in": "garbage"})
+        ... except OAuthError as exc:
+        ...     "Invalid expires_in" in str(exc)
+        True
+    """
+    raw = token_response.get("expires_in")
+    if raw is None:
+        return None
+    # Reject bools (True/False are int subclasses in Python) and any non-scalar types.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}")
+    # Sign-check the original numeric BEFORE int() truncation, otherwise int(-0.5) == 0
+    # would bypass the negative check.
+    if isinstance(raw, (int, float)) and raw < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {raw}")
+    # RFC 6749 §5.1 specifies integer seconds; reject non-integral floats explicitly.
+    if isinstance(raw, float) and not raw.is_integer():
+        raise OAuthError(f"Invalid expires_in from OAuth provider (non-integer): {raw}")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise OAuthError(f"Invalid expires_in from OAuth provider: {raw!r}") from exc
+    if value < 0:
+        raise OAuthError(f"Invalid expires_in from OAuth provider (negative): {value}")
+    return value

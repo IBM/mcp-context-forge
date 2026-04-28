@@ -251,7 +251,7 @@ CMD ["python", "-m", "awesome_server.server_fastmcp"]
 
 Notes:
 - Swap the container entrypoint to `fastmcp run /app/src/awesome_server/server_fastmcp.py:mcp --transport http --host 0.0.0.0 --port 8000` (or similar) when you need remote HTTP access.
-- For hardened multi-stage builds (scratch base, non-root, healthchecks), study `data_analysis_server/Containerfile` and `mcp_eval_server/Containerfile`.
+- For hardened multi-stage builds (ubi-minimal runtime, non-root UID 1001, healthchecks), study `data_analysis_server/Containerfile` and `mcp_eval_server/Containerfile`.
 
 **Run Locally**
 - Stdio mode (for local LLM clients or direct JSON-RPC piping):

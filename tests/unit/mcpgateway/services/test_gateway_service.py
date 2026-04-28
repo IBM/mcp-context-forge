@@ -101,6 +101,8 @@ def _make_gateway(**overrides):
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
+        "client_cert": None,
+        "client_key": None,
         "signing_algorithm": None,
         "visibility": "public",
         "enabled": True,
@@ -651,6 +653,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_encrypt_client_key_encrypts_plaintext(self, gateway_service):
         """_encrypt_client_key encrypts a plaintext private key."""
+        # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
         result = await GatewayService._encrypt_client_key(_fake_pem_key("SECRET"))
@@ -660,6 +663,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_encrypt_client_key_returns_none_for_empty(self, gateway_service):
         """_encrypt_client_key returns None for None or empty input."""
+        # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
         assert await GatewayService._encrypt_client_key(None) is None
@@ -668,6 +672,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_encrypt_client_key_idempotent(self, gateway_service):
         """_encrypt_client_key does not double-encrypt already-encrypted values."""
+        # First-Party
         from mcpgateway.services.gateway_service import GatewayService
 
         encryption = get_encryption_service(settings.auth_encryption_secret)
@@ -722,9 +727,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(
@@ -759,9 +762,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(client_key=settings.masked_auth_value)
@@ -932,7 +933,57 @@ class TestGatewayService:
         assert result == []
         assert next_cursor is None
         # Query IS executed but returns empty due to WHERE FALSE condition
-        test_db.execute.assert_called_once()
+        # Note: execute is called twice - once for admin check, once for actual query
+        assert test_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_platform_admin_bypass(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Platform admin email should bypass visibility filtering."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        # Mock platform admin email
+        original_admin = getattr(settings, "platform_admin_email", "")
+        monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[mock_gateway]))
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "test_gateway"
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        # Platform admin should see all gateways
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="platform-admin@example.com", token_teams=["some-team"])
+
+        assert len(result) == 1
+        assert result[0].name == "test_gateway"
+        # Restore original value
+        if original_admin:
+            monkeypatch.setattr(settings, "platform_admin_email", original_admin)
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_database_exception_handling(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """DB exception during admin check (token_teams=None path) should fail-closed to non-admin filtering, not crash."""
+
+        call_count = [0]
+
+        def mock_execute(stmt):
+            call_count[0] += 1
+            # Admin check runs first when token_teams=None — simulate DB failure there.
+            if call_count[0] == 1:
+                raise Exception("Database error")
+            return _make_execute_result(scalars_list=[])
+
+        test_db.execute = Mock(side_effect=mock_execute)
+
+        # token_teams=None is the only path that triggers admin check; non-admin users
+        # should fall through to normal (team-scoped) filtering after exception.
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", token_teams=None)
+
+        assert call_count[0] >= 2
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
@@ -1285,6 +1336,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_team_id_rejects_non_owner(self, gateway_service, mock_gateway, test_db):
         """Reassigning a gateway to a team where user is not owner must raise GatewayError."""
+        # First-Party
         from mcpgateway.services.gateway_service import _validate_gateway_team_assignment
 
         mock_team = MagicMock()
@@ -2361,7 +2413,7 @@ class TestGatewayService:
             oauth_config=oauth_config,
         )
 
-        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(oauth_config)
+        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(oauth_config, ca_certificate=None, client_cert=None, client_key=None)
         _, auth_headers, *_ = gateway_service.connect_to_sse_server.call_args.args
         assert auth_headers == {"Authorization": "Bearer token123"}
 
@@ -3977,7 +4029,6 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     assert len(added_gateway.prompts) == 1
     assert added_gateway.prompts[0].title == "Prompt Title"
 
-
     # Regression: verify namespacing fields are set (issue #3087)
     federated_prompt = added_gateway.prompts[0]
     assert federated_prompt.original_name == "Prompt"
@@ -5431,7 +5482,9 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw)
-        gateway_service.oauth_manager.get_access_token.assert_awaited_once()
+        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(
+            {"grant_type": "client_credentials", "token_url": "http://auth/token"}, ca_certificate=None, client_cert=None, client_key=None
+        )
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_client_creds_failure(self, gateway_service, monkeypatch):
@@ -5569,7 +5622,6 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
 
-
     @pytest.mark.asyncio
     async def test_health_check_with_mtls_ca_certificate(self, gateway_service, monkeypatch):
         """Health check creates SSL context with mTLS client_cert/client_key (lines 3348-3349)."""
@@ -5608,8 +5660,11 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
         mock_settings = MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5, auto_refresh_servers=False,
-            httpx_admin_read_timeout=5, mcp_session_pool_enabled=False,
+            enable_ed25519_signing=False,
+            health_check_timeout=5,
+            auto_refresh_servers=False,
+            httpx_admin_read_timeout=5,
+            mcp_session_pool_enabled=False,
             auth_encryption_secret=settings.auth_encryption_secret,
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.settings", mock_settings)
@@ -7712,8 +7767,11 @@ class TestMtlsDecryptExceptionBranches:
 
 
 def test_resolve_tool_title():
-    from mcpgateway.services.gateway_service import _resolve_tool_title
+    # Third-Party
     from mcp.types import Tool as MCPTool
+
+    # First-Party
+    from mcpgateway.services.gateway_service import _resolve_tool_title
 
     _BASE = {"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}}
 

@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 1.0.0-RC-2](https://img.shields.io/badge/Version-1.0.0--RC--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-2](https://img.shields.io/badge/AppVersion-1.0.0--RC--2-informational?style=flat-square)
+![Version: 1.0.0-RC-3](https://img.shields.io/badge/Version-1.0.0--RC--3-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-3](https://img.shields.io/badge/AppVersion-1.0.0--RC--3-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -68,6 +68,79 @@ mcpContextForge:
 
 If registration fails with `422` and mentions blocked private network addresses, update SSRF values and
 retry the Helm upgrade.
+
+## Kubernetes Process Limits
+
+**Important:** Kubernetes does NOT provide native per-container process limits equivalent to Docker's `ulimits.nproc`.
+
+To prevent resource exhaustion in Kubernetes deployments, implement defense-in-depth using:
+
+### Option 1: Admission Controllers (Recommended)
+
+**OPA Gatekeeper:**
+```yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sProcessLimit
+metadata:
+  name: container-process-limit
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    maxProcesses: 5000
+```
+
+**Kyverno:**
+```yaml
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: limit-processes
+spec:
+  validationFailureAction: enforce
+  rules:
+    - name: check-process-limit
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "Container must not spawn excessive processes"
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(capabilities):
+                    drop:
+                      - SYS_ADMIN
+```
+
+### Option 2: Runtime Security Tools
+
+**Falco Rule:**
+```yaml
+- rule: Excessive Process Creation
+  desc: Detect rapid process creation patterns
+  condition: >
+    spawned_process and
+    proc.pname = proc.name and
+    evt.count > 100 in 1s
+  output: "Rapid process creation detected (user=%user.name container=%container.name)"
+  priority: CRITICAL
+```
+
+### Option 3: Node-level cgroups v2 (Advanced)
+
+Configure pids.max at the node level (affects all pods on the node):
+```bash
+echo 5000 > /sys/fs/cgroup/kubepods/pids.max
+```
+
+**Note:** Requires node-level access and impacts all pods on the node.
+
+For detailed guidance on resource limits and process management, see `docs/docs/security/resource-limits.md` in the repository.
 
 ## Values
 
@@ -741,7 +814,6 @@ retry the Helm upgrade.
 | mcpContextForge.secret.PROXY_USER_HEADER | string | `"X-Authenticated-User"` |  |
 | mcpContextForge.secret.OAUTH_REQUEST_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.secret.OAUTH_MAX_RETRIES | string | `"3"` |  |
-| mcpContextForge.secret.OAUTH_DEFAULT_TIMEOUT | string | `"3600"` |  |
 | mcpContextForge.secret.DCR_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |

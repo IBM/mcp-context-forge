@@ -22,17 +22,27 @@ from urllib.parse import urlsplit, urlunsplit
 # Third-Party
 import httpx
 import orjson
+from sqlalchemy import exists as sa_exists
 from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import fresh_db_session
+from mcpgateway.db import Server as DbServer
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
+# Hex-only on purpose: server IDs are uuid4().hex (32 hex chars).  Non-hex
+# segments (e.g. "ndh45", "my-server") will never match here and instead fall
+# through to the _SERVER_SCOPED_PATH_RE defense-in-depth guard, which rejects
+# them without a database round-trip.
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
+# Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
+# match (e.g. empty segment: /servers//mcp). Used as a defense-in-depth guard.
+_SERVER_SCOPED_PATH_RE = re.compile(r"^/servers/.*/mcp(?:/)?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
 _CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER = "x-contextforge-affinity-forwarded"
@@ -51,6 +61,57 @@ _INTERNAL_ONLY_REQUEST_HEADERS = frozenset(
     }
 )
 _RESPONSE_HOP_BY_HOP_HEADERS = frozenset({"connection", "transfer-encoding", "keep-alive"})
+# Sentinel returned by _validate_server_id to signal that an error response
+# has already been sent and the caller should return immediately.
+_REJECT = object()
+
+
+async def _validate_server_id(match: re.Match[str] | None, path: str, scope: Scope, receive: Receive, send: Send) -> str | object | None:
+    """Validate and resolve the server_id from the request path.
+
+    Args:
+        match: Result of ``_SERVER_ID_RE.search(path)``.
+        path: Original request path.
+        scope: ASGI scope dict.
+        receive: ASGI receive callable.
+        send: ASGI send callable.
+
+    Returns:
+        The validated server_id string, ``None`` when the path is
+        not server-scoped (legitimate global ``/mcp``), or the
+        sentinel ``_REJECT`` when an error response has already been
+        sent and the caller should return immediately.
+    """
+    if match:
+        server_id = match.group("server_id")
+        # SECURITY: Validate that the server_id exists in the database
+        # to prevent unauthorized access via invalid server IDs.
+        try:
+            with fresh_db_session() as db:
+                exists = db.execute(sa_exists().where(DbServer.id == server_id)).scalar()
+                if not exists:
+                    logger.warning("Invalid server ID in Rust proxy MCP request path: %s", server_id)
+                    response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
+                    await response(scope, receive, send)
+                    return _REJECT
+        except Exception as e:
+            logger.error("Failed to validate server ID %s in Rust proxy: %s", server_id, e)
+            response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
+            await response(scope, receive, send)
+            return _REJECT
+        return server_id
+
+    # SECURITY (defense-in-depth): If the path looks server-scoped but
+    # the primary regex didn't capture a server_id (e.g. empty segment
+    # /servers//mcp, or an encoding edge case), reject immediately
+    # rather than falling through to unscoped global behaviour (#3891).
+    if _SERVER_SCOPED_PATH_RE.search(path):
+        logger.warning("Server-scoped MCP path with unparseable server ID rejected in Rust proxy: %s", path)
+        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+        await response(scope, receive, send)
+        return _REJECT
+
+    return None  # Legitimate unscoped /mcp path
 
 
 class RustMCPRuntimeProxy:
@@ -85,6 +146,12 @@ class RustMCPRuntimeProxy:
             logger.debug("Rust MCP runtime deferring to Python fallback: HTTP method %r is not supported", method)
             await self.python_fallback_app(scope, receive, send)
             return
+
+        modified_path = str(scope.get("modified_path") or scope.get("path") or "")
+        match = _SERVER_ID_RE.search(modified_path)
+        validated = await _validate_server_id(match, modified_path, scope, receive, send)
+        if validated is _REJECT:
+            return  # Error response already sent
 
         target_url = _build_runtime_mcp_url(scope)
         headers = _build_forward_headers(scope)
@@ -176,6 +243,10 @@ async def _stream_request_body(receive: Receive):
 
 def _extract_server_id_from_scope(scope: Scope) -> str | None:
     """Extract server_id when the mounted MCP path came from /servers/<id>/mcp.
+
+    This function only extracts the ID from the path. Server existence
+    validation must be performed separately via _validate_server_id() before
+    forwarding requests.
 
     Args:
         scope: Incoming ASGI scope.

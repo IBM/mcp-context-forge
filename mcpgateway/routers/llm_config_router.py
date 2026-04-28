@@ -389,7 +389,7 @@ async def create_model(
 )
 @require_permission("admin.system_config")
 async def list_models(
-    provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
+    provider_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by provider ID"),
     enabled_only: bool = Query(False, description="Only return enabled models"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),

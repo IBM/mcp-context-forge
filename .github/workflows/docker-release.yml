@@ -5,9 +5,10 @@
 # This workflow re-tags a Docker image (built by a previous workflow)
 # when a GitHub Release is published, giving it a semantic version tag
 # like `v0.9.0`. It assumes the CI build has already pushed an image
-# tagged with the commit SHA, and that all checks on that commit passed.
+# tagged with the commit SHA. It verifies all check-runs passed before
+# re-tagging.
 #
-# ➤ Trigger: Release published (e.g. from GitHub UI or `gh release` CLI)
+# ➤ Trigger: Release published, or manual workflow_dispatch with a tag
 # ➤ Assumes: Existing image tagged with the commit SHA is available
 # ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.9.0`
 #
@@ -39,12 +40,14 @@ permissions:
 jobs:
   tag-and-push:
     # ------------------------------------------------------------------
-    # Only run if the release tag starts with 'v', and is not draft/prerelease
+    # Run on workflow_dispatch, or when a non-draft, non-prerelease
+    # release tag starts with 'v'.
     # ------------------------------------------------------------------
     if: |
-      startsWith(github.event.release.tag_name, 'v') &&
-      github.event.release.draft == false &&
-      github.event.release.prerelease == false
+      (github.event_name == 'workflow_dispatch') ||
+      (startsWith(github.event.release.tag_name, 'v') &&
+       github.event.release.draft == false &&
+       github.event.release.prerelease == false)
 
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -52,7 +55,7 @@ jobs:
     permissions:
       contents: read      # read repo info
       packages: write     # push Docker image
-      statuses: read      # check commit status API
+      checks: read        # read GitHub Actions check-runs for the release commit
 
     steps:
       # ----------------------------------------------------------------
@@ -61,43 +64,143 @@ jobs:
       - name: 🏷️  Extract tag & commit SHA
         id: meta
         shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          TARGET_COMMITISH: ${{ github.event.release.target_commitish }}
+          REMOTE: https://github.com/${{ github.repository }}.git
         run: |
           set -euo pipefail
-          TAG="${{ github.event.release.tag_name }}"
           echo "tag=$TAG" >>"$GITHUB_OUTPUT"
 
-          # Ask the remote repo which commit the tag points to
-          SHA=$(git ls-remote --quiet --refs \
-                "https://github.com/${{ github.repository }}.git" \
-                "refs/tags/$TAG" | cut -f1)
+          # Peel annotated tags so we get the commit SHA, not the tag object SHA.
+          SHA=$(git ls-remote --quiet "$REMOTE" "refs/tags/$TAG^{}" | cut -f1)
 
-          # Fallback to the release's target_commitish (covers annotated tags/branch releases)
+          # Lightweight tags have no peeled ref; fall back to the tag ref itself.
+          if [ -z "$SHA" ]; then
+            SHA=$(git ls-remote --quiet --refs "$REMOTE" "refs/tags/$TAG" | cut -f1)
+          fi
+
+          # Final fallback: the release's target_commitish (branch name or SHA).
           if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
-            SHA="${{ github.event.release.target_commitish }}"
+            SHA="$TARGET_COMMITISH"
+          fi
+
+          # Validate that SHA is a 40-character hex commit hash, not a branch name.
+          if ! echo "$SHA" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "ERROR: Resolved SHA '$SHA' is not a valid commit hash." >&2
+            echo "This may indicate the tag was deleted or target_commitish is a branch name." >&2
+            exit 1
           fi
 
           echo "Resolved commit SHA: $SHA"
           echo "sha=$SHA" >>"$GITHUB_OUTPUT"
 
       # ----------------------------------------------------------------
-      # Step 2  Confirm all checks on that commit were successful
+      # Step 2  Confirm all check-runs on that commit were successful.
+      # Excludes this workflow's own check-run (matched by GITHUB_RUN_ID
+      # in the details_url) to avoid self-referencing.  Deduplicates by
+      # check name so that a rerun of a previously failed job is evaluated
+      # by its latest attempt.  Blocks on any non-completed (queued /
+      # in_progress) runs so we never release before CI finishes.
       # ----------------------------------------------------------------
       - name: ✅  Verify commit checks passed
         env:
           SHA: ${{ steps.meta.outputs.sha }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          STATUS=$(curl -sSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/$REPO/commits/$SHA/status" \
-            | jq -r '.state')
-          echo "Combined status: $STATUS"
-          if [ "$STATUS" != "success" ]; then
-            echo "Required workflows have not all succeeded - aborting." >&2
+
+          if [ -z "$GH_TOKEN" ]; then
+            echo "ERROR: GH_TOKEN is empty. Check that the job has 'checks: read' permission." >&2
             exit 1
           fi
+
+          # per_page=100 is the GitHub API maximum; pagination guard below catches overflow.
+          HTTP_CODE=$(curl -sSL --max-time 30 -o /tmp/check-runs.json -w '%{http_code}' \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/check-runs?per_page=100") || {
+            echo "ERROR: curl failed (exit code $?) when fetching check-runs for $SHA." >&2
+            echo "This may indicate a network issue or invalid repository/SHA." >&2
+            exit 1
+          }
+
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "GitHub API returned HTTP $HTTP_CODE for check-runs on $SHA - aborting." >&2
+            cat /tmp/check-runs.json >&2 || true
+            exit 1
+          fi
+          RESPONSE=$(cat /tmp/check-runs.json)
+
+          if ! echo "$RESPONSE" | jq -e '.check_runs' >/dev/null 2>&1; then
+            echo "GitHub API did not return check_runs for $SHA - aborting." >&2
+            echo "$RESPONSE" | jq -r '.message // .' >&2 || echo "$RESPONSE" >&2
+            exit 1
+          fi
+
+          # Guard against pagination: abort if more check-runs exist than were returned.
+          TOTAL_COUNT=$(echo "$RESPONSE" | jq -r '.total_count')
+          RETURNED=$(echo "$RESPONSE" | jq -r '.check_runs | length')
+          if ! [[ "$TOTAL_COUNT" =~ ^[0-9]+$ ]] || ! [[ "$RETURNED" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Unexpected API response shape (total_count='$TOTAL_COUNT', returned='$RETURNED')." >&2
+            exit 1
+          fi
+          if [ "$TOTAL_COUNT" -gt "$RETURNED" ]; then
+            echo "ERROR: $TOTAL_COUNT check-runs exist but only $RETURNED were returned (pagination needed) - aborting." >&2
+            exit 1
+          fi
+
+          # Exclude this workflow's own check-run by matching GITHUB_RUN_ID
+          # in the details_url (stable regardless of job name/display name).
+          # Then deduplicate by check name, keeping only the latest attempt
+          # (highest id) so reruns of failed jobs use their newest result.
+          LATEST_RUNS=$(echo "$RESPONSE" | jq --arg run_id "$GITHUB_RUN_ID" '
+            [ (.check_runs // [])[]
+              | select((.details_url // "") | test("/" + $run_id + "/") | not) ]
+            | group_by(.name)
+            | [ .[] | sort_by(.id) | last ]')
+
+          TOTAL_LATEST=$(echo "$LATEST_RUNS" | jq 'length')
+          if ! [[ "$TOTAL_LATEST" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Failed to parse deduplicated check-runs." >&2
+            exit 1
+          fi
+          echo "Found $RETURNED raw check-runs, $TOTAL_LATEST unique checks after dedup (excluding self)."
+
+          if [ "$TOTAL_LATEST" -eq 0 ]; then
+            echo "No check-runs found for $SHA (excluding self) - refusing to re-tag a commit with no CI evidence." >&2
+            exit 1
+          fi
+
+          # Block if any checks are still queued or in progress.
+          PENDING=$(echo "$LATEST_RUNS" | jq '[ .[] | select(.status != "completed") ] | length')
+          if [ "$PENDING" -gt 0 ]; then
+            echo "$PENDING check-run(s) still pending on $SHA - all CI must complete before release." >&2
+            echo "$LATEST_RUNS" | jq -r '.[] | select(.status != "completed") | "  - \(.name): \(.status)"' >&2
+            exit 1
+          fi
+
+          FAILED=$(echo "$LATEST_RUNS" | jq '
+            [ .[]
+              | select(.conclusion != "success"
+                       and .conclusion != "skipped"
+                       and .conclusion != "neutral") ]
+            | length')
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "One or more check-runs did not succeed on $SHA - aborting." >&2
+            echo "$LATEST_RUNS" | jq -r '
+              .[]
+              | select(.conclusion != "success"
+                       and .conclusion != "skipped"
+                       and .conclusion != "neutral")
+              | "  - \(.name): \(.conclusion)"' >&2
+            exit 1
+          fi
+
+          COMPLETED=$(echo "$LATEST_RUNS" | jq 'length')
+          echo "All $COMPLETED check-runs on $SHA passed."
 
       # ----------------------------------------------------------------
       # Step 3  Authenticate with GitHub Container Registry (GHCR)
@@ -124,18 +227,25 @@ jobs:
       # 3. This preserves all architecture variants (amd64, arm64, s390x)
       # ----------------------------------------------------------------
       - name: 🏷️  Create version tag for multiplatform manifest
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          SHA: ${{ steps.meta.outputs.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          echo "Creating version tag ${{ steps.meta.outputs.tag }} from ${IMAGE}:${{ steps.meta.outputs.sha }}"
+          IMAGE="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          echo "Creating version tag $TAG from ${IMAGE}:${SHA}"
           docker buildx imagetools create \
-            "${IMAGE}:${{ steps.meta.outputs.sha }}" \
-            --tag "${IMAGE}:${{ steps.meta.outputs.tag }}"
+            "${IMAGE}:${SHA}" \
+            --tag "${IMAGE}:${TAG}"
 
       # ----------------------------------------------------------------
       # Step 6  Verify the new version tag
       # ----------------------------------------------------------------
       - name: 🔍  Verify version tag
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          echo "Inspecting ${IMAGE}:${{ steps.meta.outputs.tag }}"
-          docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.tag }}"
+          IMAGE="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          echo "Inspecting ${IMAGE}:${TAG}"
+          docker buildx imagetools inspect "${IMAGE}:${TAG}"

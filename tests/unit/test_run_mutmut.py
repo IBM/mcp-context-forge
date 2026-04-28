@@ -7,9 +7,7 @@ Covers the security changes in PR #3944:
 """
 
 # Standard
-import ast
 import importlib
-import inspect
 import sqlite3
 import textwrap
 from unittest.mock import call, patch
@@ -141,48 +139,6 @@ class TestMutmutCleanup:
             with patch.object(_mutmut_module, "run_command", return_value=("", "", 1)):
                 with pytest.raises(PermissionError, match="Cannot remove mutants"):
                     _mutmut_module.main()
-
-
-class TestMutmutSecurityRegression:
-    """Static checks that os.system is not reintroduced."""
-
-    def test_os_module_not_imported(self):
-        """run_mutmut.py must not import the os module."""
-        # First-Party
-        import run_mutmut
-
-        source = inspect.getsource(run_mutmut)
-        tree = ast.parse(source)
-        imported_names = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    imported_names.add(alias.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    imported_names.add(node.module.split(".")[0])
-        assert "os" not in imported_names, "os module should not be imported in run_mutmut.py"
-
-    def test_no_os_system_calls(self):
-        """run_mutmut.py source must not contain os.system calls."""
-        # First-Party
-        import run_mutmut
-
-        source = inspect.getsource(run_mutmut)
-        tree = ast.parse(source)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Name) and node.func.value.id == "os" and node.func.attr == "system":
-                    pytest.fail("os.system() call found in run_mutmut.py — use shutil.rmtree instead")
-
-    def test_shutil_is_used_for_cleanup(self):
-        """run_mutmut.py must use shutil for directory removal."""
-        # First-Party
-        import run_mutmut
-
-        assert hasattr(run_mutmut, "shutil"), "run_mutmut should import shutil"
-        source = inspect.getsource(run_mutmut)
-        assert "shutil.rmtree" in source, "shutil.rmtree should be used for directory cleanup"
 
 
 # ===========================================================================

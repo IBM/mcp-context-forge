@@ -6,7 +6,6 @@
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
 [![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
@@ -127,7 +126,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <details>
 <summary><strong>📈 Admin UI, Observability & Dev Experience</strong></summary>
 
-* Admin UI built with HTMX + Alpine.js
+* Admin UI built with HTMX 2.0.3 (bundled) + Alpine.js
 * Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
@@ -508,11 +507,11 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 # Tail logs and generate API key
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
@@ -530,7 +529,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 ```
 
 **Host networking** (access local MCP servers):
@@ -538,7 +537,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
 docker run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 ```
 
 **Airgapped deployment** (no internet):
@@ -559,7 +558,7 @@ docker run -d --name mcpgateway -p 4444:4444 \
 ```bash
 podman run -d --name mcpgateway \
   -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 ```
 
 <details>
@@ -571,14 +570,14 @@ mkdir -p $(pwd)/data && chmod 777 $(pwd)/data
 podman run -d --name mcpgateway --restart=on-failure \
   -p 4444:4444 -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 ```
 
 **Host networking:**
 ```bash
 podman run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 ```
 
 </details>
@@ -589,7 +588,7 @@ podman run -d --name mcpgateway --network=host \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-2`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-3`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -635,7 +634,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -658,6 +657,12 @@ For detailed setup, workflows, and GitHub Codespaces instructions, see **[Develo
 make venv install-dev      # create .venv + install deps + build Admin UI
 make serve                 # gunicorn on :4444
 ```
+
+Rust workspace note:
+- Workspace-owned Rust crates live under `crates/` and are picked up by the root `Cargo.toml` via `crates/*`.
+- Run `cargo build`, `cargo test`, and `cargo check` from the repo root to cover the shared workspace.
+- `mcp-servers/rust/` stays outside the shared workspace on purpose and is managed separately.
+- `make venv install-dev` creates the root `.venv`, which is also reused by the workspace's PyO3/maturin builds.
 
 <details>
 <summary><strong>Alternative: UV or pip</strong></summary>
@@ -743,7 +748,6 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
-
 ### 🛡️ Content Security
 
 Content size limits prevent DoS attacks and ensure system stability:
@@ -753,7 +757,38 @@ Content size limits prevent DoS attacks and ensure system stability:
 | `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
 | `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
 
-**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
+**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated. See [Content Limits Migration Guide](docs/MIGRATION_CONTENT_LIMITS.md) for details.
+
+### 🌐 UAID Cross-Gateway Routing Security
+
+⚠️ **Security Warning:** UAID-based cross-gateway routing enables zero-config agent federation but **does not implement authentication** for outbound HTTP calls to remote gateways.
+
+**Security Implications:**
+
+1. **Remote Gateway Authentication:** Target gateways receive unauthenticated requests. They MUST enforce `AUTH_REQUIRED=true` to protect their resources.
+2. **No Authorization Context:** Cross-gateway calls execute with the target gateway's public access level. RBAC from the originating user is not preserved.
+3. **Trust Boundary:** Your gateway trusts the remote gateway's access control. Compromised remote gateways can become security vectors.
+
+**Configuration:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `UAID_ALLOWED_DOMAINS` | JSON array of trusted domain suffixes for cross-gateway routing | `[]` (allow all) |
+| `UAID_MAX_LENGTH` | Maximum UAID string length (DoS protection) | `2048` |
+
+**Recommended Actions:**
+
+- Set `UAID_ALLOWED_DOMAINS=["trusted.example.com"]` to allowlist trusted gateways
+- Set `UAID_ALLOWED_DOMAINS=["your-trusted.domain"]` to **restrict to trusted gateways only** (most secure)
+- Ensure `AUTH_REQUIRED=true` on ALL gateways in your federation
+- Monitor cross-gateway calls via correlation IDs in observability logs
+
+**Future Security Enhancements (Roadmap):**
+- Bearer token forwarding (gateway-to-gateway trust)
+- Mutual TLS authentication
+- Trusted gateway registry with signature verification
+
+See [UAID Implementation Guide](docs/docs/architecture/UAID_APPROACH_B_IMPLEMENTATION.md) for technical details.
 
 ### ⚙️ Project Defaults (Dev Setup)
 

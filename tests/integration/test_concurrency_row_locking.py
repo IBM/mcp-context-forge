@@ -524,11 +524,12 @@ async def test_concurrent_tool_update_same_tool(client: AsyncClient):
 @pytest.mark.asyncio
 @SKIP_IF_NOT_POSTGRES
 async def test_concurrent_tool_delete_operations(client: AsyncClient):
-    """Test concurrent delete operations with atomic DELETE ... RETURNING.
+    """Test that concurrent deletes of the same tool don't corrupt state.
 
-    With the atomic DELETE ... RETURNING implementation, exactly one delete should
-    succeed. All other concurrent deletes will find no row to delete and should
-    return an error in the redirect URL.
+    delete_tool uses a Core-SQL DELETE with a rowcount check: exactly one
+    caller sees rowcount == 1 (success) while the others see rowcount == 0
+    and raise ToolNotFoundError, which the admin endpoint surfaces as an
+    error in the redirect URL.
 
     Note: The admin endpoint always returns 303 redirects, so we check the
     redirect URL for error messages to distinguish success from failure.

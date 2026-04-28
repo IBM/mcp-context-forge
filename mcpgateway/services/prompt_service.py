@@ -25,10 +25,13 @@ import uuid
 
 # Third-Party
 from cpex.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
-from jinja2 import Environment, meta, select_autoescape, Template
-from mcp import ClientSession
+from jinja2 import meta, select_autoescape, Template
+from jinja2.exceptions import SecurityError as JinjaSecurityError
+from jinja2.sandbox import SandboxedEnvironment
+from mcp import ClientSession, types
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
@@ -37,6 +40,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
@@ -48,15 +52,17 @@ from mcpgateway.observability import create_span, set_span_attribute, set_span_e
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, get_content_security_service, TemplateValidationError
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
+from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -71,18 +77,27 @@ from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception
 _REGISTRY_CACHE = None
 
 # Module-level Jinja environment singleton for template caching
-_JINJA_ENV: Optional[Environment] = None
+_JINJA_ENV: Optional[SandboxedEnvironment] = None
 
 
-def _get_jinja_env() -> Environment:
+def _get_jinja_env() -> SandboxedEnvironment:
     """Get or create the module-level Jinja environment singleton.
 
+    Uses SandboxedEnvironment (not plain Environment) so rendered templates
+    cannot reach Python internals via __class__, __mro__, __subclasses__,
+    getattr chains, etc. Regex-based template blocklist validation in
+    content_security.validate_prompt_template() catches only literal
+    occurrences in the template source; SandboxedEnvironment is what
+    actually enforces the restriction at render time against hex escapes,
+    string concatenation, attr() filter chains, and other well-known SSTI
+    techniques. This is the primary defense; the regex list is advisory.
+
     Returns:
-        Jinja2 Environment with autoescape and trim settings.
+        Jinja2 SandboxedEnvironment with autoescape and trim settings.
     """
     global _JINJA_ENV  # pylint: disable=global-statement
     if _JINJA_ENV is None:
-        _JINJA_ENV = Environment(
+        _JINJA_ENV = SandboxedEnvironment(
             autoescape=select_autoescape(["html", "xml"]),
             trim_blocks=True,
             lstrip_blocks=True,
@@ -126,6 +141,55 @@ logger = logging_service.get_logger(__name__)
 structured_logger = get_structured_logger("prompt_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+
+def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Dict[str, Any]) -> "types.ClientRequest":
+    """Build a GetPrompt ClientRequest that carries _meta (CWE-20, CWE-284).
+
+    Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
+    key written into the dict so the subsequent ``model_validate`` call
+    resolves it correctly regardless of ``populate_by_name`` settings.
+
+    ``send_request`` is used instead of ``session.get_prompt()`` because the
+    MCP SDK helper does not expose a ``_meta`` parameter; this wrapper must be
+    updated if the SDK later adds that capability.
+
+    Args:
+        name: The prompt name.
+        arguments: Optional prompt arguments.
+        meta_data: Validated metadata dict to inject as ``_meta``.
+
+    Returns:
+        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+    """
+    _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
+    _gp_dict["_meta"] = meta_data
+    return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
+
+
+async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]]) -> Any:
+    """Dispatch a get_prompt call, injecting ``_meta`` when meta_data is provided.
+
+    Eliminates the repeated ``if meta_data: send_request … else: get_prompt``
+    pattern across every transport/pool branch in this module.
+
+    Args:
+        session: An active MCP :class:`ClientSession`.
+        name: The prompt name.
+        arguments: Optional prompt-rendering arguments.
+        meta_data: Optional validated metadata dict. When ``None`` the standard
+            SDK helper is used; when non-empty the low-level ``send_request``
+            path is taken to carry ``_meta``.
+
+    Returns:
+        The raw MCP result object (caller extracts ``.messages``).
+    """
+    if meta_data:
+        return await session.send_request(
+            _build_get_prompt_request(name, arguments, meta_data),
+            types.GetPromptResult,
+        )
+    return await session.get_prompt(name, arguments=arguments)
 
 
 class PromptError(Exception):
@@ -301,13 +365,13 @@ class PromptService(BaseService):
         """
         return bool(getattr(prompt, "gateway_id", None)) and not bool(getattr(prompt, "template", ""))
 
-    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], user_identity: Optional[str]) -> PromptResult:
+    async def _fetch_gateway_prompt_result(self, prompt: DbPrompt, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]] = None) -> PromptResult:
         """Fetch a rendered prompt from the upstream MCP gateway.
 
         Args:
             prompt: Gateway-backed prompt record from the catalog.
             arguments: Optional prompt-rendering arguments.
-            user_identity: Effective requester email for session-pool isolation.
+            meta_data: Optional metadata dict forwarded as ``_meta`` in the upstream MCP request.
 
         Returns:
             Prompt result normalized into ContextForge models.
@@ -335,27 +399,32 @@ class PromptService(BaseService):
                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
         remote_name = getattr(prompt, "original_name", None) or prompt.name
-        pool_user_identity = (user_identity or "anonymous").strip() or "anonymous"
         gateway_id = str(getattr(gateway, "id", ""))
         transport = str(getattr(gateway, "transport", "streamable_http") or "streamable_http").lower()
-        pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
+        registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
         prompt_arguments = arguments or None
+        # CWE-400: Validate meta_data limits before forwarding to upstream
+        _validate_meta_data(meta_data)
 
         try:
-            if settings.mcp_session_pool_enabled:
+            # #4205: Use the upstream session registry when a downstream Mcp-Session-Id
+            # is in scope; this binds the upstream session 1:1 to the downstream
+            # session and preserves connection reuse across its tool/prompt calls.
+            downstream_session_id = _downstream_session_id_from_request()
+            if downstream_session_id and gateway_id:
                 try:
-                    pool = get_mcp_session_pool()
-                except RuntimeError:
-                    pool = None
-                if pool is not None:
-                    async with pool.session(
+                    registry = get_upstream_session_registry()
+                except RegistryNotInitializedError:
+                    registry = None
+                if registry is not None:
+                    async with registry.acquire(
+                        downstream_session_id=downstream_session_id,
+                        gateway_id=gateway_id,
                         url=gateway_url,
                         headers=headers,
-                        transport_type=pool_transport_type,
-                        user_identity=pool_user_identity,
-                        gateway_id=gateway_id,
-                    ) as pooled:
-                        remote_result = await pooled.session.get_prompt(remote_name, arguments=prompt_arguments)
+                        transport_type=registry_transport_type,
+                    ) as upstream:
+                        remote_result = await _get_prompt_with_meta(upstream.session, remote_name, prompt_arguments, meta_data)
                         return PromptResult(
                             messages=[
                                 Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message)
@@ -368,12 +437,12 @@ class PromptService(BaseService):
                 async with sse_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as streams:
                     async with ClientSession(*streams) as session:
                         await session.initialize()
-                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
             else:
                 async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         await session.initialize()
-                        remote_result = await session.get_prompt(remote_name, arguments=prompt_arguments)
+                        remote_result = await _get_prompt_with_meta(session, remote_name, prompt_arguments, meta_data)
 
             return PromptResult(
                 messages=[
@@ -671,6 +740,8 @@ class PromptService(BaseService):
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other prompt registration errors
             ContentSizeError: For template size exceed
+            ContentPatternError: If template contains malicious patterns (US-3)
+            TemplateValidationError: For template security violations (US-4)
 
         Examples:
             >>> import logging
@@ -707,8 +778,16 @@ class PromptService(BaseService):
                 ip_address=created_from_ip,
             )
 
-            # Validate template syntax
-            self._validate_template(prompt.template)
+            # Validate template security (US-4)
+            content_security.validate_prompt_template(
+                template=prompt.template,
+                name=prompt.name,
+                user_email=created_by or owner_email,
+                ip_address=created_from_ip,
+            )
+
+            # Note: Template syntax validation is now handled by validate_prompt_template above
+            # No need for duplicate _validate_template call
 
             # Extract required arguments from template
             required_args = self._get_required_arguments(prompt.template)
@@ -892,6 +971,26 @@ class PromptService(BaseService):
                 custom_fields={"prompt_name": prompt.name, "visibility": visibility},
             )
             raise cse
+        except TemplateValidationError as tve:
+            db.rollback()
+            # Re-raise without wrapping so global/admin handlers can catch it
+            raise tve
+        except ContentPatternError as cpe:
+            db.rollback()
+            # Sanitize pattern_matched to prevent log injection (CWE-117)
+            sanitized_pattern = cpe.pattern_matched.replace("\n", "\\n").replace("\r", "\\r")
+            logger.error(f"Malicious pattern detected in prompt template: {sanitized_pattern}")
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt creation failed - Malicious pattern detected",
+                event_type="prompt_creation_failed",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=cpe,
+                custom_fields={"prompt_name": prompt.name},
+            )
+            raise cpe
         except Exception as e:
             db.rollback()
 
@@ -955,6 +1054,8 @@ class PromptService(BaseService):
 
         Raises:
             PromptError: If bulk registration fails critically
+            ContentSizeError: If any template exceeds size limits
+            TemplateValidationError: If any template contains dangerous patterns or invalid syntax
 
         Examples:
             >>> import logging
@@ -1041,8 +1142,16 @@ class PromptService(BaseService):
                         content_security = get_content_security_service()
                         content_security.validate_prompt_size(template=prompt.template, name=prompt.name, user_email=created_by, ip_address=created_from_ip)
 
-                        # Validate template syntax
-                        self._validate_template(prompt.template)
+                        # Validate template security (US-4)
+                        content_security.validate_prompt_template(
+                            template=prompt.template,
+                            name=prompt.name,
+                            user_email=created_by,
+                            ip_address=created_from_ip,
+                        )
+
+                        # Note: Template syntax validation is now handled by validate_prompt_template above
+                        # No need for duplicate _validate_template call
 
                         # Extract required arguments from template
                         required_args = self._get_required_arguments(prompt.template)
@@ -1169,6 +1278,11 @@ class PromptService(BaseService):
                             prompts_to_add.append(db_prompt)
                             stats["created"] += 1
 
+                    except TemplateValidationError as tve:
+                        # Template validation errors should fail fast, not continue
+                        db.rollback()
+                        logger.error(f"Template validation failed for prompt {prompt.name}: {tve.reason}")
+                        raise tve
                     except Exception as e:
                         stats["failed"] += 1
                         stats["errors"].append(f"Failed to process prompt {prompt.name}: {str(e)}")
@@ -1216,6 +1330,9 @@ class PromptService(BaseService):
 
                 logger.info(f"Bulk registered {len(prompts_to_add)} prompts, updated {len(prompts_to_update)} prompts in chunk")
 
+            except TemplateValidationError:
+                # Template validation errors should fail fast - re-raise immediately
+                raise
             except Exception as e:
                 db.rollback()
                 logger.error(f"Failed to process chunk in bulk prompt registration: {str(e)}")
@@ -1682,10 +1799,13 @@ class PromptService(BaseService):
         if visibility == "public":
             return True
 
-        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
-        # This happens when is_admin=True and no team scoping in token
+        # Admin bypass (PR #4341 invariant): never reveal another user's private rows.
+        # Anonymous bypass sees public + team only; a DB-resolved admin session
+        # additionally sees their own private rows. Matches a2a_service._visible_agent_ids.
         if token_teams is None and user_email is None:
-            return True
+            return visibility != "private"
+        if token_teams is None and user_email and is_user_admin(db, user_email):
+            return visibility != "private" or prompt_owner_email == user_email
 
         # No user context (but not admin) = deny access to non-public prompts
         if not user_email:
@@ -1786,7 +1906,7 @@ class PromptService(BaseService):
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
-            _meta_data: Optional metadata for prompt retrieval (not used currently).
+            _meta_data: Optional metadata forwarded as _meta to the upstream MCP gateway during prompt retrieval.
 
         Returns:
             Prompt result with rendered messages
@@ -1947,7 +2067,7 @@ class PromptService(BaseService):
                 if self._should_fetch_gateway_prompt(prompt):
                     # Release the read transaction before any remote network I/O.
                     db.commit()
-                    result = await self._fetch_gateway_prompt_result(prompt, arguments, user)
+                    result = await self._fetch_gateway_prompt_result(prompt, arguments, meta_data=_meta_data)
                 elif not arguments:
                     result = PromptResult(
                         messages=[
@@ -2110,6 +2230,8 @@ class PromptService(BaseService):
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other update errors
             ContentSizeError: For template size exceed
+            ContentPatternError: If template contains malicious patterns (US-3)
+            TemplateValidationError: If template contains dangerous patterns or invalid syntax
 
         Examples:
             >>> import logging
@@ -2217,8 +2339,19 @@ class PromptService(BaseService):
                     user_email=modified_by or user_email,
                     ip_address=modified_from_ip,
                 )
+
+                # Validate template security (US-4)
+                content_security.validate_prompt_template(
+                    template=prompt_update.template,
+                    name=prompt.name,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
+
+                # Note: Template syntax validation is now handled by validate_prompt_template above
+                # No need for duplicate _validate_template call
+
                 prompt.template = prompt_update.template
-                self._validate_template(prompt.template)
                 # Clear template cache to reduce memory growth
                 _compile_jinja_template.cache_clear()
             if prompt_update.arguments is not None:
@@ -2387,6 +2520,26 @@ class PromptService(BaseService):
                 error=cse,
             )
             raise cse
+        except TemplateValidationError as tve:
+            db.rollback()
+            # Re-raise without wrapping so global/admin handlers can catch it
+            raise tve
+        except ContentPatternError as cpe:
+            db.rollback()
+            # Sanitize pattern_matched to prevent log injection (CWE-117)
+            sanitized_pattern = cpe.pattern_matched.replace("\n", "\\n").replace("\r", "\\r")
+            logger.error(f"Malicious pattern detected in prompt template: {sanitized_pattern}")
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed - Malicious pattern detected",
+                event_type="prompt_update_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=cpe,
+            )
+            raise cpe
         except Exception as e:
             db.rollback()
 
@@ -2542,20 +2695,29 @@ class PromptService(BaseService):
 
     # Get prompt details for admin ui
 
-    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def get_prompt_details(
+        self,
+        db: Session,
+        prompt_id: Union[int, str],
+        include_inactive: bool = False,  # pylint: disable=unused-argument
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
-        Get prompt details by ID.
+        Get prompt details by ID with access control.
 
         Args:
             db: Database session
             prompt_id: ID of prompt
             include_inactive: Whether to include inactive prompts
+            user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
+            token_teams: JWT-scoped team list used for Layer 1 visibility checks.
 
         Returns:
             Dictionary of prompt details
 
         Raises:
-            PromptNotFoundError: If the prompt is not found
+            PromptNotFoundError: If the prompt is not found or the caller lacks visibility.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -2573,7 +2735,23 @@ class PromptService(BaseService):
         prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
-        # Return the fully converted prompt including metrics
+
+        if not await self._check_prompt_access(db, prompt, user_email, token_teams):
+            structured_logger.log(
+                level="INFO",
+                message="Prompt access denied",
+                event_type="prompt_access_denied",
+                component="prompt_service",
+                resource_type="prompt",
+                resource_id=str(prompt.id),
+                team_id=getattr(prompt, "team_id", None),
+                user_email=user_email,
+                custom_fields={
+                    "visibility": getattr(prompt, "visibility", None),
+                    "admin_bypass": user_email is None and token_teams is None,
+                },
+            )
+            raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         prompt.team = self._get_team_name(db, prompt.team_id)
         prompt_data = self.convert_prompt_to_read(prompt)
 
@@ -2830,6 +3008,12 @@ class PromptService(BaseService):
         try:
             jinja_template = _compile_jinja_template(template)
             return jinja_template.render(**arguments)
+        except JinjaSecurityError as sec_err:
+            # SandboxedEnvironment caught an unsafe attribute / call access
+            # (e.g. {{ x.__class__.__subclasses__() }}). Do NOT fall through
+            # to str.format: its attribute-access syntax ({x.__class__}) would
+            # re-open the same hole we just blocked.
+            raise PromptError(f"Failed to render template: sandbox rejected unsafe operation ({sec_err})")
         except Exception:
             try:
                 return template.format(**arguments)

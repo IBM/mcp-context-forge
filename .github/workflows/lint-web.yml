@@ -12,12 +12,6 @@
 name: Web Lint & Static Analysis
 
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "mcpgateway/static/**"
-      - "mcpgateway/templates/**"
-      - ".github/workflows/lint-web.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]

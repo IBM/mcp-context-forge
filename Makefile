@@ -39,8 +39,7 @@ MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
 
 # Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+VENV_DIR ?= $(CURDIR)/.venv
 
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
@@ -101,6 +100,28 @@ CONTAINER_CPUS   = 2
 # The -r flag for xargs is GNU-specific and will fail on macOS
 XARGS_FLAGS := $(shell [ "$$(uname)" = "Darwin" ] && echo "" || echo "-r")
 
+# -----------------------------------------------------------------------------
+#  Allow override of the image to be used in various docker compose
+#  up and down actions
+# -----------------------------------------------------------------------------
+ifndef IMAGE_LOCAL
+  # Base image name (without any prefix)
+  IMAGE_BASE := mcpgateway/mcpgateway
+  IMAGE_TAG := latest
+
+  # Handle runtime-specific image naming
+  ifeq ($(CONTAINER_RUNTIME),podman)
+    # Podman adds localhost/ prefix for local builds
+    IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  else
+    # Docker doesn't add prefix
+    IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
+    IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
+    IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
+  endif
+endif
 
 # =============================================================================
 # 📖 DYNAMIC HELP
@@ -244,6 +265,7 @@ INTERROGATE_VERSION     ?= 1.7.0
 RADON_VERSION           ?= 6.0.1
 YAMLLINT_VERSION        ?= 1.38.0
 TOMLCHECK_VERSION       ?= 0.2.3
+PYSPELLING_VERSION      ?= 2.11
 
 # detect-secrets: pinned to IBM's hardened fork (Tag 0.13.1+ibm.64.dss).
 # Uses a git-URL + commit SHA rather than a PyPI version because the IBM
@@ -253,7 +275,7 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
+	@mkdir -p "$(VENV_DIR)"
 	@$(UV_BIN) venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
@@ -273,8 +295,8 @@ install-db: venv
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust not available (optional)"; \
 	else \
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
 	fi
@@ -359,7 +381,7 @@ js-build:                        ## Install npm dependencies and build JS bundle
 	fi
 
 ## --- Primary servers ---------------------------------------------------------
-serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
+serve: install js-build                  ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
@@ -724,10 +746,12 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-mcp-cli         - Run MCP protocol tests via mcp-cli against live gateway (localhost:8080)
-# help:                        Requires: mcp-cli installed, ContextForge running (docker-compose up)
-# help:                        Override gateway URL: MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-cli
-# help:                        No LLM or API key required - tests MCP protocol only
+# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
+# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
+# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
+# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -759,9 +783,10 @@ clean:
 # Dirs/files always excluded from standard pytest runs
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/e2e/test_entra_id_integration.py \
-    tests/e2e/test_mcp_cli_protocol.py \
+    tests/e2e/test_mcp_protocol_e2e.py \
     tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust
+    tests/e2e_rust \
+    tests/protocol_compliance
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -773,13 +798,46 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
-	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+test-mcp-protocol-e2e:  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_cli_protocol.py -v -s --tb=short \
-			|| { echo "❌ mcp-cli protocol tests failed!"; exit 1; }; \
-		echo "✅ mcp-cli protocol tests passed!"'
+		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+			|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }; \
+		echo "✅ MCP protocol E2E tests passed!"'
+
+test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
+	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
+	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
+	@$(MAKE) test-mcp-protocol-e2e
+
+test-protocol-compliance:  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
+	@echo "📜 Running MCP protocol compliance harness (tests/protocol_compliance)..."
+	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
+			|| { echo "❌ protocol compliance harness failed!"; exit 1; }; \
+		echo "✅ protocol compliance harness passed!"'
+
+test-protocol-compliance-reference:  ## Protocol compliance harness — reference server only (fast, always-on)
+	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "reference-stdio" -v --tb=short \
+			|| { echo "❌ reference-target compliance harness failed!"; exit 1; }; \
+		echo "✅ reference-target compliance harness passed!"'
+
+test-protocol-compliance-gateway:  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
+	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+			|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }; \
+		echo "✅ gateway-target compliance harness passed!"'
+
+test-protocol-compliance-matrix:  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
+		$(VENV_DIR)/bin/python scripts/compliance_matrix.py $(MATRIX_ARGS)'
 
 test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1617,9 +1675,10 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@mkdir -p reports
+	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
 	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile sso up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -1630,6 +1689,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
+	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
@@ -1676,7 +1736,7 @@ testing-rebuild-rust-full:                 ## Rebuild Rust image with no cache, 
 .PHONY: testing-down
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector --profile dast --profile sso down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 .PHONY: testing-status
@@ -2955,6 +3015,87 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 			--processes=-1'
 
 # =============================================================================
+# 🔴 OCP DEPLOYMENT & BENCHMARK
+# =============================================================================
+# Make targets wrap Ansible playbooks in ansible/ocp/playbooks/.
+# All logic lives in the playbooks — Make provides a simpler interface.
+# Requires: pip install ansible && ansible-galaxy collection install kubernetes.core
+
+# OCP_NS is used as both the namespace and the Helm release name (kept identical for simplicity)
+OCP_NS ?=
+BENCH_USERS ?= 125
+BENCH_SPAWN ?= 30
+BENCH_RUNTIME ?= 60s
+OCP_INVENTORY ?= ansible/ocp/inventory/cluster.yml
+
+define check_ansible
+@command -v ansible-playbook >/dev/null 2>&1 || \
+	(echo "ERROR: ansible-playbook not found." && \
+	 echo "Install with: pip install ansible && ansible-galaxy collection install kubernetes.core" && \
+	 exit 1)
+endef
+
+ocp-install-operator:                        ## Install CrunchyData PGO operator (one-time, cluster-wide, requires OCP_CLUSTER)
+	$(check_ansible)
+	@if [ -z "$(OCP_CLUSTER)" ]; then echo "Usage: make ocp-install-operator OCP_CLUSTER=<api-url>"; echo "Example: make ocp-install-operator OCP_CLUSTER=https://api.my-cluster.example.com:6443"; exit 1; fi
+	@CURRENT=$$(oc whoami --show-server 2>/dev/null) || (echo "ERROR: Not logged in. Run: oc login $(OCP_CLUSTER)" && exit 1); \
+		if [ "$$CURRENT" != "$(OCP_CLUSTER)" ]; then \
+			echo "ERROR: Currently logged into $$CURRENT but OCP_CLUSTER=$(OCP_CLUSTER)"; \
+			echo "Run: oc login $(OCP_CLUSTER)"; exit 1; \
+		fi
+	@/bin/bash -c 'read -p "Install CrunchyData PGO operator on $(OCP_CLUSTER)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/install-operator.yml \
+		-i $(OCP_INVENTORY) \
+		-e skip_confirm=true
+
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-deploy for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/deploy.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark-setup:                         ## Enable Locust and configure server ID for benchmark (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark-setup OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-benchmark-setup for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+ocp-benchmark:                               ## Run MCP benchmark on OCP (requires OCP_NS; optional BENCH_USERS, BENCH_SPAWN, BENCH_RUNTIME)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-benchmark OCP_NS=<namespace> [BENCH_USERS=500 BENCH_SPAWN=50 BENCH_RUNTIME=60s]"; exit 1; fi
+	ansible-playbook ansible/ocp/playbooks/benchmark.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e bench_users=$(BENCH_USERS) \
+		-e bench_spawn=$(BENCH_SPAWN) \
+		-e bench_runtime=$(BENCH_RUNTIME) \
+		-e skip_confirm=true
+
+ocp-uninstall:                               ## Uninstall the ContextForge Helm release on OCP (requires OCP_NS)
+	$(check_ansible)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-uninstall OCP_NS=<namespace>"; exit 1; fi
+	@/bin/bash -c 'read -p "Run ocp-uninstall for namespace $(OCP_NS)? [y/N]: " ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || (echo "Aborted." && exit 1)'
+	ansible-playbook ansible/ocp/playbooks/uninstall.yml \
+		-i $(OCP_INVENTORY) \
+		-e ocp_namespace=$(OCP_NS) \
+		-e skip_confirm=true
+
+# =============================================================================
 # 📊 JMETER PERFORMANCE TESTING
 # =============================================================================
 # help: 📊 JMETER PERFORMANCE TESTING
@@ -3713,7 +3854,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.25.8
+LINT_GO_TOOLCHAIN ?= go1.26.2
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -4113,7 +4254,7 @@ pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
 spellcheck:                         ## 🔤  Spell-check
-	@$(VENV_DIR)/bin/pyspelling || true
+	@$(UV_BIN) tool run --with 'lxml>=6.1.0' pyspelling==$(PYSPELLING_VERSION) || true
 
 .PHONY: fawltydeps
 fawltydeps:                         ## 🏗️  Dependency sanity
@@ -4899,7 +5040,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -4937,9 +5078,8 @@ hadolint:
 # =============================================================================
 # help: 📦 DEPENDENCY MANAGEMENT
 # help: deps-update          - Run update-deps.py to update all dependencies in pyproject.toml and docs/requirements.txt
-# help: containerfile-update - Update base image in Containerfile to latest tag
 
-.PHONY: deps-update containerfile-update
+.PHONY: deps-update
 
 deps-update:
 	@echo "⬆️  Updating project dependencies via update_dependencies.py..."
@@ -4947,12 +5087,6 @@ deps-update:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --ignore-dependency starlette --file pyproject.toml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 ./.github/tools/update_dependencies.py --file docs/requirements.txt"
 	@echo "✅ Dependencies updated in pyproject.toml and docs/requirements.txt"
-
-containerfile-update:
-	@echo "⬆️  Updating base image in Containerfile to :latest tag..."
-	@test -f Containerfile || { echo "❌ Containerfile not found."; exit 1; }
-	@sed -i.bak -E 's|^(FROM\s+\S+):[^\s]+|\1:latest|' Containerfile && rm -f Containerfile.bak
-	@echo "✅ Base image updated to latest."
 
 
 # =============================================================================
@@ -4967,12 +5101,12 @@ containerfile-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
+dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
 	@$(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building Rust plugins..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		echo "🦀 Building Rust..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -4981,14 +5115,14 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@echo ''
 	@echo '💡 To publish both Python and Rust packages:'
 	@echo '   make publish         # Publish Python package'
-	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
+	@echo '   make rust-release-publish  # Publish Rust wheels (if configured)'
 
 wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@echo "📦 Building Python wheel..."
 	@$(UV_BIN) build --wheel
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
-		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust"; exit 0; }; \
 		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
@@ -5040,22 +5174,6 @@ CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker ||
 
 print-runtime:
 	@echo Using container runtime: $(CONTAINER_RUNTIME)
-# Base image name (without any prefix)
-IMAGE_BASE := mcpgateway/mcpgateway
-IMAGE_TAG := latest
-
-# Handle runtime-specific image naming
-ifeq ($(CONTAINER_RUNTIME),podman)
-  # Podman adds localhost/ prefix for local builds
-  IMAGE_LOCAL := localhost/$(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := localhost/$(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-else
-  # Docker doesn't add prefix
-  IMAGE_LOCAL := $(IMAGE_BASE):$(IMAGE_TAG)
-  IMAGE_LOCAL_DEV := $(IMAGE_BASE)-dev:$(IMAGE_TAG)
-  IMAGE_PUSH := $(IMAGE_BASE):$(IMAGE_TAG)
-endif
 
 print-image:
 	@echo "🐳 Container Runtime: $(CONTAINER_RUNTIME)"
@@ -5110,8 +5228,8 @@ endef
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
-# Containerfile to use (can be overridden)
-#CONTAINER_FILE ?= Containerfile
+# Containerfile to use (can be overridden). Defaults to Containerfile.lite (the
+# multi-stage production build); falls back to Dockerfile if absent.
 CONTAINER_FILE ?= $(shell [ -f "Containerfile.lite" ] && echo "Containerfile.lite" || echo "Dockerfile")
 
 
@@ -5181,7 +5299,7 @@ container-build-rust:
 
 container-build-rust-lite:
 	@echo "🦀 Building lite container WITH Rust plugins..."
-	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
+	$(MAKE) container-build ENABLE_RUST_BUILD=1
 
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
@@ -5578,13 +5696,13 @@ container-wait-healthy:
 	podman-logs podman-stats podman-top podman-shell
 
 podman-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-prod:
-	@$(MAKE) container-build CONTAINER_RUNTIME=podman CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=podman
 
 podman-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=podman
@@ -5665,19 +5783,19 @@ podman-top:
 	docker-top docker-shell
 
 docker-dev:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod-rust:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1
 
 docker-prod-rust-no-cache:
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker RUST_MCP_BUILD=1 DOCKER_BUILD_ARGS="--no-cache"
 
 # Build production image with profiling tools (memray) for performance debugging
 # Usage: make docker-prod-profiling
@@ -5688,7 +5806,7 @@ docker-prod-rust-no-cache:
 #   memray flamegraph /tmp/profile.bin -o flamegraph.html
 docker-prod-profiling:
 	@echo "📊 Building production image WITH profiling tools..."
-	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -7442,7 +7560,7 @@ test-full: coverage test-js test-ui-report
 # 🔒 SECURITY TOOLS
 # =============================================================================
 # help: 🔒 SECURITY TOOLS
-# help: security-all        - Run all security tools (semgrep, dodgy, gitleaks, etc.)
+# help: security-all        - Run all security tools (semgrep, dodgy, detect-secrets-scan, etc.)
 # help: security-report     - Generate comprehensive security report in docs/security/
 # help: security-fix        - Auto-fix security issues where possible (pyupgrade, etc.)
 # help: semgrep             - Static analysis for security patterns
@@ -7452,8 +7570,6 @@ test-full: coverage test-js test-ui-report
 # help: interrogate         - Check docstring coverage
 # help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
-# help: gitleaks-install    - Install gitleaks secret scanner
-# help: gitleaks            - Scan git history for secrets
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
@@ -7462,9 +7578,9 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim sri-verify
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -7476,9 +7592,6 @@ security-all:
 	    echo "- $$t"; \
 	    $(MAKE) $$t || true; \
 	done
-	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@echo "🔍  Running gitleaks (if installed)..."
-	@command -v gitleaks >/dev/null 2>&1 && $(MAKE) gitleaks || echo "⚠️  gitleaks not installed - run 'make gitleaks-install'"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo "✅  Security scan complete!"
 
@@ -7633,8 +7746,17 @@ async-clean:
 	@pkill -f "aiomonitor" || true
 	@pkill -f "snakeviz" || true
 
-# Exclude pattern for detect-secrets to skip common directories and auto generated files
-DETECT_SECRETS_FILES_EXCLUDE := '^.secrets.baseline|package-lock.json|Cargo.lock|scripts/sign_image.sh|scripts/zap|sonar-project.properties|uv.lock'
+# Exclude pattern for detect-secrets to skip common directories and auto generated files.
+# Uses Python verbose-regex mode (?x) so each alternative can be commented.
+# Backslash line continuations collapse the value to one line with interleaved
+# spaces — harmless under (?x).
+DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
+  package-lock\.json$$         \
+  |Cargo\.lock$$               \
+  |uv\.lock$$                  \
+  |go\.sum$$                   \
+  |mcpgateway/sri_hashes\.json$$ \
+)'
 
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
@@ -7700,6 +7822,10 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 	@echo "🛡️  Running DevSkim static analysis..."
 	@if command -v devskim >/dev/null 2>&1 || [ -f "$$HOME/.dotnet/tools/devskim" ]; then \
 		export PATH="$$PATH:$$HOME/.dotnet/tools" && \
+		export DOTNET_ROLL_FORWARD=Major && \
+		if [ -z "$$DOTNET_ROOT" ] && [ -d /opt/homebrew/opt/dotnet/libexec ]; then \
+			export DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec; \
+		fi && \
 		echo "📂 Scanning mcpgateway/ for security anti-patterns..." && \
 		devskim analyze --source-code mcpgateway --output-file devskim-results.sarif -f sarif && \
 		echo "" && \
@@ -7768,7 +7894,7 @@ security-fix:                       ## 🔧 Auto-fix security issues where possi
 	@echo "✅ Auto-fixes applied where possible"
 	@echo "⚠️  Manual review still required for:"
 	@echo "   - Dependency updates (run 'make update')"
-	@echo "   - Secrets in code (review dodgy/gitleaks output)"
+	@echo "   - Secrets in code (review dodgy/detect-secrets output)"
 	@echo "   - Security patterns (review semgrep output)"
 	@echo "   - DevSkim findings (review devskim-results.sarif)"
 
@@ -7875,9 +8001,9 @@ snyk-iac-test:                      ## 🏗️ Test IaC files for security issue
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-compose-results.json || true; \
 	fi
-	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ]; then \
+	@if [ -f "Dockerfile" ] || [ -f "Containerfile" ] || [ -f "Containerfile.lite" ]; then \
 		echo "📦 Testing Dockerfile/Containerfile..."; \
-		snyk iac test $(CONTAINERFILE) \
+		snyk iac test $(CONTAINER_FILE) \
 			--severity-threshold=medium \
 			--org=$${SNYK_ORG:-} \
 			--json-file-output=snyk-iac-docker-results.json || true; \
@@ -8394,19 +8520,57 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🦀 RUST MCP RUNTIME (OPTIONAL)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🦀 RUST
+# =============================================================================
+# 🦀 RUST (workspace: crates/*)
+# =============================================================================
+# help: 🦀 RUST
+# help: -----------------------------------------------------------------------------
+# help: Workspace-wide (all crates):
+# help: rust-ensure-deps                      - Ensure Rust toolchain and maturin are available
+# help: rust-build                            - Build Rust workspace (release)
+# help: rust-build-check                      - Build workspace (debug) + verify maturin crates build
+# help: rust-test                             - Run Rust workspace tests
+# help: rust-format                           - Format Rust code (cargo fmt)
+# help: rust-fmt-check                        - Check formatting (cargo fmt --check)
+# help: rust-lint                             - Lint Rust code (cargo clippy)
+# help: rust-check                            - Run all Rust checks (build, fmt, clippy, test)
+# help: rust-doc                              - Build Rust documentation
+# help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
+# help: rust-licenses                         - Run cargo-deny license check
+# help: rust-coverage                         - Run coverage (terminal, HTML, Cobertura XML)
+# help: rust-diff-cover                       - Run changed-line coverage for Rust
+# help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
+# help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
 # help:
-# help: Rust MCP Runtime (Optional)
-# help: ========================================================================================================
+# help: Maturin (Python bindings, crates/* with pyproject.toml):
+# help: rust-install                          - Install maturin crates into venv (release build)
+# help: rust-dev                              - Install maturin crates in debug mode
+# help: rust-stub-gen                         - Generate Python type stubs for maturin crates
+# help: rust-verify-stubs                     - Verify stub files and pyproject.toml
+# help: rust-verify                           - Verify maturin crate installation
+# help: rust-clean-stubs                      - Remove generated stub files from maturin crates
+# help: rust-uninstall-plugins                - Uninstall maturin crates from Python environment
+# help: rust-build-wheels                     - Build Python wheels for maturin crates
+# help:
+# help: Runtime:
 # help: rust-mcp-runtime-build                - Build the experimental Rust MCP runtime
 # help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
+# help: -----------------------------------------------------------------------------
 
-.PHONY: rust-ensure-deps
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
+.PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
-rust-ensure-deps:                       ## Ensure Rust toolchain is installed
+# Intentional broad scan under crates/: workspace-owned crates live here and CI
+# should pick up new maturin crates automatically rather than curating a short list.
+RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+# Keep rust server helpers discoverable without pulling mcp-servers/rust into the
+# shared workspace commands.
+RUST_MCP_DIRS := $(shell find mcp-servers/rust -maxdepth 2 -name Cargo.toml -exec dirname {} \; 2>/dev/null | sort -u)
+
+rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
 		echo "🦀 Rust not found."; \
 		echo "❌ Refusing to install Rust via remote shell bootstrapper."; \
@@ -8432,76 +8596,173 @@ rust-ensure-deps:                       ## Ensure Rust toolchain is installed
 		fi; \
 	fi
 
-rust-install: rust-ensure-deps          ## Install all Rust plugins into venv
-	@$(MAKE) -C plugins_rust install
+rust-verify-python-crates:             ## Fail if a PyO3 crate is missing pyproject.toml packaging metadata
+	@python3 -c 'import pathlib, sys; cargos=sorted(pathlib.Path("crates").rglob("Cargo.toml")); missing=[cargo.parent.as_posix() for cargo in cargos if "pyo3" in cargo.read_text(encoding="utf-8", errors="ignore").lower() and not cargo.with_name("pyproject.toml").exists()]; print("✅ PyO3 crate packaging metadata verified" if not missing else "❌ PyO3 crates missing pyproject.toml:"); [print(f"  - {crate}") for crate in missing]; sys.exit(1 if missing else 0)'
 
-rust-build: rust-ensure-deps            ## Build Rust plugins (release)
-	@$(MAKE) -C plugins_rust build
+rust-install: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Install maturin crates into venv
+	@echo "🦀 Installing maturin crates into venv (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate..."; \
+		uv run maturin develop --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed"
 
-rust-dev: rust-ensure-deps              ## Build and install Rust plugins (development mode)
-	@$(MAKE) -C plugins_rust install
+rust-build: rust-ensure-deps            ## Build Rust workspace (release)
+	@echo "🦀 Building Rust workspace (release)..."
+	@cargo build --workspace --release
+	@echo "✅ Rust workspace built"
 
-rust-test: rust-ensure-deps             ## Run Rust plugin and MCP runtime tests
-	@$(MAKE) -C plugins_rust test
-	@$(MAKE) -C tools_rust/mcp_runtime test
+rust-build-check: rust-ensure-deps rust-verify-python-crates  ## Build Rust workspace + verify all maturin crates build (debug, for CI)
+	@echo "🦀 Building Rust workspace..."
+	@cargo build --workspace
+	@echo "🦀 Verifying all maturin crates build..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building maturin crate: $$crate"; \
+		uv run maturin build --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ Rust workspace and all maturin crates build OK"
 
-rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
-	@$(MAKE) -C plugins_rust test-python
+rust-dev: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build and install maturin crates (debug mode)
+	@echo "🦀 Installing maturin crates (development/debug mode)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Installing $$crate (debug)..."; \
+		uv run maturin develop --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All maturin crates installed (dev mode)"
 
-rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
+rust-test: rust-ensure-deps             ## Run Rust workspace tests
+	@echo "🦀 Running Rust workspace tests..."
+	@cargo test --workspace
+	@echo "✅ Rust tests passed"
 
-rust-bench: rust-ensure-deps            ## Run Rust benchmarks
-	@$(MAKE) -C plugins_rust bench
+rust-format: rust-ensure-deps           ## Format Rust code (cargo fmt)
+	@echo "🦀 Formatting Rust code..."
+	@cargo fmt --all
+	@echo "✅ Rust code formatted"
 
-rust-bench-build: rust-ensure-deps      ## Compile Rust plugin benchmarks without running them
-	@$(MAKE) -C plugins_rust bench-build
+rust-fmt-check: rust-ensure-deps        ## Check formatting (cargo fmt --check)
+	@echo "🦀 Checking Rust code format..."
+	@cargo fmt --all -- --check
+	@echo "✅ Rust format check passed"
 
-rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
-	@$(MAKE) -C plugins_rust bench-compare
+rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
+	@echo "🦀 Linting Rust workspace..."
+	@cargo clippy --workspace --all-targets -- -D warnings -A clippy::multiple_crate_versions
+	@echo "✅ Rust lint passed"
 
-rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
-	@$(MAKE) -C plugins_rust compare
-
-rust-check: rust-ensure-deps            ## Run all Rust checks (plugins and MCP runtime)
-	@$(MAKE) -C plugins_rust check
-	@$(MAKE) -C tools_rust/mcp_runtime lint
+rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
+	@echo "✅ Rust check passed"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
-	@$(MAKE) -C plugins_rust doc
+	@echo "🦀 Building Rust documentation..."
+	@cargo doc --workspace --no-deps --document-private-items
+	@echo "✅ Rust doc built"
 
-rust-build-wheels: rust-ensure-deps     ## Build Python wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust build-wheels
+rust-build-wheels: rust-ensure-deps rust-verify-python-crates rust-stub-gen  ## Build Python wheels for maturin crates
+	@echo "🦀 Building wheels for maturin crates (from workspace root)..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		echo "  Building wheel: $$crate"; \
+		uv run maturin build --release --manifest-path $$crate/Cargo.toml || exit 1; \
+	done
+	@echo "✅ All wheels built"
 
-rust-audit: rust-ensure-deps            ## Run security audit on all Rust plugins
-	@$(MAKE) -C plugins_rust audit
+rust-vet: rust-ensure-deps              ## Run cargo-vet with strict supply-chain policy
+	@echo "🦀 Running cargo-vet..."
+	@command -v cargo-vet >/dev/null 2>&1 || { echo "Installing cargo-vet..."; cargo install --locked cargo-vet --version 0.10.2; }
+	@cargo vet check
+	@echo "✅ Rust supply-chain vetting passed"
 
-rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on all Rust plugins
-	@$(MAKE) -C plugins_rust deny
+rust-deny: rust-ensure-deps             ## Run cargo-deny policy checks on the Rust workspace
+	@echo "🦀 Running cargo-deny policy checks (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
+	@cargo deny check advisories bans sources
+	@echo "✅ Rust dependency policy check done"
 
-rust-coverage: rust-ensure-deps         ## Run coverage for all Rust plugins
-	@$(MAKE) -C plugins_rust coverage
+rust-licenses: rust-ensure-deps         ## Run cargo-deny license check (workspace)
+	@echo "🦀 Running cargo-deny license check (workspace)..."
+	@command -v cargo-deny >/dev/null 2>&1 || { echo "Installing cargo-deny..."; cargo install --locked cargo-deny --version 0.19.0; }
+	@cargo deny check licenses
+	@echo "✅ Rust license check done"
 
-rust-release: rust-ensure-deps          ## Build release wheels for all Rust plugins
-	@$(MAKE) -C plugins_rust release
+rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
+	@echo "🦀 Running coverage (workspace)..."
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
+	@mkdir -p coverage
+	@cargo llvm-cov --workspace --html --output-dir coverage/rust
+	@cargo llvm-cov report --cobertura --output-path coverage/cobertura.xml
+	@cargo llvm-cov report
+	@echo "✅ Coverage artefacts: HTML in coverage/rust/html/index.html & XML in coverage/cobertura.xml ✔"
 
-rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
-	@$(MAKE) -C plugins_rust release-publish
+rust-diff-cover:                       ## Run changed-line coverage for Rust
+	@echo "📊  Running Rust diff-cover against main branch..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@if [ ! -f coverage/cobertura.xml ]; then \
+		echo "ℹ️  No coverage/cobertura.xml found - running rust-coverage first..."; \
+		$(MAKE) --no-print-directory rust-coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		diff-cover coverage/cobertura.xml --compare-branch=main --fail-under=90"
 
-rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
-	@$(MAKE) -C plugins_rust uninstall
+rust-bench-check: rust-ensure-deps      ## Verify benchmarks build (no run; for CI)
+	@echo "🦀 Verifying Rust benchmarks build (no run)..."
+	@cargo bench --workspace --no-run
+	@echo "✅ Rust benchmarks build OK"
 
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
-	@$(MAKE) -C plugins_rust uninstall
-	@$(MAKE) -C plugins_rust clean
+rust-uninstall-plugins: rust-ensure-deps ## Uninstall maturin crates from Python environment
+	@echo "🦀 Uninstalling maturin crates from venv..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(grep '^name = ' $$crate/pyproject.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
+		[ -n "$$pkg" ] && uv pip uninstall -y "$$pkg" 2>/dev/null || true; \
+	done
+	@echo "✅ Maturin crates uninstalled"
 
-rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
-	@$(MAKE) -C plugins_rust verify
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall maturin crates
+	@$(MAKE) --no-print-directory rust-uninstall-plugins
+	@echo "🦀 Cleaning Rust build artifacts..."
+	@cargo clean
+	@rm -rf target
+	@echo "✅ Rust clean done"
 
-rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
-	@$(MAKE) -C plugins_rust verify-stubs
+rust-verify: rust-ensure-deps rust-verify-python-crates  ## Verify maturin crate installation
+	@echo "🦀 Verifying maturin crate installations..."
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		pkg=$$(sed -n '/^\[lib\]/,/^\[/p' $$crate/Cargo.toml 2>/dev/null | grep '^name = ' | head -1 | sed 's/.*\"\([^\"]*\)\".*/\1/'); \
+		[ -z "$$pkg" ] && { echo "  ❌ $$crate: no [lib] name in Cargo.toml"; exit 1; }; \
+		uv run python -c "import $$pkg; print('  ✅ $$pkg')" || { echo "  ❌ $$pkg not installed"; exit 1; }; \
+	done
+	@echo "✅ All maturin crates verified"
 
-rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
-	@$(MAKE) -C plugins_rust clean-stubs
+rust-verify-stubs: rust-ensure-deps rust-verify-python-crates  ## Verify stub generation and pyproject.toml for maturin crates
+	@echo "🦀 Verifying stub files and pyproject.toml..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ ! -f $$crate/pyproject.toml ]; then echo "❌ $$crate: pyproject.toml missing"; exit 1; fi; \
+		pyi=$$(find $$crate/python -name "__init__.pyi" 2>/dev/null | head -1); \
+		if [ -z "$$pyi" ]; then echo "❌ $$crate: no __init__.pyi (run make rust-stub-gen)"; exit 1; fi; \
+		if [ ! -s "$$pyi" ]; then echo "❌ $$crate: stub file empty"; exit 1; fi; \
+		echo "  ✅ $$crate"; \
+	done
+	@echo "✅ All stubs verified"
+
+rust-clean-stubs: rust-ensure-deps rust-verify-python-crates  ## Remove generated stub files from maturin crates
+	@echo "🦀 Removing generated stub files..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		find $$crate/python -name "__init__.pyi" -type f -delete 2>/dev/null || true; \
+	done
+	@echo "✅ Rust clean-stubs done"
+
+rust-stub-gen: rust-ensure-deps rust-verify-python-crates  ## Generate Python type stubs for maturin crates that have stub_gen
+	@echo "🦀 Generating Python type stubs..."
+	@if [ -z "$(RUST_MATURIN_CRATES)" ]; then echo "ℹ️  No maturin crates found"; exit 0; fi
+	@for crate in $(RUST_MATURIN_CRATES); do \
+		if [ -f $$crate/src/bin/stub_gen.rs ]; then \
+			pkg=$$(grep '^name = ' $$crate/Cargo.toml 2>/dev/null | head -1 | sed 's/.*\"\(.*\)\".*/\1/'); \
+			echo "  Stub-gen: $$pkg"; \
+			cargo run -p $$pkg --bin "$${pkg}_stub_gen" || exit 1; \
+		fi; \
+	done
+	@echo "✅ All stub files generated"
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"
@@ -8517,39 +8778,29 @@ rust-install-targets: rust-ensure-deps  ## Install all Rust cross-compilation ta
 	@rustup target add aarch64-apple-darwin
 	@rustup target add x86_64-pc-windows-msvc
 
-rust-build-%: rust-ensure-deps               ## Build for specific target (use rust-build-<TARGET>)
-	@echo "🎯 Ensuring Rust target $* is installed..."
-	@rustup target add $*
-	@$(MAKE) -C plugins_rust build-target-$*
-
-rust-build-all-linux: rust-build-x86_64-unknown-linux-gnu rust-build-aarch64-unknown-linux-gnu rust-build-armv7-unknown-linux-gnueabihf rust-build-s390x-unknown-linux-gnu rust-build-powerpc64le-unknown-linux-gnu  ## Build for all Linux architectures
-	@echo "✅ Built for all Linux architectures"
-
-rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
-	@echo "🦀 Building for macOS..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@$(MAKE) -C plugins_rust build-target-aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
-	@echo "🦀 Building for Windows..."
-	@$(MAKE) -C plugins_rust build-target-x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
-	@echo "✅ Built for all platforms"
-
-rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
-	@echo "✅ Cross-compilation complete"
-
-rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
-	@echo "✅ Full cross-compilation setup and build complete"
-
-rust-mcp-runtime-build:                    ## Build the experimental Rust MCP runtime
+rust-mcp-runtime-build:                 ## Build the experimental Rust MCP runtime
 	@echo "🦀 Building experimental Rust MCP runtime..."
-	@cd tools_rust/mcp_runtime && cargo build --release
+	@cd crates/mcp_runtime && cargo build --release
 
-rust-mcp-runtime-test:                     ## Run tests for the experimental Rust MCP runtime
+rust-mcp-runtime-test:                  ## Run tests for the experimental Rust MCP runtime
 	@echo "🧪 Running Rust MCP runtime tests..."
-	@cd tools_rust/mcp_runtime && cargo test --release
+	@cd crates/mcp_runtime && cargo test --release
 
-rust-mcp-runtime-run:                      ## Run the experimental Rust MCP runtime against local gateway /rpc
+rust-mcp-runtime-run:                   ## Run the experimental Rust MCP runtime against local gateway /rpc
 	@echo "🚀 Starting Rust MCP runtime on http://127.0.0.1:8787 with backend http://127.0.0.1:4444/rpc"
-	@cd tools_rust/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
+	@cd crates/mcp_runtime && cargo run --release -- --backend-rpc-url http://127.0.0.1:4444/rpc --listen-http 127.0.0.1:8787
+
+rust-a2a-runtime-build:                    ## Build the experimental Rust A2A runtime
+	@echo "🦀 Building experimental Rust A2A runtime..."
+	@cd crates/a2a_runtime && cargo build --release
+
+rust-a2a-runtime-test:                     ## Run tests for the experimental Rust A2A runtime
+	@echo "🧪 Running Rust A2A runtime tests..."
+	@cd crates/a2a_runtime && cargo test --release
+
+rust-a2a-runtime-run:                      ## Run the experimental Rust A2A runtime on http://127.0.0.1:8788
+	@echo "🚀 Starting Rust A2A runtime on http://127.0.0.1:8788"
+	@cd crates/a2a_runtime && cargo run --release -- --listen-http 127.0.0.1:8788
 
 .PHONY: conc-02-gateways
 conc-02-gateways:                    ## Run CONC-02 gateways read-during-write check (manual env/token setup required)

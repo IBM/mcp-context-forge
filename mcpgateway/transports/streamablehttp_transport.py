@@ -38,7 +38,7 @@ import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
+from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -55,23 +55,34 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
-from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_500_INTERNAL_SERVER_ERROR
 from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
+from mcpgateway.transports.context import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.metrics import mcp_auth_cache_events_counter, oauth_verify_events_counter
+from mcpgateway.services.metrics import (
+    mcp_auth_cache_events_counter,
+    oauth_verify_events_counter,
+    transport_get_active_listeners_gauge,
+    transport_get_events_delivered_counter,
+    transport_get_rejected_counter,
+)
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
@@ -79,6 +90,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -226,8 +238,15 @@ completion_service: CompletionService = CompletionService()
 mcp_app: Server[Any] = Server("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
-request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
-user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+# First-Party
+# request_headers_var + user_context_var live in `mcpgateway.transports.context`
+# so service-layer code can read them without importing this module (which
+# would create an import cycle via prompt/tool/resource services). Imported
+# here for backwards-compat: external callers that already do
+# `from mcpgateway.transports.streamablehttp_transport import request_headers_var`
+# keep working.
+from mcpgateway.transports.context import request_headers_var, user_context_var, user_identity_var  # noqa: E402  # pylint: disable=wrong-import-position
+
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 
 
@@ -902,6 +921,110 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
     return f"{base}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
 
+def _is_valid_audience(value: Any) -> bool:
+    """Return True if ``value`` is an RFC 7519-compliant ``aud`` claim.
+
+    Per RFC 7519 §4.1.3 the ``aud`` claim is either a single ``StringOrURI``
+    or an array of them. PyJWT only enforces this shape when ``verify_aud``
+    is enabled, so a misconfigured IdP could otherwise mint tokens with
+    ``aud`` values like ``{"foo": "bar"}`` or ``42``. Persisting such a value
+    as the server's ``resource`` would then cause a ``TypeError`` inside
+    PyJWT on the *next* request (when it is forwarded as ``audience=...``),
+    locking the server's auth path until the operator manually clears the
+    bogus value. Validate up-front and skip persist on malformed shapes.
+
+    Args:
+        value: The raw ``aud`` claim value to validate.
+
+    Returns:
+        True iff ``value`` is a non-empty string or a non-empty list of
+        non-empty strings; False otherwise.
+    """
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value) and all(isinstance(item, str) and item.strip() for item in value)
+    return False
+
+
+def _persist_learned_server_audience(server_id: str, verified_claims: dict[str, Any], db: Session) -> None:
+    """Persist the ``aud`` claim from a verified OAuth token as ``resource``.
+
+    Called after successful signature + issuer verification of an inbound MCP
+    request. The token's ``aud`` claim is trustworthy at this point and
+    represents the IdP's authoritative audience value.
+
+    Persistence is **first-write-only**: the learned audience is written only
+    when ``oauth_config["resource"]`` is currently falsy. The MCP request path
+    only enforces server-level access on the inbound caller — it does not
+    require ``servers.update``. Allowing every authenticated request to
+    overwrite shared server configuration would let any user with server
+    access mutate global state on behalf of all other users (last-user-wins).
+    To re-learn a stale audience after an IdP change, an admin must clear the
+    ``resource`` field via the server update API (which does enforce
+    ``servers.update``). This also avoids two related failure modes:
+
+    * Silently collapsing an operator-configured multi-audience list
+      (e.g. ``["aud-a", "aud-b"]``) down to whichever single ``aud`` a given
+      token happened to carry, breaking other clients.
+    * Silently changing the operator's audience binding when an IdP starts
+      emitting unexpected ``aud`` values; an explicit auth failure is
+      preferable so the operator notices.
+
+    Empty strings and empty lists count as unset (Python truthiness), so an
+    admin can clear the field to either falsy value to trigger re-learning
+    on the next request.
+
+    Malformed ``aud`` values (anything other than a non-empty string or a
+    non-empty list of non-empty strings) are rejected up-front via
+    :func:`_is_valid_audience` so a bogus persist cannot break subsequent
+    requests inside PyJWT.
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims,
+    and already-set (truthy) resources are silently skipped; downstream DB
+    failures are logged but do not affect the current request's authentication
+    outcome.
+
+    Args:
+        server_id: Virtual-server identifier.
+        verified_claims: Decoded and *signature-verified* JWT claims.
+        db: Active database session.
+    """
+    raw_aud = verified_claims.get("aud")
+    if not _is_valid_audience(raw_aud):
+        if raw_aud is not None:
+            logger.warning(
+                "Refusing to persist malformed aud claim for server %s (type=%s)",
+                sanitize_for_log(server_id),
+                type(raw_aud).__name__,
+            )
+        return
+
+    try:
+        server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+        if server is None or not server.oauth_config:
+            return
+
+        # First-write-only: do not overwrite an existing usable resource.
+        # Empty strings and empty lists are treated as unset (Python
+        # truthiness) so an admin can clear the field via the server update
+        # API to trigger re-learning. See docstring for the authorization
+        # rationale.
+        if server.oauth_config.get("resource"):
+            return
+
+        updated_config = dict(server.oauth_config)
+        updated_config["resource"] = raw_aud
+        server.oauth_config = updated_config
+        db.flush()
+        logger.info(
+            "Learned OAuth audience from IdP token for server %s; persisted as resource",
+            sanitize_for_log(server_id),
+        )
+    except Exception:
+        logger.warning("Failed to persist learned audience for server %s", server_id, exc_info=True)
+
+
 async def _check_server_oauth_enforcement(server_id: str, user_context: Optional[dict[str, Any]]) -> None:
     """Reject unauthenticated callers when a server requires OAuth.
 
@@ -940,13 +1063,6 @@ async def _check_server_oauth_enforcement(server_id: str, user_context: Optional
     if is_authenticated:
         _oauth_checked_var.set(True)
         return  # Already authenticated — no need to check
-
-    # Lazy DB lookup to avoid import-time side-effects
-    # Third-Party
-    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-    # First-Party
-    from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
 
     try:
         async with get_db() as db:
@@ -1157,6 +1273,87 @@ async def _validate_streamable_session_access(
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
 
 
+def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestParams]:
+    """Build a ``PaginatedRequestParams`` carrying ``_meta`` when provided.
+
+    Args:
+        meta: Request metadata (_meta) from the original MCP request, or ``None``.
+
+    Returns:
+        A ``PaginatedRequestParams`` instance with ``_meta`` set, or ``None`` when *meta* is falsy.
+    """
+    if not meta:
+        return None
+    # CWE-532: log only key names, never values which may carry PII/tokens
+    logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+    return PaginatedRequestParams(_meta=meta)
+
+
+async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
+    """Send a JSON response for Streamable HTTP request handling paths.
+
+    Args:
+        send: ASGI send callable.
+        status_code: HTTP status code for the response.
+        payload: JSON-serializable response payload.
+    """
+    body = orjson.dumps(payload)
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status_code,
+            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+async def _close_streamable_http_session(
+    *,
+    mcp_session_id: str,
+    user_context: Optional[dict[str, Any]],
+) -> tuple[int, dict[str, Any]]:
+    """Close a stateful Streamable HTTP session deterministically.
+
+    Args:
+        mcp_session_id: Stateful MCP session identifier to close.
+        user_context: Authenticated requester context used for ownership checks.
+
+    Returns:
+        Tuple ``(status_code, payload)``.
+    """
+    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+        mcp_session_id=mcp_session_id,
+        user_context=user_context,
+        rpc_method=None,
+    )
+    if not session_allowed:
+        return deny_status, {"detail": deny_detail}
+
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        return HTTP_403_FORBIDDEN, {"detail": "Session ownership unavailable"}
+
+    try:
+        await session_registry.remove_session(mcp_session_id)
+    except Exception as exc:
+        logger.warning(f"Failed to remove streamable session {mcp_session_id}: {exc}")
+        return HTTP_500_INTERNAL_SERVER_ERROR, {"detail": "Failed to close session"}
+
+    # Best-effort cleanup for multi-worker session-affinity ownership records.
+    try:
+        # First-Party
+        from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
+
+        await get_session_affinity().cleanup_session_owner(mcp_session_id)
+    except RuntimeError:
+        pass
+    except Exception as exc:
+        logger.debug(f"Failed to clear affinity owner for session {mcp_session_id}: {exc}")
+
+    return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
+
+
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
@@ -1189,19 +1386,18 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 gateway_passthrough_headers=gw_passthrough,
             )
 
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
+
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # Prepare params with _meta if provided
-                params = None
-                if meta:
-                    params = PaginatedRequestParams(_meta=meta)
-                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
-
                 # List tools with _meta forwarded
-                result = await session.list_tools(params=params)
+                result = await session.list_tools(params=_build_paginated_params(meta))
                 return result.tools
 
     except Exception as e:
@@ -1241,23 +1437,23 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 gateway_passthrough_headers=gw_passthrough,
             )
 
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
+
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            logger.debug("Forwarding _meta to remote gateway: %s", meta)
+            # CWE-532: log only key names, never values which may carry PII/tokens
+            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
         # Use MCP SDK to connect and list resources
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
-                # Prepare params with _meta if provided
-                params = None
-                if meta:
-                    params = PaginatedRequestParams(_meta=meta)
-                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
-
                 # List resources with _meta forwarded
-                result = await session.list_resources(params=params)
+                result = await session.list_resources(params=_build_paginated_params(meta))
 
                 logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
                 return result.resources
@@ -1307,9 +1503,15 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 gateway_passthrough_headers=gw_passthrough,
             )
 
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
+
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
-            logger.debug("Forwarding _meta to remote gateway: %s", meta)
+            # CWE-532: log only key names, never values which may carry PII/tokens
+            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -1319,8 +1521,10 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 # Prepare request params with _meta if provided
                 if meta:
                     # Create params and inject _meta
+                    # by_alias=True ensures the alias "_meta" key is written so
+                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
                     request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump()
+                    request_params_dict = request_params.model_dump(by_alias=True)
                     request_params_dict["_meta"] = meta
 
                     # Send request with _meta
@@ -1338,6 +1542,40 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
         return []
+
+
+def _truthy_is_error(result: Any) -> bool:
+    """Return ``True`` when ``result`` represents an MCP error response.
+
+    Centralises the #4202 egress check so both the local and pooled
+    branches of :func:`call_tool` read ``is_error`` identically, and so
+    the mitigation for MagicMock-attribute pollution in the test suite
+    lives in one place. Semantics:
+
+    - A real ``mcpgateway.common.models.ToolResult`` has ``is_error`` as a
+      typed ``bool`` with default ``False`` — ``result.is_error is True``
+      and ``bool(result.is_error)`` agree, so either form is correct in
+      production.
+    - A ``unittest.mock.MagicMock`` auto-materialises attributes as truthy
+      ``MagicMock`` objects. ``bool(mock.is_error)`` reports ``True``
+      even when the test author didn't explicitly set the attribute,
+      which used to silently route success-path transport tests into the
+      ``CallToolResult`` short-circuit branch. The ``is True`` identity
+      check rejects that shape.
+    - The identity check does silently coerce truthy non-``True`` values
+      (e.g. ``1``, ``"true"``) to ``False``. That's acceptable because
+      production ``ToolResult.is_error`` is typed ``bool`` and the
+      failure mode of a misbehaving upstream producing a truthy non-bool
+      is already caught at the ``_coerce_to_tool_result`` boundary.
+
+    Args:
+        result: Upstream tool result (ToolResult, MCP SDK CallToolResult,
+            MagicMock, or any duck-typed carrier).
+
+    Returns:
+        ``True`` only when ``result.is_error`` is literally ``True``.
+    """
+    return getattr(result, "is_error", False) is True
 
 
 @mcp_app.call_tool(validate_input=False)
@@ -1437,12 +1675,6 @@ async def call_tool(name: str, arguments: dict) -> Union[
     if gateway_id_from_header:
         try:  # Check if this gateway is in direct_proxy mode
             async with get_db() as check_db:
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                 gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
                 if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
@@ -1462,6 +1694,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         meta_data=meta_data,
                         user_email=user_email,
                         token_teams=token_teams,
+                        user_context=user_identity_var.get(),
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
@@ -1481,14 +1714,14 @@ async def call_tool(name: str, arguments: dict) -> Union[
         try:
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import get_session_affinity  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
 
-            if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+            if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
                 logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
                 raise RuntimeError("invalid mcp session id")
 
-            pool = get_mcp_session_pool()
+            pool = get_session_affinity()
 
             # Register session mapping BEFORE checking forwarding (same pattern as SSE)
             # This ensures ownership is registered atomically so forward_request_to_owner() works
@@ -1550,6 +1783,25 @@ async def call_tool(name: str, arguments: dict) -> Union[
 
                 unstructured = _rehydrate_content_items(result_data.get("content", []))
                 structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                if not isinstance(structured, dict):
+                    structured = None
+                is_error = bool(result_data.get("isError") or result_data.get("is_error"))
+                if is_error:
+                    # Preserve the upstream error payload verbatim (#4202). Wrap
+                    # in CallToolResult so the MCP SDK's server-side
+                    # ``isinstance(results, types.CallToolResult)`` short-circuit
+                    # (in ``mcp.server.lowlevel.server``) skips re-validation
+                    # and doesn't clobber the message with "Output validation
+                    # error: outputSchema defined but no structured output
+                    # returned".
+                    return types.CallToolResult(
+                        content=unstructured,
+                        structuredContent=structured,
+                        isError=True,
+                    )
+                # Success path: return the list/tuple shape so the MCP SDK's
+                # server-side validator runs and enforces the tool's
+                # outputSchema against the structured payload.
                 if structured:
                     return (unstructured, structured)
                 return unstructured
@@ -1674,15 +1926,39 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 structured = None
 
             # Fallback to by-alias dump (in case the result is a pydantic model with alias fields)
-            if structured is None:
+            if not isinstance(structured, dict):
                 try:
-                    structured = result.model_dump(by_alias=True).get("structuredContent") if hasattr(result, "model_dump") else None
+                    dump = result.model_dump(by_alias=True) if hasattr(result, "model_dump") else {}
+                    structured = dump.get("structuredContent") if isinstance(dump, dict) else None
                 except Exception:
                     structured = None
 
+            # MCP CallToolResult.structuredContent accepts dict or None only;
+            # reject anything else (e.g. stray MagicMocks in tests, bad shapes).
+            if not isinstance(structured, dict):
+                structured = None
+
+            is_error = _truthy_is_error(result)
+
+            if is_error:
+                # Preserve the upstream error payload verbatim (#4202). Wrap
+                # in CallToolResult so the MCP SDK's server-side
+                # ``isinstance(results, types.CallToolResult)`` short-circuit
+                # (in ``mcp.server.lowlevel.server``) skips re-validation
+                # and doesn't clobber the message with "Output validation
+                # error: outputSchema defined but no structured output
+                # returned".
+                return types.CallToolResult(
+                    content=unstructured,
+                    structuredContent=structured,
+                    isError=True,
+                )
+
+            # Success path: return the list/tuple shape so the MCP SDK's
+            # server-side validator runs and enforces the tool's
+            # outputSchema against the structured payload.
             if structured:
                 return (unstructured, structured)
-
             return unstructured
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
@@ -1905,12 +2181,6 @@ async def list_tools() -> List[types.Tool]:
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
                 if gateway_id:
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                    # First-Party
-                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
@@ -1941,12 +2211,6 @@ async def list_tools() -> List[types.Tool]:
                         logger.warning("Gateway %s specified in %s header not found", gateway_id, GATEWAY_ID_HEADER)
 
                 # Check if server exists for cache mode
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-
                 server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
                 if not server:
                     logger.warning("Server %s not found in database", server_id)
@@ -2203,12 +2467,6 @@ async def list_resources() -> List[types.Resource]:
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
                 if gateway_id:
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                    # First-Party
-                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
@@ -2330,12 +2588,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
             if gateway_id:
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
@@ -2344,23 +2596,20 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
-                    # Get _meta from request context if available
-                    meta = None
-                    try:
-                        request_ctx = mcp_app.request_context
-                        meta = request_ctx.meta
-                        logger.info(
-                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
-                            resource_uri,
-                            server_id,
-                            gateway.id,
-                            GATEWAY_ID_HEADER,
-                            meta,
-                        )
-                    except (LookupError, AttributeError) as e:
-                        logger.debug("No request context available for _meta extraction: %s", e)
-
-                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    # SECURITY: CWE-532 protection - Log only meta_data key names, NEVER values
+                    # Metadata may contain PII, authentication tokens, or sensitive context that
+                    # MUST NOT be written to logs. This is a critical security control.
+                    logger.debug(
+                        "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta keys: %s",
+                        resource_uri,
+                        server_id,
+                        gateway.id,
+                        GATEWAY_ID_HEADER,
+                        sorted(meta_data.keys()) if meta_data else None,
+                    )
+                    # CWE-400: validate _meta limits before network I/O (bypassed in direct-proxy branch)
+                    _validate_meta_data(meta_data)
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
                         first_content = contents[0]
@@ -2642,6 +2891,816 @@ async def complete(
         return types.Completion(values=[], total=0, hasMore=False)
 
 
+# ----------------------------- POST response interception (ADR-052) ----------------------------
+
+
+@dataclass(frozen=True)
+class _BodyPeekResult:
+    """Result of buffering a POST body for response or notification interception.
+
+    ``body`` is ``None`` when the body cannot be replayed safely — either
+    the client disconnected before ``more_body`` went False or the ASGI
+    transport raised while we were reading. Callers must NOT replay in
+    those cases.
+
+    When ``too_large`` is True, ``body`` holds only the chunks we had
+    already accepted before the cap-busting chunk arrived (so its size
+    is at most ``mcp_body_peek_max_bytes``, and may be less). The
+    cap-busting chunk itself is passed through to the SDK verbatim via
+    ``replay_tail`` — we do **not** slice it into ``body`` and a
+    remainder, since that would duplicate the chunk's bytes in memory
+    and effectively double the peak footprint we were trying to bound.
+    With the no-slice design the over-cap path holds at most
+    ``cap + chunk`` bytes (the chunk reference uvicorn already
+    allocated, plus whatever we'd buffered before it).
+
+    ``replay_tail_more_body`` records whether further chunks are still
+    pending on the original receive after the tail. Interception is
+    skipped on the ``too_large`` path because we couldn't fit the whole
+    body in memory to inspect it.
+    """
+
+    body: Optional[bytes]
+    intercepted: bool
+    disconnected: bool = False
+    too_large: bool = False
+    replay_tail: bytes = b""
+    replay_tail_more_body: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject construction sites that build a meaningless combination of fields.
+
+        Enforces the five invariants the dataclass would otherwise leave
+        to convention:
+
+        1. ``body is None`` ⇔ the body cannot be replayed (``disconnected``
+           must be True; ``intercepted`` and ``too_large`` must be False;
+           there cannot be a ``replay_tail``).
+        2. ``intercepted=True`` ⇒ we matched a held responder, so ``body``
+           must be set and ``too_large`` must be False.
+        3. ``too_large=True`` ⇒ ``body`` is set, ``intercepted`` is False
+           (we couldn't parse), and the cap-busting chunk is carried in
+           ``replay_tail`` (otherwise the SDK would silently lose data).
+        4. ``replay_tail_more_body=True`` ⇒ ``replay_tail`` is non-empty.
+        """
+        if self.body is None:
+            if not self.disconnected:
+                raise ValueError("_BodyPeekResult.body=None is only valid when disconnected=True")
+            if self.intercepted or self.too_large or self.replay_tail or self.replay_tail_more_body:
+                raise ValueError("_BodyPeekResult: disconnected result must not carry intercepted/too_large/replay_tail")
+            return
+        # body is not None
+        if self.intercepted and self.too_large:
+            raise ValueError("_BodyPeekResult: intercepted and too_large are mutually exclusive")
+        if self.intercepted and (self.replay_tail or self.replay_tail_more_body):
+            # An intercepted POST already short-circuited with 202; the
+            # dispatcher never wraps the receive with a replay, so any
+            # replay_tail would be silently swallowed.
+            raise ValueError("_BodyPeekResult: intercepted result must not carry replay_tail")
+        if self.too_large and not self.replay_tail:
+            raise ValueError("_BodyPeekResult: too_large result must carry the replay_tail (cap-busting chunk)")
+        if self.replay_tail_more_body and not self.replay_tail:
+            raise ValueError("_BodyPeekResult: replay_tail_more_body=True requires a non-empty replay_tail")
+
+
+async def _drain_request_body(receive: Receive) -> _BodyPeekResult:
+    """Drain ASGI request events into a body buffer with a soft peek cap.
+
+    Cap (``settings.mcp_body_peek_max_bytes``) bounds the memory the
+    body-peek path holds while inspecting. When the buffered prefix
+    reaches the cap we stop reading, return what we have with
+    ``too_large=True``, and let the caller fall through to the SDK via a
+    replay-and-defer wrapper. The SDK's normal streaming receive then
+    drains the rest of the body — no traffic is dropped, interception is
+    just skipped for that one request. This matters for legitimate large
+    payloads such as ``sampling/createMessage`` model output, which can
+    exceed the cap and would otherwise be lost if we 413'd.
+
+    ASGI transport-level errors (``anyio.EndOfStream``,
+    ``ClosedResourceError``, ``OSError``) are translated to
+    ``disconnected=True`` so the body-peek path stays transparent to
+    the SDK fallback. Without this translation a transport hiccup
+    here would surface as a 500 from the gateway instead of the
+    SDK's normal disconnect handling.
+    """
+    cap = settings.mcp_body_peek_max_bytes
+    body = bytearray()
+    try:
+        while True:
+            message = await receive()
+            if message.get("type") != "http.request":
+                return _BodyPeekResult(body=None, intercepted=False, disconnected=True)
+            chunk = message.get("body", b"")
+            chunk_is_final = not message.get("more_body", False)
+            if len(body) + len(chunk) > cap:
+                # Soft cap: stop peeking, hand the prefix back so the
+                # caller can replay-and-defer to the SDK. Don't 413 —
+                # legitimate sampling responses can exceed the cap.
+                #
+                # Pass the cap-busting chunk through verbatim instead
+                # of slicing it into ``body`` and a remainder. Slicing
+                # would copy the whole chunk into two new bytes objects,
+                # duplicating it in memory — the very amplification the
+                # cap is meant to prevent. With the no-slice design the
+                # peak footprint stays at ``len(body) + chunk`` bytes
+                # (the chunk reference uvicorn already allocated, plus
+                # whatever we'd buffered before it).
+                return _BodyPeekResult(
+                    body=bytes(body),
+                    intercepted=False,
+                    too_large=True,
+                    replay_tail=chunk,
+                    replay_tail_more_body=not chunk_is_final,
+                )
+            body.extend(chunk)
+            if chunk_is_final:
+                return _BodyPeekResult(body=bytes(body), intercepted=False)
+    except (anyio.EndOfStream, anyio.ClosedResourceError, OSError) as exc:
+        logger.debug("body-peek receive() aborted: %s", exc)
+        return _BodyPeekResult(body=None, intercepted=False, disconnected=True)
+
+
+async def _maybe_intercept_response_post(
+    *,
+    receive: Receive,
+    mcp_session_id: str,
+    notification_service: Any,
+) -> _BodyPeekResult:
+    """Drain the POST body and try to route it to a held server-initiated request.
+
+    Args:
+        receive: ASGI receive callable for the in-flight POST.
+        mcp_session_id: Validated downstream session id.
+        notification_service: Live ``NotificationService`` singleton; the
+            holder of the per-session pending-request dict.
+
+    Returns:
+        ``_BodyPeekResult``. ``intercepted=True`` when a held responder
+        was matched and resolved (caller should respond 202).
+        ``disconnected=True`` when the client dropped mid-body (caller
+        should NOT replay; the SDK's disconnect handling will fire on
+        its own first ``receive()``).
+    """
+    drained = await _drain_request_body(receive)
+    if drained.disconnected or drained.body is None:
+        return drained
+    if drained.too_large:
+        # Prefix-only body — can't parse for interception. Pass the
+        # drained result through so the dispatch falls through to the
+        # SDK with replay-and-defer (preserving too_large).
+        return drained
+    body = drained.body
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return _BodyPeekResult(body=body, intercepted=False)
+    # Single-message JSON-RPC response (the spec allows batches; for v1 we
+    # only intercept the single-message shape — batches fall through).
+    if not isinstance(payload, dict):
+        return _BodyPeekResult(body=body, intercepted=False)
+    if "method" in payload or "id" not in payload:
+        return _BodyPeekResult(body=body, intercepted=False)
+    if "result" not in payload and "error" not in payload:
+        return _BodyPeekResult(body=body, intercepted=False)
+    request_id = str(payload["id"])
+    handled = await notification_service.complete_request(mcp_session_id, request_id, payload)
+    return _BodyPeekResult(body=body, intercepted=handled)
+
+
+async def _maybe_short_circuit_notification(receive: Receive) -> _BodyPeekResult:
+    """Drain a POST body and detect a JSON-RPC notification (no ``id`` field).
+
+    Spec: a notification is fire-and-forget — the server MUST NOT return
+    a JSON-RPC response body. Per the Streamable HTTP spec the prescribed
+    HTTP-level acknowledgment is ``202 Accepted`` with an empty body,
+    which is what the caller emits when we return ``intercepted=True``.
+    Anything else (a request with an ``id``, a malformed body, or
+    anything we can't parse) returns ``intercepted=False`` and the
+    caller should replay the body to the SDK for normal handling.
+
+    Returns ``disconnected=True`` when the client dropped mid-body so the
+    caller can avoid feeding the SDK a truncated payload.
+    """
+    drained = await _drain_request_body(receive)
+    if drained.disconnected or drained.body is None:
+        return drained
+    if drained.too_large:
+        # Prefix-only body — can't parse for short-circuit. Pass the
+        # drained result through so the dispatch falls through to the
+        # SDK with replay-and-defer (preserving too_large).
+        return drained
+    body = drained.body
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return _BodyPeekResult(body=body, intercepted=False)
+    # Only short-circuit single-message notifications. A batch or anything
+    # without a ``method`` falls through to the SDK.
+    if not isinstance(payload, dict):
+        return _BodyPeekResult(body=body, intercepted=False)
+    if "method" not in payload or "id" in payload:
+        return _BodyPeekResult(body=body, intercepted=False)
+    return _BodyPeekResult(body=body, intercepted=True)
+
+
+def _make_replay_receive(
+    body: bytes,
+    downstream_receive: Receive,
+    *,
+    replay_tail: bytes = b"",
+    replay_tail_more_body: bool = False,
+) -> Receive:
+    """Return an ASGI receive that yields ``body`` once, then defers to ``downstream_receive``.
+
+    Used after we have peeked at a POST body for response interception but
+    decided not to short-circuit — the SDK still needs to see the body, so
+    we replay it before relinquishing receive duty back to the original
+    callable for any subsequent disconnect signals.
+
+    When the peek truncated at the cap, ``replay_tail`` holds the chunk
+    bytes we consumed but did not store in ``body``; the replay yields
+    them as a second ASGI message before deferring. ``replay_tail_more_body``
+    indicates whether more chunks still need draining from
+    ``downstream_receive`` after the tail. Without this, truncating the
+    peek would silently drop the unstored chunk bytes from the SDK's
+    view of the body.
+
+    Args:
+        body: Buffered request body (≤ peek cap).
+        downstream_receive: The original ASGI receive callable to fall back
+            to once the buffered messages have been replayed.
+        replay_tail: Chunk bytes consumed from receive but not stored in
+            ``body`` (over-cap remainder). Empty when no truncation.
+        replay_tail_more_body: ``True`` when ``downstream_receive`` still
+            has further chunks to deliver after the tail; the SDK then
+            keeps calling ``receive()`` to drain them.
+    """
+    pending: list[Dict[str, Any]] = [{"type": "http.request", "body": body, "more_body": bool(replay_tail) or replay_tail_more_body}]
+    if replay_tail:
+        pending.append({"type": "http.request", "body": replay_tail, "more_body": replay_tail_more_body})
+    queue = iter(pending)
+
+    async def replay_receive() -> Dict[str, Any]:
+        """Yield the buffered prefix (and tail if any), then defer to original receive."""
+        try:
+            return next(queue)
+        except StopIteration:
+            return await downstream_receive()
+
+    return replay_receive
+
+
+# Lazy-populated on first request to avoid the import cycle at module
+# load time; caches the MODULE rather than the function so
+# ``monkeypatch.setattr(module, "get_notification_service", ...)`` in
+# tests still takes effect (the per-call attribute lookup on the
+# cached module sees the patched value).
+_notification_service_module: Optional[Any] = None
+
+
+def _get_notification_service() -> Any:
+    """Return the current ``notification_service.get_notification_service()`` result.
+
+    The first call imports the module (resolving the cycle that makes a
+    top-level import unsafe); subsequent calls re-read the module
+    attribute so test monkeypatching continues to work.
+    """
+    global _notification_service_module  # pylint: disable=global-statement
+    if _notification_service_module is None:
+        # First-Party
+        import mcpgateway.services.notification_service as ns_module  # pylint: disable=import-outside-toplevel
+
+        _notification_service_module = ns_module
+    return _notification_service_module.get_notification_service()
+
+
+def _resolve_intercept_target(method: str, mcp_session_id: str) -> Optional[Any]:
+    """Return the NotificationService when response interception should run, else None.
+
+    Response interception applies only to POST requests with a session
+    id where the service has at least one pending server-initiated
+    request. The service's "not initialized" RuntimeError is treated as
+    "no interception" (test bootstrap / early startup); other
+    exceptions are intentionally not caught — a narrow catch keeps
+    bugs in ``has_pending_request`` from silently disabling interception
+    for every in-flight responder.
+
+    Args:
+        method: HTTP method.
+        mcp_session_id: ``"not-provided"`` when no Mcp-Session-Id header
+            was present, else the validated session id.
+
+    Returns:
+        The ``NotificationService`` instance to pass into
+        ``_maybe_intercept_response_post``, or ``None`` to skip
+        interception entirely.
+    """
+    if method != "POST" or mcp_session_id == "not-provided":
+        return None
+    try:
+        svc = _get_notification_service()
+    except RuntimeError:
+        return None
+    if svc.has_pending_request(mcp_session_id):
+        return svc
+    return None
+
+
+class _PeekDispatchOutcome(Enum):
+    """Outcome of dispatching a body-peek result back into the request loop."""
+
+    HANDLED = "handled"
+    """Helper sent the 202 response; caller should ``return``."""
+    ABORTED = "aborted"
+    """Client disconnected mid-body; caller should ``return`` without further action."""
+    FALLTHROUGH = "fallthrough"
+    """Caller should continue with the (possibly replay-wrapped) ``receive`` callable."""
+
+
+async def _dispatch_peek_outcome(
+    peek: "_BodyPeekResult",
+    receive: Receive,
+    send: Send,
+    *,
+    accepted_body: bytes,
+    log_label: str,
+    log_context: str,
+) -> tuple[_PeekDispatchOutcome, Receive]:
+    """Translate a ``_BodyPeekResult`` into the next action for ``handle_streamable_http``.
+
+    Both the response-interception and notification-short-circuit paths
+    follow the same shape:
+
+    * ``intercepted`` → emit 202 + return
+    * ``disconnected`` → log + return
+    * ``too_large`` → log and fall through
+    * otherwise → wrap ``receive`` with the replay receive
+
+    Args:
+        peek: Result of the body-peek call.
+        receive: Original ASGI receive callable.
+        send: ASGI send callable used to emit the 202 response.
+        accepted_body: Body bytes for the 202 response (``b"{}"`` for
+            response interception, ``b""`` for notification
+            short-circuit).
+        log_label: Short identifier for the path emitting the log
+            (e.g. ``"response interception"`` or
+            ``"notification short-circuit"``).
+        log_context: Per-request identifier used in log lines (session
+            id, path, etc.).
+
+    Returns:
+        ``(outcome, receive)`` — the second value is meaningful only for
+        ``FALLTHROUGH`` and is the (possibly replay-wrapped) callable
+        the caller should pass to the SDK.
+
+    Raises:
+        RuntimeError: If the peek result violates the invariant that
+            ``body`` is non-None on the fall-through path. The
+            ``_BodyPeekResult.__post_init__`` validator should make this
+            unreachable; the explicit raise replaces the prior
+            ``assert`` so the check survives ``python -O``.
+    """
+    if peek.intercepted:
+        await send({"type": "http.response.start", "status": 202, "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": accepted_body})
+        return _PeekDispatchOutcome.HANDLED, receive
+    if peek.disconnected:
+        # Client dropped mid-body. Don't feed the SDK a truncated payload —
+        # let it observe the disconnect on its own next ``receive()`` call.
+        logger.debug("POST %s aborted by client mid-body (%s); not replaying", log_context, log_label)
+        return _PeekDispatchOutcome.ABORTED, receive
+    if peek.too_large:
+        # Body exceeded the peek cap. Skip interception and fall through to
+        # the SDK with a replay-and-defer wrapper — valid MCP traffic isn't
+        # dropped; only this one request misses interception.
+        logger.debug("POST %s body exceeds peek cap during %s; falling through to SDK", log_context, log_label)
+    if peek.body is None:  # type-narrow for mypy; invariant rules this out
+        raise RuntimeError("_BodyPeekResult invariant violation: body=None on fall-through")
+    new_receive = _make_replay_receive(
+        peek.body,
+        receive,
+        replay_tail=peek.replay_tail,
+        replay_tail_more_body=peek.replay_tail_more_body,
+    )
+    return _PeekDispatchOutcome.FALLTHROUGH, new_receive
+
+
+# ----------------------------- GET /mcp stream -----------------------------
+#
+# ADR-052: spec-conformant server→client SSE stream. Any node accepts the GET
+# (no affinity check); messages are delivered via the per-session event bus
+# which fans out across nodes when running on Redis. The single-listener
+# invariant is enforced via SessionAffinity.claim_listener.
+
+# How many heartbeats per TTL — gives us "lose at most TTL/N before
+# expiring" margin. 3 means a single missed beat is recoverable on the
+# next attempt without losing the claim. Floor of 1s prevents
+# pathological busy-looping if an operator sets the TTL very low.
+_GET_STREAM_HEARTBEAT_INTERVALS_PER_TTL = 3
+_GET_STREAM_HEARTBEAT_MIN_INTERVAL_SECONDS = 1.0
+
+
+def _heartbeat_interval_seconds() -> float:
+    """Derive the heartbeat refresh cadence from the configured listener TTL.
+
+    Returns ``ttl / _GET_STREAM_HEARTBEAT_INTERVALS_PER_TTL``, floored
+    at ``_GET_STREAM_HEARTBEAT_MIN_INTERVAL_SECONDS``. Deriving from
+    the TTL means an operator-configured TTL value lower than the
+    minimum interval still produces a sane cadence; a hard-coded
+    cadence would let the claim TTL expire before the next heartbeat
+    fired.
+    """
+    ttl = float(settings.mcp_get_stream_listener_ttl_seconds)
+    return max(_GET_STREAM_HEARTBEAT_MIN_INTERVAL_SECONDS, ttl / _GET_STREAM_HEARTBEAT_INTERVALS_PER_TTL)
+
+
+# How many consecutive heartbeat failures we tolerate before treating
+# the claim as lost. N=2 rides out one transient Redis hiccup at
+# heartbeat time without tearing down an otherwise-healthy stream.
+# Stays well under the TTL: with the default 30s TTL and ~10s heartbeat
+# cadence, 2 misses = 20s, comfortably below 30s.
+_GET_STREAM_HEARTBEAT_FAILURE_TOLERANCE = 2
+
+# Metric label used when the JSON-RPC method on the wire isn't a string —
+# defensive guard against malformed envelopes that nonetheless deliver.
+_UNKNOWN_METHOD_LABEL = "unknown"
+
+# Allowlist of MCP method labels that the events-delivered counter is
+# allowed to emit. Anything outside this set buckets to ``other``. The
+# method name comes from upstream JSON-RPC traffic, so an unbucketed
+# label would let a buggy or malicious upstream server explode
+# Prometheus cardinality and exhaust scrape memory. Keep this list
+# narrow — add new entries when a real MCP method graduates from
+# ``other`` and you want a dedicated bucket.
+_KNOWN_MCP_METHOD_LABELS: frozenset[str] = frozenset(
+    {
+        "notifications/initialized",
+        "notifications/cancelled",
+        "notifications/progress",
+        "notifications/message",
+        "notifications/tools/list_changed",
+        "notifications/resources/list_changed",
+        "notifications/resources/updated",
+        "notifications/prompts/list_changed",
+        "notifications/roots/list_changed",
+        "sampling/createMessage",
+        "elicitation/create",
+        "roots/list",
+        "logging/setLevel",
+        "ping",
+    }
+)
+_OTHER_METHOD_LABEL = "other"
+
+
+def _accepts_event_stream(accept_header: str) -> bool:
+    """Return True iff the Accept header allows ``text/event-stream``.
+
+    Case-insensitive media-type match, honours ``;q=0`` as
+    "explicitly not wanted", and treats an empty / missing header as
+    permissive (curl-style clients). Per RFC 7231 §5.3.2 — substring
+    matching gets both edge cases wrong: ``Text/Event-Stream`` rejected
+    and ``Accept: text/event-stream;q=0`` accepted.
+    """
+    if not accept_header:
+        return True  # absence of preference → no restriction
+    for entry in accept_header.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        media_type, _, params = entry.partition(";")
+        media_type = media_type.strip().lower()
+        if media_type not in ("text/event-stream", "text/*", "*/*"):
+            continue
+        # q-value defaults to 1.0; 0 means explicit refusal.
+        q_value = 1.0
+        for param in params.split(";"):
+            name, _, value = param.partition("=")
+            if name.strip().lower() == "q":
+                try:
+                    q_value = float(value.strip())
+                except ValueError:
+                    q_value = 0.0
+                break
+        if q_value > 0:
+            return True
+    return False
+
+
+def _bucket_method_label(method: Optional[str]) -> str:
+    """Map an MCP method name to a bounded Prometheus label value."""
+    if not isinstance(method, str) or not method:
+        return _UNKNOWN_METHOD_LABEL
+    if method in _KNOWN_MCP_METHOD_LABELS:
+        return method
+    return _OTHER_METHOD_LABEL
+
+
+async def _handle_get_stream(
+    *,
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    mcp_session_id: str,
+    last_event_id: Optional[str],
+    accept: str,
+) -> None:
+    """Serve a GET /mcp SSE stream for ``mcp_session_id``.
+
+    Negotiates the listener claim, opens an :class:`EventSourceResponse`
+    backed by the :class:`ServerEventBus`, and refreshes the claim while
+    the connection is held.
+
+    Args:
+        scope: ASGI scope for the inbound GET request.
+        receive: ASGI receive callable.
+        send: ASGI send callable.
+        mcp_session_id: Validated downstream session id from
+            ``Mcp-Session-Id``.
+        last_event_id: Value of the ``Last-Event-Id`` header, or None.
+        accept: Value of the ``Accept`` header (used for content negotiation).
+
+    Notes:
+        Per the MCP spec, GET requires ``Accept: text/event-stream``. We
+        return 406 if the client did not accept it; 409 if another
+        listener already holds the claim for this session; and 503 in
+        any of three cases — ``SessionAffinity`` singleton missing,
+        ``ListenerClaimResult.UNAVAILABLE`` (claim-storage backend
+        failed), or ``get_server_event_bus()`` raised. All three 503
+        paths share the same ``bus_unavailable`` label on
+        ``transport_get_rejected_total``; separating them would
+        require distinct outcome labels, filed as a potential
+        follow-up if operators need to split.
+    """
+    # Third-Party
+    from sse_starlette.sse import EventSourceResponse  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
+        get_session_affinity,
+        ListenerClaimResult,
+        SessionAffinityNotInitializedError,
+    )
+    from mcpgateway.transports.server_event_bus import (  # pylint: disable=import-outside-toplevel
+        BusBackendError,
+        get_server_event_bus,
+        ListenerBacklogOverflow,
+    )
+
+    if not _accepts_event_stream(accept):
+        transport_get_rejected_counter.labels(outcome="not_acceptable").inc()
+        await ORJSONResponse(
+            {"detail": "GET /mcp requires Accept: text/event-stream"},
+            status_code=406,
+        )(scope, receive, send)
+        return
+
+    # Resolve the process-wide SessionAffinity singleton. ADR-052: the
+    # listener-claim dict lives on the singleton regardless of whether
+    # cross-worker Redis affinity is enabled, so ``main.lifespan``
+    # always initializes it. A transient-fallback singleton would
+    # break the single-listener invariant: each request would get a
+    # fresh instance with its own dict, so two GETs on the same
+    # session both win the claim.
+    try:
+        affinity = get_session_affinity()
+    except SessionAffinityNotInitializedError:
+        # Early-boot / test-bootstrap race. Fail closed with 503 — we
+        # cannot enforce the invariant without the singleton, and in any
+        # real deployment lifespan initializes the service before the
+        # HTTP listener accepts traffic.
+        logger.warning("GET /mcp: SessionAffinity not initialized; returning 503")
+        transport_get_rejected_counter.labels(outcome="bus_unavailable").inc()
+        await ORJSONResponse(
+            {"detail": "Session affinity service not initialized; retry shortly."},
+            status_code=503,
+            headers={"Retry-After": "1"},
+        )(scope, receive, send)
+        return
+
+    connection_id = str(uuid4())
+    claim_result = await affinity.claim_listener(mcp_session_id, connection_id)
+    # match + assert_never makes the consumer exhaustive: a future
+    # ListenerClaimResult variant added without updating this branch
+    # is a type-checker error rather than a silent fall-through.
+    match claim_result:
+        case ListenerClaimResult.CONFLICT:
+            transport_get_rejected_counter.labels(outcome="listener_conflict").inc()
+            await ORJSONResponse(
+                {"detail": "Another GET /mcp stream is already open for this session."},
+                status_code=409,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
+            return
+        case ListenerClaimResult.UNAVAILABLE:
+            # Distinct from CONFLICT: storage backing the claim failed
+            # (Redis unreachable, configured-but-no-client, eval errored).
+            # 503 lets operators distinguish backend outage from real
+            # listener races.
+            transport_get_rejected_counter.labels(outcome="bus_unavailable").inc()
+            await ORJSONResponse(
+                {"detail": "Listener-claim storage unavailable; retry shortly."},
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
+            return
+        case ListenerClaimResult.WON:
+            pass  # fall through into the SSE stream setup below
+        case _ as _unreachable:
+            assert_never(_unreachable)
+
+    # The finally block below runs three independent cleanups: release
+    # the listener claim (always safe — release_listener is a no-op for
+    # non-owners), decrement the gauge (guarded by
+    # ``gauge_incremented`` so we only dec what we inc'd), and log the
+    # missing-response case. Each step has its own try/except so one
+    # failure doesn't skip the others.
+    bus = None
+    heartbeat_task: Optional[asyncio.Task[None]] = None
+    cancel_stream_event = asyncio.Event()
+    response_invoked = False
+    gauge_incremented = False
+    try:
+        transport_get_active_listeners_gauge.inc()
+        gauge_incremented = True
+        try:
+            bus = await get_server_event_bus()
+        except (RuntimeError, BusBackendError) as exc:
+            # Configured-but-unavailable backends raise these; broader
+            # exceptions (programming errors, misconfiguration) propagate
+            # to the outer except so the failure has a real traceback in
+            # the log instead of being smuggled into a 503.
+            logger.warning("GET /mcp: event bus unavailable for session %s: %s", mcp_session_id, exc)
+            transport_get_rejected_counter.labels(outcome="bus_unavailable").inc()
+            await ORJSONResponse(
+                {"detail": "Event bus unavailable; retry shortly."},
+                status_code=503,
+                headers={"Retry-After": "1"},
+            )(scope, receive, send)
+            return
+
+        heartbeat_interval = _heartbeat_interval_seconds()
+        consecutive_failures = 0
+
+        async def heartbeat_loop() -> None:
+            """Refresh the listener claim periodically; signal the event generator to close on loss.
+
+            Tolerates ``_GET_STREAM_HEARTBEAT_FAILURE_TOLERANCE``
+            consecutive failures before treating the claim as lost. Without
+            this, a single Redis hiccup at heartbeat time would tear down
+            the stream even though the Redis-side TTL hadn't actually
+            expired — letting an attacker who can perturb Redis disconnect
+            active streams on demand.
+            """
+            nonlocal consecutive_failures
+            while True:
+                await asyncio.sleep(heartbeat_interval)
+                still_ours = await affinity.heartbeat_listener(mcp_session_id, connection_id)
+                if still_ours:
+                    consecutive_failures = 0
+                    continue
+                consecutive_failures += 1
+                if consecutive_failures < _GET_STREAM_HEARTBEAT_FAILURE_TOLERANCE:
+                    logger.debug(
+                        "GET /mcp heartbeat for %s missed (%d/%d); will retry",
+                        mcp_session_id,
+                        consecutive_failures,
+                        _GET_STREAM_HEARTBEAT_FAILURE_TOLERANCE,
+                    )
+                    continue
+                # Lost the claim (preempted, TTL expired, or sustained
+                # heartbeat failure). The single-listener invariant says
+                # we must close THIS stream — otherwise a second GET that
+                # re-claims would coexist with us. Set the cancel event;
+                # event_gen exits and sse_starlette tears down the
+                # response.
+                logger.info(
+                    "GET /mcp listener claim for %s lost after %d consecutive heartbeat failures; ending stream",
+                    mcp_session_id,
+                    consecutive_failures,
+                )
+                cancel_stream_event.set()
+                return
+
+        heartbeat_task = asyncio.create_task(heartbeat_loop(), name=f"get-stream-heartbeat:{mcp_session_id[:8]}")
+
+        async def event_gen():
+            """Drain the event bus and yield SSE-shaped frames; signaled by ``cancel_stream_event`` on listener-claim loss."""
+            bus_iter = aiter(bus.subscribe(mcp_session_id, last_event_id=last_event_id))
+            try:
+                while True:
+                    next_event_task = asyncio.create_task(anext(bus_iter))
+                    cancel_wait_task = asyncio.create_task(cancel_stream_event.wait())
+                    try:
+                        done, _pending = await asyncio.wait(
+                            {next_event_task, cancel_wait_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    finally:
+                        if not next_event_task.done():
+                            next_event_task.cancel()
+                        if not cancel_wait_task.done():
+                            cancel_wait_task.cancel()
+                    if cancel_wait_task in done:
+                        return
+                    try:
+                        event = next_event_task.result()
+                    except StopAsyncIteration:
+                        return
+                    root = getattr(event.message, "root", None)
+                    method_attr = getattr(root, "method", None) if root is not None else None
+                    transport_get_events_delivered_counter.labels(method=_bucket_method_label(method_attr)).inc()
+                    yield {
+                        "id": event.event_id,
+                        "event": "message",
+                        "data": event.message.model_dump_json(by_alias=True, exclude_none=True),
+                    }
+            except ListenerBacklogOverflow:
+                logger.info(
+                    "GET /mcp listener for %s dropped: backlog overflow (client should reconnect with Last-Event-Id)",
+                    mcp_session_id,
+                )
+            except BusBackendError as exc:
+                logger.warning(
+                    "GET /mcp listener for %s dropped: bus backend error: %s",
+                    mcp_session_id,
+                    exc,
+                )
+            except Exception as exc:  # noqa: BLE001 — catch-all guards the SSE response; log with traceback (CancelledError is a BaseException and already propagates)
+                # The named branches above cover the documented bus
+                # failure modes; anything else is a programming error
+                # (label-cardinality bug, SDK shape change, etc.) and
+                # would silently terminate the stream every time
+                # without a traceback. ``exc_info`` preserves the stack
+                # so the cause survives in operator logs / Sentry.
+                logger.warning(
+                    "GET /mcp event generator for %s exited unexpectedly: %s",
+                    mcp_session_id,
+                    exc,
+                    exc_info=exc,
+                )
+            finally:
+                # Close the bus iterator so its own finally block runs
+                # immediately — that's what cancels the Pub/Sub pump task
+                # and aclose's the redis pubsub. Without this aclose, the
+                # bus generator only finalizes on GC, leaking the pubsub
+                # connection and pump task in the meantime.
+                try:
+                    await bus_iter.aclose()
+                except Exception as exc:  # noqa: BLE001 — best-effort, log so leaks are visible
+                    logger.debug("bus_iter.aclose raised for %s: %s", mcp_session_id, exc)
+
+        response = EventSourceResponse(
+            event_gen(),
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        response_invoked = True
+        await response(scope, receive, send)
+    finally:
+        # Each cleanup step gets its own try/except so a failure in one
+        # doesn't skip the others. A single bare ``await
+        # release_listener`` would skip the gauge decrement on a Redis
+        # hiccup and let the gauge drift upward forever; in Redis mode
+        # the orphaned claim would also block subsequent GETs on that
+        # session until TTL expiry.
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001 — log so a regression in heartbeat_loop has a forensic trail
+                logger.warning(
+                    "Heartbeat task drain raised for %s during GET /mcp cleanup: %s",
+                    mcp_session_id,
+                    exc,
+                    exc_info=exc,
+                )
+        try:
+            await affinity.release_listener(mcp_session_id, connection_id)
+        except Exception as exc:  # noqa: BLE001 — log, don't skip the gauge dec below
+            logger.warning(
+                "release_listener raised for %s during GET /mcp cleanup: %s",
+                mcp_session_id,
+                exc,
+            )
+        if gauge_incremented:
+            try:
+                transport_get_active_listeners_gauge.dec()
+            except Exception as exc:  # noqa: BLE001 — Prometheus client failures shouldn't propagate
+                logger.debug("gauge.dec raised for %s: %s", mcp_session_id, exc)
+        if not response_invoked:
+            logger.debug(
+                "GET /mcp for %s exited before response was constructed",
+                mcp_session_id,
+            )
+
+
 class SessionManagerWrapper:
     """
     Wrapper class for managing the lifecycle of a StreamableHTTPSessionManager instance.
@@ -2783,7 +3842,9 @@ class SessionManagerWrapper:
 
         return None  # Legitimate unscoped /mcp path
 
-    async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
+    async def handle_streamable_http(  # noqa: PLR0911,PLR0912,PLR0915 — pylint: disable=too-many-return-statements,too-many-branches,too-many-statements,too-many-locals
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
         """
         Forwards an incoming ASGI request to the streamable HTTP session manager.
 
@@ -2851,12 +3912,22 @@ class SessionManagerWrapper:
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import SessionAffinity  # pylint: disable=import-outside-toplevel
 
-                if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                if not SessionAffinity.is_valid_mcp_session_id(mcp_session_id):
                     logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
                     mcp_session_id = "not-provided"
-            except Exception:
+            except Exception as exc:
+                # A real failure here (pool import broken, DB/Redis timeout in
+                # a future validator) would otherwise be silently rendered as
+                # the #4205 405 with no log line. Warn at least once per
+                # request so ops can correlate a 405 storm with the root
+                # cause; we still fall through to treat the session as
+                # unprovided (the safe behaviour) rather than 5xx'ing.
+                logger.warning(
+                    "Session id validation failed; treating request as session-less: %s",
+                    exc,
+                )
                 mcp_session_id = "not-provided"
 
         # Log session manager ID for debugging
@@ -2886,6 +3957,98 @@ class SessionManagerWrapper:
         # affinity branches would bypass the 404 and get empty-scoped results.
         validated = await self._validate_server_id(match, path, scope, receive, send)
         if validated is _REJECT:
+            return
+
+        # GET /mcp: server→client stream per MCP Streamable HTTP spec
+        # ("Listening for messages from the server"). Three short-circuit
+        # rejections live here, then the spec-conformant SSE handler takes
+        # over (ADR-052).
+        #
+        # Rejections preserved from the #4205 era:
+        #   * stateful sessions disabled globally → 405
+        #     (no event-store infrastructure to anchor a stream against)
+        #   * no Mcp-Session-Id → 405
+        #     (the spec requires a session for the GET stream)
+        # Plus one operator kill switch:
+        #   * mcp_get_stream_enabled=False → 405 (deliberate disable)
+        #
+        # All emit `Allow: POST, DELETE` so the client knows the resource is
+        # real. Placed after server-id validation and RBAC so bogus server
+        # IDs still 404 and unauthorized callers still 403 before we
+        # advertise the endpoint.
+        if method == "GET" and (not settings.use_stateful_sessions or not settings.mcp_get_stream_enabled or mcp_session_id == "not-provided"):
+            if not settings.use_stateful_sessions:
+                detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
+                reject_outcome = "stateful_disabled"
+            elif not settings.mcp_get_stream_enabled:
+                detail = "GET /mcp stream disabled by operator (MCP_GET_STREAM_ENABLED=False)."
+                reject_outcome = "feature_disabled"
+            else:
+                detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+                reject_outcome = "no_session_id"
+            transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
+            # Log level split by reason: stateful-disabled and feature-disabled
+            # are operator-facing config conditions (warn); missing session id
+            # is routine probing from strict MCP clients before `initialize`
+            # and would flood info-level logs (debug).
+            if reject_outcome == "stateful_disabled":
+                logger.warning("Rejecting GET %s with 405 — stateful sessions disabled", path)
+            elif reject_outcome == "feature_disabled":
+                logger.warning("Rejecting GET %s with 405 — GET stream feature disabled (mcp_get_stream_enabled=False)", path)
+            else:
+                logger.debug("Rejecting GET %s with 405 — no session id presented", path)
+            response = ORJSONResponse(
+                {"detail": detail},
+                status_code=405,
+                headers={"Allow": "POST, DELETE"},
+            )
+            await response(scope, receive, send)
+            return
+
+        # GET /mcp with a valid session — spec-conformant SSE stream.
+        if method == "GET":
+            # Gate on session ownership before opening the SSE channel.
+            # Without this, any authenticated caller who knows another
+            # user's Mcp-Session-Id can subscribe to that session's
+            # server-initiated traffic (notifications, sampling, progress
+            # events) — and can also pin the rightful owner out of the
+            # single-listener slot until TTL expiry. Mirrors the gate
+            # that POST and DELETE already apply downstream.
+            session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+                rpc_method=None,
+            )
+            if not session_allowed:
+                transport_get_rejected_counter.labels(outcome="session_denied").inc()
+                logger.warning(
+                    "Rejecting GET %s with %s — session ownership check failed for %s",
+                    path,
+                    deny_status,
+                    mcp_session_id,
+                )
+                response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+                await response(scope, receive, send)
+                return
+            await _handle_get_stream(
+                scope=scope,
+                receive=receive,
+                send=send,
+                mcp_session_id=mcp_session_id,
+                last_event_id=headers.get("last-event-id"),
+                accept=headers.get("accept", ""),
+            )
+            return
+
+        # Deterministic stateful lifecycle close:
+        # When a valid MCP session ID is provided for DELETE, perform explicit
+        # ownership-checked teardown instead of relying on SDK manager behavior.
+        if method == "DELETE" and settings.use_stateful_sessions and mcp_session_id != "not-provided":
+            status_code, payload = await _close_streamable_http_session(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+            )
+            await _send_streamable_http_json_response(send, status_code=status_code, payload=payload)
             return
 
         if is_internally_forwarded:
@@ -3004,10 +4167,10 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-                pool = get_mcp_session_pool()
-                owner = await pool.get_streamable_http_session_owner(mcp_session_id)
+                pool = get_session_affinity()
+                owner = await pool.get_session_owner(mcp_session_id)
                 logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
                 if owner and owner != WORKER_ID:
@@ -3027,7 +4190,7 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     # Forward to owner worker
-                    response = await pool.forward_streamable_http_to_owner(
+                    response = await pool.forward_to_owner(
                         owner_worker_id=owner,
                         mcp_session_id=mcp_session_id,
                         method=method,
@@ -3237,6 +4400,88 @@ class SessionManagerWrapper:
                         initialize_span_active = True
             return message
 
+        # ADR-052: server-initiated request response interception.
+        # When this session has any pending RequestResponder waiting for a
+        # downstream reply, peek at this POST body. If it's a JSON-RPC
+        # response whose id matches a pending entry, route it directly to
+        # NotificationService.complete_request and short-circuit the SDK.
+        # Otherwise replay the buffered body to the SDK transparently.
+        # Only triggered when there's at least one pending request — the
+        # common case (zero pending) takes the streaming-receive fast path.
+        _notif_svc = _resolve_intercept_target(method, mcp_session_id)
+        if _notif_svc is not None:
+            # Authorize the caller against the session BEFORE touching the
+            # body or matching the held responder. Without this, an
+            # authenticated user who knows the victim's ``Mcp-Session-Id``
+            # plus a pending JSON-RPC ``id`` could POST a forged response
+            # here and ``complete_request`` would accept it (202) — the
+            # SDK's normal POST validation runs only when interception
+            # falls through, so the bypass would never reach it.
+            session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+                rpc_method=None,
+            )
+            if not session_allowed:
+                logger.warning(
+                    "POST %s denied by session-ownership check during interception (%s)",
+                    mcp_session_id,
+                    deny_status,
+                )
+                response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+                await response(scope, receive, send)
+                return
+            peek = await _maybe_intercept_response_post(
+                receive=receive,
+                mcp_session_id=mcp_session_id,
+                notification_service=_notif_svc,
+            )
+            outcome, receive = await _dispatch_peek_outcome(
+                peek,
+                receive,
+                send,
+                accepted_body=b"{}",
+                log_label="response interception",
+                log_context=mcp_session_id,
+            )
+            if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
+                return
+
+        # Spec-mandated notification short-circuit. JSON-RPC 2.0 + MCP
+        # Streamable HTTP: a notification (a request without an ``id``) is
+        # fire-and-forget — the server MUST NOT respond to it, and the spec
+        # acknowledges receipt with 202 Accepted regardless of session state.
+        # The MCP SDK's ``_validate_session`` enforces session-id presence
+        # for *every* POST and 400s here, which violates the notification
+        # rule. We peek the body only when no session id was presented (the
+        # common notification case is the post-init `notifications/initialized`
+        # round trip) on an MCP path — POSTs with a session id keep the
+        # streaming-receive fast path; non-MCP paths are not ours to peek
+        # (and may legitimately have no body / non-JSON body). Single-message
+        # bodies only; batches fall through to the SDK in case it ever grows
+        # proper batch handling.
+        is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
+        # Skip when the affinity-forwarded path has already consumed the
+        # receive (it reads the body itself for the /rpc forward and
+        # falls through to the SDK on failure). Re-reading would observe
+        # an http.disconnect from the now-exhausted original receive and
+        # short-circuit the SDK fallback that the trusted-internal flow
+        # depends on. Forwarded requests already carry an Mcp-Session-Id
+        # in production, but tests exercise the no-session forwarded path
+        # so the gate is needed.
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+            peek = await _maybe_short_circuit_notification(receive)
+            outcome, receive = await _dispatch_peek_outcome(
+                peek,
+                receive,
+                send,
+                accepted_body=b"",
+                log_label="notification short-circuit",
+                log_context=path,
+            )
+            if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
+                return
+
         span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
 
         try:
@@ -3253,22 +4498,34 @@ class SessionManagerWrapper:
                 captured_session_id,
                 mcp_session_id,
             )
-            if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
-                session_to_register: Optional[str] = None
-
-                # Only server-emitted session IDs (from successful initialize) can
-                # establish new ownership state for affinity.
+            # Two distinct writes happen here:
+            #
+            #   * Claim the *logical owner* in the shared session registry.
+            #     This is what `_validate_streamable_session_access` reads on
+            #     subsequent POST/DELETE/GET requests, so it MUST fire whether
+            #     or not multi-worker affinity is enabled — single-node
+            #     deployments still need ownership recorded for the GET-stream
+            #     gate to recognise the legitimate owner.
+            #
+            #   * Register the *worker-affinity* mapping. This only matters
+            #     when multi-worker affinity is on and stays gated.
+            session_to_register: Optional[str] = None
+            requester_email = user_context.get("email") if isinstance(user_context, dict) else None
+            if settings.use_stateful_sessions:
                 if captured_session_id:
                     session_to_register = captured_session_id
-
-                    requester_email = user_context.get("email") if isinstance(user_context, dict) else None
                     if requester_email:
                         effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
                         if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
-                            logger.warning("Session owner mismatch for %s... (requester=%s, owner=%s)", captured_session_id[:8], requester_email, effective_owner)
+                            logger.warning(
+                                "Session owner mismatch for %s... (requester=%s, owner=%s)",
+                                captured_session_id[:8],
+                                requester_email,
+                                effective_owner,
+                            )
                 elif mcp_session_id != "not-provided":
-                    # Existing client-provided IDs may only refresh affinity when they
-                    # are already bound to the caller's principal.
+                    # Existing client-provided IDs may only refresh ownership
+                    # when they are already bound to the caller's principal.
                     session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(
                         mcp_session_id=mcp_session_id,
                         user_context=user_context,
@@ -3277,19 +4534,30 @@ class SessionManagerWrapper:
                     if session_allowed:
                         session_to_register = mcp_session_id
 
-                logger.debug("[HTTP_AFFINITY_DEBUG] session_to_register=%s", session_to_register)
-                if session_to_register:
-                    try:
-                        # First-Party - lazy import to avoid circular dependencies
-                        # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+            logger.debug(
+                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s session_to_register=%s",
+                settings.mcpgateway_session_affinity_enabled,
+                settings.use_stateful_sessions,
+                captured_session_id,
+                mcp_session_id,
+                session_to_register,
+            )
+            if session_to_register and settings.mcpgateway_session_affinity_enabled:
+                try:
+                    # First-Party - lazy import to avoid circular dependencies
+                    # First-Party
+                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
-                        pool = get_mcp_session_pool()
-                        await pool.register_pool_session_owner(session_to_register)
-                        logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", WORKER_ID, session_to_register[:8])
-                    except Exception as e:
-                        logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
-                        logger.warning("Failed to register session ownership: %s", e)
+                    pool = get_session_affinity()
+                    await pool.register_session_owner(session_to_register)
+                    logger.debug(
+                        "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
+                        WORKER_ID,
+                        session_to_register[:8],
+                    )
+                except Exception as e:
+                    logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
+                    logger.warning("Failed to register session ownership: %s", e)
 
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)
@@ -3307,23 +4575,93 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
-def _set_proxy_user_context(proxy_user: str) -> None:
-    """Set user context for a proxy-authenticated request (no team context, non-admin).
+def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
+    """Build a UserContext from the user_context dict and store it in user_identity_var.
 
     Args:
-        proxy_user: Email address of the proxy-authenticated user.
+        ctx: User context dictionary with email, is_admin, teams, auth_method keys.
     """
-    user_context_var.set(
-        {
+    # Standard
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+    email = ctx.get("email")
+    if email:
+        user_identity_var.set(
+            UserContext(
+                user_id=email,
+                email=email,
+                is_admin=ctx.get("is_admin", False),
+                teams=ctx.get("teams"),
+                auth_method=ctx.get("auth_method", "bearer"),
+                authenticated_at=datetime.now(timezone.utc),
+            )
+        )
+
+
+async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
+    """Authenticate a proxy-identified user and set per-request transport context.
+
+    Performs a DB lookup via EmailAuthService, resolves team/admin state via
+    :func:`mcpgateway.auth._resolve_teams_from_db`, enforces ``is_active``, and
+    handles the platform-admin bootstrap (``REQUIRE_USER_IN_DB=False`` + email
+    matches ``settings.platform_admin_email``).  On success, sets
+    ``user_context_var``, user identity, and trace context.  Mirrors the REST
+    ``_authenticate_proxy_user`` helper in ``verify_credentials.py`` so that
+    trusted-proxy MCP clients receive the same DB-backed team/admin resolution
+    as REST admin/API callers (fixes #4262 on the primary MCP transport path).
+
+    Args:
+        proxy_user: Email address supplied by the trusted upstream proxy via
+            ``settings.proxy_user_header``.
+
+    Returns:
+        ``None`` on success.  On failure, returns a dict with ``detail`` (str)
+        and optional ``headers`` (dict) suitable for passing to
+        ``_StreamableHttpAuthHandler._send_error`` to produce a 401 response.
+    """
+    # First-Party
+    from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+    # Use the module-local async get_db() context manager (line 721) rather than
+    # mcpgateway.db.get_db: it provides proper cancellation handling for MCP
+    # handlers cancelled mid-auth (client disconnect, timeout).
+    async with get_db() as db:
+        auth_service = EmailAuthService(db)
+        user_info = await auth_service.get_user_by_email(proxy_user)
+
+        if user_info:
+            # Enforce account-active check (matches JWT path in _enforce_revocation_and_active_user).
+            # A disabled user - including a disabled admin - must not be able to authenticate via
+            # trusted-proxy mode and inherit their pre-disable authorizations.
+            if not user_info.is_active:
+                return {"detail": "Account disabled", "headers": {"WWW-Authenticate": "Bearer"}}
+
+            token_teams = await _resolve_teams_from_db(proxy_user, user_info)
+            is_admin = user_info.is_admin
+        else:
+            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+            if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                token_teams = None  # Admin bypass
+                is_admin = True
+            else:
+                return {"detail": "User not found in database", "headers": {"WWW-Authenticate": "Bearer"}}
+
+        _proxy_ctx: dict[str, Any] = {
             "email": proxy_user,
-            "teams": [],
+            "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
             "is_authenticated": True,
-            "is_admin": False,
-            "permission_is_admin": False,
+            "is_admin": is_admin,
+            "permission_is_admin": is_admin,
             "auth_method": "proxy",
+            "token_use": "session",  # nosec B105 - Not a password; JWT claim type. DB-backed team resolution.
         }
-    )
-    set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
+        user_context_var.set(_proxy_ctx)
+        _set_user_identity_from_dict(_proxy_ctx)
+        # For trace context, admin bypass (teams=None) is represented as [] to match the existing
+        # pre-authentication contract of set_trace_context_from_teams.
+        set_trace_context_from_teams(token_teams or [], user_email=proxy_user, is_admin=is_admin, auth_method="proxy")
+        return None
 
 
 def get_streamable_http_auth_context() -> dict[str, Any]:
@@ -3453,8 +4791,12 @@ class _StreamableHttpAuthHandler:
 
         # Determine authentication strategy based on settings
         if proxy_trusted and proxy_user:
-            _set_proxy_user_context(proxy_user)
-            return True  # Trusted proxy supplied user
+            # DB-backed authentication of the proxy-supplied identity; returns None on success
+            # or {"detail": ..., "headers": ...} on failure (unknown user, disabled user).
+            proxy_error = await _set_proxy_user_context(proxy_user)
+            if proxy_error:
+                return await self._send_error(**proxy_error)
+            return True  # Trusted proxy supplied valid, active user
 
         # --- Standard JWT authentication flow (client auth enabled) ---
         token: str | None = None
@@ -3724,9 +5066,6 @@ class _StreamableHttpAuthHandler:
             # DB/cache, so a second membership query would be redundant.
             if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
                 # Import lazily to avoid circular imports
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
@@ -3790,6 +5129,7 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
+            _set_user_identity_from_dict(auth_user_ctx)
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,
@@ -3916,12 +5256,6 @@ class _StreamableHttpAuthHandler:
         server_id = match.group("server_id")
         server_id_log = sanitize_for_log(server_id)
 
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-        # First-Party
-        from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-
         try:
             async with get_db() as db:
                 server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
@@ -3981,34 +5315,59 @@ class _StreamableHttpAuthHandler:
             )
             return OAuthAuthResult.NOT_APPLICABLE
 
-        # Per RFC 8707/9728, the resource URL is the canonical audience for an
-        # access token bound to this MCP server. We MUST enforce it so that a
-        # token minted for a different API cannot authenticate here just
-        # because it was signed by an allowed issuer. Additional audiences may
-        # be declared explicitly in oauth_config (``resource``, or — for
-        # backward compat — ``client_id``) to accommodate IdPs that issue
-        # tokens with the client_id in ``aud``.
-        resource_url = _build_server_resource_url(self.scope, server_id)
-        if not resource_url:
-            # Can't build a canonical audience — fail closed rather than
-            # accept a token we cannot bind to this resource.
-            logger.warning("Unable to derive resource URL for server %s; rejecting OAuth token", server_id)
-            await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": "Bearer"})
-            return OAuthAuthResult.FAILED
+        # Audience enforcement strategy:
+        #
+        # 1. ``resource`` configured (operator-set or previously learned)
+        #    → enforce it strictly.
+        # 2. ``resource`` unset → fall back to a list of acceptable
+        #    audiences derived from operator config:
+        #      * the canonical RFC 8707/9728 resource URL, and
+        #      * the legacy ``client_id`` field (for IdPs like Authentik
+        #        that mint tokens with ``aud == client_id``).
+        #    PyJWT's "any element matches" semantics accept either.
+        # 3. Neither configured → fail closed. Skipping audience entirely
+        #    would let any token from an allowed issuer authenticate here,
+        #    enabling cross-resource token confusion in shared-IdP
+        #    deployments.
+        configured_resource = server.oauth_config.get("resource")
+        expected_audience: Optional[Union[str, list[str]]]
+        if configured_resource:
+            expected_audience = configured_resource
+        else:
+            fallback_audiences: list[str] = []
+            canonical_url = _build_server_resource_url(self.scope, server_id)
+            if canonical_url:
+                fallback_audiences.append(canonical_url)
+            legacy_client_id = server.oauth_config.get("client_id")
+            if isinstance(legacy_client_id, str) and legacy_client_id.strip():
+                fallback_audiences.append(legacy_client_id.strip())
+            if not fallback_audiences:
+                logger.warning(
+                    "Server %s has no resource or client_id configured and no canonical resource URL could be derived; rejecting OAuth token",
+                    server_id_log,
+                )
+                resource_metadata = _build_resource_metadata_url(self.scope, server_id)
+                www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+                await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
+                return OAuthAuthResult.FAILED
+            expected_audience = fallback_audiences[0] if len(fallback_audiences) == 1 else fallback_audiences
 
-        expected_audiences: list[str] = [resource_url]
-        extra_audience = server.oauth_config.get("resource") or server.oauth_config.get("client_id")
-        if isinstance(extra_audience, str) and extra_audience.strip():
-            expected_audiences.append(extra_audience.strip())
-        elif isinstance(extra_audience, list):
-            expected_audiences.extend(s.strip() for s in extra_audience if isinstance(s, str) and s.strip())
+        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audience)
 
-        claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audiences)
         if claims is None:
             resource_metadata = _build_resource_metadata_url(self.scope, server_id)
             www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
             await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
             return OAuthAuthResult.FAILED
+
+        # Best-effort: persist the verified aud so subsequent requests use
+        # the strict ``resource`` path. ``_persist_learned_server_audience``
+        # is a no-op when ``resource`` is already set.
+        try:
+            async with get_db() as db:
+                _persist_learned_server_audience(server_id, claims, db)
+        except Exception:
+            logger.warning("Failed to persist learned audience for server %s (caller guard)", server_id, exc_info=True)
 
         # Resolve user identity from verified claims
         user_email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")

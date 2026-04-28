@@ -289,7 +289,8 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
   - Who sees it: Only the resource owner (owner_email), and only when their token is not a public-only token (token_teams must be non-empty).
   - Team members cannot see or use it unless they are the owner.
   - Public-only tokens (token_teams=[]) cannot access private resources even as the owner.
-  - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
+  - Platform Admin bypass (token teams=null, is_admin=true) does NOT grant visibility or mutation access to another user's private resources (see [#4341](https://github.com/IBM/mcp-context-forge/pull/4341)). Since direct-ID reads return 404 under bypass, update/delete of another user's private resource also fails because the read-before-write gate hides the resource.
+  - Mutations: Only the owner. If cross-user administrative access is required, prefer changing visibility to `team` or using a properly scoped token; admin bypass alone is insufficient.
 
 - Team:
 

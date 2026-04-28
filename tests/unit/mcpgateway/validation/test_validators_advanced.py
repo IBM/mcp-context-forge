@@ -389,11 +389,11 @@ def test_validate_name_invalid():
 def test_validate_name_rejects_control_characters():
     """EDGE-03: Control characters (\\n, \\t, \\r) must be rejected, not treated as whitespace."""
     control_char_names = [
-        "test\nname",   # newline
-        "test\tname",   # tab
-        "test\rname",   # carriage return
-        "test\x0bname", # vertical tab
-        "test\x0cname", # form feed
+        "test\nname",  # newline
+        "test\tname",  # tab
+        "test\rname",  # carriage return
+        "test\x0bname",  # vertical tab
+        "test\x0cname",  # form feed
     ]
     for name in control_char_names:
         with pytest.raises(ValueError, match="can only contain letters, numbers"):
@@ -1126,7 +1126,7 @@ class TestValidateUrlSecurity:
             SecurityValidator.validate_url("https://[::1]/path")
 
     def test_crlf_injection(self):
-        with pytest.raises(ValueError, match="line breaks"):
+        with pytest.raises(ValueError, match="control characters"):
             SecurityValidator.validate_url("https://example.com/\r\nHost: evil.com")
 
     def test_space_in_domain(self):
@@ -1200,6 +1200,289 @@ class TestValidateUrlSecurity:
         monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
         with pytest.raises(ValueError):
             SecurityValidator.validate_url("http://:99999", "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: percent-encoded injection vectors for validate_url (PR #4335)      #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlPercentEncoding:
+    """Regression tests that encoded injection payloads cannot bypass validate_url."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        """SSRF tests live in TestValidateSsrf; here we focus on pattern bypass."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url,match",
+        [
+            ("https://example.com/%0d%0aHost:evil.com", "control characters"),
+            ("https://example.com/%0D%0AHost:evil.com", "control characters"),
+            ("https://example.com/%0a", "control characters"),
+            ("https://example.com/%0d", "control characters"),
+        ],
+    )
+    def test_encoded_crlf_blocked(self, url, match):
+        with pytest.raises(ValueError, match=match):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%3Cscript%3Ealert(1)%3C/script%3E",
+            "https://example.com/%3cscript%3ealert(1)%3c/script%3e",
+            "https://example.com/%3Ciframe%20src=x%3E",
+        ],
+    )
+    def test_encoded_html_tags_blocked(self, url):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/?x=javascript%3Aalert(1)",
+            "https://example.com/?x=JAVASCRIPT%3Aalert(1)",
+            "https://example.com/?x=vbscript%3Amsgbox(1)",
+            "https://example.com/?x=data%3Atext/html,<script>",
+        ],
+    )
+    def test_encoded_dangerous_protocols_blocked(self, url):
+        with pytest.raises(ValueError, match="unsupported or potentially dangerous protocol"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://%5B%3A%3A1%5D:8080/",
+            "https://%5B::1%5D:8080/",
+        ],
+    )
+    def test_encoded_ipv6_brackets_blocked(self, url):
+        with pytest.raises(ValueError, match="IPv6"):
+            SecurityValidator.validate_url(url, "URL")
+
+    def test_encoded_space_in_authority_blocked(self):
+        with pytest.raises(ValueError, match="spaces"):
+            SecurityValidator.validate_url("https://exam%20ple.com/", "URL")
+
+    def test_encoded_tab_in_authority_blocked(self):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_url("https://example%09.com/", "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%253Cscript%253E",
+            "https://example.com/%250d%250aHost:evil.com",
+            "https://example.com/%2520",
+        ],
+    )
+    def test_double_encoded_payloads_blocked(self, url):
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%u003cscript%u003e",
+            "https://example.com/%U003C",
+        ],
+    )
+    def test_iis_unicode_escapes_blocked(self, url):
+        with pytest.raises(ValueError, match="%u-style escapes"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%5Cu003cscript%5Cu003e",
+            "https://example.com/%5Cx3c",
+            "https://example.com/path\\u003cscript",
+        ],
+    )
+    def test_js_unicode_escape_blocked(self, url):
+        """JS-style `\\uXXXX` / `\\xXX` escapes must be rejected."""
+        with pytest.raises(ValueError, match="JavaScript-style escape sequences"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%C0%BC",
+            "https://example.com/%c0%bcscript",
+            "https://example.com/%ED%A0%80",
+        ],
+    )
+    def test_utf8_overlong_or_invalid_rejected(self, url):
+        """Invalid UTF-8 / overlong sequences produce U+FFFD and are rejected."""
+        with pytest.raises(ValueError, match="invalid UTF-8"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/hello%20world",
+            "https://example.com/?q=hello%20world",
+            "https://example.com/foo%2Fbar",
+            "https://example.com/caf%C3%A9",
+            "https://example.com/%2B",
+        ],
+    )
+    def test_legitimate_encoded_characters_accepted(self, url):
+        """Regression: `%20` and other legitimate encodings in path/query must pass."""
+        assert SecurityValidator.validate_url(url, "URL") == url
+
+    def test_encoded_loopback_blocked_with_ssrf(self):
+        """Encoded `127.0.0.1` in hostname must be caught by SSRF once enabled."""
+        ssrf_settings = MagicMock()
+        ssrf_settings.ssrf_protection_enabled = True
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_blocked_hosts = []
+        ssrf_settings.ssrf_allow_localhost = False
+        ssrf_settings.ssrf_allow_private_networks = False
+        ssrf_settings.ssrf_allowed_networks = []
+        ssrf_settings.ssrf_dns_fail_closed = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="localhost|SSRF"):
+                SecurityValidator.validate_url("http://%31%32%37%2E%30%2E%30%2E%31/", "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: percent-encoded bypass prevention on adjacent validators           #
+# --------------------------------------------------------------------------- #
+class TestAdjacentValidatorPercentEncoding:
+    """Ensure percent-encoded payloads cannot bypass validate_no_xss / validate_uri / sanitize_display_text."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%3Cscript%3Ealert(1)%3C/script%3E",
+            "%3Ciframe%20src=x%3E",
+            "%3Cimg%20onerror=x%3E",
+        ],
+    )
+    def test_validate_no_xss_blocks_encoded_html(self, payload):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "foo/%2E%2E/bar",
+            "foo/%2e%2e/bar",
+            "/%2E%2E/etc/passwd",
+        ],
+    )
+    def test_validate_uri_blocks_encoded_traversal(self, payload):
+        with pytest.raises(ValueError, match="directory traversal"):
+            SecurityValidator.validate_uri(payload, "URI")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%3Cscript%3Ealert(1)%3C/script%3E",
+            "%3Ciframe%20src=evil%3E",
+        ],
+    )
+    def test_sanitize_display_text_blocks_encoded_html(self, payload):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.sanitize_display_text(payload, "field")
+
+    def test_sanitize_display_text_blocks_encoded_js_protocol(self):
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.sanitize_display_text("javascript%3Aalert(1)", "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "foo/%252E%252E/bar",
+            "%252E%252E%252Fetc%252Fpasswd",
+        ],
+    )
+    def test_validate_uri_blocks_double_encoded_traversal(self, payload):
+        """Double-encoded `%2E%2E` must not slip past validate_uri."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_uri(payload, "URI")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%253Cscript%253Ealert(1)%253C/script%253E",
+            "%253Cimg%2520onerror%253Dx%253E",
+        ],
+    )
+    def test_validate_no_xss_blocks_double_encoded_html(self, payload):
+        """Double-encoded `%3Cscript%3E` must not slip past validate_no_xss."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%253Cscript%253Ealert(1)%253C/script%253E",
+            "javascript%253Aalert(1)",
+        ],
+    )
+    def test_sanitize_display_text_blocks_double_encoded(self, payload):
+        """Double-encoded HTML/script must not slip past sanitize_display_text."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.sanitize_display_text(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%2527 OR 1=1",
+            "admin%253B DROP TABLE users",
+            "1%252D%252D",
+        ],
+    )
+    def test_validate_sql_parameter_blocks_double_encoded(self, payload):
+        """Double-encoded SQL metacharacters must not slip past validate_sql_parameter."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_sql_parameter(payload)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "javascript%3Aalert(1)",
+            "vbscript%3Amsgbox(1)",
+            "click%20onload%3Dalert(1)",
+        ],
+    )
+    def test_validate_no_xss_blocks_encoded_js_protocol(self, payload):
+        """validate_no_xss now also rejects encoded JavaScript protocol patterns."""
+        with pytest.raises(ValueError, match="script patterns|HTML tags"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%27 OR 1=1",
+            "%27%3B DROP TABLE users",
+            "1%2D%2D",
+            "admin%3B",
+            "%2F%2A evil %2A%2F",
+        ],
+    )
+    def test_validate_sql_parameter_blocks_encoded(self, payload):
+        """Percent-encoded SQL injection tokens must not bypass validate_sql_parameter."""
+        with pytest.raises(ValueError, match="SQL injection"):
+            SecurityValidator.validate_sql_parameter(payload)
+
+    @pytest.mark.parametrize(
+        "safe",
+        [
+            "plain_param",
+            "user@example.com",
+            "12345",
+        ],
+    )
+    def test_validate_sql_parameter_accepts_safe_values(self, safe):
+        """Regression: safe parameters still pass."""
+        assert SecurityValidator.validate_sql_parameter(safe) == safe
 
 
 # --------------------------------------------------------------------------- #
@@ -1297,3 +1580,202 @@ class TestValidateSsrf:
         ssrf_settings.ssrf_dns_fail_closed = True
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             SecurityValidator._validate_ssrf("127.0.0.1", "URL")  # Should not raise
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: A-G helpers (_unquote_if_needed, _parse_ip_network_cached)        #
+# --------------------------------------------------------------------------- #
+class TestUrlHardeningHelpers:
+    """Verify the module-level helpers added by the A-G hardening refactor."""
+
+    def test_unquote_if_needed_returns_identity_for_no_percent(self):
+        """No `%` → helper returns the same object (enables `is not` short-circuit)."""
+        from mcpgateway.common.validators import _unquote_if_needed
+
+        s = "https://example.com/path/no/percent"
+        result = _unquote_if_needed(s)
+        assert result is s, "no-% path must return same object identity"
+
+    def test_unquote_if_needed_decodes_when_percent_present(self):
+        """With `%` → helper returns a new decoded string."""
+        from mcpgateway.common.validators import _unquote_if_needed
+
+        s = "https://example.com/hello%20world"
+        result = _unquote_if_needed(s)
+        assert result is not s
+        assert result == "https://example.com/hello world"
+
+    def test_parse_ip_network_cached_reuses_cache(self):
+        """Second call with the same CIDR must be a cache hit."""
+        from mcpgateway.common.validators import _parse_ip_network_cached
+
+        _parse_ip_network_cached.cache_clear()
+        first = _parse_ip_network_cached("10.0.0.0/8")
+        info_after_first = _parse_ip_network_cached.cache_info()
+        second = _parse_ip_network_cached("10.0.0.0/8")
+        info_after_second = _parse_ip_network_cached.cache_info()
+
+        assert first is second, "same CIDR must return same cached network object"
+        assert info_after_first.misses == 1
+        assert info_after_second.hits == info_after_first.hits + 1
+
+    def test_parse_ip_network_cached_raises_for_invalid_cidr_every_call(self):
+        """Invalid CIDRs re-raise on every call (lru_cache does not cache exceptions)."""
+        import pytest as _pytest
+
+        from mcpgateway.common.validators import _parse_ip_network_cached
+
+        _parse_ip_network_cached.cache_clear()
+        for _ in range(3):
+            with _pytest.raises(ValueError):
+                _parse_ip_network_cached("not-a-cidr")
+
+    def test_decode_strict_rejects_double_encoded(self):
+        """_decode_strict must raise on double-encoded payloads."""
+        import pytest as _pytest
+
+        from mcpgateway.common.validators import _decode_strict
+
+        with _pytest.raises(ValueError, match="double-encoded"):
+            _decode_strict("%253Cscript%253E", "field")
+
+    def test_decode_strict_passes_through_clean_input(self):
+        """_decode_strict returns same-identity object for no-% input."""
+        from mcpgateway.common.validators import _decode_strict
+
+        s = "https://example.com/clean"
+        assert _decode_strict(s, "field") is s
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: C0 control character rejection in validate_url                     #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlControlCharacters:
+    """Verify that C0 controls and DEL are rejected in decoded URLs."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%00",
+            "https://example.com/%09path",
+            "https://example.com/%0b",
+            "https://example.com/%0c",
+            "https://example.com/%7f",
+            "https://example.com/%01%02%03",
+        ],
+    )
+    def test_encoded_c0_controls_blocked(self, url):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%20path",
+            "https://example.com/caf%C3%A9",
+            "https://example.com/%2B",
+        ],
+    )
+    def test_legitimate_encodings_still_accepted(self, url):
+        assert SecurityValidator.validate_url(url, "URL") == url
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: C0 control character rejection in validate_uri                     #
+# --------------------------------------------------------------------------- #
+class TestValidateUriControlCharacters:
+    """Verify that C0 controls are rejected in decoded URIs."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "resource/%00name",
+            "resource/%09tab",
+            "resource/%0bvtab",
+            "resource/%7fdelchar",
+        ],
+    )
+    def test_encoded_c0_controls_blocked_in_uri(self, uri):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_uri(uri, "URI")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: %25uXXXX bypass regression (double-encoded IIS escapes)           #
+# --------------------------------------------------------------------------- #
+class TestDoubleEncodedIisEscapes:
+    """Verify %25uXXXX decodes to %uXXXX and is still rejected."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%25u003cscript%25u003e",
+            "https://example.com/%25U003C",
+            "https://example.com/%25u0022",
+        ],
+    )
+    def test_double_encoded_iis_escapes_blocked(self, url):
+        with pytest.raises(ValueError, match="%u-style escapes"):
+            SecurityValidator.validate_url(url, "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: JS-pattern false-positive awareness on free text                   #
+# --------------------------------------------------------------------------- #
+class TestJsPatternFalsePositiveAwareness:
+    """Document expected behavior of DANGEROUS_JS_PATTERN on free text.
+
+    These tests make the strictness policy explicit: event-handler-like patterns
+    in display text ARE rejected by validate_no_xss / sanitize_display_text.
+    If this policy changes, update these expectations.
+    """
+
+    @pytest.mark.parametrize(
+        "safe_text",
+        [
+            "Meeting is oncall rotation",
+            "Turn on the lights",
+            "Python onclick handler docs",
+            "condition: true",
+            "user@example.com",
+        ],
+    )
+    def test_freetext_without_equals_accepted_by_validate_no_xss(self, safe_text):
+        SecurityValidator.validate_no_xss(safe_text, "field")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "oncall=1",
+            "onclick=alert(1)",
+            "onload=evil()",
+        ],
+    )
+    def test_event_handler_like_patterns_rejected_by_validate_no_xss(self, text):
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_no_xss(text, "field")
+
+    @pytest.mark.parametrize(
+        "safe_text",
+        [
+            "plain text",
+            "user@example.com",
+            "12345",
+            "hello world with spaces",
+        ],
+    )
+    def test_freetext_accepted_by_sanitize_display_text(self, safe_text):
+        result = SecurityValidator.sanitize_display_text(safe_text, "field")
+        assert result == safe_text

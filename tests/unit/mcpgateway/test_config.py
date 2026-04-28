@@ -13,9 +13,9 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+# Third-Party
 from pydantic import SecretStr
 
-# Third-Party
 # Third-party
 import pytest
 
@@ -71,6 +71,7 @@ def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
 
 def test_sso_entra_graph_timeout_and_max_groups_validation():
     """Graph fallback timeout and max_groups should enforce configured bounds."""
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -78,6 +79,34 @@ def test_sso_entra_graph_timeout_and_max_groups_validation():
 
     with pytest.raises(ValidationError):
         Settings(sso_entra_graph_api_max_groups=-1, _env_file=None)
+
+
+@pytest.mark.parametrize("bad_value", [0, 11, 100])
+def test_uaid_max_federation_hops_rejects_out_of_range(bad_value):
+    """`uaid_max_federation_hops` must stay within `1..=10`.
+
+    Parity guard with the Rust sidecar's `validate_cross_field` check
+    in `crates/a2a_runtime/src/config.rs` (rejects 0 and >10).  Without
+    this test a future edit that raised the Python ceiling or relaxed
+    the floor would silently diverge from Rust and let an operator
+    configure a range the sidecar will then refuse at startup.
+    """
+    # Third-Party
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(uaid_max_federation_hops=bad_value, _env_file=None)
+
+
+@pytest.mark.parametrize("good_value", [1, 5, 10])
+def test_uaid_max_federation_hops_accepts_bounds(good_value):
+    """Boundary values (1 and 10) plus the default (5) must all be accepted.
+
+    Inclusive bounds — regression guard against an off-by-one on the
+    `le=10` constraint.
+    """
+    settings = Settings(uaid_max_federation_hops=good_value, _env_file=None)
+    assert settings.uaid_max_federation_hops == good_value
 
 
 # --------------------------------------------------------------------------- #
@@ -237,6 +266,7 @@ def test_compression_minimum_size_validation():
     assert s.compression_minimum_size == 0
 
     # Invalid: negative values should fail
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError) as exc_info:
@@ -246,6 +276,7 @@ def test_compression_minimum_size_validation():
 
 def test_compression_gzip_level_validation():
     """Test that gzip level validates 1-9 range."""
+    # Third-Party
     from pydantic import ValidationError
 
     # Valid range
@@ -266,6 +297,7 @@ def test_compression_gzip_level_validation():
 
 def test_compression_brotli_quality_validation():
     """Test that brotli quality validates 0-11 range."""
+    # Third-Party
     from pydantic import ValidationError
 
     # Valid range
@@ -286,6 +318,7 @@ def test_compression_brotli_quality_validation():
 
 def test_compression_zstd_level_validation():
     """Test that zstd level validates 1-22 range."""
+    # Third-Party
     from pydantic import ValidationError
 
     # Valid range
@@ -309,6 +342,7 @@ def test_compression_zstd_level_validation():
 # --------------------------------------------------------------------------- #
 def test_normalize_env_list_vars_empty_value():
     """Empty env var should be converted to '[]'."""
+    # First-Party
     from mcpgateway.config import _normalize_env_list_vars
 
     with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": ""}, clear=False):
@@ -318,6 +352,7 @@ def test_normalize_env_list_vars_empty_value():
 
 def test_normalize_env_list_vars_valid_json():
     """Valid JSON array should be left as-is."""
+    # First-Party
     from mcpgateway.config import _normalize_env_list_vars
 
     with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": '["a.com", "b.com"]'}, clear=False):
@@ -327,10 +362,12 @@ def test_normalize_env_list_vars_valid_json():
 
 def test_normalize_env_list_vars_csv():
     """CSV value should be converted to JSON array."""
+    # First-Party
     from mcpgateway.config import _normalize_env_list_vars
 
     with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": "a.com, b.com"}, clear=False):
         _normalize_env_list_vars()
+        # Third-Party
         import orjson
 
         result = orjson.loads(os.environ["SSO_TRUSTED_DOMAINS"])
@@ -339,10 +376,12 @@ def test_normalize_env_list_vars_csv():
 
 def test_normalize_env_list_vars_invalid_json_bracket():
     """Value starting with '[' but not valid JSON should fall through to CSV."""
+    # First-Party
     from mcpgateway.config import _normalize_env_list_vars
 
     with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": "[not-valid-json"}, clear=False):
         _normalize_env_list_vars()
+        # Third-Party
         import orjson
 
         result = orjson.loads(os.environ["SSO_TRUSTED_DOMAINS"])
@@ -586,7 +625,7 @@ def test_get_security_warnings_many():
         skip_ssl_verify=True,
         debug=True,
         dev_mode=False,
-        token_expiry=20000,
+        token_expiry=1440,  # Max allowed value (was 20000)
         tool_rate_limit=2000,
         _env_file=None,
     )
@@ -625,9 +664,10 @@ def test_get_security_warnings_dev_mode():
 
 def test_get_security_warnings_long_token():
     """Very long token expiry should generate a warning."""
-    s = Settings(token_expiry=20160, _env_file=None)
+    s = Settings(token_expiry=1440, _env_file=None)  # Max allowed value
     warnings = s.get_security_warnings()
-    assert any("token expiry" in w for w in warnings)
+    # Should NOT have token expiry warning since 1440 < 10080
+    assert not any("token expiry" in w for w in warnings)
 
 
 def test_get_security_warnings_high_rate_limit():
@@ -678,6 +718,7 @@ def test_parse_allowed_origins_quoted_string():
 # --------------------------------------------------------------------------- #
 def test_validate_log_level_invalid():
     """Invalid log level should raise ValueError."""
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -732,6 +773,7 @@ def test_parse_sso_issuers_empty_string():
 
 def test_parse_sso_issuers_invalid_json():
     """Invalid JSON starting with '[' should raise ValueError."""
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -740,6 +782,7 @@ def test_parse_sso_issuers_invalid_json():
 
 def test_parse_sso_issuers_invalid_type():
     """Non-string/list/None type should raise ValueError."""
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -825,6 +868,7 @@ def test_parse_list_from_env_invalid_json_fallback():
 
 def test_parse_list_from_env_invalid_type():
     """Non-string/list/None type should raise ValueError."""
+    # Third-Party
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
@@ -1027,6 +1071,7 @@ def test_init_cors_production_env():
 # --------------------------------------------------------------------------- #
 def test_generate_settings_schema():
     """generate_settings_schema should return a valid JSON schema dict."""
+    # First-Party
     from mcpgateway.config import generate_settings_schema
 
     schema = generate_settings_schema()
@@ -1137,6 +1182,37 @@ def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path
         Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
 
 
+def test_experimental_rust_a2a_runtime_defaults():
+    """Experimental Rust A2A runtime settings should default to disabled with local sidecar URL."""
+    s = Settings(_env_file=None)
+    assert s.experimental_rust_a2a_runtime_enabled is False
+    assert s.experimental_rust_a2a_runtime_delegate_enabled is False
+    assert s.experimental_rust_a2a_runtime_managed is True
+    assert s.experimental_rust_a2a_runtime_url == "http://127.0.0.1:8788"
+    assert s.experimental_rust_a2a_runtime_uds is None
+    assert s.experimental_rust_a2a_runtime_timeout_seconds == 30
+
+
+def test_experimental_rust_a2a_runtime_uds_accepts_absolute_path(tmp_path: Path):
+    """The optional Rust A2A runtime UDS path should round-trip when configured."""
+    uds_path = tmp_path / "contextforge-a2a-rust.sock"
+    s = Settings(experimental_rust_a2a_runtime_uds=str(uds_path), _env_file=None)
+    assert s.experimental_rust_a2a_runtime_uds == str(uds_path)
+
+
+def test_experimental_rust_a2a_runtime_uds_rejects_relative_path():
+    """The Rust A2A runtime UDS path must be absolute."""
+    with pytest.raises(ValueError, match="must be an absolute path"):
+        Settings(experimental_rust_a2a_runtime_uds="relative.sock", _env_file=None)
+
+
+def test_experimental_rust_a2a_runtime_uds_rejects_missing_parent(tmp_path: Path):
+    """The Rust A2A runtime UDS parent directory must already exist."""
+    missing_parent = tmp_path / "missing" / "contextforge-a2a-rust.sock"
+    with pytest.raises(ValueError, match="parent directory does not exist"):
+        Settings(experimental_rust_a2a_runtime_uds=str(missing_parent), _env_file=None)
+
+
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
@@ -1172,8 +1248,9 @@ def test_allow_unauthenticated_admin_warns_when_auth_disabled(caplog):
 # --------------------------------------------------------------------------- #
 def test_derive_ed25519_public_key():
     """Valid Ed25519 private key should auto-derive public key."""
-    from cryptography.hazmat.primitives.asymmetric import ed25519
+    # Third-Party
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ed25519
 
     private_key = ed25519.Ed25519PrivateKey.generate()
     pem = private_key.private_bytes(
@@ -1195,8 +1272,9 @@ def test_derive_ed25519_invalid_key_warns():
 
 def test_derive_ed25519_non_ed25519_key_is_ignored():
     """Non-Ed25519 keys should be ignored by the derive_public_keys model validator (config.py:2074)."""
-    from cryptography.hazmat.primitives.asymmetric import ec
+    # Third-Party
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
 
     private_key = ec.generate_private_key(ec.SECP256R1())
     pem = private_key.private_bytes(
@@ -1238,6 +1316,7 @@ def test_reverse_proxy_feature_default_false():
 
 def test_hot_server_check_interval_property():
     """hot_server_check_interval should be auto-derived from gateway_auto_refresh_interval."""
+    # First-Party
     from mcpgateway.config import Settings
 
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)

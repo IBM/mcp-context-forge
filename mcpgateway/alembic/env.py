@@ -43,6 +43,7 @@ Note:
 
 # Standard
 from importlib.resources import files
+import logging
 from logging.config import fileConfig
 
 # Third-Party
@@ -110,9 +111,10 @@ def _inside_alembic() -> bool:
 
 config.set_main_option("script_location", str(files("mcpgateway").joinpath("alembic")))
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
+# Only apply alembic.ini logging when root has no handlers (standalone CLI).
+# Skip when imported from the gateway lifespan to avoid fileConfig() resetting
+# root handlers/level (disable_existing_loggers does not protect root).
+if config.config_file_name is not None and not logging.getLogger().handlers:
     fileConfig(
         config.config_file_name,
         disable_existing_loggers=False,

@@ -30,13 +30,10 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import (
-    PromptError,
-    PromptNameConflictError,
-    PromptNotFoundError,
-    PromptService,
-    PromptValidationError,
-)
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
+
+# Local
+from tests.helpers.admin_mocks import install_admin_user
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -213,6 +210,7 @@ class TestPromptServiceInit:
         """Cover env-override parsing in PromptService._get_plugin_manager (PLUGINS_ENABLED)."""
         from mcpgateway.plugins import enable_plugins, reset_plugin_manager_factory
 
+
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
         enable_plugins(False)
         reset_plugin_manager_factory()
@@ -375,15 +373,21 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_register_prompt_template_validation_error(self, prompt_service, test_db):
+        """Test that template validation errors are raised as TemplateValidationError."""
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
         prompt_service._notify_prompt_added = AsyncMock()
-        # Patch _validate_template to raise
-        prompt_service._validate_template = Mock(side_effect=Exception("bad template"))
-        pc = PromptCreate(name="fail", description="", template="bad", arguments=[])
-        with pytest.raises(PromptError) as exc_info:
+
+        # Use a template with nonexistent filter (passes Pydantic, fails service validation)
+        pc = PromptCreate(name="fail", description="", template="Hello {{ name | nonexistent_filter }}", arguments=[])
+
+        with pytest.raises(TemplateValidationError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
-        assert "Failed to register prompt" in str(exc_info.value)
+        # Generic error message to avoid leaking template details (CWE-209 fix)
+        assert "invalid jinja2 syntax" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -519,7 +523,7 @@ class TestPromptService:
         prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(
             db_prompt,
             {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
-            "user@test.com",
+            meta_data=None,
         )
         test_db.commit.assert_called_once()
         assert result.description == "Convert time with detailed context"
@@ -1175,6 +1179,188 @@ class TestPromptService:
             # Verify rollback was called
             test_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_register_prompt_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
+        """Test that ContentPatternError is caught and re-raised during prompt registration."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentPatternError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
+            pattern_matched="__import__", content_type="Prompt template", content_snippet="{{__import__('os')}}", violation_type="python_injection"
+        )
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service),
+            patch("mcpgateway.services.prompt_service.logger") as mock_logger,
+            patch("mcpgateway.services.prompt_service.structured_logger") as mock_structured_logger,
+        ):
+            # Use model_construct to bypass Pydantic validation
+            prompt = PromptCreate.model_construct(name="malicious-prompt", template="{{__import__('os')}}")
+
+            with pytest.raises(ContentPatternError) as exc_info:
+                await prompt_service.register_prompt(test_db, prompt, created_by="test_user", owner_email="test@example.com")
+
+            # Verify the error details
+            assert exc_info.value.pattern_matched == "__import__"
+            assert exc_info.value.violation_type == "python_injection"
+            assert exc_info.value.content_snippet == "{{__import__('os')}}"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
+            # Verify logger.error was called (covers line 908)
+            mock_logger.error.assert_called_once()
+            assert "__import__" in str(mock_logger.error.call_args)
+
+            # Verify structured_logger.log was called (covers lines 909-918)
+            mock_structured_logger.log.assert_called_once()
+            call_args = mock_structured_logger.log.call_args
+            assert call_args[1]["level"] == "ERROR"
+            assert call_args[1]["message"] == "Prompt creation failed - Malicious pattern detected"
+            assert call_args[1]["event_type"] == "prompt_creation_failed"
+            assert call_args[1]["component"] == "prompt_service"
+            assert call_args[1]["user_id"] == "test_user"
+            assert call_args[1]["user_email"] == "test@example.com"
+            assert call_args[1]["custom_fields"]["prompt_name"] == "malicious-prompt"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_with_content_pattern_error(self, prompt_service, test_db, mock_logging_services):
+        """Test that ContentPatternError is caught and re-raised during prompt update."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),  # get_for_update call
+                _make_execute_result(scalar=None),  # conflict check (if name changes)
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentPatternError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = ContentPatternError(
+            pattern_matched="eval(", content_type="Prompt template", content_snippet="{{eval(user_input)}}", violation_type="code_injection"
+        )
+
+        mock_structured_logger = mock_logging_services["structured_logger"]
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service), patch("mcpgateway.services.prompt_service.logger") as mock_logger:
+            upd = PromptUpdate(template="{{eval(user_input)}}")
+
+            with pytest.raises(ContentPatternError) as exc_info:
+                # Don't pass user_email to skip permission check
+                await prompt_service.update_prompt(test_db, 1, upd, modified_by="test_user")
+
+            # Verify the error details
+            assert exc_info.value.pattern_matched == "eval("
+            assert exc_info.value.violation_type == "code_injection"
+
+            # Verify rollback was called (covers line 2444)
+            test_db.rollback.assert_called_once()
+
+            # Verify logger.error was called (covers line 2445)
+            mock_logger.error.assert_called_once()
+            assert "eval(" in str(mock_logger.error.call_args)
+
+            # Verify structured_logger.log was called (covers line 2446)
+            mock_structured_logger.log.assert_called_once()
+            call_args = mock_structured_logger.log.call_args
+            assert call_args[1]["level"] == "ERROR"
+            assert call_args[1]["message"] == "Prompt update failed - Malicious pattern detected"
+            assert call_args[1]["event_type"] == "prompt_update_failed"
+            assert call_args[1]["component"] == "prompt_service"
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_content_pattern_error(self, prompt_service, test_db):
+        """Test that TemplateValidationError is caught and re-raised during prompt update.
+
+        This test covers:
+        - prompt_service.py template validation with dangerous patterns
+        """
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises TemplateValidationError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(
+            template_name="test-prompt", reason="Template contains dangerous pattern that could lead to code injection", pattern="__import__"
+        )
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use a simple template that passes Pydantic validation
+            upd = PromptUpdate(template="Hello {{name}}")
+
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.template_name == "test-prompt"
+            assert "dangerous pattern" in exc_info.value.reason.lower()
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_template_validation_error(self, prompt_service, test_db):
+        """Test that TemplateValidationError is caught and re-raised during prompt update."""
+        # First-Party
+        from mcpgateway.services.content_security import TemplateValidationError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises TemplateValidationError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_template.side_effect = TemplateValidationError(template_name="test-template", reason="Template contains dangerous pattern", pattern="__import__")
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use a safe template that passes Pydantic validation
+            # The mock will raise TemplateValidationError when validate_prompt_template is called
+            upd = PromptUpdate(template="Hello {{ name }}")
+
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.template_name == "test-template"
+            assert "dangerous pattern" in exc_info.value.reason.lower()
+            assert exc_info.value.pattern == "__import__"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
     # ──────────────────────────────────────────────────────────────────
     #   set state
     # ──────────────────────────────────────────────────────────────────
@@ -1569,12 +1755,51 @@ class TestPromptAccessAuthorization:
         assert await prompt_service._check_prompt_access(mock_db, public_prompt, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
-    async def test_check_prompt_access_admin_bypass(self, prompt_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
+    async def test_check_prompt_access_admin_bypass_denied_for_private(self, prompt_service, mock_db):
+        """Admin bypass does NOT grant access to private resources (security requirement)."""
         private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
 
-        # Admin bypass: both None = unrestricted access
-        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email=None, token_teams=None) is True
+        # Admin bypass: both None, but private resources are NEVER accessible via admin bypass
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email=None, token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_bypass_grants_team_access(self, prompt_service, mock_db):
+        """Admin bypass grants access to team resources."""
+        team_prompt = self._create_mock_prompt(visibility="team", owner_email="owner@test.com", team_id="team-abc")
+
+        # Admin bypass: both None = access to team resources
+        assert await prompt_service._check_prompt_access(mock_db, team_prompt, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_database_admin_bypass(self, prompt_service, mock_db):
+        """DB admin bypass: own private allowed, other user's private denied (PR #4341)."""
+        other_users_private = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+        own_private = self._create_mock_prompt(visibility="private", owner_email="admin@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        # token_teams=None + DB admin viewing OWN private → allowed (#4341 carve-out for self-access)
+        assert await prompt_service._check_prompt_access(mock_db, own_private, user_email="admin@test.com", token_teams=None) is True
+        # token_teams=None + DB admin viewing OTHER user's private → denied (#4341 invariant)
+        assert await prompt_service._check_prompt_access(mock_db, other_users_private, user_email="admin@test.com", token_teams=None) is False
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_with_narrowed_token_still_narrowed(self, prompt_service, mock_db):
+        """DB admin with a team-scoped token must NOT bypass (#4106 guard)."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=["some-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_with_public_only_token_stays_public_only(self, prompt_service, mock_db):
+        """DB admin with public-only token (token_teams=[]) sees only public."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        install_admin_user(mock_db)
+
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_check_prompt_access_private_denied_to_unauthenticated(self, prompt_service, mock_db):
@@ -1959,16 +2184,28 @@ class TestPromptBulkRegistration:
         assert any("Prompt name conflict" in err for err in result["errors"])
 
     @pytest.mark.asyncio
-    async def test_register_prompts_bulk_invalid_template_counts_failed(self, prompt_service):
+    async def test_register_prompts_bulk_invalid_template_counts_failed(self, prompt_service, monkeypatch):
+        """Test that template validation errors cause fail-fast in bulk operations."""
+        # First-Party
+        from mcpgateway import config
+        from mcpgateway.services.content_security import ContentSecurityService, TemplateValidationError
+
+        # Ensure validation is enabled by monkeypatching settings
+        monkeypatch.setattr(config.settings, "content_validate_prompt_templates", True)
+
+        # Create a fresh ContentSecurityService with validation enabled
+        mock_security_service = ContentSecurityService()
+
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
         db.commit = MagicMock()
         db.refresh = MagicMock()
+        db.rollback = MagicMock()
         prompt_service._notify_prompt_added = AsyncMock()
 
         prompt = SimpleNamespace(
             name="bad",
-            template="Hello {{ invalid",
+            template="Hello {{ invalid",  # Unbalanced braces
             description=None,
             arguments=[],
             tags=[],
@@ -1980,15 +2217,20 @@ class TestPromptBulkRegistration:
             visibility="public",
         )
 
-        result = await prompt_service.register_prompts_bulk(
-            db=db,
-            prompts=[prompt],
-            created_by="tester",
-            conflict_strategy="skip",
-        )
+        # Mock get_content_security_service to return our service with validation enabled
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Template validation errors now cause fail-fast behavior
+            with pytest.raises(TemplateValidationError) as exc_info:
+                await prompt_service.register_prompts_bulk(
+                    db=db,
+                    prompts=[prompt],
+                    created_by="tester",
+                    conflict_strategy="skip",
+                )
 
-        assert result["failed"] == 1
-        assert any("Failed to process prompt" in err for err in result["errors"])
+            assert "Unbalanced template braces" in str(exc_info.value)
+            # Verify rollback was called
+            db.rollback.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -2877,10 +3119,15 @@ class TestUpdatePromptFieldsAndExceptions:
             return existing
 
         db = MagicMock()
+        # Caller is an admin so the update is allowed; the test only verifies
+        # that the persisted owner (not the payload owner_email) is used in
+        # the WHERE clause.  Explicit is_user_admin patch avoids depending
+        # on MagicMock-is-truthy in the real admin check.
         with (
             patch("mcpgateway.services.prompt_service.get_for_update", side_effect=fake_get_for_update),
             patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+            patch("mcpgateway.utils.admin_check.is_user_admin", return_value=True),
         ):
             mock_cache = AsyncMock()
             mock_cache_fn.return_value = mock_cache
@@ -3353,3 +3600,244 @@ class TestListPromptsGatewayIdFilter:
         attrs = mock_create_span.call_args[0][1]
         assert attrs["server_id"] == "server-1"
         assert attrs["team.scope"] == "team-1"
+
+
+# --------------------------------------------------------------------------- #
+# Security regression tests for meta_data handling (CWE-400, CWE-20, CWE-284)#
+# --------------------------------------------------------------------------- #
+
+
+class TestValidateMetaDataPrompt:
+    """Unit tests for _validate_meta_data in prompt_service (CWE-400 guards)."""
+
+    def test_none_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data(None)
+
+    def test_empty_dict_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({})
+
+    def test_valid_small_dict_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        _validate_meta_data({"trace_id": "abc", "user": "test@example.com"})
+
+    def test_too_many_keys_raises(self):
+        """meta_data with more than _META_MAX_KEYS keys must be rejected."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        oversized = {str(i): i for i in range(META_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="maximum key count"):
+            _validate_meta_data(oversized)
+
+    def test_excessive_nesting_depth_raises(self):
+        """meta_data with depth > _META_MAX_DEPTH must be rejected."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        deeply_nested = {"level1": {"level2": {"level3": "value"}}}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(deeply_nested)
+
+    def test_list_of_dicts_depth_bypass_is_rejected(self):
+        """Depth check must traverse lists so {"k": [{"l2": {"l3": "x"}}]} is rejected (CWE-400 / Finding 4)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        hidden_depth = {"k": [{"l2": {"l3": "x"}}]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            _validate_meta_data(hidden_depth)
+
+    def test_non_serializable_value_raises(self):
+        """meta_data with non-JSON-serializable value must raise ValueError (CWE-20 / Finding 6)."""
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        class _Unserializable:
+            pass
+
+        with pytest.raises(ValueError, match="not serializable"):
+            _validate_meta_data({"bad": _Unserializable()})
+
+    def test_exact_max_depth_is_accepted(self):
+        # First-Party
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        two_levels = {"outer": {"inner": "value"}}
+        _validate_meta_data(two_levels)
+
+    def test_oversized_bytes_raises(self):
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_BYTES
+        from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
+
+        large_value = "x" * (META_MAX_BYTES + 1)
+        with pytest.raises(ValueError, match="maximum size"):
+            _validate_meta_data({"k": large_value})
+
+
+class TestBuildGetPromptRequest:
+    """Unit tests for _build_get_prompt_request (CWE-20 and CWE-284 guards)."""
+
+    def test_meta_is_injected_under_alias_key(self):
+        """_meta must be present on the inner params model after build (CWE-20)."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _build_get_prompt_request
+
+        meta_data = {"trace_id": "xyz", "user": "alice@example.com"}
+        request = _build_get_prompt_request("my-prompt", None, meta_data)
+        inner_params = request.root.params
+        assert inner_params is not None
+        assert inner_params.meta is not None
+        dumped = inner_params.meta.model_dump()
+        # All meta_data keys must survive; MCP SDK may add progressToken alongside
+        assert meta_data.items() <= dumped.items()
+
+    def test_returns_client_request_type(self):
+        """Return value must be a ClientRequest wrapping GetPromptRequest."""
+        # Third-Party
+        from mcp import types
+        from mcp.types import GetPromptRequest
+
+        # First-Party
+        from mcpgateway.services.prompt_service import _build_get_prompt_request
+
+        req = _build_get_prompt_request("my-prompt", {"arg": "val"}, {"k": "v"})
+        assert isinstance(req, types.ClientRequest)
+        assert isinstance(req.root, GetPromptRequest)
+
+
+class TestGetPromptMetaDataValidationIntegration:
+    """Integration tests: _validate_meta_data is called by _fetch_gateway_prompt_result."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_rejects_oversized_meta_data(self):
+        """_fetch_gateway_prompt_result must raise ValueError for oversized meta_data."""
+        # First-Party
+        from mcpgateway.common.validators import META_MAX_KEYS as _META_MAX_KEYS
+        from mcpgateway.services.prompt_service import PromptService
+
+        service = PromptService()
+
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+        gateway.auth_type = None
+
+        prompt = _build_db_prompt(template="", name="gw-prompt")
+        prompt.gateway_id = "gw-1"
+        prompt.gateway = gateway
+        prompt.original_name = "gw-prompt"
+
+        oversized = {str(i): i for i in range(_META_MAX_KEYS + 1)}
+
+        with pytest.raises(ValueError, match="maximum key count"):
+            await service._fetch_gateway_prompt_result(prompt, {}, meta_data=oversized)
+
+
+class TestFetchGatewayPromptRegistryPath:
+    """Covers the upstream-session-registry branches in _fetch_gateway_prompt_result (#4205)."""
+
+    def _build_gateway_prompt(self):
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+        gateway.auth_type = None
+        gateway.auth_query_params = None
+
+        prompt = _build_db_prompt(template="", name="gw-prompt")
+        prompt.gateway_id = "gw-1"
+        prompt.gateway = gateway
+        prompt.original_name = "gw-prompt"
+        return prompt
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_uses_registry_when_downstream_session_id_present(self):
+        """Registry path runs when Mcp-Session-Id is in scope and the registry is initialised.
+
+        Covers prompt_service.py:402-403, 405, 408-409, 416.
+        """
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "from registry"
+
+        fake_upstream = MagicMock()
+        fake_upstream.session = MagicMock()
+
+        class _Ctx:
+            async def __aenter__(self):
+                return fake_upstream
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        fake_registry = MagicMock()
+        fake_registry.acquire = MagicMock(return_value=_Ctx())
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-xyz"),
+            patch("mcpgateway.services.prompt_service.get_upstream_session_registry", return_value=fake_registry),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, {"a": "b"}, meta_data=None)
+
+        fake_registry.acquire.assert_called_once()
+        assert result.description == "from registry"
+
+    @pytest.mark.asyncio
+    async def test_fetch_gateway_prompt_falls_back_when_registry_not_initialised(self):
+        """RegistryNotInitializedError falls through to the transport-direct path (covers line 406-407)."""
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptService
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+
+        service = PromptService()
+        prompt = self._build_gateway_prompt()
+
+        remote_result = MagicMock()
+        remote_result.messages = []
+        remote_result.description = "from fallback"
+
+        class _FakeStreamsCtx:
+            async def __aenter__(self):
+                # streamablehttp_client yields (read, write, get_session_id)
+                return (MagicMock(), MagicMock(), MagicMock())
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        class _FakeClientSessionCtx:
+            async def __aenter__(self):
+                session = MagicMock()
+                session.initialize = AsyncMock()
+                return session
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with (
+            patch("mcpgateway.services.prompt_service._downstream_session_id_from_request", return_value="downstream-xyz"),
+            patch("mcpgateway.services.prompt_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+            patch("mcpgateway.services.prompt_service.streamablehttp_client", return_value=_FakeStreamsCtx()),
+            patch("mcpgateway.services.prompt_service.ClientSession", return_value=_FakeClientSessionCtx()),
+            patch("mcpgateway.services.prompt_service._get_prompt_with_meta", new_callable=AsyncMock, return_value=remote_result),
+        ):
+            result = await service._fetch_gateway_prompt_result(prompt, None, meta_data=None)
+
+        assert result.description == "from fallback"

@@ -73,9 +73,9 @@ class TokenValidationResult:
             >>> r.blocking_errors
             []
             >>> r.audience_match = False
-            >>> r.warnings.append("Token audience mismatch: token aud=[api://wrong], expected 'api://correct'")
+            >>> r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
             >>> r.blocking_errors
-            ["Token audience mismatch: token aud=[api://wrong], expected 'api://correct'"]
+            ['Token audience mismatch: token aud does not match expected resource or gateway URL']
         """
         if not self.warnings:
             return []
@@ -152,8 +152,8 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
         gateway_name: Gateway name for log messages.
         result: Validation result to update in-place.
     """
-    expected_audience = oauth_config.get("resource") or gateway_url
-    if not expected_audience:
+    expected = oauth_config.get("resource") or gateway_url
+    if not expected:
         return
 
     token_aud = claims.get("aud")
@@ -161,14 +161,15 @@ def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gat
         logger.debug("OAuth token for gateway %s has no 'aud' claim", gateway_name)
         return
 
+    # Normalize both sides to lists for a simple membership check.
+    # Per RFC 7519 Section 4.1.3, aud can be a string or array.
+    expected_list = expected if isinstance(expected, list) else [expected]
     aud_list = token_aud if isinstance(token_aud, list) else [token_aud]
-    if expected_audience in aud_list:
+    if any(a in expected_list for a in aud_list):
         result.audience_match = True
     else:
         result.audience_match = False
-        safe_aud = ", ".join(str(a)[:80] for a in aud_list[:3])
-        safe_expected = str(expected_audience)[:80]
-        result.warnings.append(f"Token audience mismatch: token aud=[{safe_aud}], expected '{safe_expected}'")
+        result.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
 
 
 def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gateway_name: str, result: TokenValidationResult) -> None:
