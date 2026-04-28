@@ -327,6 +327,10 @@ class Settings(BaseSettings):
     )
 
     # Authentication
+    auth_header_name: str = Field(
+        default="Authorization",
+        description="HTTP header name for JWT authentication. Use 'Authorization' (default) or alternative like 'X-MCP-Gateway-Auth' to avoid header collision with downstream servers.",
+    )
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"

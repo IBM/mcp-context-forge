@@ -106,7 +106,7 @@ def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
 
 
 def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
-    """Extract bearer token from WebSocket Authorization headers.
+    """Extract bearer token from WebSocket headers using configured auth header name.
 
     Args:
         query_params: WebSocket query parameters mapping-like object.
@@ -124,9 +124,15 @@ def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_par
         logger.warning(f"{query_param_warning}; token ignored")
 
     header_values = headers or {}
-    auth_header = header_values.get("authorization") if hasattr(header_values, "get") else None
+
+    # Use configured authentication header name (default: Authorization)
+    auth_header_name = settings.auth_header_name.lower()
+    auth_header = header_values.get(auth_header_name) if hasattr(header_values, "get") else None
+
+    # Try case-sensitive version if lowercase didn't work
     if not auth_header and hasattr(header_values, "get"):
-        auth_header = header_values.get("Authorization")
+        auth_header = header_values.get(settings.auth_header_name)
+
     if auth_header:
         scheme, _, credentials = auth_header.partition(" ")
         if scheme.lower() == "bearer" and credentials:

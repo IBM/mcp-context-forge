@@ -93,8 +93,24 @@ async def run_pre_request_hooks(
         #
         # This guard can be disabled with PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=true
         # for deployments that require plugin-driven token exchange (e.g. WXO auth).
+        #
+        # Note: When using a custom auth header (e.g., X-MCP-Gateway-Auth), the
+        # standard Authorization header is NOT protected, allowing it to pass through
+        # to downstream servers for their authentication.
         if not settings.plugins_can_override_auth_headers:
-            _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
+            # Get the configured auth header name (handle mocks in tests)
+            auth_header_name = getattr(settings, "auth_header_name", "Authorization")
+            if not isinstance(auth_header_name, str):
+                auth_header_name = "Authorization"  # Fallback for mocked settings
+
+            # Build list of protected headers - always protect the configured auth header
+            _auth_protected_headers = {auth_header_name.lower(), "cookie", "x-api-key", "proxy-authorization"}
+
+            # If using custom auth header, don't protect standard Authorization header
+            # This allows Authorization to pass through to downstream servers
+            if auth_header_name.lower() != "authorization":
+                _auth_protected_headers.discard("authorization")
+
             original_lower = {h.lower() for h in headers}
             overridden = {k.lower() for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}
             if overridden:

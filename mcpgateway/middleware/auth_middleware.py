@@ -144,9 +144,10 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if request.cookies:
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
-        # 2. Try Authorization header
+        # 2. Try configured authentication header (default: Authorization)
         if not token:
-            auth_header = request.headers.get("authorization")
+            auth_header_name = settings.auth_header_name.lower()
+            auth_header = request.headers.get(auth_header_name)
             if auth_header and auth_header.startswith("Bearer "):
                 token = auth_header.replace("Bearer ", "")
 
