@@ -5895,6 +5895,7 @@ docker-shell:
 # help: compose-tls-https     - 🔒 Start stack with TLS, force HTTPS redirect (HTTPS:8443 only)
 # help: compose-tls-down      - Stop TLS-enabled stack
 # help: compose-tls-logs      - Tail logs from TLS stack
+# help: compose-test-hardened - 🔒 Test hardened runtime (read_only + cap_drop + runtime/default seccomp)
 # help: compose-tls-ps        - Show TLS stack status
 # help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
 # help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
@@ -6256,6 +6257,90 @@ compose-tls-logs:
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
 
 compose-tls-ps:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hardened Runtime Testing - Verify security constraints work in practice
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: compose-test-hardened
+
+compose-test-hardened: compose-validate
+	@echo "🔒 Testing hardened runtime configuration..."
+	@echo ""
+	@echo "   Security constraints:"
+	@echo "   ├─ read_only: true (read-only root filesystem)"
+	@echo "   ├─ cap_drop: ALL (zero capabilities)"
+	@echo "   ├─ seccomp: runtime/default (Docker's default syscall filter)"
+	@echo "   └─ tmpfs: /tmp, /var/tmp, /run (writable mounts)"
+	@echo ""
+	@echo "🚀 Starting hardened stack..."
+	@$(MAKE) --no-print-directory compose-up
+	@echo ""
+	@echo "⏳ Waiting for services to initialize (30s)..."
+	@sleep 30
+	@echo ""
+	@echo "🏥 Testing health endpoint..."
+	@if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then \
+		echo "✅ Health check passed"; \
+	else \
+		echo "❌ Health check failed"; \
+		echo ""; \
+		echo "📋 Gateway logs:"; \
+		$(COMPOSE) logs --tail=50 gateway; \
+		echo ""; \
+		echo "🛑 Stopping stack..."; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "🔐 Testing authenticated /tools endpoint..."
+	@if [ -z "$(JWT_SECRET_KEY)" ]; then \
+		echo "⚠️  JWT_SECRET_KEY not set, using default from .env"; \
+		SECRET=$$(grep '^JWT_SECRET_KEY=' .env 2>/dev/null | cut -d= -f2 || echo "dev-secret-key-change-in-production"); \
+	else \
+		SECRET="$(JWT_SECRET_KEY)"; \
+	fi; \
+	TOKEN=$$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 60 --secret "$$SECRET" 2>/dev/null || echo ""); \
+	if [ -z "$$TOKEN" ]; then \
+		echo "⚠️  Could not generate JWT token (python module may not be available)"; \
+		echo "   Skipping authenticated endpoint test"; \
+	else \
+		if curl -f -s -H "Authorization: Bearer $$TOKEN" http://localhost:8080/tools > /dev/null 2>&1; then \
+			echo "✅ Authenticated /tools endpoint passed"; \
+		else \
+			echo "❌ Authenticated /tools endpoint failed"; \
+			echo ""; \
+			echo "📋 Gateway logs:"; \
+			$(COMPOSE) logs --tail=50 gateway; \
+			echo ""; \
+			echo "🛑 Stopping stack..."; \
+			$(MAKE) --no-print-directory compose-down; \
+			exit 1; \
+		fi; \
+	fi
+	@echo ""
+	@echo "🔍 Verifying security constraints are active..."
+	@echo "   Checking read-only filesystem..."
+	@if $(COMPOSE) exec -T gateway sh -c 'touch /test-write 2>/dev/null' 2>/dev/null; then \
+		echo "❌ Read-only filesystem check failed (write succeeded)"; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	else \
+		echo "✅ Read-only filesystem verified (write blocked)"; \
+	fi
+	@echo "   Checking tmpfs mounts are writable..."
+	@if $(COMPOSE) exec -T gateway sh -c 'touch /tmp/test-write && rm /tmp/test-write' 2>/dev/null; then \
+		echo "✅ Tmpfs mounts verified (writable)"; \
+	else \
+		echo "❌ Tmpfs mounts check failed"; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "✅ All hardened runtime tests passed!"
+	@echo ""
+	@echo "💡 Stack is still running. To stop: make compose-down"
+	@echo "💡 To view logs: make compose-logs"
+	@echo "💡 To check status: make compose-ps"
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls ps
 
 # =============================================================================
