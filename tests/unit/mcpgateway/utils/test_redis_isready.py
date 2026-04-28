@@ -78,6 +78,28 @@ class MockRedis:
 # ---------------------------------------------------------------------------
 
 
+def test_probe_log_does_not_leak_password(monkeypatch, caplog):
+    """The 'Probing Redis at ...' log line must not contain the raw password."""
+    # Standard
+    import logging
+
+    monkeypatch.setattr(redis_isready.time, "sleep", lambda *_: None)
+    secret = "fake-test-password"
+    url = f"rediss://:{secret}@redis.example.com:6379"
+
+    with patch("redis.Redis", MockRedis), caplog.at_level(logging.INFO, logger="redis_isready"):
+        redis_isready.wait_for_redis_ready(
+            redis_url=url,
+            max_retries=1,
+            retry_interval_ms=1,
+            sync=True,
+        )
+
+    full_log = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert secret not in full_log
+    assert "REDACTED" in full_log
+
+
 def test_wait_for_redis_ready_success(monkeypatch):
     """A healthy Redis instance should succeed on the first attempt."""
 
