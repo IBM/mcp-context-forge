@@ -1610,7 +1610,6 @@ class SecurityValidator:
             if "is not allowed" in str(e):
                 raise
             # Otherwise it's not a valid IP, continue to hostname check
-            pass
 
         # Resolve hostname to check for private IPs (prevent DNS rebinding)
         try:
