@@ -18,6 +18,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
 class TestSecurityHeaders:
@@ -322,21 +323,20 @@ class TestCacheControlHardening:
                 assert "no-store" in cache_control, f"{path} missing 'no-store' in Cache-Control: {cache_control}"
                 assert "private" in cache_control, f"{path} missing 'private' in Cache-Control: {cache_control}"
 
-    def test_docs_endpoints_are_cache_hardened(self, client: TestClient):
-        """Docs/schema endpoints are auth-protected and must NOT be cacheable.
+    def test_docs_paths_are_classified_as_protected(self):
+        """Regression guard: /docs, /redoc, /openapi.json must be classified as protected.
 
-        Regression guard: a prior version of this middleware exempted /docs,
-        /redoc, and /openapi.json. They are protected by DocsAuthMiddleware,
-        so a shared cache could replay an authenticated docs/schema response
-        to unauthenticated viewers — Web Cache Deception.
+        These paths are auth-protected by DocsAuthMiddleware. Exempting them from
+        SecurityHeadersMiddleware would let a shared cache replay an authenticated
+        docs/schema response to unauthenticated viewers — Web Cache Deception.
+
+        This is a unit test of the classifier rather than a request-flow test
+        because DocsAuthMiddleware wraps SecurityHeadersMiddleware and short-
+        circuits unauthenticated requests before they reach the response path.
         """
-        with patch.object(settings, "auth_required", False):
-            for path in ("/docs", "/redoc", "/openapi.json"):
-                response = client.get(path)
-                cache_control = response.headers.get("Cache-Control", "")
-
-                assert "no-store" in cache_control, f"{path} missing 'no-store': {cache_control}"
-                assert "private" in cache_control, f"{path} missing 'private': {cache_control}"
+        middleware = SecurityHeadersMiddleware(app=None)
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert middleware._is_protected_path(path), f"{path} must be treated as protected"  # pylint: disable=protected-access
 
     def test_protected_endpoints_have_vary_authorization(self, client: TestClient):
         """Test that protected endpoints include Vary: Authorization header."""
