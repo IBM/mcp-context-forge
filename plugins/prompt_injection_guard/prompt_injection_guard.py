@@ -461,13 +461,12 @@ class PromptInjectionGuardPlugin(Plugin):
             )
 
         if action == "redact":
-            redacted_text = scan_result.get("redacted_text")
             new_args = dict(payload.args or {})
-            # Replace first matching string arg with redacted version
             for key, val in new_args.items():
-                if isinstance(val, str) and redacted_text:
-                    new_args[key] = redacted_text
-                    break
+                if isinstance(val, str):
+                    per_key_result = self._build_result(self._scan_value(val), val)
+                    if per_key_result and per_key_result.get("redacted_text"):
+                        new_args[key] = per_key_result["redacted_text"]
             modified = PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args)
             return PromptPrehookResult(
                 modified_payload=modified,
@@ -506,12 +505,12 @@ class PromptInjectionGuardPlugin(Plugin):
             )
 
         if action == "redact":
-            redacted_text = scan_result.get("redacted_text")
             new_args = dict(payload.args or {})
             for key, val in new_args.items():
-                if isinstance(val, str) and redacted_text:
-                    new_args[key] = redacted_text
-                    break
+                if isinstance(val, str):
+                    per_key_result = self._build_result(self._scan_value(val), val)
+                    if per_key_result and per_key_result.get("redacted_text"):
+                        new_args[key] = per_key_result["redacted_text"]
             modified = ToolPreInvokePayload(name=payload.name, args=new_args)
             return ToolPreInvokeResult(
                 modified_payload=modified,
