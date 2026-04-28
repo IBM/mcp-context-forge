@@ -35,6 +35,7 @@ Release 1.0.0 marks the **General Availability** of ContextForge, consolidating 
 - Request body size limiting ([#4382](https://github.com/IBM/mcp-context-forge/pull/4382))
 - Comprehensive input validation for all router query parameters ([#4337](https://github.com/IBM/mcp-context-forge/pull/4337))
 - URL-encoded injection pattern blocking in SecurityValidator ([#4335](https://github.com/IBM/mcp-context-forge/pull/4335))
+- Security hardening for startup logs to prevent credential exposure ([#4507](https://github.com/IBM/mcp-context-forge/pull/4507))
 
 #### **🦀 Rust**
 
