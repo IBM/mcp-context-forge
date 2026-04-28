@@ -212,7 +212,7 @@ class TestUpsertBindings:
         r = results[0]
         assert r.team_id == "team-a"
         assert r.tool_name == "tool_x"
-        assert r.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert r.plugin_id == "OutputLengthGuardPlugin"
         assert r.mode == "enforce"
 
         assert r.priority == 50
@@ -332,7 +332,7 @@ class TestUpsertBindings:
 
         tool_a = by_tool["tool_a"]
         assert tool_a.team_id == "team-a"
-        assert tool_a.plugin_id == "RATE_LIMITER"
+        assert tool_a.plugin_id == "RateLimiterPlugin"
         assert tool_a.mode == "permissive"
 
         assert tool_a.priority == 20
@@ -340,7 +340,7 @@ class TestUpsertBindings:
 
         tool_b = by_tool["tool_b"]
         assert tool_b.team_id == "team-a"
-        assert tool_b.plugin_id == "RATE_LIMITER"
+        assert tool_b.plugin_id == "RateLimiterPlugin"
         assert tool_b.mode == "permissive"
 
         assert tool_b.priority == 20

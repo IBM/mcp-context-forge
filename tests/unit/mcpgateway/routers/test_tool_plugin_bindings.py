@@ -199,7 +199,7 @@ class TestToolPluginBindingsRouter:
         binding = result.bindings[0]
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
-        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
 
         assert binding.priority == 50
@@ -366,7 +366,7 @@ class TestToolPluginBindingsRouter:
 
         team_a = by_team["team-a"]
         assert team_a.tool_name == "tool_x"
-        assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert team_a.plugin_id == "OutputLengthGuardPlugin"
         assert team_a.mode == "enforce"
 
         assert team_a.priority == 50
@@ -375,7 +375,7 @@ class TestToolPluginBindingsRouter:
 
         team_b = by_team["team-b"]
         assert team_b.tool_name == "tool_y"
-        assert team_b.plugin_id == "RATE_LIMITER"
+        assert team_b.plugin_id == "RateLimiterPlugin"
         assert team_b.mode == "permissive"
 
         assert team_b.priority == 30
@@ -405,7 +405,7 @@ class TestToolPluginBindingsRouter:
         binding = result.bindings[0]
         assert binding.team_id == "team-a"
         assert binding.tool_name == "tool_x"
-        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
 
         assert binding.priority == 50
