@@ -83,7 +83,6 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.transports.context import UserContext
-from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.trace_context import (
     clear_trace_context,

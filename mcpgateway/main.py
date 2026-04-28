@@ -117,7 +117,6 @@ from mcpgateway.plugins import (
     stop_plugin_invalidation_listener,
 )
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
-from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (

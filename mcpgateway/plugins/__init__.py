@@ -23,11 +23,9 @@ import time
 from typing import Any, Callable, Literal, Optional, Union
 
 # Third-Party
+from cpex.framework import ObservabilityProvider, TenantPluginManager, TenantPluginManagerFactory
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as _ValidationError
-
-# Third-Party
-from cpex.framework import ObservabilityProvider, TenantPluginManager, TenantPluginManagerFactory
 
 # First-Party
 from mcpgateway.plugins import _state
@@ -233,6 +231,7 @@ def init_plugin_manager_factory(
     global _observability_service
     _observability_service = observability
     if db_factory is not None:
+        # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory  # pylint: disable=import-outside-toplevel
 
         _plugin_manager_factory = GatewayTenantPluginManagerFactory(
