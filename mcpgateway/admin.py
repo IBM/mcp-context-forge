@@ -14023,7 +14023,7 @@ async def admin_test_gateway(
             # Extract hostnames from registered gateway URLs
             for url in registered_urls:
                 try:
-                    parsed = urlparse(url)
+                    parsed = urllib.parse.urlparse(url)
                     if parsed.hostname:
                         # Normalize: lowercase and strip trailing dots
                         hostname = parsed.hostname.lower().rstrip(".")
