@@ -35,7 +35,7 @@ describe("App", () => {
     await user.click(gatewaysLink);
 
     // Verify Gateways page is displayed
-    const gatewaysHeading = await screen.findByRole("heading", { name: /gateways/i });
+    const gatewaysHeading = await screen.findByRole("heading", { name: /Connect a source/i });
     expect(gatewaysHeading).toBeInTheDocument();
   });
 });
