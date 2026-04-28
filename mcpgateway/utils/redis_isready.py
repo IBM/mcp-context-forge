@@ -96,8 +96,9 @@ import time
 from typing import Any, Optional
 
 # First-Party
-# First Party imports
 from mcpgateway.config import settings
+from mcpgateway.utils.db_isready import _sanitize
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # Environment variables
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -182,7 +183,7 @@ def wait_for_redis_ready(
     if max_retries < 1 or retry_interval_ms <= 0:
         raise RuntimeError("Invalid max_retries or retry_interval_ms values")
 
-    log.info(f"Probing Redis at {redis_url} (interval={retry_interval_ms}ms, max_retries={max_retries}, max_backoff={max_backoff}s)")
+    log.info(f"Probing Redis at {sanitize_url_for_logging(redis_url)} (interval={retry_interval_ms}ms, max_retries={max_retries}, max_backoff={max_backoff}s)")
 
     def _probe(*_: Any) -> None:
         """
@@ -219,10 +220,10 @@ def wait_for_redis_ready(
                     # Add jitter (±25%) to prevent thundering herd
                     jitter = backoff * random.uniform(-0.25, 0.25)  # nosec B311
                     sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
-                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {sleep_time:.1f}s")
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({_sanitize(str(exc))}) - retrying in {sleep_time:.1f}s")
                     time.sleep(sleep_time)
                 else:
-                    log.debug(f"Attempt {attempt}/{max_retries} failed ({exc})")
+                    log.debug(f"Attempt {attempt}/{max_retries} failed ({_sanitize(str(exc))})")
         raise RuntimeError(f"Redis not ready after {max_retries} attempts")
 
     if sync:
@@ -323,7 +324,7 @@ def main() -> None:  # pragma: no cover
             logger=log,
         )
     except RuntimeError as exc:
-        log.error(f"Redis unavailable: {exc}")
+        log.error(f"Redis unavailable: {_sanitize(str(exc))}")
         sys.exit(1)
 
     sys.exit(0)
