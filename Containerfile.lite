@@ -380,7 +380,6 @@ RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
     && microdnf clean all \
     && rm -rf /var/cache/yum \
     && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
-    && groupadd --gid 1001 app \
     && useradd --uid 1001 --gid 1001 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
 
 # ----------------------------------------------------------------------------
