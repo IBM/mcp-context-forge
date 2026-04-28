@@ -1,4 +1,11 @@
-"""MCP protocol-version negotiation compliance tests."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_protocol_version.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP protocol-version negotiation compliance tests.
+"""
 
 from __future__ import annotations
 

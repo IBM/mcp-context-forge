@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_encryption_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -22,6 +22,7 @@ from mcpgateway.services.encryption_service import (
     get_encryption_service,
     protect_oauth_config_for_storage,
 )
+
 
 class TestEncryptionService:
     """Test cases for EncryptionService class."""
@@ -303,6 +304,7 @@ class TestEncryptionService:
         decrypted = encryption.decrypt_secret(encrypted)
 
         assert decrypted == "test_data"
+
     # ============ Tests for new strict/idempotent API ============
 
     def test_decrypt_secret_or_plaintext_with_plaintext(self):
@@ -429,11 +431,13 @@ class TestEncryptionService:
         # Create JSON that looks like it could be encrypted but isn't
         import json
 
-        fake_encrypted_json = json.dumps({
-            "kdf": "argon2id",
-            "other_field": "value",
-            # Missing required fields: salt, token, t, m, p
-        })
+        fake_encrypted_json = json.dumps(
+            {
+                "kdf": "argon2id",
+                "other_field": "value",
+                # Missing required fields: salt, token, t, m, p
+            }
+        )
 
         # Should NOT be detected as encrypted (missing required fields)
         assert encryption.is_encrypted(fake_encrypted_json) is False
@@ -468,7 +472,7 @@ class TestEncryptionService:
 
         # Truncate at various points
         truncated_variants = [
-            encrypted[:len(encrypted) // 2],  # Truncate half
+            encrypted[: len(encrypted) // 2],  # Truncate half
             encrypted[:-10],  # Truncate end
             "v2:{",  # Barely start of JSON
         ]
@@ -589,12 +593,15 @@ class TestEncryptionService:
 
         # Create a v2 bundle missing required keys
         import json
-        incomplete_bundle = json.dumps({
-            "version": "v2",
-            "kdf": "argon2id",
-            "salt": "dGVzdA==",
-            # Missing: token, t, m, p
-        })
+
+        incomplete_bundle = json.dumps(
+            {
+                "version": "v2",
+                "kdf": "argon2id",
+                "salt": "dGVzdA==",
+                # Missing: token, t, m, p
+            }
+        )
 
         with pytest.raises(ValueError, match="missing required keys"):
             encryption._decrypt_bundle(f"v2:{incomplete_bundle}")
@@ -606,15 +613,18 @@ class TestEncryptionService:
         # Create a valid-looking bundle with corrupted token
         import json
         import base64
-        corrupted_bundle = json.dumps({
-            "version": "v2",
-            "kdf": "argon2id",
-            "salt": base64.b64encode(b"testsalt12345678").decode(),
-            "token": "corrupted_invalid_fernet_token",
-            "t": 1,
-            "m": 1024,
-            "p": 1,
-        })
+
+        corrupted_bundle = json.dumps(
+            {
+                "version": "v2",
+                "kdf": "argon2id",
+                "salt": base64.b64encode(b"testsalt12345678").decode(),
+                "token": "corrupted_invalid_fernet_token",
+                "t": 1,
+                "m": 1024,
+                "p": 1,
+            }
+        )
 
         with pytest.raises(ValueError, match="Decryption failed"):
             encryption._decrypt_bundle(f"v2:{corrupted_bundle}")
@@ -632,15 +642,18 @@ class TestEncryptionService:
         encryption = EncryptionService(SecretStr("test_key"))
 
         import json
-        wrong_version = json.dumps({
-            "version": "v1",  # Wrong version
-            "kdf": "argon2id",
-            "salt": "dGVzdA==",
-            "token": "token",
-            "t": 1,
-            "m": 1024,
-            "p": 1,
-        })
+
+        wrong_version = json.dumps(
+            {
+                "version": "v1",  # Wrong version
+                "kdf": "argon2id",
+                "salt": "dGVzdA==",
+                "token": "token",
+                "t": 1,
+                "m": 1024,
+                "p": 1,
+            }
+        )
 
         result = encryption._is_valid_v2_bundle(wrong_version)
         assert result is False
@@ -658,14 +671,17 @@ class TestEncryptionService:
         encryption = EncryptionService(SecretStr("test_key"))
 
         import json
-        no_markers = json.dumps({
-            "salt": "dGVzdA==",
-            "token": "token",
-            "t": 1,
-            "m": 1024,
-            "p": 1,
-            # Missing both version and kdf
-        })
+
+        no_markers = json.dumps(
+            {
+                "salt": "dGVzdA==",
+                "token": "token",
+                "t": 1,
+                "m": 1024,
+                "p": 1,
+                # Missing both version and kdf
+            }
+        )
 
         result = encryption._is_valid_json_bundle(no_markers)
         assert result is False

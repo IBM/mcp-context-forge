@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for translate_header_utils helpers."""
+"""Location: ./tests/unit/mcpgateway/test_translate_header_utils.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for translate_header_utils helpers.
+"""
 
 # Third-Party
 import pytest

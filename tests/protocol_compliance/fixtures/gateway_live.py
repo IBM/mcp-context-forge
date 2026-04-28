@@ -1,4 +1,10 @@
-"""Live ContextForge gateway connection for the compliance harness.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/fixtures/gateway_live.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Live ContextForge gateway connection for the compliance harness.
 
 Phase 4a originally wired this in-process via FastAPI ``TestClient`` +
 ``httpx.ASGITransport``, but the gateway's bootstrap layer doesn't seed the

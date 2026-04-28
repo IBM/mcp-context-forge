@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Workflow state generators for load testing."""
+"""Location: ./tests/load/generators/workflow_state.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Workflow state generators for load testing.
+"""
 
 import random
 import secrets

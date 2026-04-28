@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Gateway populator - creates gateways via POST /gateways."""
+"""Location: ./tests/populate/populators/gateways.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Gateway populator - creates gateways via POST /gateways.
+"""
 
 # Standard
 import random

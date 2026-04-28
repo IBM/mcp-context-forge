@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_auth_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -64,9 +64,11 @@ async def test_token_from_cookie(monkeypatch):
     mock_user.email = "user@example.com"
 
     # DB session is only created when security logging is enabled
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     call_next.assert_awaited_once_with(request)
@@ -92,9 +94,11 @@ async def test_token_from_header(monkeypatch):
     mock_user.email = "header@example.com"
 
     # DB session is only created when security logging is enabled
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     call_next.assert_awaited_once_with(request)
@@ -124,11 +128,13 @@ async def test_authentication_failure(monkeypatch):
     mock_security_logger.log_authentication_attempt = MagicMock(return_value=None)
 
     # DB session is only created when failure logging is enabled
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("Invalid token"))), \
-         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger, \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("Invalid token"))),
+        patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger,
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     call_next.assert_awaited_once_with(request)
@@ -164,9 +170,11 @@ async def test_db_close_exception(monkeypatch):
     mock_db.close.side_effect = Exception("close error")
 
     # DB session is only created when security logging is enabled
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         # The close() exception should be caught in finally block
         # and not propagate to break the request
         response = await middleware.dispatch(request, call_next)
@@ -195,10 +203,12 @@ async def test_no_db_session_when_logging_disabled(monkeypatch):
     mock_user.email = "user@example.com"
 
     # Disable both success and failure logging
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     call_next.assert_awaited_once_with(request)
@@ -228,10 +238,12 @@ async def test_success_logging_exception(monkeypatch):
     mock_security_logger = MagicMock()
     mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -257,9 +269,11 @@ async def test_success_logging_exception_rolls_back_shared_session():
     shared_session = MagicMock()
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -290,10 +304,12 @@ async def test_hard_deny_logging_exception_rolls_back_shared_session():
     shared_session = MagicMock()
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -320,10 +336,12 @@ async def test_generic_failure_logging_exception_rolls_back_shared_session():
     shared_session = MagicMock()
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -351,9 +369,11 @@ async def test_rollback_failure_falls_back_to_invalidate():
     shared_session.rollback.side_effect = Exception("rollback failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -381,9 +401,11 @@ async def test_success_invalidate_failure_silenced():
     shared_session.invalidate.side_effect = Exception("invalidate failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -413,10 +435,12 @@ async def test_hard_deny_invalidate_failure_silenced():
     shared_session.invalidate.side_effect = Exception("invalidate failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -442,10 +466,12 @@ async def test_generic_failure_invalidate_failure_silenced():
     shared_session.invalidate.side_effect = Exception("invalidate failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -472,10 +498,12 @@ async def test_hard_deny_rollback_failure_falls_back_to_invalidate():
     shared_session.rollback.side_effect = Exception("rollback failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -502,10 +530,12 @@ async def test_generic_failure_rollback_failure_falls_back_to_invalidate():
     shared_session.rollback.side_effect = Exception("rollback failed")
     request.state.db = shared_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -523,10 +553,12 @@ async def test_auth_failure_logging_disabled(monkeypatch):
     request.cookies = {"jwt_token": "bad_token"}
     request.headers = {}
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -548,11 +580,13 @@ async def test_failure_logging_exception(monkeypatch):
     mock_security_logger = MagicMock()
     mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("log fail")
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -576,11 +610,13 @@ async def test_failure_logging_close_exception(monkeypatch):
     mock_db.close.side_effect = RuntimeError("close fail")
     mock_security_logger = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 200
@@ -606,9 +642,11 @@ async def test_http_401_returns_json_deny_for_api_request():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -629,9 +667,11 @@ async def test_http_403_returns_json_deny_for_api_request():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=403, detail="Account disabled"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=403, detail="Account disabled"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 403
@@ -652,9 +692,11 @@ async def test_http_401_browser_request_continues_for_redirect():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Browser request should pass through for RBAC redirect, not get JSON 401
@@ -681,11 +723,13 @@ async def test_http_401_with_failure_logging_enabled():
     mock_security_logger = MagicMock()
     mock_db = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -716,11 +760,13 @@ async def test_http_401_logging_db_error_handled():
     mock_security_logger.log_authentication_attempt = MagicMock(side_effect=Exception("DB down"))
     mock_db = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Should still return 401 despite logging failure
@@ -746,11 +792,13 @@ async def test_http_401_logging_db_close_error_handled():
     mock_db = MagicMock()
     mock_db.close.side_effect = Exception("close failed")
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -770,9 +818,11 @@ async def test_non_401_403_http_exception_continues_as_anonymous():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=500, detail="Internal error"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=500, detail="Internal error"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Non-security error: continue as anonymous
@@ -794,9 +844,11 @@ async def test_non_revocation_401_falls_through_as_anonymous():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid authentication credentials"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Invalid authentication credentials"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Non-revocation 401 should fall through, not hard-deny
@@ -818,9 +870,11 @@ async def test_http_401_referer_admin_continues_for_redirect():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Referer-based admin detection should let the request through for redirect
@@ -842,9 +896,11 @@ async def test_http_401_json_deny_includes_security_headers():
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     assert response.status_code == 401
@@ -911,9 +967,11 @@ async def test_auth_middleware_reuses_session_on_success():
     mock_user = MagicMock()
     mock_user.email = "user@example.com"
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # SessionLocal should NOT be called (session reused)
@@ -944,9 +1002,11 @@ async def test_auth_middleware_closes_only_owned_sessions():
 
     mock_new_session = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # New session should be closed (owned=True)
@@ -976,10 +1036,12 @@ async def test_auth_middleware_handles_close_failure():
     mock_new_session = MagicMock()
     mock_new_session.close.side_effect = Exception("Close failed")
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
-         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger:
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger,
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Close failure should be logged as warning
@@ -1007,10 +1069,12 @@ async def test_auth_middleware_reuses_session_on_failure():
     existing_session = MagicMock()
     request.state.db = existing_session
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # SessionLocal should NOT be called (session reused)
@@ -1049,11 +1113,13 @@ async def test_auth_failure_logs_committed_before_hard_deny_api_response():
     mock_security_logger = MagicMock()
     mock_db = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Verify hard-deny response
@@ -1087,12 +1153,14 @@ async def test_auth_middleware_close_failure_in_hard_deny_path():
     mock_db.close.side_effect = Exception("Close failed")
     mock_security_logger = MagicMock()
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
-         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
-         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger, \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+        patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger,
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+    ):
         response = await middleware.dispatch(request, call_next)
 
     # Should still return 401 despite close failure

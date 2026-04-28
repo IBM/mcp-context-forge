@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Backfill oauth_config secret encryption for gateway/server/a2a rows.
+"""Location: ./mcpgateway/alembic/versions/y8i9j0k1l2m3_backfill_oauth_config_secret_encryption.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Backfill oauth_config secret encryption for gateway/server/a2a rows.
 
 Revision ID: y8i9j0k1l2m3
 Revises: x7h8i9j0k1l2

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the plugin runtime admin endpoints in ``mcpgateway.admin``.
+"""Location: ./tests/unit/mcpgateway/test_admin_plugin_runtime.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the plugin runtime admin endpoints in ``mcpgateway.admin``.
 
 Covers the deny paths CLAUDE.md requires for security-sensitive changes:
     * missing ``admin.plugins`` permission → 403

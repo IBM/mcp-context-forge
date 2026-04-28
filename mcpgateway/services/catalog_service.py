@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Server Catalog Service.
+"""Location: ./mcpgateway/services/catalog_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP Server Catalog Service.
 
 This service manages the catalog of available MCP servers that can be
 easily registered with one-click from the admin UI.

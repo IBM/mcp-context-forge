@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Merge gateway_refresh and sso_provider_metadata heads.
+"""Location: ./mcpgateway/alembic/versions/b9e496e91e71_merge_gateway_refresh_and_sso_provider_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Merge gateway_refresh and sso_provider_metadata heads.
 
 Revision ID: b9e496e91e71
 Revises: a8f3b2c1d4e5, u5f6g7h8i9j0

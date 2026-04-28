@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for LLM admin router."""
+"""Location: ./tests/unit/mcpgateway/routers/test_llm_admin_router.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for LLM admin router.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -114,7 +120,9 @@ async def test_delete_provider_html_not_found(mock_request, monkeypatch: pytest.
 
 @pytest.mark.asyncio
 async def test_check_provider_health(mock_request, monkeypatch: pytest.MonkeyPatch):
-    health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc))
+    health = ProviderHealthCheck(
+        provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc)
+    )
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
 
     result = await llm_admin_router.check_provider_health(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
@@ -275,7 +283,9 @@ async def test_fetch_provider_models_success(monkeypatch: pytest.MonkeyPatch):
     provider.api_base = "http://api"
     provider.api_key = None
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     class DummyResponse:
         def raise_for_status(self):
@@ -421,7 +431,9 @@ async def test_fetch_provider_models_http_error(monkeypatch: pytest.MonkeyPatch)
     provider.api_base = "http://api"
     provider.api_key = None
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     class DummyResponse:
         status_code = 403
@@ -453,7 +465,9 @@ async def test_fetch_provider_models_request_error(monkeypatch: pytest.MonkeyPat
     provider.api_base = "http://api"
     provider.api_key = None
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     class DummyClient:
         async def get(self, *_args, **_kwargs):
@@ -476,7 +490,9 @@ async def test_fetch_provider_models_generic_error(monkeypatch: pytest.MonkeyPat
     provider.api_base = "http://api"
     provider.api_key = None
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     class DummyClient:
         async def get(self, *_args, **_kwargs):
@@ -499,7 +515,9 @@ async def test_fetch_provider_models_ollama_format(monkeypatch: pytest.MonkeyPat
     provider.api_base = "http://api"
     provider.api_key = None
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     class DummyResponse:
         def raise_for_status(self):
@@ -531,7 +549,9 @@ async def test_fetch_provider_models_with_api_key(monkeypatch: pytest.MonkeyPatc
     provider.api_base = "http://api"
     provider.api_key = "encrypted_key"
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
-    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
+    )
 
     import mcpgateway.utils.services_auth as auth_module
 
@@ -603,7 +623,9 @@ async def test_sync_provider_models_skip_empty_id(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.asyncio
 async def test_check_provider_health_no_latency(mock_request, monkeypatch: pytest.MonkeyPatch):
-    health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.UNKNOWN, response_time_ms=None, error="No base URL", checked_at=datetime.now(timezone.utc))
+    health = ProviderHealthCheck(
+        provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.UNKNOWN, response_time_ms=None, error="No base URL", checked_at=datetime.now(timezone.utc)
+    )
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
 
     result = await llm_admin_router.check_provider_health(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})

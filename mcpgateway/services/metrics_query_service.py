@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Metrics Query Service for combined raw + rollup queries.
+"""Location: ./mcpgateway/services/metrics_query_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Metrics Query Service for combined raw + rollup queries.
 This service provides unified metrics queries that combine recent raw metrics
 with historical hourly rollups for complete historical coverage.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

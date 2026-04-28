@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/oauth_manager.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -660,7 +660,7 @@ class OAuthManager:
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec
             "requested_token_type": requested_token_type,
             "client_id": client_id,
             "client_secret": client_secret,

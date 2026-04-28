@@ -1,9 +1,14 @@
-"""add_a2a_task_events_table
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/ffe4494639d3_add_a2a_task_events_table.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_a2a_task_events_table
 
 Revision ID: ffe4494639d3
 Revises: 8f2e1c9b0d3a
 Create Date: 2026-04-02 11:15:42.565904
-
 """
 
 # Standard

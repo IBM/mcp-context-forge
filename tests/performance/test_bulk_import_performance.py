@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/test_bulk_import_performance.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Performance tests for bulk import operations.
 
 This module contains comprehensive performance tests for bulk import operations
@@ -31,6 +35,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PerformanceMetrics:
     """Container for performance metrics."""
+
     execution_time: float
     throughput: float
     memory_used: float
@@ -53,13 +58,7 @@ class BulkImportPerformanceTester:
     def _generate_resources(self, count: int) -> List[Dict[str, Any]]:
         """Generate test resource data."""
         return [
-            {
-                "uri": f"test://resource-{i}",
-                "name": f"Test Resource {i}",
-                "content": f"Test content for resource {i}",
-                "description": f"Performance test resource {i}",
-                "mime_type": "text/plain"
-            }
+            {"uri": f"test://resource-{i}", "name": f"Test Resource {i}", "content": f"Test content for resource {i}", "description": f"Performance test resource {i}", "mime_type": "text/plain"}
             for i in range(count)
         ]
 
@@ -72,42 +71,19 @@ class BulkImportPerformanceTester:
                 "description": f"Performance test tool {i}",
                 "integration_type": "REST",
                 "request_type": "GET",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "param1": {"type": "string"},
-                        "param2": {"type": "integer"}
-                    }
-                }
+                "input_schema": {"type": "object", "properties": {"param1": {"type": "string"}, "param2": {"type": "integer"}}},
             }
             for i in range(count)
         ]
 
     def _generate_prompts(self, count: int) -> List[Dict[str, Any]]:
         """Generate test prompt data."""
-        return [
-            {
-                "name": f"test_prompt_{i}",
-                "description": f"Performance test prompt {i}",
-                "template": f"This is test prompt {i} with {{{{variable}}}}"
-            }
-            for i in range(count)
-        ]
+        return [{"name": f"test_prompt_{i}", "description": f"Performance test prompt {i}", "template": f"This is test prompt {i} with {{{{variable}}}}"} for i in range(count)]
 
-    async def benchmark_resources_import(
-        self,
-        resources: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_resources_import(self, resources: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark resource import performance."""
         # Prepare configuration
-        config_data = {
-            "version": "1.0",
-            "exported_at": "2025-01-01T00:00:00Z",
-            "entities": {
-                "resources": resources
-            }
-        }
+        config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": resources}}
 
         # Force garbage collection before measurement
         gc.collect()
@@ -119,12 +95,7 @@ class BulkImportPerformanceTester:
         # Measure execution time
         start_time = time.perf_counter()
 
-        result = await self.import_service.import_configuration(
-            db=self.db,
-            import_data=config_data,
-            imported_by=imported_by,
-            conflict_strategy=ConflictStrategy.SKIP
-        )
+        result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
 
         end_time = time.perf_counter()
 
@@ -140,19 +111,9 @@ class BulkImportPerformanceTester:
         total_count = len(resources)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_resources_import_single(
-        self,
-        resources: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_resources_import_single(self, resources: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark resource import performance using single imports."""
         gc.collect()
         tracemalloc.start()
@@ -163,17 +124,8 @@ class BulkImportPerformanceTester:
 
         # Import each resource individually
         for resource in resources:
-            config_data = {
-                "version": "1.0",
-                "exported_at": "2025-01-01T00:00:00Z",
-                "entities": {"resources": [resource]}
-            }
-            result = await self.import_service.import_configuration(
-                db=self.db,
-                import_data=config_data,
-                imported_by=imported_by,
-                conflict_strategy=ConflictStrategy.SKIP
-            )
+            config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource]}}
+            result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
             success_count += result.processed_entities
 
         end_time = time.perf_counter()
@@ -186,39 +138,18 @@ class BulkImportPerformanceTester:
         total_count = len(resources)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_tools_import(
-        self,
-        tools: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_tools_import(self, tools: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark tool import performance."""
-        config_data = {
-            "version": "1.0",
-            "exported_at": "2025-01-01T00:00:00Z",
-            "entities": {
-                "tools": tools
-            }
-        }
+        config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": tools}}
 
         gc.collect()
         tracemalloc.start()
         start_memory = tracemalloc.get_traced_memory()[0]
 
         start_time = time.perf_counter()
-        result = await self.import_service.import_configuration(
-            db=self.db,
-            import_data=config_data,
-            imported_by=imported_by,
-            conflict_strategy=ConflictStrategy.SKIP
-        )
+        result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
         end_time = time.perf_counter()
 
         current_memory, peak_memory = tracemalloc.get_traced_memory()
@@ -231,39 +162,18 @@ class BulkImportPerformanceTester:
         total_count = len(tools)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_prompts_import(
-        self,
-        prompts: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_prompts_import(self, prompts: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark prompt import performance."""
-        config_data = {
-            "version": "1.0",
-            "exported_at": "2025-01-01T00:00:00Z",
-            "entities": {
-                "prompts": prompts
-            }
-        }
+        config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": prompts}}
 
         gc.collect()
         tracemalloc.start()
         start_memory = tracemalloc.get_traced_memory()[0]
 
         start_time = time.perf_counter()
-        result = await self.import_service.import_configuration(
-            db=self.db,
-            import_data=config_data,
-            imported_by=imported_by,
-            conflict_strategy=ConflictStrategy.SKIP
-        )
+        result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
         end_time = time.perf_counter()
 
         current_memory, peak_memory = tracemalloc.get_traced_memory()
@@ -276,41 +186,18 @@ class BulkImportPerformanceTester:
         total_count = len(prompts)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_mixed_import(
-        self,
-        tools: List[Dict[str, Any]],
-        prompts: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_mixed_import(self, tools: List[Dict[str, Any]], prompts: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark mixed entity import performance."""
-        config_data = {
-            "version": "1.0",
-            "exported_at": "2025-01-01T00:00:00Z",
-            "entities": {
-                "tools": tools,
-                "prompts": prompts
-            }
-        }
+        config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": tools, "prompts": prompts}}
 
         gc.collect()
         tracemalloc.start()
         start_memory = tracemalloc.get_traced_memory()[0]
 
         start_time = time.perf_counter()
-        result = await self.import_service.import_configuration(
-            db=self.db,
-            import_data=config_data,
-            imported_by=imported_by,
-            conflict_strategy=ConflictStrategy.SKIP
-        )
+        result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
         end_time = time.perf_counter()
 
         current_memory, peak_memory = tracemalloc.get_traced_memory()
@@ -323,19 +210,9 @@ class BulkImportPerformanceTester:
         total_count = len(tools) + len(prompts)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_tools_import_single(
-        self,
-        tools: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_tools_import_single(self, tools: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark tool import performance using single imports."""
         gc.collect()
         tracemalloc.start()
@@ -346,17 +223,8 @@ class BulkImportPerformanceTester:
 
         # Import each tool individually
         for tool in tools:
-            config_data = {
-                "version": "1.0",
-                "exported_at": "2025-01-01T00:00:00Z",
-                "entities": {"tools": [tool]}
-            }
-            result = await self.import_service.import_configuration(
-                db=self.db,
-                import_data=config_data,
-                imported_by=imported_by,
-                conflict_strategy=ConflictStrategy.SKIP
-            )
+            config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": [tool]}}
+            result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
             success_count += result.processed_entities
 
         end_time = time.perf_counter()
@@ -369,19 +237,9 @@ class BulkImportPerformanceTester:
         total_count = len(tools)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
-    async def benchmark_prompts_import_single(
-        self,
-        prompts: List[Dict[str, Any]],
-        imported_by: str = "perf_test"
-    ) -> PerformanceMetrics:
+    async def benchmark_prompts_import_single(self, prompts: List[Dict[str, Any]], imported_by: str = "perf_test") -> PerformanceMetrics:
         """Benchmark prompt import performance using single imports."""
         gc.collect()
         tracemalloc.start()
@@ -392,17 +250,8 @@ class BulkImportPerformanceTester:
 
         # Import each prompt individually
         for prompt in prompts:
-            config_data = {
-                "version": "1.0",
-                "exported_at": "2025-01-01T00:00:00Z",
-                "entities": {"prompts": [prompt]}
-            }
-            result = await self.import_service.import_configuration(
-                db=self.db,
-                import_data=config_data,
-                imported_by=imported_by,
-                conflict_strategy=ConflictStrategy.SKIP
-            )
+            config_data = {"version": "1.0", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt]}}
+            result = await self.import_service.import_configuration(db=self.db, import_data=config_data, imported_by=imported_by, conflict_strategy=ConflictStrategy.SKIP)
             success_count += result.processed_entities
 
         end_time = time.perf_counter()
@@ -415,13 +264,7 @@ class BulkImportPerformanceTester:
         total_count = len(prompts)
         throughput = total_count / execution_time if execution_time > 0 else 0
 
-        return PerformanceMetrics(
-            execution_time=execution_time,
-            throughput=throughput,
-            memory_used=memory_used,
-            success_count=success_count,
-            total_count=total_count
-        )
+        return PerformanceMetrics(execution_time=execution_time, throughput=throughput, memory_used=memory_used, success_count=success_count, total_count=total_count)
 
 
 @pytest.fixture
@@ -429,6 +272,7 @@ def perf_tester(test_db, test_engine):
     """Create performance tester instance."""
     # Ensure all tables exist, including audit_trails
     from mcpgateway.db import Base
+
     Base.metadata.create_all(bind=test_engine)
 
     return BulkImportPerformanceTester(test_db, ImportService())
@@ -667,7 +511,6 @@ class TestResourcesImportComparison:
         logger.info(f"  Throughput:     +{throughput_improvement:.1f}%")
         logger.info(f"{'='*70}")
 
-
     async def test_resources_single_vs_bulk_comparison_1k(self, perf_tester: BulkImportPerformanceTester):
         """Compare single vs bulk import performance for resources (1000 resources)."""
         resources = perf_tester._generate_resources(1000)
@@ -706,7 +549,6 @@ class TestResourcesImportComparison:
         assert speedup > 1.0, f"Expected speedup > 1.0x, got {speedup:.2f}x"
         assert bulk_metrics.throughput > single_metrics.throughput, "Bulk should be faster than single"
         assert speedup > 1.0, f"Expected speedup > 1.0x, got {speedup:.2f}x"
-
 
 
 @pytest.mark.asyncio
@@ -830,8 +672,6 @@ class TestPromptsImportComparison:
 
         assert bulk_metrics.throughput > single_metrics.throughput, "Bulk should be faster than single"
         assert speedup > 1.0, f"Expected speedup > 1.0x, got {speedup:.2f}x"
-
-
 
     async def test_prompts_single_vs_bulk_comparison_1k(self, perf_tester: BulkImportPerformanceTester):
         """Compare single vs bulk import performance for prompts (1000 prompts)."""

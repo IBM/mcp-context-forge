@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for log_search helper functions."""
+"""Location: ./tests/unit/mcpgateway/routers/test_log_search_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for log_search helper functions.
+"""
 
 # Standard
 from datetime import datetime, timedelta, timezone

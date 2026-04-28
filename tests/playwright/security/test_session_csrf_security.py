@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Session security and CSRF-related tests for admin auth cookies."""
+"""Location: ./tests/playwright/security/test_session_csrf_security.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Session security and CSRF-related tests for admin auth cookies.
+"""
 
 # Future
 from __future__ import annotations

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/client/benchmark_httpx.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 HTTPX Client Benchmark Suite
 
 Benchmarks different HTTPX client patterns to measure throughput, latency,
@@ -75,9 +79,7 @@ class BenchmarkConfig:
             duration=int(os.getenv("BENCHMARK_DURATION", str(cls.duration))),
             concurrency=int(os.getenv("BENCHMARK_CONCURRENCY", str(cls.concurrency))),
             max_connections=int(os.getenv("BENCHMARK_MAX_CONNECTIONS", str(cls.max_connections))),
-            max_keepalive_connections=int(
-                os.getenv("BENCHMARK_MAX_KEEPALIVE", str(cls.max_keepalive_connections))
-            ),
+            max_keepalive_connections=int(os.getenv("BENCHMARK_MAX_KEEPALIVE", str(cls.max_keepalive_connections))),
         )
 
 
@@ -179,8 +181,7 @@ class BenchmarkRunner:
             elapsed = time.perf_counter() - start_time
             current_rps = self.successful / elapsed if elapsed > 0 else 0
             print(
-                f"  [{elapsed:.0f}s] {self.successful:,} requests, "
-                f"{current_rps:,.0f} req/s, {self.failed} errors",
+                f"  [{elapsed:.0f}s] {self.successful:,} requests, " f"{current_rps:,.0f} req/s, {self.failed} errors",
                 flush=True,
             )
 
@@ -192,10 +193,7 @@ class BenchmarkRunner:
         start = time.perf_counter()
         progress_task = asyncio.create_task(self._progress_reporter(start))
 
-        tasks = [
-            asyncio.create_task(self._worker_per_request(i))
-            for i in range(self.config.concurrency)
-        ]
+        tasks = [asyncio.create_task(self._worker_per_request(i)) for i in range(self.config.concurrency)]
 
         await asyncio.sleep(self.config.duration)
         self.stop_event.set()
@@ -215,10 +213,7 @@ class BenchmarkRunner:
 
         async with httpx.AsyncClient(timeout=self._get_timeout()) as client:
             progress_task = asyncio.create_task(self._progress_reporter(start))
-            tasks = [
-                asyncio.create_task(self._worker_shared(client, i))
-                for i in range(self.config.concurrency)
-            ]
+            tasks = [asyncio.create_task(self._worker_shared(client, i)) for i in range(self.config.concurrency)]
 
             await asyncio.sleep(self.config.duration)
             self.stop_event.set()
@@ -232,10 +227,7 @@ class BenchmarkRunner:
     async def run_shared_with_limits(self) -> BenchmarkResult:
         """Run benchmark with shared client and connection limits."""
         self._reset()
-        print(
-            f"Running shared (limits={self.config.max_connections}) pattern "
-            f"(c={self.config.concurrency})..."
-        )
+        print(f"Running shared (limits={self.config.max_connections}) pattern " f"(c={self.config.concurrency})...")
 
         start = time.perf_counter()
 
@@ -244,10 +236,7 @@ class BenchmarkRunner:
             limits=self._get_limits(),
         ) as client:
             progress_task = asyncio.create_task(self._progress_reporter(start))
-            tasks = [
-                asyncio.create_task(self._worker_shared(client, i))
-                for i in range(self.config.concurrency)
-            ]
+            tasks = [asyncio.create_task(self._worker_shared(client, i)) for i in range(self.config.concurrency)]
 
             await asyncio.sleep(self.config.duration)
             self.stop_event.set()
@@ -264,10 +253,7 @@ class BenchmarkRunner:
     async def run_http2(self) -> BenchmarkResult:
         """Run benchmark with HTTP/2 enabled."""
         self._reset()
-        print(
-            f"Running HTTP/2 pattern (c={self.config.concurrency}, "
-            f"limits={self.config.max_connections})..."
-        )
+        print(f"Running HTTP/2 pattern (c={self.config.concurrency}, " f"limits={self.config.max_connections})...")
 
         start = time.perf_counter()
 
@@ -277,10 +263,7 @@ class BenchmarkRunner:
             http2=True,
         ) as client:
             progress_task = asyncio.create_task(self._progress_reporter(start))
-            tasks = [
-                asyncio.create_task(self._worker_shared(client, i))
-                for i in range(self.config.concurrency)
-            ]
+            tasks = [asyncio.create_task(self._worker_shared(client, i)) for i in range(self.config.concurrency)]
 
             await asyncio.sleep(self.config.duration)
             self.stop_event.set()
@@ -378,22 +361,12 @@ def print_summary_table(results: List[BenchmarkResult]):
     print("\n" + "=" * 100)
     print("SUMMARY")
     print("=" * 100)
-    print(
-        f"{'Pattern':<40} {'Total':>12} {'RPS':>12} {'P50(ms)':>10} "
-        f"{'P99(ms)':>10} {'Success%':>10}"
-    )
+    print(f"{'Pattern':<40} {'Total':>12} {'RPS':>12} {'P50(ms)':>10} " f"{'P99(ms)':>10} {'Success%':>10}")
     print("-" * 100)
 
     for r in results:
-        success_rate = (
-            (r.successful_requests / r.total_requests * 100)
-            if r.total_requests > 0
-            else 0
-        )
-        print(
-            f"{r.pattern:<40} {r.total_requests:>12,} {r.rps:>12,.1f} "
-            f"{r.p50_latency_ms:>10.2f} {r.p99_latency_ms:>10.2f} {success_rate:>9.1f}%"
-        )
+        success_rate = (r.successful_requests / r.total_requests * 100) if r.total_requests > 0 else 0
+        print(f"{r.pattern:<40} {r.total_requests:>12,} {r.rps:>12,.1f} " f"{r.p50_latency_ms:>10.2f} {r.p99_latency_ms:>10.2f} {success_rate:>9.1f}%")
 
 
 def print_comparison(results: List[BenchmarkResult], baseline_pattern: str = "per_request"):

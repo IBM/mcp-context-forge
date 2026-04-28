@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for Alembic migration abf8ac3b6008 (backfill admin.overview and servers.use).
+"""Location: ./tests/unit/mcpgateway/db/test_rbac_permission_backfill_migration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for Alembic migration abf8ac3b6008 (backfill admin.overview and servers.use).
 
 Tests verify:
 - Migration module structure (import, revision IDs, function signatures)

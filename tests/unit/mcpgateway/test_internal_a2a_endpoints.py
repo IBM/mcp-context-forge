@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the /_internal/a2a/* endpoints in mcpgateway/main.py.
+"""Location: ./tests/unit/mcpgateway/test_internal_a2a_endpoints.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the /_internal/a2a/* endpoints in mcpgateway/main.py.
 
 Coverage strategy
 -----------------

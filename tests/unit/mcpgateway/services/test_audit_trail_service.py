@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for audit_trail_service."""
+"""Location: ./tests/unit/mcpgateway/services/test_audit_trail_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for audit_trail_service.
+"""
 
 # Standard
 from unittest.mock import MagicMock

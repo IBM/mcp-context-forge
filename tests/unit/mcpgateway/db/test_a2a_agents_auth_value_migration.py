@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/db/test_a2a_agents_auth_value_migration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for migration a3c38b6c2437 (fix a2a_agents auth_value JSON -> TEXT).
 
@@ -35,32 +36,24 @@ DOWN_REVISION = "e1f2a3b4c5d6"
 
 def _create_a2a_agents_table(conn, auth_value_type: str = "TEXT") -> None:
     """Create a minimal a2a_agents table with the given auth_value column type."""
-    conn.execute(
-        sa.text(
-            f"""
+    conn.execute(sa.text(f"""
             CREATE TABLE a2a_agents (
                 id VARCHAR(36) PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
                 auth_type VARCHAR(20),
                 auth_value {auth_value_type}
             )
-            """
-        )
-    )
+            """))
 
 
 def _create_a2a_agents_table_no_auth_value(conn) -> None:
     """Create a minimal a2a_agents table without auth_value column."""
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             CREATE TABLE a2a_agents (
                 id VARCHAR(36) PRIMARY KEY,
                 name VARCHAR(255) NOT NULL
             )
-            """
-        )
-    )
+            """))
 
 
 def _get_table_names(conn) -> set:
@@ -292,18 +285,14 @@ def _pg_engine():
 def _setup_pg_table(conn, auth_value_type: str = "JSON") -> None:
     """Create a fresh a2a_agents table on PostgreSQL with the given auth_value type."""
     conn.execute(sa.text("DROP TABLE IF EXISTS a2a_agents CASCADE"))
-    conn.execute(
-        sa.text(
-            f"""
+    conn.execute(sa.text(f"""
             CREATE TABLE a2a_agents (
                 id VARCHAR(36) PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
                 auth_type VARCHAR(20),
                 auth_value {auth_value_type}
             )
-            """
-        )
-    )
+            """))
     conn.commit()
 
 

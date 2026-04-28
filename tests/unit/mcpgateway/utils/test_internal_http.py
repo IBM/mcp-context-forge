@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/utils/test_internal_http.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for internal loopback HTTP helpers.
 """

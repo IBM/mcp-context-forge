@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_email_auth_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -79,8 +79,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
 
-        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, \
-             patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, patch("mcpgateway.routers.email_auth.settings") as mock_settings:
             mock_service = MockAuthService.return_value
             mock_service.authenticate_user = AsyncMock(return_value=mock_user_needs_password_change)
 

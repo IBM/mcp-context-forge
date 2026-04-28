@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Schema auth validation tests to improve coverage."""
+"""Location: ./tests/unit/mcpgateway/test_schemas_auth_validation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schema auth validation tests to improve coverage.
+"""
 
 # Third-Party
 from pydantic import SecretStr, ValidationError

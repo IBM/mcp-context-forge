@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for OAuthManager service."""
+"""Location: ./tests/unit/mcpgateway/services/test_oauth_manager.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for OAuthManager service.
+"""
 
 # Standard
 import json

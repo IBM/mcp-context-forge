@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_redis_client.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for the centralized Redis client factory.
 """
@@ -25,7 +26,6 @@ from mcpgateway.utils.redis_client import (
     get_redis_parser_info,
     is_redis_available,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

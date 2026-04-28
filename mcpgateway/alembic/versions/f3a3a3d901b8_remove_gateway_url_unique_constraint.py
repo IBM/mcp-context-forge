@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/f3a3a3d901b8_remove_gateway_url_unique_constraint.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
@@ -10,7 +10,6 @@ An improved alternative duplication check has been implemented for gateway dupli
 Revision ID: f3a3a3d901b8
 Revises: aac21d6f9522
 Create Date: 2025-11-11 22:30:05.474282
-
 """
 
 # Standard

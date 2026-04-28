@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for EmailAuthService - focusing on user creation role assignment."""
+"""Location: ./tests/unit/mcpgateway/services/test_email_auth_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for EmailAuthService - focusing on user creation role assignment.
+"""
 
 # Standard
 from types import SimpleNamespace

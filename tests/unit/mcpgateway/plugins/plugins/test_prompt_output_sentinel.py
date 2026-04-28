@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the prompt output sentinel plugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/test_prompt_output_sentinel.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the prompt output sentinel plugin.
+"""
 
 from __future__ import annotations
 

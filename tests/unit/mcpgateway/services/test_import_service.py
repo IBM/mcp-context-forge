@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_import_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -37,15 +37,9 @@ def import_service():
     service.root_service = AsyncMock()
 
     # Setup default return values for bulk registration methods
-    service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
-    service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
-    service.resource_service.register_resources_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    service.prompt_service.register_prompts_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+    service.resource_service.register_resources_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     return service
 
@@ -129,9 +123,7 @@ async def test_validate_entity_fields_missing_required(import_service):
 async def test_import_configuration_success(import_service, mock_db, valid_import_data):
     """Test successful configuration import."""
     # Setup mocks for successful bulk creation
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.return_value = MagicMock()
 
     # Execute import
@@ -171,9 +163,7 @@ async def test_import_configuration_dry_run(import_service, mock_db, valid_impor
 async def test_import_configuration_conflict_skip(import_service, mock_db, valid_import_data):
     """Test import with skip conflict strategy."""
     # Setup mocks for conflict scenario - bulk methods return stats
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.side_effect = GatewayNameConflictError("test_gateway")
 
     # Execute import with skip strategy
@@ -190,9 +180,7 @@ async def test_import_configuration_conflict_skip(import_service, mock_db, valid
 async def test_import_configuration_conflict_update(import_service, mock_db, valid_import_data):
     """Test import with update conflict strategy."""
     # Setup mocks for conflict scenario - bulk methods handle updates internally
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.side_effect = GatewayNameConflictError("test_gateway")
 
     # Mock existing entities for update
@@ -216,9 +204,7 @@ async def test_import_configuration_conflict_update(import_service, mock_db, val
 async def test_import_configuration_conflict_fail(import_service, mock_db, valid_import_data):
     """Test import with fail conflict strategy."""
     # Setup mocks for conflict scenario - bulk methods return failures
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 1, "errors": ["Tool name conflict: test_tool"]
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 1, "errors": ["Tool name conflict: test_tool"]}
     import_service.gateway_service.register_gateway.side_effect = GatewayNameConflictError("test_gateway")
 
     # Execute import with fail strategy
@@ -234,9 +220,7 @@ async def test_import_configuration_conflict_fail(import_service, mock_db, valid
 async def test_import_configuration_selective(import_service, mock_db, valid_import_data):
     """Test selective import functionality."""
     # Setup mocks for bulk registration
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.return_value = MagicMock()
 
     selected_entities = {
@@ -280,11 +264,7 @@ async def test_validate_import_data_invalid_entity_structure(import_service):
     invalid_data = {
         "version": "2025-03-26",
         "exported_at": "2025-01-01T00:00:00Z",
-        "entities": {
-            "tools": [
-                "not_a_dict"  # Should be a dictionary
-            ]
-        },
+        "entities": {"tools": ["not_a_dict"]},  # Should be a dictionary
     }
 
     with pytest.raises(ImportValidationError) as excinfo:
@@ -383,9 +363,7 @@ async def test_process_prompt_entities(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt_data]}, "metadata": {"entity_counts": {"prompts": 1}}}
 
     # Setup mocks - use bulk registration
-    import_service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.prompt_service.register_prompts_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     # Execute import
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
@@ -406,9 +384,7 @@ async def test_process_resource_entities(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource_data]}, "metadata": {"entity_counts": {"resources": 1}}}
 
     # Setup mocks - use bulk registration
-    import_service.resource_service.register_resources_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.resource_service.register_resources_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     # Execute import
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
@@ -509,9 +485,7 @@ async def test_import_with_rekey_secret(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": [tool_data]}, "metadata": {"entity_counts": {"tools": 1}}}
 
     # Setup mocks for bulk registration
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     # Execute import with rekey secret
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, rekey_secret="new-encryption-key", imported_by="test_user")
@@ -528,9 +502,7 @@ async def test_import_with_rekey_secret(import_service, mock_db):
 async def test_import_skipped_entity(import_service, mock_db, valid_import_data):
     """Test skipped entity handling."""
     # Setup selective entities that don't match any entities in the data
-    selected_entities = {
-        "tools": ["non_existent_tool"]  # This doesn't match "test_tool"
-    }
+    selected_entities = {"tools": ["non_existent_tool"]}  # This doesn't match "test_tool"
 
     # Execute selective import
     status = await import_service.import_configuration(db=mock_db, import_data=valid_import_data, selected_entities=selected_entities, imported_by="test_user")
@@ -623,16 +595,12 @@ async def test_calculate_total_entities(import_service):
     assert total == 3
 
     # Test with selection
-    selected_entities = {
-        "tools": ["tool1"]  # Only select one tool
-    }
+    selected_entities = {"tools": ["tool1"]}  # Only select one tool
     total = import_service._calculate_total_entities(entities, selected_entities)
     assert total == 1
 
     # Test with empty selection for entity type
-    selected_entities = {
-        "tools": []  # Empty list means include all tools
-    }
+    selected_entities = {"tools": []}  # Empty list means include all tools
     total = import_service._calculate_total_entities(entities, selected_entities)
     assert total == 2
 
@@ -756,9 +724,7 @@ async def test_import_validation_edge_cases(import_service):
 async def test_import_configuration_with_selected_entities(import_service, mock_db, valid_import_data):
     """Test import with selected entities filter."""
     # Setup mocks for bulk registration
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     import_service.gateway_service.register_gateway.return_value = MagicMock()
 
     # Test with specific entity selection
@@ -848,9 +814,7 @@ async def test_tool_conflict_update_not_found(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": [tool_data]}, "metadata": {"entity_counts": {"tools": 1}}}
 
     # Bulk method handles conflicts internally - simulate skipped result
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -866,10 +830,7 @@ async def test_tool_conflict_update_exception(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": [tool_data]}, "metadata": {"entity_counts": {"tools": 1}}}
 
     # Bulk method handles update failures internally
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0,
-        "errors": ["Could not update tool error_tool"]
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": ["Could not update tool error_tool"]}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -885,9 +846,7 @@ async def test_tool_conflict_rename_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"tools": [tool_data]}, "metadata": {"entity_counts": {"tools": 1}}}
 
     # Bulk method handles rename strategy internally
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.RENAME, imported_by="test_user")
 
@@ -1117,9 +1076,7 @@ async def test_prompt_conflict_skip_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt_data]}, "metadata": {"entity_counts": {"prompts": 1}}}
 
     # Bulk method handles conflicts internally
-    import_service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
-    }
+    import_service.prompt_service.register_prompts_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.SKIP, imported_by="test_user")
 
@@ -1135,9 +1092,7 @@ async def test_prompt_conflict_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt_data]}, "metadata": {"entity_counts": {"prompts": 1}}}
 
     # Bulk method handles updates internally
-    import_service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.prompt_service.register_prompts_bulk.return_value = {"created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -1153,9 +1108,7 @@ async def test_prompt_conflict_rename_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt_data]}, "metadata": {"entity_counts": {"prompts": 1}}}
 
     # Bulk method handles rename strategy internally
-    import_service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.prompt_service.register_prompts_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.RENAME, imported_by="test_user")
 
@@ -1171,10 +1124,7 @@ async def test_prompt_conflict_fail_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"prompts": [prompt_data]}, "metadata": {"entity_counts": {"prompts": 1}}}
 
     # Bulk method handles fail strategy internally
-    import_service.prompt_service.register_prompts_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 1,
-        "errors": ["Prompt name conflict: fail_prompt"]
-    }
+    import_service.prompt_service.register_prompts_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 1, "errors": ["Prompt name conflict: fail_prompt"]}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.FAIL, imported_by="test_user")
 
@@ -1206,9 +1156,7 @@ async def test_resource_conflict_skip_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource_data]}, "metadata": {"entity_counts": {"resources": 1}}}
 
     # Bulk method handles conflicts internally
-    import_service.resource_service.register_resources_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
-    }
+    import_service.resource_service.register_resources_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.SKIP, imported_by="test_user")
 
@@ -1224,9 +1172,7 @@ async def test_resource_conflict_update_success(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource_data]}, "metadata": {"entity_counts": {"resources": 1}}}
 
     # Bulk method handles updates internally
-    import_service.resource_service.register_resources_bulk.return_value = {
-        "created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.resource_service.register_resources_bulk.return_value = {"created": 0, "updated": 1, "skipped": 0, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -1242,9 +1188,7 @@ async def test_resource_conflict_rename_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource_data]}, "metadata": {"entity_counts": {"resources": 1}}}
 
     # Bulk method handles rename strategy internally
-    import_service.resource_service.register_resources_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.resource_service.register_resources_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.RENAME, imported_by="test_user")
 
@@ -1260,10 +1204,7 @@ async def test_resource_conflict_fail_strategy(import_service, mock_db):
     import_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "entities": {"resources": [resource_data]}, "metadata": {"entity_counts": {"resources": 1}}}
 
     # Bulk method handles fail strategy internally
-    import_service.resource_service.register_resources_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 0, "failed": 1,
-        "errors": ["Resource URI conflict: /api/fail"]
-    }
+    import_service.resource_service.register_resources_bulk.return_value = {"created": 0, "updated": 0, "skipped": 0, "failed": 1, "errors": ["Resource URI conflict: /api/fail"]}
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.FAIL, imported_by="test_user")
 
@@ -1521,7 +1462,7 @@ async def test_server_update_conversion(import_service, mock_db):
     assert server_update.name == "update_server"
     assert server_update.description == "Updated server description"
     assert server_update.associated_tools is None  # None because no tools found to resolve
-    assert server_update.tags == [{'id':'server','label':'server'}, {'id':'update','label':'update'}]
+    assert server_update.tags == [{"id": "server", "label": "server"}, {"id": "update", "label": "update"}]
 
 
 @pytest.mark.asyncio
@@ -1549,7 +1490,7 @@ async def test_prompt_update_conversion_with_schema(import_service):
     assert prompt_update.arguments[0].required == True
     assert prompt_update.arguments[1].name == "value"
     assert prompt_update.arguments[1].required == False
-    assert prompt_update.tags == [{'id':'prompt','label':'prompt'}, {'id':'update','label':'update'}]
+    assert prompt_update.tags == [{"id": "prompt", "label": "prompt"}, {"id": "update", "label": "update"}]
 
 
 @pytest.mark.asyncio
@@ -1562,7 +1503,7 @@ async def test_prompt_update_conversion_no_schema(import_service):
     assert prompt_update.template == "Simple template"
     assert prompt_update.description == "Simple prompt"
     assert prompt_update.arguments is None  # No arguments when no schema
-    assert prompt_update.tags == [{'id':'simple','label':'simple'}]
+    assert prompt_update.tags == [{"id": "simple", "label": "simple"}]
 
 
 @pytest.mark.asyncio
@@ -1575,7 +1516,7 @@ async def test_resource_update_conversion(import_service):
     assert resource_update.description == "Updated resource description"
     assert resource_update.mime_type == "application/xml"
     assert resource_update.content == "<xml>updated content</xml>"
-    assert resource_update.tags == [{'id':'resource','label':'resource'}, {'id':'xml','label':'xml'}]
+    assert resource_update.tags == [{"id": "resource", "label": "resource"}, {"id": "xml", "label": "xml"}]
 
 
 @pytest.mark.asyncio
@@ -1619,7 +1560,6 @@ async def test_gateway_update_auth_conversion_basic_and_headers(import_service):
     assert multi_update.auth_type == "authheaders"
     assert hasattr(multi_update, "auth_headers")
     assert len(multi_update.auth_headers) == 2
-
 
 
 # ============================================================================
@@ -1716,7 +1656,6 @@ async def test_register_tools_bulk_conflict_skip():
     assert any(t.original_name == "new" for t in rows)
 
 
-
 @pytest.mark.asyncio
 async def test_register_prompts_bulk_creates_and_returns_counts():
     """Test bulk prompt registration creates prompts and returns correct counts."""
@@ -1732,21 +1671,9 @@ async def test_register_prompts_bulk_creates_and_returns_counts():
     service = PromptService()
     service._notify_prompt_added = AsyncMock()
 
-    prompts = [
-        PromptCreate(
-            name=f"prompt{i}",
-            template=f"Hello {{{{name{i}}}}}",
-            description=f"Test prompt {i}"
-        ) for i in range(10)
-    ]
+    prompts = [PromptCreate(name=f"prompt{i}", template=f"Hello {{{{name{i}}}}}", description=f"Test prompt {i}") for i in range(10)]
 
-    result = await service.register_prompts_bulk(
-        db=db,
-        prompts=prompts,
-        created_by="tester",
-        created_via="test",
-        conflict_strategy="skip"
-    )
+    result = await service.register_prompts_bulk(db=db, prompts=prompts, created_by="tester", created_via="test", conflict_strategy="skip")
 
     assert result["created"] == 10
     # verify DB contains the created prompts
@@ -1774,17 +1701,8 @@ async def test_register_prompts_bulk_conflict_skip():
     await service.register_prompt(db, first)
 
     # Bulk with a duplicate name should be skipped
-    prompts = [
-        PromptCreate(name="dup_prompt", template="Updated {{name}}", description="Duplicate prompt updated"),
-        PromptCreate(name="new_prompt", template="New {{user}}", description="New prompt")
-    ]
-    result = await service.register_prompts_bulk(
-        db=db,
-        prompts=prompts,
-        created_by="tester",
-        created_via="test",
-        conflict_strategy="skip"
-    )
+    prompts = [PromptCreate(name="dup_prompt", template="Updated {{name}}", description="Duplicate prompt updated"), PromptCreate(name="new_prompt", template="New {{user}}", description="New prompt")]
+    result = await service.register_prompts_bulk(db=db, prompts=prompts, created_by="tester", created_via="test", conflict_strategy="skip")
 
     assert result["skipped"] >= 1
     assert result["created"] >= 1
@@ -1809,23 +1727,9 @@ async def test_register_resources_bulk_creates_and_returns_counts():
     service = ResourceService()
     service._notify_resource_added = AsyncMock()
 
-    resources = [
-        ResourceCreate(
-            name=f"resource{i}",
-            uri=f"file:///resource{i}.txt",
-            description=f"Test resource {i}",
-            mime_type="text/plain",
-            content=f"Content for resource {i}"
-        ) for i in range(10)
-    ]
+    resources = [ResourceCreate(name=f"resource{i}", uri=f"file:///resource{i}.txt", description=f"Test resource {i}", mime_type="text/plain", content=f"Content for resource {i}") for i in range(10)]
 
-    result = await service.register_resources_bulk(
-        db=db,
-        resources=resources,
-        created_by="tester",
-        created_via="test",
-        conflict_strategy="skip"
-    )
+    result = await service.register_resources_bulk(db=db, resources=resources, created_by="tester", created_via="test", conflict_strategy="skip")
 
     assert result["created"] == 10
     # verify DB contains the created resources
@@ -1849,39 +1753,15 @@ async def test_register_resources_bulk_conflict_skip():
     service._notify_resource_added = AsyncMock()
 
     # Pre-create one resource
-    first = ResourceCreate(
-        name="dup_resource",
-        uri="file:///duplicate.txt",
-        description="Duplicate resource",
-        mime_type="text/plain",
-        content="Original content"
-    )
+    first = ResourceCreate(name="dup_resource", uri="file:///duplicate.txt", description="Duplicate resource", mime_type="text/plain", content="Original content")
     await service.register_resource(db, first)
 
     # Bulk with a duplicate URI should be skipped
     resources = [
-        ResourceCreate(
-            name="dup_resource_updated",
-            uri="file:///duplicate.txt",
-            description="Duplicate resource updated",
-            mime_type="text/plain",
-            content="Updated content"
-        ),
-        ResourceCreate(
-            name="new_resource",
-            uri="file:///new.txt",
-            description="New resource",
-            mime_type="text/plain",
-            content="New content"
-        )
+        ResourceCreate(name="dup_resource_updated", uri="file:///duplicate.txt", description="Duplicate resource updated", mime_type="text/plain", content="Updated content"),
+        ResourceCreate(name="new_resource", uri="file:///new.txt", description="New resource", mime_type="text/plain", content="New content"),
     ]
-    result = await service.register_resources_bulk(
-        db=db,
-        resources=resources,
-        created_by="tester",
-        created_via="test",
-        conflict_strategy="skip"
-    )
+    result = await service.register_resources_bulk(db=db, resources=resources, created_by="tester", created_via="test", conflict_strategy="skip")
 
     assert result["skipped"] >= 1
     assert result["created"] >= 1
@@ -2880,9 +2760,7 @@ async def test_process_tools_bulk_restores_original_description(import_service, 
     ]
 
     # Simulate 1 tool created by bulk registration
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
 
     # Mock the DB query for the restore step
     mock_tool = MagicMock()
@@ -2926,9 +2804,7 @@ async def test_process_tools_bulk_skips_restore_when_no_creates(import_service, 
     ]
 
     # All tools skipped — no creates
-    import_service.tool_service.register_tools_bulk.return_value = {
-        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
-    }
+    import_service.tool_service.register_tools_bulk.return_value = {"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}
 
     await import_service._process_tools_bulk(
         db=mock_db,

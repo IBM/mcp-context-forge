@@ -1,4 +1,10 @@
-"""JSON-RPC 2.0 envelope invariants from MCP 2025-11-25 § Base Protocol / Messages.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_jsonrpc_envelope.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+JSON-RPC 2.0 envelope invariants from MCP 2025-11-25 § Base Protocol / Messages.
 
 These tests probe the live gateway with raw httpx so they catch envelope
 regressions the high-level FastMCP Client would hide. They cover the

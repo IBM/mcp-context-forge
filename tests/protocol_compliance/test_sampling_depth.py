@@ -1,4 +1,11 @@
-"""Sampling depth tests — parameters beyond prompt-only happy path."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_sampling_depth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Sampling depth tests — parameters beyond prompt-only happy path.
+"""
 
 from __future__ import annotations
 
