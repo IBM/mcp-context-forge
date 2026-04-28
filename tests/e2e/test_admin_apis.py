@@ -35,7 +35,7 @@ import logging  # noqa: E402
 # test_admin_a2a_listing_continues_on_conversion_error exercises the
 # A2A listing endpoint.
 import os  # noqa: F401
-from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
 from urllib.parse import quote  # noqa: E402
 import uuid  # noqa: E402
 
@@ -900,6 +900,99 @@ class TestAdminGatewayAPIs:
                         assert "error" in data["body"]
                         assert data["body"]["error"] == "Invalid gateway URL"
                         mock_client_class.assert_not_called()
+
+    async def test_gateway_test_endpoint_allowlist_enforcement(self, client: AsyncClient, mock_settings):
+        """Test that gateway test endpoint enforces allowlist (ICA_ContextForgeICACF-14)."""
+        # Configure settings to use allowlist mode (not registered-only)
+        mock_settings.gateway_test_allow_registered_only = False
+        mock_settings.gateway_test_allowed_hosts = ["trusted.example.com"]
+
+        # Test 1: URL not in allowlist should be rejected
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS to return public IP for evil.com
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://evil.com",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200  # HTTP status is always 200
+            response_data = response.json()
+            assert response_data["statusCode"] == 400  # Gateway test result status
+            assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 2: URL with trailing dot should be normalized and still rejected if not in allowlist
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS to return public IP for evil.com.
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://evil.com.",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200
+            response_data = response.json()
+            assert response_data["statusCode"] == 400
+            assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 3: Private IP should be rejected even if in allowlist
+        mock_settings.gateway_test_allowed_hosts = ["192.168.1.1"]
+        request_data = {
+            "base_url": "https://192.168.1.1",
+            "path": "/test",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["statusCode"] == 400
+        assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 4: Loopback should be rejected
+        request_data = {
+            "base_url": "https://127.0.0.1",
+            "path": "/test",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["statusCode"] == 400
+
+        # Test 5: Link-local (cloud metadata) should be rejected
+        request_data = {
+            "base_url": "https://169.254.169.254",
+            "path": "/latest/meta-data",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["statusCode"] == 400
+
+    async def test_gateway_test_endpoint_registered_only_mode(self, client: AsyncClient, mock_settings):
+        """Test gateway test endpoint in registered-only mode."""
+        # Configure to only allow registered gateways
+        mock_settings.gateway_test_allow_registered_only = True
+
+        # Test: Cannot test ANY gateway when no gateways are registered
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS for any domain
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://example.com",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200
+            response_data = response.json()
+            # When allowlist is empty (no registered gateways), all requests should be rejected
+            assert response_data["statusCode"] == 400
+            assert response_data["body"]["error"] == "Invalid gateway URL"
 
 
 # -------------------------
