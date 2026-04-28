@@ -52,10 +52,18 @@ interface RequestOptions {
   headers?: Record<string, string>;
   /** Pass `true` to skip adding the Authorization header (e.g. login). */
   unauthenticated?: boolean;
+  /** AbortSignal for request cancellation/timeout. */
+  signal?: AbortSignal;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, headers: extraHeaders = {}, unauthenticated = false } = options;
+  const {
+    method = "GET",
+    body,
+    headers: extraHeaders = {},
+    unauthenticated = false,
+    signal,
+  } = options;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -78,6 +86,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     // This also means the browser will NOT auto-send cookies cross-origin,
     // making CSRF attacks structurally impossible for these requests.
     credentials: "omit",
+    signal,
   });
 
   if (response.status === 401) {
@@ -111,8 +120,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 // ---------------------------------------------------------------------------
 
 export const api = {
-  get<T>(path: string, headers?: Record<string, string>): Promise<T> {
-    return request<T>(path, { method: "GET", headers });
+  get<T>(path: string, headers?: Record<string, string>, signal?: AbortSignal): Promise<T> {
+    return request<T>(path, { method: "GET", headers, signal });
   },
 
   post<T>(
