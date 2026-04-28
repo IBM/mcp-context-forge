@@ -20,12 +20,14 @@ interface NewMCPServerModalProps {
   triggerLabel?: string;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   showTriggerIcon?: boolean;
+  triggerClassName?: string;
 }
 
 export function NewMCPServerModal({
   triggerLabel = "Connect",
   triggerVariant = "default",
   showTriggerIcon = true,
+  triggerClassName,
 }: NewMCPServerModalProps) {
   const { navigate } = useRouter();
   const [open, setOpen] = useState(false);
@@ -57,7 +59,11 @@ export function NewMCPServerModal({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
-        <Button variant={triggerVariant} className="h-10 w-fit rounded-lg px-4">
+        <Button
+          variant={triggerVariant}
+          size="sm"
+          className={triggerClassName || "h-10 w-fit rounded-lg px-4"}
+        >
           {showTriggerIcon && <Plus className="h-4 w-4" />}
           {triggerLabel}
         </Button>
