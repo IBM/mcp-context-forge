@@ -112,3 +112,36 @@ def reset_app_root_path(monkeypatch):
     by setting the monkeypatch value explicitly in the test.
     """
     monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "")
+
+
+@pytest.fixture(autouse=True)
+def configure_gateway_test_allowlist(monkeypatch, request):
+    """Configure gateway test endpoint allowlist for unit tests.
+
+    This fixture is automatically applied to all tests in mcpgateway unit tests.
+    It configures the gateway test endpoint to allow *.example.com and mocks DNS
+    resolution to return public IPs for test domains.
+
+    This is necessary because the security fix (ICA_ContextForgeICACF-14) now
+    enforces an allowlist for the /admin/gateways/test endpoint.
+
+    Tests that explicitly test the security validation (TestGatewayTestUrlValidation)
+    should skip this fixture by using the marker: @pytest.mark.skip_gateway_allowlist
+    """
+    # Skip this fixture for tests that are testing the security validation itself
+    if "TestGatewayTestUrlValidation" in request.node.nodeid:
+        return
+
+    from mcpgateway import config
+    import socket
+
+    # Configure allowlist to allow test domains
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["*.example.com", "*.google.com"])
+
+    # Mock DNS resolution to return public IP for all test domains
+    def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        """Mock getaddrinfo to return public IP (8.8.8.8) for all domains in tests."""
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
