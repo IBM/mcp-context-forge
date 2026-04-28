@@ -177,8 +177,8 @@ def _sanitize(txt: str) -> str:
         Same *txt* but with credentials replaced by ``***``.
     """
 
-    redacted = _CRED_RE.sub(r"://\\1:***@", txt)
-    return _PWD_RE.sub(r"\\1=***", redacted)
+    redacted = _CRED_RE.sub(r"://\1:***@", txt)
+    return _PWD_RE.sub(r"\1=***", redacted)
 
 
 def _format_target(url: URL) -> str:
