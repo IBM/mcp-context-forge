@@ -18,9 +18,9 @@ CDN_RESOURCES = {
     # Chart.js
     "chartjs": "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js",
     # Marked (Markdown parser)
-    "marked": "https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js",
+    "marked": "https://cdn.jsdelivr.net/npm/marked@18.0.2/lib/marked.umd.js",
     # DOMPurify (XSS sanitizer)
-    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js",
+    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.1/dist/purify.min.js",
     # CodeMirror (code editor)
     "codemirror_js": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js",
     "codemirror_addon_simple": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js",
@@ -32,5 +32,5 @@ CDN_RESOURCES = {
     "codemirror_css": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.css",
     "codemirror_theme_monokai": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css",
     # Font Awesome
-    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css",
+    "fontawesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css",
 }
