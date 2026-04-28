@@ -18,23 +18,20 @@ import logging
 from typing import Callable, Optional
 
 # Third-Party
-from cpex.framework.manager import TenantPluginManagerFactory
-from cpex.framework.models import PluginConfigOverride, PluginMode
 from sqlalchemy.orm import Session
 
 # First-Party
 from cpex.framework import PluginConfigOverride, PluginMode, TenantPluginManagerFactory
-from mcpgateway.schemas import PLUGIN_ID_TO_NAME
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 
 logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
 
-# Legacy mode names from the old framework that may still be stored in DB bindings.
-_LEGACY_MODE_MAP = {
+_BINDING_MODE_TO_PLUGIN_MODE: dict[str, PluginMode] = {
     "enforce": PluginMode.SEQUENTIAL,
     "permissive": PluginMode.AUDIT,
+    "disabled": PluginMode.DISABLED,
 }
 
 
@@ -57,15 +54,6 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
     """
 
     def __init__(self, *args: object, db_factory: Callable[[], Session], **kwargs: object) -> None:
-        """Initialise the factory with a DB session factory.
-
-        Args:
-            *args: Forwarded to :class:`TenantPluginManagerFactory`.
-            db_factory: Zero-argument callable that returns a fresh
-                ``Session`` (e.g. ``SessionLocal``).  The session is opened
-                and closed within each ``get_config_from_db`` call.
-            **kwargs: Forwarded to :class:`TenantPluginManagerFactory`.
-        """
         super().__init__(*args, **kwargs)
         self._db_factory = db_factory
 
@@ -93,11 +81,6 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
             finally:
                 db.close()
         except Exception:
-            # Previously this swallowed the error and returned None, which made
-            # the factory rebuild the manager with base YAML config — silently
-            # dropping any per-team/per-tool overrides (including enforce-mode
-            # security plugins). Fail loudly so the rebuild bubbles up; the
-            # caller retries on the next request or cache TTL expiry.
             logger.error(
                 "get_config_from_db: DB error for context_id=%s — failing rebuild to avoid dropping bindings",
                 context_id,
@@ -111,18 +94,8 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
         overrides: list[PluginConfigOverride] = []
         for binding in bindings:
-            plugin_name = PLUGIN_ID_TO_NAME.get(binding.plugin_id)
-            if plugin_name is None:
-                logger.warning(
-                    "get_config_from_db: unknown plugin_id %r for binding %s, skipping",
-                    binding.plugin_id,
-                    binding.id,
-                )
-                continue
-
-            mode: Optional[PluginMode] = None
-            if binding.mode:
-                mode = _LEGACY_MODE_MAP.get(binding.mode) or PluginMode(binding.mode)
+            plugin_name = binding.plugin_id
+            mode: Optional[PluginMode] = _BINDING_MODE_TO_PLUGIN_MODE.get(binding.mode) if binding.mode else None
             overrides.append(
                 PluginConfigOverride(
                     name=plugin_name,

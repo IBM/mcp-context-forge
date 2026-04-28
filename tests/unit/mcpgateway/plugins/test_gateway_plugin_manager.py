@@ -37,7 +37,6 @@ from mcpgateway.plugins.gateway_plugin_manager import (
 from cpex.framework.models import PluginMode
 from mcpgateway.schemas import (
     PluginBindingMode,
-    PluginId,
     PluginPolicyItem,
     TeamPolicies,
     ToolPluginBindingRequest,
@@ -147,8 +146,8 @@ class TestGetConfigFromDb:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["my_tool"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.SEQUENTIAL,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.ENFORCE,
 
                             priority=42,
                             config={**_OLG, "max_chars": 500},
@@ -215,8 +214,8 @@ class TestGetConfigFromDb:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.AUDIT,
+                            plugin_id="RateLimiterPlugin",
+                            mode=PluginBindingMode.PERMISSIVE,
 
                             priority=5,
                             config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},

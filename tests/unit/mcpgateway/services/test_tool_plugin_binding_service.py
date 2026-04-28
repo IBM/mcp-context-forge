@@ -156,8 +156,8 @@ def simple_request():
                 policies=[
                     PluginPolicyItem(
                         tool_names=["tool_x"],
-                        plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                        mode=PluginBindingMode.SEQUENTIAL,
+                        plugin_id="OutputLengthGuardPlugin",
+                        mode=PluginBindingMode.ENFORCE,
 
                         priority=50,
                         config=dict(_OLG),
@@ -213,7 +213,7 @@ class TestUpsertBindings:
         assert r.team_id == "team-a"
         assert r.tool_name == "tool_x"
         assert r.plugin_id == "OUTPUT_LENGTH_GUARD"
-        assert r.mode == "sequential"
+        assert r.mode == "enforce"
 
         assert r.priority == 50
         assert r.config == dict(_OLG)
@@ -236,8 +236,8 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.AUDIT,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.PERMISSIVE,
 
                             priority=10,
                             config=cfg_v1,
@@ -255,8 +255,8 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.SEQUENTIAL,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.ENFORCE,
 
                             priority=50,
                             config=cfg_v2,
@@ -271,7 +271,7 @@ class TestUpsertBindings:
 
         r = updated[0]
         assert r.id == original_id                       # primary key preserved
-        assert r.mode == "sequential"
+        assert r.mode == "enforce"
         assert r.priority == 50
         assert r.config == cfg_v2
         assert r.updated_by == "updater@example.com"
@@ -312,8 +312,8 @@ class TestUpsertBindings:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_a", "tool_b"],
-                            plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.AUDIT,
+                            plugin_id="RateLimiterPlugin",
+                            mode=PluginBindingMode.PERMISSIVE,
 
                             priority=20,
                             config=cfg,
@@ -333,7 +333,7 @@ class TestUpsertBindings:
         tool_a = by_tool["tool_a"]
         assert tool_a.team_id == "team-a"
         assert tool_a.plugin_id == "RATE_LIMITER"
-        assert tool_a.mode == "audit"
+        assert tool_a.mode == "permissive"
 
         assert tool_a.priority == 20
         assert tool_a.config == cfg
@@ -341,7 +341,7 @@ class TestUpsertBindings:
         tool_b = by_tool["tool_b"]
         assert tool_b.team_id == "team-a"
         assert tool_b.plugin_id == "RATE_LIMITER"
-        assert tool_b.mode == "audit"
+        assert tool_b.mode == "permissive"
 
         assert tool_b.priority == 20
         assert tool_b.config == cfg
@@ -550,7 +550,7 @@ class TestPluginPolicyItemValidation:
             plugin_id="RateLimiterPlugin",
             config=dict(_RL),
         )
-        assert item.mode == PluginBindingMode.SEQUENTIAL
+        assert item.mode == PluginBindingMode.ENFORCE
         assert item.priority == 50
 
     def test_output_length_guard_valid_config(self):
@@ -695,8 +695,8 @@ class TestTopLevelSchemas:
 
     def test_plugin_binding_mode_enum_values(self):
         """PluginBindingMode enum covers all expected execution modes."""
-        assert PluginBindingMode.SEQUENTIAL == "sequential"
-        assert PluginBindingMode.AUDIT == "audit"
+        assert PluginBindingMode.ENFORCE == "enforce"
+        assert PluginBindingMode.PERMISSIVE == "permissive"
         assert PluginBindingMode.DISABLED == "disabled"
 
 
@@ -721,8 +721,8 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_x"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.SEQUENTIAL,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.ENFORCE,
 
                             priority=50,
                             config=dict(_OLG),
@@ -740,8 +740,8 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.RATE_LIMITER,
-                            mode=PluginBindingMode.AUDIT,
+                            plugin_id="RateLimiterPlugin",
+                            mode=PluginBindingMode.PERMISSIVE,
 
                             priority=10,
                             config={**_RL, "by_user": "100/m", "by_tenant": "1000/m"},
@@ -779,8 +779,8 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["*"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.AUDIT,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.PERMISSIVE,
 
                             priority=1,
                             config={**_OLG, "max_chars": 100},
@@ -798,8 +798,8 @@ class TestGetBindingsForTool:
                     policies=[
                         PluginPolicyItem(
                             tool_names=["tool_z"],
-                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
-                            mode=PluginBindingMode.SEQUENTIAL,
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.ENFORCE,
 
                             priority=99,
                             config={**_OLG, "max_chars": 9999},

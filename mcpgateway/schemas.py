@@ -8216,94 +8216,12 @@ class PerformanceHistoryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class PluginId(str, Enum):
-    """Supported plugin identifiers for tool plugin bindings."""
-
-    OUTPUT_LENGTH_GUARD = "OUTPUT_LENGTH_GUARD"
-    RATE_LIMITER = "RATE_LIMITER"
-    SECRETS_DETECTION = "SECRETS_DETECTION"
-
-
-PLUGIN_ID_TO_NAME: dict[str, str] = {
-    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
-    PluginId.RATE_LIMITER: "RateLimiterPlugin",
-    PluginId.SECRETS_DETECTION: "SecretsDetection",
-}
-
-
 class PluginBindingMode(str, Enum):
-    """Plugin execution mode for tool plugin bindings.
+    """Plugin execution mode for tool plugin bindings."""
 
-    Values match cpex ``PluginMode`` names (lower-cased).  Legacy values
-    ``enforce`` and ``permissive`` are accepted at the DB/gateway layer
-    via ``_LEGACY_MODE_MAP`` in ``gateway_plugin_manager.py`` for
-    backwards compatibility with existing rows.
-    """
-
-    SEQUENTIAL = "sequential"
-    AUDIT = "audit"
-    FIRE_AND_FORGET = "fire_and_forget"
-    CONCURRENT = "concurrent"
-    TRANSFORM = "transform"
+    ENFORCE = "enforce"
+    PERMISSIVE = "permissive"
     DISABLED = "disabled"
-
-
-# --- Plugin-specific config schemas ---
-
-
-class OutputLengthGuardConfig(BaseModel):
-    """Config schema for OUTPUT_LENGTH_GUARD plugin."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    min_chars: int = Field(0, ge=0, description="Minimum character count, must be >= 0")
-    max_chars: int = Field(2000, gt=1, description="Maximum character count, must be > 1")
-    strategy: Literal["truncate", "block"] = Field("truncate", description="Action when limit exceeded")
-    ellipsis: str = Field("...", max_length=20, description="Suffix appended on truncation")
-
-    @model_validator(mode="after")
-    def min_less_than_max(self) -> "OutputLengthGuardConfig":
-        if self.min_chars >= self.max_chars:
-            raise ValueError("min_chars must be less than max_chars")
-        return self
-
-
-class RateLimiterConfig(BaseModel):
-    """Config schema for RATE_LIMITER plugin."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    by_user: Optional[str] = Field(None, description="Rate limit per user, e.g. '60/m' or '10/s'")
-    by_tenant: Optional[str] = Field(None, description="Rate limit per tenant, e.g. '600/m'")
-    by_tool: Optional[str] = Field(None, description="Rate limit per tool, e.g. '10/m'")
-
-    @field_validator("by_user", "by_tenant", "by_tool", mode="before")
-    @classmethod
-    def validate_rate_string(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        if not re.match(r"^\d+/[sm]$", v):
-            raise ValueError(f"Rate string '{v}' is invalid. Use format '<count>/s' or '<count>/m'")
-        return v
-
-
-class SecretsDetectionConfig(BaseModel):
-    """Config schema for SECRETS_DETECTION plugin."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag")
-    redact: bool = Field(True, description="Whether to redact detected secrets")
-    redaction_text: str = Field("[REDACTED]", max_length=50, description="Text to replace secrets with")
-    block_on_detection: bool = Field(False, description="Whether to block the response when secrets detected")
-    min_findings_to_block: int = Field(1, ge=1, description="Minimum number of findings required to block")
-
-
-_PLUGIN_CONFIG_MAP: Dict[str, type] = {
-    PluginId.OUTPUT_LENGTH_GUARD: OutputLengthGuardConfig,
-    PluginId.RATE_LIMITER: RateLimiterConfig,
-    PluginId.SECRETS_DETECTION: SecretsDetectionConfig,
-}
 
 
 # --- Policy item (one plugin, one or more tools) ---
@@ -8323,8 +8241,8 @@ class PluginPolicyItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
-    plugin_id: PluginId = Field(..., description="Plugin to bind")
-    mode: PluginBindingMode = Field(PluginBindingMode.SEQUENTIAL, description="Execution mode (matches cpex PluginMode)")
+    plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
+    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ...,

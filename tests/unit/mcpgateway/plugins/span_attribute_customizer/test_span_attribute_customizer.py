@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
-from mcpgateway.plugins import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
