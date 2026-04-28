@@ -37,6 +37,7 @@ from mcpgateway.plugins.gateway_plugin_manager import (
 from cpex.framework.models import PluginMode
 from mcpgateway.schemas import (
     PluginBindingMode,
+    PluginId,
     PluginPolicyItem,
     TeamPolicies,
     ToolPluginBindingRequest,
