@@ -5097,9 +5097,9 @@ class TestOAuthAudienceEnforcement:
 
     @pytest.mark.asyncio
     async def test_no_resource_no_client_id_no_canonical_fails_closed(self, monkeypatch):
-        """No resource, no client_id, no derivable canonical URL → 401 fail closed."""
+        """No resource, no client_id, no derivable canonical URL → 401 fail closed with WWW-Authenticate."""
         monkeypatch.setattr(settings, "app_domain", "")
-        handler, _responses = _make_handler_unknown_host()
+        handler, responses = _make_handler_unknown_host()
         server = MagicMock()
         server.oauth_enabled = True
         server.oauth_config = {"authorization_servers": [IDP_ISSUER]}
@@ -5115,6 +5115,65 @@ class TestOAuthAudienceEnforcement:
         assert result is OAuthAuthResult.FAILED
         verify_mock.assert_not_awaited()
         persist_mock.assert_not_called()
+
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
+        header_dict = {k.decode().lower(): v.decode() for k, v in start["headers"]}
+        assert "www-authenticate" in header_dict
+        assert header_dict["www-authenticate"].startswith("Bearer")
+        assert b"Invalid OAuth access token" in _response_body(responses)
+
+    @pytest.mark.asyncio
+    async def test_no_canonical_url_falls_back_to_client_id_only(self, monkeypatch):
+        """When canonical URL cannot be derived but ``client_id`` is set, fallback uses client_id alone (C4)."""
+        monkeypatch.setattr(settings, "app_domain", "")
+        handler, _responses = _make_handler_unknown_host()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER], "client_id": "my-client-id"}
+
+        captured: dict = {}
+
+        async def fake_verify(token, authorization_servers, *, expected_audience=None):
+            captured["expected_audience"] = expected_audience
+
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.transports.streamablehttp_transport._persist_learned_server_audience", new_callable=AsyncMock),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        # Single-element fallback collapses to scalar (per len-check at the call site).
+        assert captured["expected_audience"] == "my-client-id"
+
+    @pytest.mark.parametrize(
+        "client_id_value",
+        ["   ", "", 42, ["my-client-id"], {"id": "x"}, None],
+        ids=["whitespace_string", "empty_string", "int", "list", "dict", "none"],
+    )
+    @pytest.mark.asyncio
+    async def test_client_id_non_string_or_blank_treated_as_missing(self, monkeypatch, client_id_value):
+        """Non-string or whitespace-only ``client_id`` is excluded from the fallback list (C7/C8)."""
+        monkeypatch.setattr(settings, "app_domain", "")
+        handler, responses = _make_handler_unknown_host()
+        server = MagicMock()
+        server.oauth_enabled = True
+        server.oauth_config = {"authorization_servers": [IDP_ISSUER], "client_id": client_id_value}
+
+        verify_mock = AsyncMock(return_value={"sub": "user", "aud": "anything"})
+        with (
+            _patched_get_db(server),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", verify_mock),
+            patch("mcpgateway.transports.streamablehttp_transport._persist_learned_server_audience", new_callable=AsyncMock),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token())
+
+        assert result is OAuthAuthResult.FAILED
+        verify_mock.assert_not_awaited()
+        start = next(m for m in responses if m["type"] == "http.response.start")
+        assert start["status"] == 401
 
     @pytest.mark.asyncio
     async def test_resource_field_used_as_expected_audience(self, _pinned_app_domain):
@@ -5632,20 +5691,35 @@ class TestPersistLearnedServerAudienceUnit:
             [],
             "",
             "   ",
+            [None],
+            ["   "],
         ],
-        ids=["dict", "int", "list_with_empty_string", "list_with_int", "empty_list", "empty_string", "whitespace_string"],
+        ids=[
+            "dict",
+            "int",
+            "list_with_empty_string",
+            "list_with_int",
+            "empty_list",
+            "empty_string",
+            "whitespace_string",
+            "list_with_none",
+            "list_with_whitespace_string",
+        ],
     )
-    def test_skips_when_aud_is_malformed(self, bad_aud):
-        """Malformed ``aud`` shapes are rejected before persisting (B2)."""
+    def test_skips_when_aud_is_malformed(self, bad_aud, caplog):
+        """Malformed ``aud`` shapes are rejected before persisting and a warning is logged (B2)."""
         # First-Party
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         db_mock = MagicMock()
 
-        _persist_learned_server_audience("srv-1", {"aud": bad_aud, "sub": "user"}, db_mock)
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
+            _persist_learned_server_audience("srv-1", {"aud": bad_aud, "sub": "user"}, db_mock)
 
         db_mock.execute.assert_not_called()
         db_mock.flush.assert_not_called()
+        assert "Refusing to persist malformed aud claim" in caplog.text
+        assert "srv-1" in caplog.text
 
     def test_skips_when_oauth_config_is_none(self):
         """``server.oauth_config`` being None is handled gracefully (no flush)."""
@@ -5662,16 +5736,100 @@ class TestPersistLearnedServerAudienceUnit:
 
         db_mock.flush.assert_not_called()
 
-    def test_db_error_is_swallowed(self):
-        """DB errors during persist are logged but do not propagate."""
+    def test_skips_when_oauth_config_is_empty_dict(self):
+        """``server.oauth_config`` being an empty dict is handled gracefully (B5)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
+
+        server = MagicMock()
+        server.oauth_config = {}
+
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server
+
+        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+
+        db_mock.flush.assert_not_called()
+
+    def test_skips_when_server_row_is_none(self):
+        """``db.execute(...).scalar_one_or_none()`` returning None is handled gracefully (B4)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
+
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = None
+
+        _persist_learned_server_audience("srv-missing", {"aud": "my-client-id", "sub": "user"}, db_mock)
+
+        db_mock.flush.assert_not_called()
+
+    def test_flush_error_is_swallowed_and_logged(self, caplog):
+        """``db.flush()`` raising is caught by the outer except and logged (B12)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
+
+        server = MagicMock()
+        server.oauth_config = dict({"authorization_servers": ["https://idp.example.com"]})
+
+        db_mock = MagicMock()
+        db_mock.execute.return_value.scalar_one_or_none.return_value = server
+        db_mock.flush.side_effect = RuntimeError("constraint violation")
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
+            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+
+        assert "Failed to persist learned audience for server srv-1" in caplog.text
+
+    def test_db_error_is_swallowed(self, caplog):
+        """DB errors during persist are logged but do not propagate (B11)."""
         # First-Party
         from mcpgateway.transports.streamablehttp_transport import _persist_learned_server_audience  # pylint: disable=import-outside-toplevel
 
         db_mock = MagicMock()
         db_mock.execute.side_effect = RuntimeError("connection refused")
 
-        # Should not raise.
-        _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.transports.streamablehttp_transport"):
+            _persist_learned_server_audience("srv-1", {"aud": "my-client-id", "sub": "user"}, db_mock)
+
+        assert "Failed to persist learned audience for server srv-1" in caplog.text
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, False),
+            ("", False),
+            ("   ", False),
+            ("aud", True),
+            ([], False),
+            ([None], False),
+            ([""], False),
+            (["aud"], True),
+            (["aud-a", "aud-b"], True),
+            ({"foo": "bar"}, False),
+            (42, False),
+            (b"aud", False),
+        ],
+        ids=[
+            "none",
+            "empty_string",
+            "whitespace_string",
+            "valid_string",
+            "empty_list",
+            "list_with_none",
+            "list_with_empty_string",
+            "list_with_one_valid",
+            "list_with_two_valid",
+            "dict",
+            "int",
+            "bytes",
+        ],
+    )
+    def test_is_valid_audience_directly(self, value, expected):
+        """Direct unit test of the shape validator across all RFC 7519 §4.1.3 edge cases (A1-A10)."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _is_valid_audience  # pylint: disable=import-outside-toplevel
+
+        assert _is_valid_audience(value) is expected
 
 
 class TestOAuthServerMisconfigurationRejected:
