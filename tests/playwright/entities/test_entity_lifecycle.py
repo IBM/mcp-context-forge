@@ -230,7 +230,7 @@ class TestToolLifecycle:
                 "tool": {
                     "name": name,
                     "url": "https://httpbin.org/post",
-                    "description": "Delete test",
+                    "description": "Deletion test",
                     "integration_type": "REST",
                     "request_type": "POST",
                 },
