@@ -454,13 +454,13 @@ serve: install js-build                  ## Run production server with Gunicorn 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 
-dev: js-build
+dev:
 	@echo "🚀 Starting dev server with React hot reload..."
 	@echo "🚀 Starting development server with CSS watch..."
 	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
 	$(MAKE) js-build watch-css & \
 	WATCH_CSS_PID=$$!; \
-	@cd client && npm install --no-audit --no-fund && npm run build:watch & echo $$! > /tmp/mcpgateway-client-watch.pid
+	@cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1 & echo $$! > /tmp/mcpgateway-client-watch.pid
 	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo
