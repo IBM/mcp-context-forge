@@ -4858,8 +4858,8 @@ class ToolService(BaseService):
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
                     # Inject identity propagation headers for REST tools
-                    if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
+                    if global_context and global_context.state.get("user_context"):
+                        headers.update(build_identity_headers(global_context.state.get("user_context")))
 
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -5165,9 +5165,9 @@ class ToolService(BaseService):
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
                     # Inject identity propagation headers and meta for MCP tools
-                    if global_context and global_context.user_context:
-                        headers.update(build_identity_headers(global_context.user_context))
-                        meta_data = build_identity_meta(global_context.user_context, meta_data)
+                    if global_context and global_context.state.get("user_context"):
+                        headers.update(build_identity_headers(global_context.state.get("user_context")))
+                        meta_data = build_identity_meta(global_context.state.get("user_context"), meta_data)
 
                     # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
                     client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None

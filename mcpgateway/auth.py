@@ -1842,7 +1842,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     """Inject user identity into the plugin_global_context.
 
     Always populates both the legacy ``global_context.user`` dict (for backward
-    compatibility) and the new structured ``global_context.user_context``
+    compatibility) and the new structured ``global_context.state["user_context"]``
     (:class:`UserContext`).
 
     Args:
@@ -1887,7 +1887,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         token_teams = getattr(request.state, "token_teams", None) if request and hasattr(request, "state") else None
         team_id = getattr(request.state, "team_id", None) if request and hasattr(request, "state") else None
 
-        global_context.user_context = UserContext(
+        global_context.state["user_context"] = UserContext(
             user_id=user.email,
             email=user.email,
             full_name=user.full_name,

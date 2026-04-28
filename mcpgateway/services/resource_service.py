@@ -2422,8 +2422,8 @@ class ResourceService(BaseService):
                             headers = build_gateway_auth_headers(gateway)
 
                             # Inject identity propagation headers
-                            if plugin_global_context and plugin_global_context.user_context:
-                                headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
+                            if plugin_global_context and plugin_global_context.state.get("user_context"):
+                                headers.update(build_identity_headers(plugin_global_context.state.get("user_context"), gateway))
 
                             # Use MCP SDK to connect and read resource
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
