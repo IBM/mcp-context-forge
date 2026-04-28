@@ -211,20 +211,20 @@ postgres = [
 ]
 
 llmchat = [
-    "langchain-core>=1.3.2",
+    "langchain-core>=1.3.0",
     "langchain-mcp-adapters>=0.2.2",
     "langchain-ollama>=1.1.0",
-    "langchain-openai>=1.2.1",
-    "langgraph>=1.1.10",
-    "langsmith>=0.7.37", # Transitive pin (langchain-core)
+    "langchain-openai>=1.1.16",
+    "langgraph>=1.1.8",
+    "langsmith>=0.7.33", # Transitive pin (langchain-core)
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.152.4",
+    "hypothesis>=6.152.1",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.16.1", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
+    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -234,17 +234,17 @@ fuzz-atheris = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.41.1",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.41.1",
-    "opentelemetry-exporter-otlp-proto-http>=1.41.1",
-    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-api>=1.41.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.41.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.41.0",
+    "opentelemetry-sdk>=1.41.0",
 ]
 
 # Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
 # Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
 # Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
 granian = [
-    "granian[pname,uvloop,reload]>=2.7.4",
+    "granian[pname,uvloop,reload]>=2.7.3",
 ]
 
 # Async SQLite Driver (optional)
@@ -265,7 +265,7 @@ asyncpg = [
 # See docs/docs/development/profiling.md for detailed usage
 profiling = [
     "memray>=1.19.3",
-    "py-spy>=0.4.2",
+    "py-spy>=0.4.1",
 ]
 
 # Plugin templating tools (optional)
@@ -290,7 +290,7 @@ grpc = [
     "grpcio>=1.80.0",
     "grpcio-reflection>=1.80.0",
     "grpcio-tools>=1.80.0",
-    "protobuf>=7.34.1", # grpcio-reflection 1.78.x caps at <7.0.0
+    "protobuf>=6.33.6", # grpcio-reflection 1.78.x caps at <7.0.0
 ]
 
 # UI Testing
