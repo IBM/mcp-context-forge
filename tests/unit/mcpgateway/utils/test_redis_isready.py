@@ -78,6 +78,59 @@ class MockRedis:
 # ---------------------------------------------------------------------------
 
 
+def test_mask_redis_url_with_password_only():
+    """rediss URL with password and no username should mask the password."""
+    masked = redis_isready._mask_redis_url(
+        "rediss://:fake-test-password@redis.example.com:6379"
+    )
+    assert masked == "rediss://:*****@redis.example.com:6379"
+    assert "fake-test-password" not in masked
+
+
+def test_mask_redis_url_with_user_and_password():
+    """URL with username and password should preserve username and mask password."""
+    masked = redis_isready._mask_redis_url("redis://user:secret@host:6379/0")
+    assert masked == "redis://user:*****@host:6379/0"
+    assert "secret" not in masked
+
+
+def test_mask_redis_url_without_password():
+    """URL without credentials should be returned unchanged."""
+    assert (
+        redis_isready._mask_redis_url("redis://localhost:6379/0")
+        == "redis://localhost:6379/0"
+    )
+
+
+def test_mask_redis_url_handles_empty_and_malformed():
+    """Empty or malformed URLs should not raise."""
+    assert redis_isready._mask_redis_url("") == ""
+    # Malformed input is returned unchanged (no password to leak).
+    assert redis_isready._mask_redis_url("not-a-url") == "not-a-url"
+
+
+def test_probe_log_does_not_leak_password(monkeypatch, caplog):
+    """The 'Probing Redis at ...' log line must not contain the raw password."""
+    # Standard
+    import logging
+
+    monkeypatch.setattr(redis_isready.time, "sleep", lambda *_: None)
+    secret = "fake-test-password"
+    url = f"rediss://:{secret}@redis.example.com:6379"
+
+    with patch("redis.Redis", MockRedis), caplog.at_level(logging.INFO, logger="redis_isready"):
+        redis_isready.wait_for_redis_ready(
+            redis_url=url,
+            max_retries=1,
+            retry_interval_ms=1,
+            sync=True,
+        )
+
+    full_log = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert secret not in full_log
+    assert "*****" in full_log
+
+
 def test_wait_for_redis_ready_success(monkeypatch):
     """A healthy Redis instance should succeed on the first attempt."""
 
