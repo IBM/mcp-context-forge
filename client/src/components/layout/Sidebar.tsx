@@ -2,12 +2,11 @@ import { useIntl } from "react-intl";
 import {
   Blocks,
   Bot,
+  Box,
   ChartLine,
-  FileCode2,
   House,
   KeyRound,
   MessageSquareMore,
-  MonitorCog,
   Server,
   Settings,
   Shapes,
@@ -30,6 +29,7 @@ import {
 import { GatewayIcon } from "../icons/GatewayIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
 import { MainNavIcon } from "../icons/MainNavIcon.tsx";
+import { PromptIcon } from "../icons/PromptIcon.tsx";
 
 interface NavItem {
   labelKey: string;
@@ -49,8 +49,8 @@ const COMPONENTS_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
   { labelKey: "navigation.agents", path: "/app/agents", icon: Bot },
   { labelKey: "navigation.tools", path: "/app/tools", icon: Wrench },
-  { labelKey: "navigation.resources", path: "/app/resources", icon: MonitorCog },
-  { labelKey: "navigation.prompts", path: "/app/prompts", icon: FileCode2 },
+  { labelKey: "navigation.resources", path: "/app/resources", icon: Box },
+  { labelKey: "navigation.prompts", path: "/app/prompts", icon: PromptIcon },
   { labelKey: "navigation.plugins", path: "/app/plugins", icon: Blocks },
   { labelKey: "navigation.serverCatalog", path: "/app/server-catalog", icon: Shapes },
 ];
