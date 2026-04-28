@@ -1,9 +1,14 @@
-"""merge token_revocation and uaid heads
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/cae28b15a507_merge_token_revocation_and_uaid_heads.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+merge token_revocation and uaid heads
 
 Revision ID: cae28b15a507
 Revises: aa1b2c3d4e5f, d2b501bf4262
 Create Date: 2026-04-21 16:10:45.722681
-
 """
 
 # Standard

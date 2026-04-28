@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_gateway_filtering.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for gateway_id filtering on /prompts and /resources endpoints.
 

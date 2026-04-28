@@ -1,4 +1,10 @@
-"""Unit tests for baggage_middleware.py coverage gaps.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for baggage_middleware.py coverage gaps.
 
 This module contains targeted tests for specific uncovered lines in
 mcpgateway/middleware/baggage_middleware.py to improve coverage.

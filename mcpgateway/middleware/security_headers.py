@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/security_headers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -8,7 +8,6 @@ Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
 XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
-
 """
 
 # Standard

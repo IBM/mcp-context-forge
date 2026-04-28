@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/services/test_observability_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
@@ -29,7 +38,7 @@ def mock_db():
 @pytest.fixture
 def mock_session_factory():
     """Mock SessionLocal for observability independent sessions."""
-    with patch('mcpgateway.services.observability_service.SessionLocal') as mock_factory:
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_factory:
         mock_session = MagicMock()
         mock_factory.return_value = mock_session
         # Setup common mock behaviors
@@ -105,8 +114,7 @@ def test_record_token_usage_with_and_without_span(mock_ctid, mock_session_factor
     span = MagicMock()
     mock_session.query.return_value.filter_by.return_value.first.return_value = span
     service.record_token_usage(model="gpt-4-turbo", input_tokens=5, output_tokens=3)
-    service.record_token_usage(span_id="sid", model="claude-3-sonnet",
-                               input_tokens=10, output_tokens=15, provider="anthropic")
+    service.record_token_usage(span_id="sid", model="claude-3-sonnet", input_tokens=10, output_tokens=15, provider="anthropic")
     assert service.record_metric.call_count >= 2
 
 
@@ -170,7 +178,7 @@ def test_parse_traceparent_zero_ids(caplog):
 
 
 def test_parse_traceparent_valid_but_zero_ids(caplog):
-    header = "00-" + "0"*32 + "-0000000000000000-01"
+    header = "00-" + "0" * 32 + "-0000000000000000-01"
     output = parse_traceparent(header)
     assert output is None
     assert "Invalid traceparent" in caplog.text or "zero" in caplog.text
@@ -178,21 +186,19 @@ def test_parse_traceparent_valid_but_zero_ids(caplog):
 
 def test_parse_traceparent_malformed_formats(caplog):
     assert parse_traceparent("wrong-format") is None
-    assert parse_traceparent("xx-" + "abc"*16 + "-1234567890123456-00") is None
+    assert parse_traceparent("xx-" + "abc" * 16 + "-1234567890123456-00") is None
     assert "Invalid traceparent" in caplog.text or "Unsupported" in caplog.text
 
 
 def test_format_traceparent_unsampled_branch():
-    val = format_traceparent("a"*32, "b"*16, sampled=False)
+    val = format_traceparent("a" * 32, "b" * 16, sampled=False)
     assert val.endswith("-00")
 
 
 def test_start_trace_with_parent_and_resources(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    tid = service.start_trace("GET /endpoint", parent_span_id="parent123",
-                              http_method="GET", http_url="/endpoint",
-                              attributes={"a": 1}, resource_attributes={"service": "gateway"})
+    tid = service.start_trace("GET /endpoint", parent_span_id="parent123", http_method="GET", http_url="/endpoint", attributes={"a": 1}, resource_attributes={"service": "gateway"})
     assert isinstance(tid, str)
     # Session add handled internally
 
@@ -346,8 +352,7 @@ def test_trace_a2a_request_no_request_data_skips_sanitization(mock_session_facto
 def test_record_transport_activity_full_branches(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity("http", "send",
-                                      message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
+    service.record_transport_activity("http", "send", message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
     assert service.record_metric.call_count >= 3
 
 
@@ -361,13 +366,13 @@ def test_record_transport_activity_bytes_sent_zero_skips_metric(mock_db):
     metric_names = [call.kwargs["name"] for call in service.record_metric.mock_calls if "name" in call.kwargs]
     assert not any(name.endswith(".bytes_sent") for name in metric_names)
 
+
 def test_record_metric_exists(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     metric_func = getattr(service, "record_metric", None)
     if metric_func:
-        metric_func(name="metric.test", value=1.0, metric_type="counter",
-                    unit="test", trace_id="tid", attributes={"a": "b"})
+        metric_func(name="metric.test", value=1.0, metric_type="counter", unit="test", trace_id="tid", attributes={"a": "b"})
         # Session add handled internally
 
 
@@ -468,6 +473,7 @@ def test_query_traces_applies_filters(mock_db):
 
     with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace:
         mock_trace.attributes.__getitem__.return_value.astext = MagicMock()
+
         class _Comparable:
             def __ge__(self, _other):
                 return MagicMock()
@@ -603,14 +609,13 @@ def test_query_traces_invalid_limit_and_order(mock_db):
 def test_record_transport_activity_all_metrics(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity("ws", "send",
-                                      message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
+    service.record_transport_activity("ws", "send", message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
     assert service.record_metric.call_count >= 3
 
 
 def test_parse_traceparent_invalid_strings(caplog):
     assert parse_traceparent("invalid-header") is None
-    assert parse_traceparent("00-" + "0"*32 + "-abcd"*4 + "-01") is None
+    assert parse_traceparent("00-" + "0" * 32 + "-abcd" * 4 + "-01") is None
     bad = "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
     assert parse_traceparent(bad) is None
     assert "Invalid" in caplog.text or "Unsupported" in caplog.text
@@ -619,9 +624,7 @@ def test_parse_traceparent_invalid_strings(caplog):
 def test_start_trace_with_resource_and_parent(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    tid = service.start_trace("GET /test", parent_span_id="p123",
-                              attributes={"foo": "bar"},
-                              resource_attributes={"service": "gateway"})
+    tid = service.start_trace("GET /test", parent_span_id="p123", attributes={"foo": "bar"}, resource_attributes={"service": "gateway"})
     # Session add handled internally
     assert isinstance(tid, str)
 
@@ -685,14 +688,12 @@ def test_trace_a2a_request_with_response_result(mock_session_factory):
 def test_record_transport_activity_full(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity("http", "send",
-                                      message_count=1, bytes_sent=50, bytes_received=25,
-                                      connection_id="cid")
+    service.record_transport_activity("http", "send", message_count=1, bytes_sent=50, bytes_received=25, connection_id="cid")
     assert service.record_metric.call_count >= 3
 
 
 def test_parse_traceparent_zero_trace_parent(caplog):
-    header = "00-" + "0"*32 + "-0000000000000000-01"
+    header = "00-" + "0" * 32 + "-0000000000000000-01"
     result = parse_traceparent(header)
     assert result is None
     assert "Invalid traceparent" in caplog.text or "zero" in caplog.text
@@ -708,9 +709,7 @@ def test_generate_trace_and_span_ids_lengths():
 def test_start_trace_parent_id_included(mock_session_factory):
     mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    trace_id = service.start_trace("GET /resource",
-                                   parent_span_id="p123",
-                                   attributes={"foo": "bar"})
+    trace_id = service.start_trace("GET /resource", parent_span_id="p123", attributes={"foo": "bar"})
     # Session add handled internally
     # parent_span_id gets merged in attributes
     assert "parent_span_id" in (mock_session.add.call_args[0][0].attributes or {})
@@ -773,6 +772,7 @@ def test_query_spans_applies_filters(mock_db):
 
     with patch("mcpgateway.services.observability_service.ObservabilitySpan") as mock_span:
         mock_span.attributes.__getitem__.return_value.astext = MagicMock()
+
         class _Comparable:
             def __ge__(self, _other):
                 return MagicMock()
@@ -924,9 +924,7 @@ def test_record_token_usage_auto_cost_and_total(mock_session_factory):
     with patch("mcpgateway.services.observability_service.current_trace_id") as cvar:
         cvar.get.return_value = "tid"
         service.record_metric = MagicMock()
-        service.record_token_usage(model="gpt-4o-mini",
-                                   input_tokens=10, output_tokens=5,
-                                   total_tokens=None, estimated_cost_usd=None)
+        service.record_token_usage(model="gpt-4o-mini", input_tokens=10, output_tokens=5, total_tokens=None, estimated_cost_usd=None)
         service.record_metric.assert_called()
 
 
@@ -944,12 +942,7 @@ def test_trace_a2a_request_successful_path(mock_session_factory):
 def test_record_transport_activity_all_metrics_and_error(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity("http", "send",
-                                      message_count=2,
-                                      bytes_sent=128,
-                                      bytes_received=64,
-                                      connection_id="cid1",
-                                      error="fail")
+    service.record_transport_activity("http", "send", message_count=2, bytes_sent=128, bytes_received=64, connection_id="cid1", error="fail")
     # should record message, send, receive, error metrics
     assert service.record_metric.call_count >= 3
 
@@ -1020,17 +1013,11 @@ def test_start_span_with_commit_true(mock_session_factory):
 
     service = ObservabilityService()
     with patch.object(service, "_safe_commit") as mock_safe_commit:
-        span_id = service.start_span(
-            trace_id="trace123",
-            name="test_span",
-            commit=True
-        )
+        span_id = service.start_span(trace_id="trace123", name="test_span", commit=True)
 
         # Verify _safe_commit was called
         mock_safe_commit.assert_called_once_with(mock_session, "start_span")
         assert span_id is not None
-
-
 
 
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
@@ -1040,17 +1027,10 @@ def test_start_span_with_plugin_context_custom_attributes(mock_session_factory):
 
     # Create mock context with custom attributes
     mock_context = MagicMock()
-    mock_context.global_context.state = {
-        "custom_span_attributes": {"custom_key": "custom_value", "another_key": 123}
-    }
+    mock_context.global_context.state = {"custom_span_attributes": {"custom_key": "custom_value", "another_key": 123}}
 
     service = ObservabilityService()
-    span_id = service.start_span(
-        trace_id="trace123",
-        name="test_span",
-        attributes={"original_key": "original_value"},
-        context=mock_context
-    )
+    span_id = service.start_span(trace_id="trace123", name="test_span", attributes={"original_key": "original_value"}, context=mock_context)
 
     assert span_id is not None
     mock_session.close.assert_called_once()
@@ -1063,17 +1043,10 @@ def test_start_span_with_plugin_context_remove_attributes(mock_session_factory):
 
     # Create mock context with attributes to remove
     mock_context = MagicMock()
-    mock_context.global_context.state = {
-        "remove_span_attributes": ["sensitive_key", "another_key"]
-    }
+    mock_context.global_context.state = {"remove_span_attributes": ["sensitive_key", "another_key"]}
 
     service = ObservabilityService()
-    span_id = service.start_span(
-        trace_id="trace123",
-        name="test_span",
-        attributes={"sensitive_key": "secret", "keep_key": "value"},
-        context=mock_context
-    )
+    span_id = service.start_span(trace_id="trace123", name="test_span", attributes={"sensitive_key": "secret", "keep_key": "value"}, context=mock_context)
 
     assert span_id is not None
     mock_session.close.assert_called_once()
@@ -1108,7 +1081,7 @@ def test_add_event_session_close_failure(mock_session_factory):
     with patch("mcpgateway.services.observability_service.ObservabilityEvent", return_value=mock_event):
         # Patch _safe_commit to return True
         service = ObservabilityService()
-        with patch.object(service, '_safe_commit', return_value=True):
+        with patch.object(service, "_safe_commit", return_value=True):
             event_id = service.add_event("span123", "test_event", severity="info")
 
     # Verify event was created (returns non-zero if successful)
@@ -1127,12 +1100,8 @@ def test_record_metric_session_close_failure(mock_session_factory):
     with patch("mcpgateway.services.observability_service.ObservabilityMetric", return_value=mock_metric):
         # Patch _safe_commit to return True
         service = ObservabilityService()
-        with patch.object(service, '_safe_commit', return_value=True):
-            metric_id = service.record_metric(
-                name="test.metric",
-                value=1.0,
-                metric_type="counter"
-            )
+        with patch.object(service, "_safe_commit", return_value=True):
+            metric_id = service.record_metric(name="test.metric", value=1.0, metric_type="counter")
 
     # Verify metric was created
     assert metric_id == 456

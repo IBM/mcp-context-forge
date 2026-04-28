@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers_source.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for PASSTHROUGH_HEADERS_SOURCE configuration feature.
 Passthrough can take precedence from:

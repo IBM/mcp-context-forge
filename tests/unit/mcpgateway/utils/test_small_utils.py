@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for small utility modules that had low coverage."""
+"""Location: ./tests/unit/mcpgateway/utils/test_small_utils.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for small utility modules that had low coverage.
+"""
 
 # Third-Party
 from pydantic import BaseModel

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add binding_reference_id to tool_plugin_bindings.
+"""Location: ./mcpgateway/alembic/versions/ff03273d8f93_add_binding_reference_id_to_tool_plugin_bindings.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add binding_reference_id to tool_plugin_bindings.
 
 Revision ID: ff03273d8f93
 Revises: 1a02944e2671

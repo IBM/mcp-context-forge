@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add observability performance indexes
+"""Location: ./mcpgateway/alembic/versions/i3c4d5e6f7g8_add_observability_performance_indexes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add observability performance indexes
 
 Revision ID: i3c4d5e6f7g8
 Revises: a23a08d61eb0
 Create Date: 2025-01-05 12:00:00.000000
-
 """
 
 # Standard

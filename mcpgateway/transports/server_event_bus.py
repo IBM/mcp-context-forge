@@ -1,26 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Server-to-client event bus for the MCP GET /mcp stream (ADR-052).
+"""Location: ./mcpgateway/transports/server_event_bus.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Server-to-client event bus for the MCP GET /mcp stream (ADR-052).
 Backs the spec-defined "Listening for messages from the server" SSE stream.
 Server-initiated JSON-RPC messages (notifications and requests) are
 ``publish``-ed by whichever worker holds the upstream MCP session and
 ``subscribe``-d by the GET /mcp handler on whichever node the client landed.
-
 Two interchangeable backends sit behind ``ServerEventBus``:
-
 * ``RedisServerEventBus`` (selected when ``cache_type == "redis"``) — durable
   per-session ring buffer via :class:`RedisEventStore` + Pub/Sub fanout on
   ``mcp:session:{sid}:events`` so any node can serve the stream.
-
 * ``InMemoryServerEventBus`` (default) — process-local ring buffer with
   ``asyncio.Queue`` per subscriber. Single-process semantics are identical
   to Redis for one process; cross-worker delivery is intentionally absent
   because that is a multi-node concern.
-
 The factory ``get_server_event_bus()`` reads ``cache_type`` once at first
 call and binds the singleton; switching backends requires a restart.
-
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

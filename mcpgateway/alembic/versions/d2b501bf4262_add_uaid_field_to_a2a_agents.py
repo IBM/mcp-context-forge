@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add UAID field to a2a_agents
+"""Location: ./mcpgateway/alembic/versions/d2b501bf4262_add_uaid_field_to_a2a_agents.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add UAID field to a2a_agents
 
 Revision ID: d2b501bf4262
 Revises: ffe4494639d3

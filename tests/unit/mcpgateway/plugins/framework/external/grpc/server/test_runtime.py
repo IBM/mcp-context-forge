@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/grpc/server/test_runtime.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -69,9 +69,7 @@ class TestGrpcPluginRuntimeGetServerConfig:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = MagicMock()
-        mock_plugin_server.get_grpc_server_config = MagicMock(
-            return_value=GRPCServerConfig(host="192.168.1.1", port=50053)
-        )
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig(host="192.168.1.1", port=50053))
         runtime._plugin_server = mock_plugin_server
 
         config = runtime._get_server_config()
@@ -263,13 +261,11 @@ class TestGrpcPluginRuntimeIntegration:
         from mcpgateway.plugins.framework.external.grpc.server.runtime import GrpcPluginRuntime
 
         config_file = tmp_path / "config.yaml"
-        config_file.write_text(
-            """
+        config_file.write_text("""
 plugins: []
 plugin_settings:
   parallel_execution_within_band: false
-"""
-        )
+""")
 
         runtime = GrpcPluginRuntime(config_path=str(config_file))
 

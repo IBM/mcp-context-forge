@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Clean up populated test data via REST API DELETE endpoints.
+"""Location: ./tests/populate/cleanup.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Clean up populated test data via REST API DELETE endpoints.
 
 Usage:
     python -m tests.populate.cleanup --confirm

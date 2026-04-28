@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.services.a2a_protocol."""
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_protocol.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.services.a2a_protocol.
+"""
 
 # Standard
 from unittest.mock import MagicMock

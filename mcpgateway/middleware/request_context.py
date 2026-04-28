@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Small helpers for per-request caching.
-
-Copyright 2025
+"""Location: ./mcpgateway/middleware/request_context.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Small helpers for per-request caching.
 This module provides optional helpers for caching request metadata on
 request.state to avoid repeated property access in hot paths.
 

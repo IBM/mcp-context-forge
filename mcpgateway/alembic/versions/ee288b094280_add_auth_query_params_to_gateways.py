@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add auth_query_params column to gateways table.
+"""Location: ./mcpgateway/alembic/versions/ee288b094280_add_auth_query_params_to_gateways.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add auth_query_params column to gateways table.
 
 Revision ID: ee288b094280
 Revises: 43c07ed25a24

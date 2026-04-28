@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for A2A agent support using an in-memory ASGI fixture.
+"""Location: ./tests/integration/test_a2a_sdk_integration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for A2A agent support using an in-memory ASGI fixture.
 
 The public Python SDK bundled in this repo still targets the legacy A2A surface,
 so these tests exercise the v1 wire format directly while retaining a small set

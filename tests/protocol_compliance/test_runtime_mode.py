@@ -1,4 +1,10 @@
-"""Runtime-mutable MCP mode (shadow ↔ edge) smoke and drift tests.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_runtime_mode.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Runtime-mutable MCP mode (shadow ↔ edge) smoke and drift tests.
 
 Exercises the gateway's ``/admin/runtime/mcp-mode`` API and, when the
 gateway booted with Rust support (``RUST_MCP_MODE=shadow|edge``), flips

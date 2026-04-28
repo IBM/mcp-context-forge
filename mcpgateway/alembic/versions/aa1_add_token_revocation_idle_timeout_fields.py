@@ -1,9 +1,14 @@
-"""add_token_revocation_idle_timeout_fields
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/aa1_add_token_revocation_idle_timeout_fields.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_token_revocation_idle_timeout_fields
 
 Revision ID: aa1b2c3d4e5f
 Revises: z1a2b3c4d5e6
 Create Date: 2026-04-21 12:58:00.000000
-
 """
 
 # Third-Party

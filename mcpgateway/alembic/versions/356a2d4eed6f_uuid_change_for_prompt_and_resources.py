@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""UUID Change for Prompt and Resources
+"""Location: ./mcpgateway/alembic/versions/356a2d4eed6f_uuid_change_for_prompt_and_resources.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+UUID Change for Prompt and Resources
 
 Revision ID: 356a2d4eed6f
 Revises: z1a2b3c4d5e6
 Create Date: 2025-12-01 14:52:01.957105
-
 """
 
 # Standard

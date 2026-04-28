@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/test_parallel_cleanup.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Test script to verify parallel session cleanup performance improvement.
 """
 
@@ -53,6 +57,7 @@ async def test_parallel_cleanup_performance():
     # Patch _refresh_session_db to simulate blocking DB operation
     def slow_refresh_session_db(self, session_id: str) -> bool:
         import time
+
         time.sleep(self._sessions[session_id].delay)  # simulate DB latency
         return True
 

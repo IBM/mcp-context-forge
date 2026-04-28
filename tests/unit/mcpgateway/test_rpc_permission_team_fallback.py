@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_rpc_permission_team_fallback.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Regression tests for session-token team-permission fallback in _ensure_rpc_permission.
 Ref: https://github.com/IBM/mcp-context-forge/issues/3515

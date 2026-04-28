@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test for metrics aggregation combining raw and hourly metrics.
-
-Tests issue #3598: Ensure metrics_summary queries both raw and hourly tables.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/test_metrics_aggregation_fix.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test for metrics aggregation combining raw and hourly metrics.
+Tests issue #3598: Ensure metrics_summary queries both raw and hourly tables.
 """
 
 # Standard

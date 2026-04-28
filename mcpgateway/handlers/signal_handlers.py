@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Signal handlers for ContextForge Gateway.
+"""Location: ./mcpgateway/handlers/signal_handlers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Signal handlers for ContextForge Gateway.
 
 Provides SIGHUP handling for certificate rotation without restart.
 """

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for ToolLookupCache."""
+"""Location: ./tests/unit/mcpgateway/cache/test_tool_lookup_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for ToolLookupCache.
+"""
 
 # Standard
 import builtins

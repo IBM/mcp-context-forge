@@ -1,4 +1,11 @@
-"""MCP sampling compliance tests — server can request sampling from the client."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_sampling.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP sampling compliance tests — server can request sampling from the client.
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Extended tests to achieve >95% coverage for mcp_client_chat_service module."""
+"""Location: ./tests/unit/mcpgateway/services/test_mcp_client_chat_service_extended.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extended tests to achieve >95% coverage for mcp_client_chat_service module.
+"""
+
 import importlib.util
 import sys
 import types
@@ -10,10 +17,10 @@ import pytest
 
 import mcpgateway.services.mcp_client_chat_service as svc
 
-
 # --------------------------------------------------------------------------- #
 # LLM PROVIDER FACTORY TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_llmproviderfactory_valid_providers(monkeypatch):
     providers = {
@@ -94,6 +101,7 @@ def test_gateway_provider_anthropic_completion(monkeypatch):
 # CHAT HISTORY MANAGER TESTS
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_chat_history_manager_trims_and_saves(monkeypatch):
     mgr = svc.ChatHistoryManager(redis_client=None, max_messages=2, ttl=60)
@@ -130,6 +138,7 @@ async def test_get_langchain_messages_role_mapping(monkeypatch):
 # MCP CLIENT TESTS
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
     mock_client = AsyncMock()
@@ -144,7 +153,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
     client._connected = True
 
     await client.connect()
-    tools = await mock_client.list_tools()      # ✅ call directly for the actual result
+    tools = await mock_client.list_tools()  # ✅ call directly for the actual result
     assert tools == ["tool_1"]
     await client.disconnect()
 
@@ -152,6 +161,7 @@ async def test_mcpclient_connect_disconnect_and_reload(monkeypatch):
 # --------------------------------------------------------------------------- #
 # MCP CHAT SERVICE INITIALIZATION / VALIDATION / ERROR TESTS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_mcpchatservice_initialize_and_valid_chat(monkeypatch):
@@ -225,6 +235,7 @@ async def test_chat_retries_exceeded(monkeypatch):
 # STREAMING / NON-STREAMING BRANCHES SIMULATION
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_chat_non_streaming_response(monkeypatch):
     chatcfg = svc.MCPClientConfig(
@@ -249,12 +260,10 @@ async def test_chat_non_streaming_response(monkeypatch):
 # CLEANUP / FINAL VALIDATION
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_chat_service_disconnect_cleanup(monkeypatch):
-    chatcfg = svc.MCPClientConfig(
-        mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"),
-        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4"))
-    )
+    chatcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"), llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")))
     service = svc.MCPChatService(chatcfg)
     service._client = AsyncMock()
     service._client.disconnect = AsyncMock(return_value=None)
@@ -780,10 +789,12 @@ async def test_chat_service_initialization_with_mock_config(monkeypatch):
 # ADDITIONAL CONFIGURATION VALIDATION TESTS
 # --------------------------------------------------------------------------- #
 
+
 def test_mcpserverconfig_invalid_url(monkeypatch):
     cfg = svc.MCPServerConfig(url="ftp://invalid", transport="streamable_http")
     assert isinstance(cfg.url, str)
     assert cfg.url.startswith("ftp://")
+
 
 def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
     monkeypatch.setattr(svc.settings, "mcpgateway_stdio_transport_enabled", True)
@@ -791,11 +802,13 @@ def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
     assert cfg.command == "python"
     assert isinstance(cfg.args, list)
 
+
 def test_openai_config_validation_defaults():
     cfg = svc.OpenAIConfig(api_key="sk", model="gpt-3.5")
     assert cfg.temperature == 0.7
     assert cfg.max_retries == 2
     assert "gpt" in cfg.model
+
 
 def test_awsbedrock_config_region_defaults():
     cfg = svc.AWSBedrockConfig(model_id="anthropic.claude-v2", region_name="us-east-1")
@@ -803,14 +816,17 @@ def test_awsbedrock_config_region_defaults():
     assert cfg.temperature <= 1.0
     assert cfg.max_tokens > 0
 
+
 def test_anthropic_config_missing_model(monkeypatch):
     cfg = svc.AnthropicConfig(api_key="ant-key")
     assert "claude" in cfg.model
     assert cfg.temperature <= 1.0
 
+
 # --------------------------------------------------------------------------- #
 # PROVIDER MODEL NAME TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_provider_get_model_names(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
@@ -825,12 +841,13 @@ def test_provider_get_model_names(monkeypatch):
         svc.OllamaProvider(svc.OllamaConfig(model="llama2")),
         svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant")),
         svc.AWSBedrockProvider(svc.AWSBedrockConfig(model_id="m", region_name="us-east-1")),
-        svc.WatsonxProvider(svc.WatsonxConfig(api_key="key", url="https://s", project_id="p"))
+        svc.WatsonxProvider(svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")),
     ]
     for p in provs:
         name = p.get_model_name()
         assert isinstance(name, str)
         assert len(name) > 0
+
 
 def test_provider_fallbacks(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
@@ -841,9 +858,11 @@ def test_provider_fallbacks(monkeypatch):
     with pytest.raises(ImportError):
         prov.get_llm()
 
+
 # --------------------------------------------------------------------------- #
 # CHAT HISTORY REDIS PATH TESTS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_chat_history_with_redis(monkeypatch):
@@ -855,6 +874,7 @@ async def test_chat_history_with_redis(monkeypatch):
     res = await mgr.get_history("user")
     assert isinstance(res, list)
 
+
 @pytest.mark.asyncio
 async def test_trim_messages_and_clear(monkeypatch):
     mgr = svc.ChatHistoryManager(redis_client=None, max_messages=2)
@@ -863,9 +883,11 @@ async def test_trim_messages_and_clear(monkeypatch):
     hist = await mgr.get_history("u")
     assert isinstance(hist, list)
 
+
 # --------------------------------------------------------------------------- #
 # MCP CLIENT EDGE PATHS
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_mcpclient_double_connect(monkeypatch):
@@ -877,6 +899,7 @@ async def test_mcpclient_double_connect(monkeypatch):
     await c.connect()
     await c.connect()  # triggers double connect warning
     assert hasattr(c, "_connected")
+
 
 @pytest.mark.asyncio
 async def test_mcpclient_tools_cache(monkeypatch):
@@ -893,9 +916,11 @@ async def test_mcpclient_tools_cache(monkeypatch):
     assert tools_val == ["Tool"]
     assert "Tool" in tools_val
 
+
 # --------------------------------------------------------------------------- #
 # MCP CHAT SERVICE RETRY MECHANISMS & ERROR BRANCHES
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_chat_service_retry_limit(monkeypatch):
@@ -1067,9 +1092,11 @@ def test_optional_provider_import_blocks_execute():
 
 def test_azure_openai_provider_chat(monkeypatch):
     """AzureOpenAIProvider.get_llm(model_type='chat') creates AzureChatOpenAI."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "AzureChatOpenAI", DummyLLM)
     cfg = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://ep", azure_deployment="dep")
     provider = svc.AzureOpenAIProvider(cfg)
@@ -1081,9 +1108,11 @@ def test_azure_openai_provider_chat(monkeypatch):
 
 def test_azure_openai_provider_completion(monkeypatch):
     """AzureOpenAIProvider.get_llm(model_type='completion') creates AzureOpenAI."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "AzureOpenAI", DummyLLM)
     cfg = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://ep", azure_deployment="dep")
     provider = svc.AzureOpenAIProvider(cfg)
@@ -1102,9 +1131,11 @@ def test_azure_openai_provider_error(monkeypatch):
 
 def test_ollama_provider_completion(monkeypatch):
     """OllamaProvider.get_llm(model_type='completion') creates OllamaLLM."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "OllamaLLM", DummyLLM)
     cfg = svc.OllamaConfig(model="llama2", num_ctx=4096)
     provider = svc.OllamaProvider(cfg)
@@ -1115,9 +1146,11 @@ def test_ollama_provider_completion(monkeypatch):
 
 def test_ollama_provider_chat_no_num_ctx(monkeypatch):
     """OllamaProvider.get_llm(model_type='chat') without num_ctx."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "ChatOllama", DummyLLM)
     cfg = svc.OllamaConfig(model="llama2", num_ctx=None)
     provider = svc.OllamaProvider(cfg)
@@ -1137,9 +1170,11 @@ def test_ollama_provider_error(monkeypatch):
 
 def test_openai_provider_completion(monkeypatch):
     """OpenAIProvider.get_llm(model_type='completion') creates OpenAI."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "OpenAI", DummyLLM)
     cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4", base_url="https://custom", default_headers={"X-Custom": "val"})
     provider = svc.OpenAIProvider(cfg)
@@ -1160,9 +1195,11 @@ def test_openai_provider_error(monkeypatch):
 
 def test_anthropic_provider_completion(monkeypatch):
     """AnthropicProvider.get_llm(model_type='completion') creates AnthropicLLM."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
     monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
@@ -1175,6 +1212,7 @@ def test_anthropic_provider_completion(monkeypatch):
 def test_anthropic_provider_not_available():
     """AnthropicProvider raises ImportError when not available."""
     import mcpgateway.services.mcp_client_chat_service as m
+
     orig = m._ANTHROPIC_AVAILABLE
     try:
         m._ANTHROPIC_AVAILABLE = False
@@ -1196,9 +1234,11 @@ def test_anthropic_provider_error(monkeypatch):
 
 def test_bedrock_provider_completion_with_credentials(monkeypatch):
     """AWSBedrockProvider.get_llm(model_type='completion') with all credentials."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatBedrock", DummyLLM)
     monkeypatch.setattr(svc, "BedrockLLM", DummyLLM)
@@ -1220,6 +1260,7 @@ def test_bedrock_provider_completion_with_credentials(monkeypatch):
 def test_bedrock_provider_not_available():
     """AWSBedrockProvider raises ImportError when not available."""
     import mcpgateway.services.mcp_client_chat_service as m
+
     orig = m._BEDROCK_AVAILABLE
     try:
         m._BEDROCK_AVAILABLE = False
@@ -1241,9 +1282,11 @@ def test_bedrock_provider_error(monkeypatch):
 
 def test_watsonx_provider_chat(monkeypatch):
     """WatsonxProvider.get_llm(model_type='chat') creates ChatWatsonx."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
@@ -1255,9 +1298,11 @@ def test_watsonx_provider_chat(monkeypatch):
 
 def test_watsonx_provider_completion_with_params(monkeypatch):
     """WatsonxProvider.get_llm(model_type='completion') with top_k/top_p."""
+
     class DummyLLM:
         def __init__(self, **kw):
             self.kw = kw
+
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
@@ -1273,6 +1318,7 @@ def test_watsonx_provider_completion_with_params(monkeypatch):
 def test_watsonx_provider_not_available():
     """WatsonxProvider raises ImportError when not available."""
     import mcpgateway.services.mcp_client_chat_service as m
+
     orig = m._WATSONX_AVAILABLE
     try:
         m._WATSONX_AVAILABLE = False
@@ -1357,7 +1403,8 @@ def test_gateway_provider_watsonx_chat(monkeypatch):
     """GatewayProvider watsonx chat branch."""
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider(
-        "watsonx", config={"project_id": "proj", "min_new_tokens": 5, "decoding_method": "greedy", "top_k": 30, "top_p": 0.8},
+        "watsonx",
+        config={"project_id": "proj", "min_new_tokens": 5, "decoding_method": "greedy", "top_k": 30, "top_p": 0.8},
     )
     _patch_gateway_session(monkeypatch, model, provider)
     monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
@@ -1584,8 +1631,10 @@ def test_mcpserverconfig_auth_token_adds_bearer():
 def test_mcpserverconfig_auth_token_no_override():
     """Existing Authorization header should not be overridden."""
     cfg = svc.MCPServerConfig(
-        url="https://srv", transport="sse",
-        auth_token="my-token", headers={"Authorization": "Basic abc"},
+        url="https://srv",
+        transport="sse",
+        auth_token="my-token",
+        headers={"Authorization": "Basic abc"},
     )
     assert cfg.headers["Authorization"] == "Basic abc"
 

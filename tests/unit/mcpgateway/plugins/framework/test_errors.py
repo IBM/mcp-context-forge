@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_errors.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -11,14 +11,7 @@ Tests for errors module.
 import pytest
 import re
 from mcpgateway.plugins.framework.errors import convert_exception_to_error
-from mcpgateway.plugins.framework import (
-    GlobalContext,
-    PluginError,
-    PluginMode,
-    PluginManager,
-    PromptHookType,
-    PromptPrehookPayload
-)
+from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginMode, PluginManager, PromptHookType, PromptPrehookPayload
 
 
 @pytest.mark.asyncio

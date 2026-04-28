@@ -1,4 +1,10 @@
-"""Reference MCP server target.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/targets/reference.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Reference MCP server target.
 
 Currently supports stdio only, via FastMCP's in-process ``Client(mcp)``
 wiring (no subprocess). SSE / Streamable HTTP can be added by extending

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CLI for verifying load test data integrity.
+"""Location: ./tests/load/verify.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CLI for verifying load test data integrity.
 
 Usage:
     python -m tests.load.verify --profile production

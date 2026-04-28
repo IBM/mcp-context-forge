@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""SSO Provider Management E2E Tests.
+"""Location: ./tests/playwright/security/test_sso_management.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+SSO Provider Management E2E Tests.
 
 Tests SSO provider CRUD operations through the /auth/sso/admin REST API.
 These tests are skipped if SSO endpoints are not available in the test environment.

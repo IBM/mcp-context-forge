@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for SSE-aware compression middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_compression.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for SSE-aware compression middleware.
+"""
 
 # Third-Party
 import pytest

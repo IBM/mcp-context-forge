@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # mcpgateway/routers/cancellation_router.py
 """Location: ./mcpgateway/routers/cancellation_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

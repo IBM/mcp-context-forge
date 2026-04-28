@@ -1,4 +1,11 @@
-"""Gateway virtual-server target: /servers/{id}/mcp on a live gateway."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/targets/gateway_virtual.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Gateway virtual-server target: /servers/{id}/mcp on a live gateway.
+"""
 
 from __future__ import annotations
 

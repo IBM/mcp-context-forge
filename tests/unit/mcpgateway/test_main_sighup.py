@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SIGHUP signal handler in mcpgateway.handlers.signal_handlers."""
+"""Location: ./tests/unit/mcpgateway/test_main_sighup.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for SIGHUP signal handler in mcpgateway.handlers.signal_handlers.
+"""
 
 # Standard
 import asyncio

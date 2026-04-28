@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for translate module helpers."""
+"""Location: ./tests/unit/mcpgateway/test_translate_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for translate module helpers.
+"""
 
 # Standard
 from types import SimpleNamespace

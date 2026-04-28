@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for toolops_altk_service."""
+"""Location: ./tests/unit/mcpgateway/test_toolops_altk_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for toolops_altk_service.
+"""
 
 # Standard
 import importlib.util

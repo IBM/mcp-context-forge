@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the metrics cleanup service.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_cleanup_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the metrics cleanup service.
 """
 
 # Standard
@@ -298,6 +300,7 @@ async def test_cleanup_all_retention_zero_includes_rollup(monkeypatch: pytest.Mo
         return CleanupResult(table_name=table_name, deleted_count=1, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
 
     monkeypatch.setattr(service, "_cleanup_table", fake_cleanup)
+
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 

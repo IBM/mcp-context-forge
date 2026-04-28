@@ -1,4 +1,10 @@
-"""Cross-module static-source invariants.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_source_patterns.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Cross-module static-source invariants.
 
 - The cancellation router must be conditionally registered in main.py
   (gated on ``settings.mcpgateway_tool_cancellation_enabled``).

@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Entity Lifecycle E2E Tests (REST API).
+"""Location: ./tests/playwright/entities/test_entity_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Entity Lifecycle E2E Tests (REST API).
 
 Tests full CRUD lifecycle + activate/deactivate for tools, resources, prompts,
 and servers via the REST API. Complements the existing browser-based entity tests.

@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test coverage for metrics API endpoints and service methods.
-
-Tests the include_metrics parameter in service list methods.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_api_coverage.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test coverage for metrics API endpoints and service methods.
+Tests the include_metrics parameter in service list methods.
 """
 
 # Standard
