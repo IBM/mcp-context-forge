@@ -309,8 +309,9 @@ COPY run.sh /app/
 # Placed here so app code changes below don't invalidate this network-bound step.
 # --chmod=0755 lets us skip a follow-up chmod layer.
 # ----------------------------------------------------------------------------
-COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
-RUN /tmp/download-cdn-assets.sh \
+COPY scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
+RUN chmod 0755 /tmp/download-cdn-assets.sh \
+    && /tmp/download-cdn-assets.sh \
     && rm /tmp/download-cdn-assets.sh
 
 # ----------------------------------------------------------------------------
@@ -320,7 +321,8 @@ RUN /tmp/download-cdn-assets.sh \
 #   - gunicorn config + mcp catalog (rare/occasional)
 #   - mcpgateway/ + plugins/ (change most often)
 # ----------------------------------------------------------------------------
-COPY --chmod=0755 run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
+COPY run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
+RUN chmod 0755 /app/run-gunicorn.sh /app/run-granian.sh /app/docker-entrypoint.sh /app/run.sh
 COPY gunicorn.config.py mcp-catalog.yml /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY plugins/ /app/plugins/
