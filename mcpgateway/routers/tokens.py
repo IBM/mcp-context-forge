@@ -146,7 +146,7 @@ async def create_token(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenCreateResponse:
-    """Create a new API token for the current user.
+    """Create a new API token for the current user or another user (admin only).
 
     Args:
         request: Token creation request with name, description, scoping, etc.
@@ -157,7 +157,7 @@ async def create_token(
         TokenCreateResponse: Created token details with raw token
 
     Raises:
-        HTTPException: If token name already exists or validation fails
+        HTTPException: If token name already exists, validation fails, or insufficient permissions
 
     Examples:
         >>> import asyncio
@@ -165,6 +165,33 @@ async def create_token(
         True
     """
     _require_authenticated_session(current_user)
+
+    # Determine target user for token creation
+    target_user_email = request.user_email or current_user["email"]
+
+    # If creating token for different user, require un-narrowed platform admin
+    if request.user_email and request.user_email != current_user["email"]:
+        # Require platform admin privilege
+        if not current_user.get("is_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required to create tokens for other users",
+            )
+
+        # Require un-narrowed admin access (token_teams=None)
+        # Narrowed admin sessions cannot delegate token creation
+        token_teams = current_user.get("token_teams")
+        if token_teams is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin-delegated token creation requires un-narrowed admin access. Your session is narrowed to specific teams.",
+            )
+
+        logger.info(
+            "Admin %s creating token for user %s",
+            current_user["email"],
+            target_user_email,
+        )
 
     # Auto-inherit team_id from the caller's single team when not explicitly provided.
     # This prevents tokens from being silently scoped to public-only (team_id=None)
@@ -204,7 +231,7 @@ async def create_token(
 
     try:
         token_record, raw_token = await service.create_token(
-            user_email=current_user["email"],
+            user_email=target_user_email,
             name=request.name,
             description=request.description,
             scope=scope,

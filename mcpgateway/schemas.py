@@ -6804,7 +6804,9 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        team_id: Optional team ID for team-scoped tokens
         is_active: Token active status (defaults to True)
+        user_email: Optional email of user to create token for (admin only)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6824,6 +6826,7 @@ class TokenCreateRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     is_active: bool = Field(default=True, description="Token active status")
+    user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
 
 
 class TokenUpdateRequest(BaseModel):
