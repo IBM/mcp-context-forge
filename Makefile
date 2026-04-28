@@ -399,7 +399,7 @@ serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 
 dev: js-build
 	@echo "🚀 Starting dev server with React hot reload..."
-	@cd client && npm install --no-audit --no-fund && npm run build:watch & echo $$! > /tmp/mcpgateway-client-watch.pid
+	@cd client && npm install --no-audit --no-fund && npm run build:watch > /dev/null 2>&1 & echo $$! > /tmp/mcpgateway-client-watch.pid
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 .PHONY: dev-echo
