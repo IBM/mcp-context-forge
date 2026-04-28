@@ -373,7 +373,7 @@ class TestMiddlewareIntegration:
         assert "Content-Security-Policy" in response.headers
 
     def test_security_headers_preserve_existing_headers(self):
-        """Test middleware preserves existing response headers."""
+        """Test middleware preserves non-security headers but enforces strict cache control."""
         app = FastAPI()
         app.add_middleware(SecurityHeadersMiddleware)
 
@@ -387,9 +387,12 @@ class TestMiddlewareIntegration:
         client = TestClient(app)
         response = client.get("/test")
 
-        # Existing headers should be preserved
+        # Custom headers should be preserved
         assert response.headers["Custom-Header"] == "custom-value"
-        assert response.headers["Cache-Control"] == "no-cache"
+
+        # Security middleware ENFORCES strict cache control for protected paths
+        # This overrides weaker settings like "no-cache" with "no-store, private"
+        assert response.headers["Cache-Control"] == "no-store, private"
 
         # Security headers should be added
         assert response.headers["X-Content-Type-Options"] == "nosniff"

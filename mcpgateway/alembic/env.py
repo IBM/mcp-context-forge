@@ -42,8 +42,8 @@ Note:
 """
 
 # Standard
-import logging
 from importlib.resources import files
+import logging
 from logging.config import fileConfig
 
 # Third-Party

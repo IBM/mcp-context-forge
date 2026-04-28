@@ -18,6 +18,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
 class TestSecurityHeaders:
@@ -299,3 +300,196 @@ class TestSecurityHeadersEdgeCases:
 def client(app_with_temp_db):
     """Create a test client for the FastAPI app."""
     return TestClient(app_with_temp_db)
+
+
+class TestCacheControlHardening:
+    """
+    Test suite for hardened cache control policies on authenticated endpoints.
+
+    Verifies that protected API endpoints implement proper cache control headers
+    for defense-in-depth security.
+    """
+
+    def test_protected_endpoints_have_no_store_private(self, client: TestClient):
+        """Test that protected endpoints return Cache-Control: no-store, private."""
+        with patch.object(settings, "auth_required", False):
+            # Test various protected endpoints
+            protected_paths = ["/tools", "/servers", "/resources", "/gateways", "/prompts", "/tags"]
+
+            for path in protected_paths:
+                response = client.get(path)
+                cache_control = response.headers.get("Cache-Control", "")
+
+                assert "no-store" in cache_control, f"{path} missing 'no-store' in Cache-Control: {cache_control}"
+                assert "private" in cache_control, f"{path} missing 'private' in Cache-Control: {cache_control}"
+
+    def test_docs_paths_are_classified_as_protected(self):
+        """Regression guard: /docs, /redoc, /openapi.json must be classified as protected.
+
+        These paths are auth-protected by DocsAuthMiddleware. Exempting them from
+        SecurityHeadersMiddleware would let a shared cache replay an authenticated
+        docs/schema response to unauthenticated viewers — Web Cache Deception.
+
+        This is a unit test of the classifier rather than a request-flow test
+        because DocsAuthMiddleware wraps SecurityHeadersMiddleware and short-
+        circuits unauthenticated requests before they reach the response path.
+        """
+        middleware = SecurityHeadersMiddleware(app=None)
+        for path in ("/docs", "/redoc", "/openapi.json"):
+            assert middleware._is_protected_path(path), f"{path} must be treated as protected"  # pylint: disable=protected-access
+
+    def test_protected_endpoints_have_vary_authorization(self, client: TestClient):
+        """Test that protected endpoints include Vary: Authorization header."""
+        with patch.object(settings, "auth_required", False):
+            response = client.get("/tools")
+            vary_header = response.headers.get("Vary", "")
+
+            assert "Authorization" in vary_header, f"Missing 'Authorization' in Vary header: {vary_header}"
+
+    def test_protected_endpoints_have_legacy_cache_headers(self, client: TestClient):
+        """Test that protected endpoints include legacy HTTP/1.0 cache headers."""
+        with patch.object(settings, "auth_required", False):
+            response = client.get("/tools")
+
+            assert response.headers.get("Pragma") == "no-cache", "Missing or incorrect Pragma header"
+            assert response.headers.get("Expires") == "0", "Missing or incorrect Expires header"
+
+    def test_exempted_endpoints_can_be_cached(self, client: TestClient):
+        """Test that public/static endpoints do NOT receive the no-store/private cache hardening."""
+        response = client.get("/health")
+        cache_control = response.headers.get("Cache-Control", "")
+
+        assert "no-store" not in cache_control, f"Exempted /health unexpectedly got 'no-store': {cache_control}"
+        assert "private" not in cache_control, f"Exempted /health unexpectedly got 'private': {cache_control}"
+        assert response.headers.get("Pragma") != "no-cache"
+        assert response.headers.get("Expires") != "0"
+
+    def test_cache_headers_with_query_parameters(self, client: TestClient):
+        """Test that cache headers are applied even with query parameters."""
+        with patch.object(settings, "auth_required", False):
+            response = client.get("/tools?page=1&limit=10")
+            cache_control = response.headers.get("Cache-Control", "")
+
+            assert "no-store" in cache_control
+            assert "private" in cache_control
+
+    def test_cache_headers_on_nested_endpoints(self, client: TestClient):
+        """Test that cache headers apply to nested protected endpoints."""
+        with patch.object(settings, "auth_required", False):
+            response = client.get("/servers/test-id/tools")
+            cache_control = response.headers.get("Cache-Control", "")
+
+            assert "no-store" in cache_control, f"Nested path missing 'no-store': {cache_control}"
+            assert "private" in cache_control, f"Nested path missing 'private': {cache_control}"
+
+    def test_cache_headers_coexist_with_cors(self, client: TestClient):
+        """Test that cache headers coexist properly with CORS headers."""
+        with patch.object(settings, "auth_required", False):
+            with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
+                response = client.get("/tools", headers={"Origin": "http://localhost:3000"})
+
+                # Should have both cache control and CORS headers
+                cache_control = response.headers.get("Cache-Control", "")
+                vary = response.headers.get("Vary", "")
+
+                assert "no-store" in cache_control
+                assert "Authorization" in vary
+                # Vary should include both Origin (from CORS) and Authorization (from cache fix)
+                assert "Origin" in vary or "origin" in vary.lower()
+
+    def test_cache_headers_on_error_responses(self, client: TestClient):
+        """Test that cache headers are present even on error responses."""
+        with patch.object(settings, "auth_required", False):
+            # Request a non-existent resource (should return 404)
+            response = client.get("/tools/non-existent-id-12345")
+
+            # Even on error, cache headers should be present
+            cache_control = response.headers.get("Cache-Control", "")
+            assert "no-store" in cache_control, f"Error response missing 'no-store': {cache_control}"
+            assert "private" in cache_control, f"Error response missing 'private': {cache_control}"
+            assert response.headers.get("Pragma") == "no-cache"
+            assert response.headers.get("Expires") == "0"
+
+
+class TestSecurityHeadersAdditionalCoverage:
+    """Additional tests for edge cases to improve coverage to 95%+."""
+
+    def test_security_headers_disabled(self, client: TestClient):
+        """Test that when security headers are disabled, none are emitted by SecurityHeadersMiddleware."""
+        with patch.object(settings, "security_headers_enabled", False):
+            response = client.get("/health")
+
+            assert response.status_code == 200
+            assert "X-Content-Type-Options" not in response.headers
+            assert "X-Frame-Options" not in response.headers
+            assert "X-XSS-Protection" not in response.headers
+            assert "Content-Security-Policy" not in response.headers
+            assert "Referrer-Policy" not in response.headers
+
+    def test_x_frame_options_sameorigin(self, client: TestClient):
+        """Test X-Frame-Options with SAMEORIGIN value."""
+        with patch.object(settings, "x_frame_options", "SAMEORIGIN"):
+            response = client.get("/health")
+
+            assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+            # CSP should have frame-ancestors 'self'
+            csp = response.headers.get("Content-Security-Policy", "")
+            assert "frame-ancestors 'self'" in csp
+
+    def test_x_frame_options_allow_from(self, client: TestClient):
+        """Test X-Frame-Options with ALLOW-FROM value."""
+        with patch.object(settings, "x_frame_options", "ALLOW-FROM https://example.com"):
+            response = client.get("/health")
+
+            assert response.headers["X-Frame-Options"] == "ALLOW-FROM https://example.com"
+            # CSP should have the allowed URI
+            csp = response.headers.get("Content-Security-Policy", "")
+            assert "frame-ancestors https://example.com" in csp
+
+    def test_x_frame_options_allow_all(self, client: TestClient):
+        """Test X-Frame-Options with ALLOW-ALL value."""
+        with patch.object(settings, "x_frame_options", "ALLOW-ALL"):
+            response = client.get("/health")
+
+            assert response.headers["X-Frame-Options"] == "ALLOW-ALL"
+            # CSP should allow all origins
+            csp = response.headers.get("Content-Security-Policy", "")
+            assert "frame-ancestors * file: http: https:" in csp
+
+    def test_x_frame_options_unknown_value(self, client: TestClient):
+        """Test X-Frame-Options with unknown value defaults to DENY behavior."""
+        with patch.object(settings, "x_frame_options", "UNKNOWN-VALUE"):
+            response = client.get("/health")
+
+            assert response.headers["X-Frame-Options"] == "UNKNOWN-VALUE"
+            # CSP should default to 'none' for unknown values
+            csp = response.headers.get("Content-Security-Policy", "")
+            assert "frame-ancestors 'none'" in csp
+
+    def test_x_frame_options_empty_string(self, client: TestClient):
+        """Test X-Frame-Options with empty string (should not set header)."""
+        with patch.object(settings, "x_frame_options", ""):
+            response = client.get("/health")
+
+            assert "X-Frame-Options" not in response.headers
+
+    def test_server_headers_removed(self, client: TestClient):
+        """Test that Server and X-Powered-By headers are removed when configured."""
+        with patch.object(settings, "remove_server_headers", True):
+            response = client.get("/health")
+
+            # These headers should not be present
+            assert "X-Powered-By" not in response.headers
+            assert "Server" not in response.headers
+
+    def test_cors_production_environment(self, client: TestClient):
+        """Test CORS in production environment requires explicit allow-list."""
+        with patch.object(settings, "environment", "production"):
+            with patch.object(settings, "allowed_origins", {"https://example.com"}):
+                # Allowed origin
+                response = client.get("/health", headers={"Origin": "https://example.com"})
+                assert response.headers.get("Access-Control-Allow-Origin") == "https://example.com"
+
+                # Disallowed origin
+                response = client.get("/health", headers={"Origin": "https://evil.com"})
+                assert response.headers.get("Access-Control-Allow-Origin") != "https://evil.com"
