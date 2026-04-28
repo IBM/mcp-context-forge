@@ -46,8 +46,8 @@ PLUGINS_CONFIG_FILE=plugins/config.yaml
 **With LLM Guard scorer (Tier-2):**
 ```bash
 pip install "mcp-contextforge-gateway[plugins]"
-# or, when cpex-prompt-injection-guard is published:
-pip install "cpex-prompt-injection-guard[llm-guard]"
+# or install the llm-guard package directly:
+pip install llm-guard
 ```
 
 ## Configuration Reference

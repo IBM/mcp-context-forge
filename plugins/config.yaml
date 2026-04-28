@@ -683,13 +683,13 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["security", "injection", "jailbreak", "owasp-llm01", "owasp-llm07"]
-    mode: "disabled" # Set to "enforce" or "permissive" to activate
+    mode: "enforce" # Set to "enforce" or "permissive" to activate
     priority: 45 # After ArgumentNormalizer (40), before PIIFilter (50)
     conditions: []
     config:
       mode: "block" # block | redact | flag-only
       check_tool_output: false
-      use_llm_guard: false # Set true after installing cpex-prompt-injection-guard[llm-guard]
+      use_llm_guard: false # Set true after installing plugins extra (pip install mcp-contextforge-gateway[plugins])
       redaction_placeholder: "[INJECTION_REDACTED]"
       categories:
         injection:

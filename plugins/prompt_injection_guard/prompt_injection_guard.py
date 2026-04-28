@@ -409,24 +409,57 @@ class PromptInjectionGuardPlugin(Plugin):
         return {"action": top_action, "violation_details": violation_details, "redacted_text": redacted}
 
     def _scan_args(self, args: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Scan all string leaves in ``args`` and return the first actionable result.
+        """Scan all string leaves in ``args`` and return the highest-priority actionable result.
+
+        Scans every string leaf so that a ``block`` in a later argument is not
+        silently downgraded by a ``redact`` or ``flag-only`` in an earlier one.
 
         Args:
             args: Tool or prompt arguments to scan.
 
         Returns:
-            First actionable result dict, or None when all inputs are clean.
+            Highest-priority actionable result dict, or None when all inputs are clean.
         """
         if not args:
             return None
+        action_priority = {"block": 0, "redact": 1, "flag-only": 2}
+        best_result: Optional[Dict[str, Any]] = None
+        best_priority = 99
         for _path, text in _iter_strings(args):
             if not text.strip():
                 continue
             findings = self._scan_value(text)
             result = self._build_result(findings, text)
             if result is not None:
-                return result
-        return None
+                priority = action_priority.get(result["action"], 99)
+                if priority < best_priority:
+                    best_priority = priority
+                    best_result = result
+                    if best_priority == 0:  # block is highest priority — short-circuit
+                        break
+        return best_result
+
+    def _redact_args(self, obj: Any) -> Any:
+        """Recursively walk ``obj`` and redact every flagged string leaf in-place.
+
+        Args:
+            obj: Arbitrary nested structure (dict, list, or str).
+
+        Returns:
+            A new structure with flagged string leaves replaced by the configured
+            redaction placeholder.  Non-string, non-container values are returned
+            unchanged.
+        """
+        if isinstance(obj, str):
+            result = self._build_result(self._scan_value(obj), obj)
+            if result and result.get("redacted_text"):
+                return result["redacted_text"]
+            return obj
+        if isinstance(obj, dict):
+            return {k: self._redact_args(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._redact_args(item) for item in obj]
+        return obj
 
     # ------------------------------------------------------------------
     # Hook implementations
@@ -461,12 +494,7 @@ class PromptInjectionGuardPlugin(Plugin):
             )
 
         if action == "redact":
-            new_args = dict(payload.args or {})
-            for key, val in new_args.items():
-                if isinstance(val, str):
-                    per_key_result = self._build_result(self._scan_value(val), val)
-                    if per_key_result and per_key_result.get("redacted_text"):
-                        new_args[key] = per_key_result["redacted_text"]
+            new_args = self._redact_args(dict(payload.args or {}))
             modified = PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args)
             return PromptPrehookResult(
                 modified_payload=modified,
@@ -505,12 +533,7 @@ class PromptInjectionGuardPlugin(Plugin):
             )
 
         if action == "redact":
-            new_args = dict(payload.args or {})
-            for key, val in new_args.items():
-                if isinstance(val, str):
-                    per_key_result = self._build_result(self._scan_value(val), val)
-                    if per_key_result and per_key_result.get("redacted_text"):
-                        new_args[key] = per_key_result["redacted_text"]
+            new_args = self._redact_args(dict(payload.args or {}))
             modified = ToolPreInvokePayload(name=payload.name, args=new_args)
             return ToolPreInvokeResult(
                 modified_payload=modified,
