@@ -74,6 +74,64 @@ class TestMetricsCleanupService:
         assert stats["total_cleaned"] == 0
         assert stats["cleanup_runs"] == 0
 
+    def test_get_stats_includes_batch_sleep_ms(self):
+        """Test that get_stats includes batch_sleep_ms."""
+        service = MetricsCleanupService()
+        stats = service.get_stats()
+        assert "batch_sleep_ms" in stats
+        assert stats["batch_sleep_ms"] == service.batch_sleep_ms
+
+    def test_cleanup_table_sleeps_between_full_batches(self):
+        """Sleep is called once after a full batch, not after the final partial batch."""
+        service = MetricsCleanupService(batch_size=10)
+        service.batch_sleep_ms = 100
+        cutoff = datetime.now(timezone.utc)
+
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, i: 1
+
+        full_batch = [mock_row] * 10
+        empty_batch = []
+
+        mock_execute = MagicMock()
+        mock_execute.fetchall.side_effect = [full_batch, empty_batch]
+        mock_execute.rowcount = 10
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value = mock_execute
+        mock_db.execute.return_value.fetchall.side_effect = [full_batch, empty_batch]
+
+        with patch("mcpgateway.services.metrics_cleanup_service.fresh_db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            with patch("mcpgateway.services.metrics_cleanup_service.time.sleep") as mock_sleep:
+                service._cleanup_table(ToolMetric, "tool_metrics", cutoff)
+
+        mock_sleep.assert_called_once_with(0.1)
+
+    def test_cleanup_table_no_sleep_after_partial_batch(self):
+        """Sleep is not called when the first batch is already smaller than batch_size."""
+        service = MetricsCleanupService(batch_size=10)
+        service.batch_sleep_ms = 100
+        cutoff = datetime.now(timezone.utc)
+
+        mock_row = MagicMock()
+        mock_row.__getitem__ = lambda self, i: 1
+
+        partial_batch = [mock_row] * 5
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.fetchall.return_value = partial_batch
+        mock_db.execute.return_value.rowcount = 5
+
+        with patch("mcpgateway.services.metrics_cleanup_service.fresh_db_session") as mock_ctx:
+            mock_ctx.return_value.__enter__ = MagicMock(return_value=mock_db)
+            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            with patch("mcpgateway.services.metrics_cleanup_service.time.sleep") as mock_sleep:
+                service._cleanup_table(ToolMetric, "tool_metrics", cutoff)
+
+        mock_sleep.assert_not_called()
+
 
 class TestCleanupResult:
     """Tests for CleanupResult dataclass."""

@@ -62,6 +62,7 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
         int: Total rows deleted.
     """
     effective_batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
+    batch_sleep_ms = getattr(settings, "metrics_cleanup_batch_sleep_ms", 50)
     total_deleted = 0
 
     while True:
@@ -75,6 +76,9 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
 
         if batch_deleted <= 0 or batch_deleted < effective_batch_size:
             break
+
+        if batch_sleep_ms > 0:
+            time.sleep(batch_sleep_ms / 1000.0)
 
     return total_deleted
 
@@ -167,6 +171,7 @@ class MetricsCleanupService:
         """
         self.retention_days = retention_days or getattr(settings, "metrics_retention_days", 7)
         self.batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
+        self.batch_sleep_ms = getattr(settings, "metrics_cleanup_batch_sleep_ms", 50)
         self.cleanup_interval_hours = cleanup_interval_hours or getattr(settings, "metrics_cleanup_interval_hours", 1)
         self.enabled = enabled if enabled is not None else getattr(settings, "metrics_cleanup_enabled", True)
 
@@ -378,6 +383,9 @@ class MetricsCleanupService:
                     if batch_deleted < self.batch_size:
                         break
 
+                    if self.batch_sleep_ms > 0:
+                        time.sleep(self.batch_sleep_ms / 1000.0)
+
                 # Get remaining count
                 remaining_count = db.execute(select(func.count()).select_from(model_class)).scalar() or 0  # pylint: disable=not-callable
 
@@ -456,6 +464,7 @@ class MetricsCleanupService:
             "retention_days": self.retention_days,
             "rollup_retention_days": self.rollup_retention_days,
             "batch_size": self.batch_size,
+            "batch_sleep_ms": self.batch_sleep_ms,
             "cleanup_interval_hours": self.cleanup_interval_hours,
             "total_cleaned": self._total_cleaned,
             "cleanup_runs": self._cleanup_runs,
