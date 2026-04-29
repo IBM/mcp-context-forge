@@ -26,6 +26,8 @@ Usage:
 import logging
 from typing import Any, Optional
 
+from mcpgateway.utils.db_isready import _sanitize
+
 logger = logging.getLogger(__name__)
 
 # Track which parser is being used for logging
@@ -159,10 +161,10 @@ async def get_redis_client() -> Optional[Any]:
             f"health_check={settings.redis_health_check_interval}s"
         )
     except ImportError as e:
-        logger.error(f"Redis parser configuration error: {e}")
+        logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
         _client = None
     except Exception as e:
-        logger.warning(f"Failed to connect to Redis: {e}")
+        logger.warning(f"Failed to connect to Redis: {_sanitize(str(e))}")
         _client = None
 
     _initialized = True
@@ -178,7 +180,7 @@ async def close_redis_client() -> None:
             await _client.aclose()
             logger.info("Redis client closed")
         except Exception as e:
-            logger.warning(f"Error closing Redis client: {e}")
+            logger.warning(f"Error closing Redis client: {_sanitize(str(e))}")
 
     _client = None
     _initialized = False
