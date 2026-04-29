@@ -122,6 +122,7 @@ class TenantPluginManagerFactory:
 
     @observability.setter
     def observability(self, value: Optional[ObservabilityProvider]) -> None:
+        """Set or replace the observability provider."""
         self._observability = value
 
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
@@ -155,6 +156,7 @@ class TenantPluginManagerFactory:
                     self._inflight.pop(context_id, None)
 
     async def _build_manager(self, context_id: str) -> TenantPluginManager:
+        """Create, initialise, and cache a new manager for *context_id*."""
         manager = None
         try:
             new_config = await self.get_config_from_db(context_id)
@@ -198,6 +200,7 @@ class TenantPluginManagerFactory:
             raise
 
     def _merge_tenant_config(self, tenant_cfg_override: Optional[list[PluginConfigOverride]]) -> Config:
+        """Overlay per-tenant plugin overrides onto the base YAML config."""
         if tenant_cfg_override is None:
             return self._base_config
 

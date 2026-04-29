@@ -56,11 +56,15 @@ _logger = logging.getLogger(__name__)
 
 
 class _GlobalToggleMsg(BaseModel):
+    """Redis pub/sub payload for a global plugin enable/disable toggle."""
+
     type: Literal["global_toggle"]
     enabled: bool
 
 
 class _ModeChangeMsg(BaseModel):
+    """Redis pub/sub payload for a per-plugin mode override."""
+
     type: Literal["mode_change"]
     plugin: str
     mode: Literal[
@@ -78,11 +82,15 @@ class _ModeChangeMsg(BaseModel):
 
 
 class _BindingChangeMsg(BaseModel):
+    """Redis pub/sub payload for a per-context binding change."""
+
     type: Literal["binding_change"]
     context_id: str
 
 
 class _TeamBindingChangeMsg(BaseModel):
+    """Redis pub/sub payload for a team-level binding change."""
+
     type: Literal["team_binding_change"]
     team_id: str
 
@@ -133,6 +141,7 @@ async def are_plugins_enabled_shared() -> bool:
 
 
 def _invalidate_shared_enabled_cache() -> None:
+    """Clear the in-memory shared-enabled cache so the next read hits Redis."""
     global _shared_enabled_cache
     _shared_enabled_cache = None
 
@@ -175,6 +184,7 @@ async def enable_plugins_shared(toggle: bool) -> bool:
 
 
 async def _publish_invalidation(message: dict[str, Any]) -> bool:
+    """Broadcast a plugin invalidation message over Redis pub/sub."""
     try:
         client = await _redis()
     except Exception as exc:
@@ -273,10 +283,12 @@ def mark_factory_init_degraded() -> None:
 
 
 def _reset_factory_init_degraded_for_tests() -> None:
+    """Reset the degraded-init flag (test-only helper)."""
     _state._reset_factory_init_degraded_for_tests()  # pylint: disable=protected-access
 
 
 def _warn_factory_init_degraded_once() -> None:
+    """Log a one-shot error when plugins are requested but factory init failed."""
     if not _state.is_factory_init_degraded() or _state.is_factory_init_degraded_logged():
         return
     _state.mark_factory_init_degraded_logged()
@@ -363,6 +375,7 @@ async def reload_plugin_context(context_id: str) -> None:
 
 
 async def _handle_invalidation_message(message: dict[str, Any]) -> None:
+    """Dispatch a single Redis pub/sub invalidation message to the appropriate handler."""
     if message.get("type") != "message":
         return
 
@@ -406,6 +419,7 @@ async def _handle_invalidation_message(message: dict[str, Any]) -> None:
 
 
 async def _plugin_invalidation_listener() -> None:
+    """Long-running task that subscribes to the Redis invalidation channel."""
     backoff = 1.0
     max_backoff = 30.0
     consecutive_failures = 0

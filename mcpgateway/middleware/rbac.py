@@ -683,7 +683,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
             # First, check if any plugins want to handle permission checking
             # Third-Party
-            from cpex.framework import GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
+            from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
             # First-Party
             from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
