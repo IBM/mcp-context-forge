@@ -4755,10 +4755,19 @@ class TestVisibleAgentIds:
     def mock_db(self):
         return MagicMock(spec=Session)
 
-    def test_admin_bypass_returns_none(self, service, mock_db):
-        """Admin context (user_email=None, token_teams=None) returns None for unrestricted access."""
+    def test_admin_bypass_returns_filtered_list(self, service, mock_db):
+        """Admin context (user_email=None, token_teams=None) returns public+team agents only (PR #4341)."""
+        # Mock the query to return public and team agents (excluding private)
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [("id-pub",), ("id-team",)]
+
         result = service._visible_agent_ids(mock_db, user_email=None, token_teams=None)
-        assert result is None
+        # Post-#4341: admin bypass returns a filtered list (not None)
+        assert result is not None
+        assert isinstance(result, list)
+        assert result == ["id-pub", "id-team"]
 
     def test_public_only_user_filters_to_public(self, service, mock_db):
         """Empty token_teams means public-only — query runs with public visibility filter."""
