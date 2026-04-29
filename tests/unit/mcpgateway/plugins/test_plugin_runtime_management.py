@@ -549,6 +549,7 @@ class TestDBErrorFallback:
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
         factory = GatewayTenantPluginManagerFactory.__new__(GatewayTenantPluginManagerFactory)
+        factory._db_factory = MagicMock()
 
         result = await factory.get_config_from_db("invalid_context_id")
         assert result is None
@@ -1564,23 +1565,22 @@ class TestFactoryAccessors:
 
 
 class TestInitPluginManagerFactory:
-    """Cover the ``db_factory``-branch in ``init_plugin_manager_factory``."""
+    """Cover ``init_plugin_manager_factory`` — db_factory is forwarded to the unified factory."""
 
-    def test_uses_gateway_factory_when_db_factory_provided(self, monkeypatch):
-        """Passing a ``db_factory`` must route through ``GatewayTenantPluginManagerFactory``."""
+    def test_db_factory_forwarded_to_factory(self, monkeypatch):
+        """Passing a ``db_factory`` must forward it to ``TenantPluginManagerFactory``."""
         import mcpgateway.plugins as framework
         from mcpgateway.plugins import init_plugin_manager_factory, reset_plugin_manager_factory
 
         captured_kwargs: dict = {}
 
-        class _FakeGatewayFactory:
+        class _FakeFactory:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
 
-        # Patch the lazy import site so the constructor call is our spy.
         monkeypatch.setattr(
-            "mcpgateway.plugins.gateway_plugin_manager.GatewayTenantPluginManagerFactory",
-            _FakeGatewayFactory,
+            "mcpgateway.plugins.gateway_plugin_manager.TenantPluginManagerFactory",
+            _FakeFactory,
         )
 
         def _fake_session_local():
@@ -1595,7 +1595,7 @@ class TestInitPluginManagerFactory:
                 observability=None,
                 db_factory=_fake_session_local,
             )
-            assert isinstance(framework._plugin_manager_factory, _FakeGatewayFactory)
+            assert isinstance(framework._plugin_manager_factory, _FakeFactory)
             assert captured_kwargs["yaml_path"] == "does/not/matter.yaml"
             assert captured_kwargs["db_factory"] is _fake_session_local
         finally:
