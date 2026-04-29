@@ -1,20 +1,22 @@
-import { useIntl } from "react-intl";
 import {
   Blocks,
-  Bot,
+  Box,
   ChartLine,
-  FileCode2,
+  Code,
   House,
-  KeyRound,
   MessageSquareMore,
-  MonitorCog,
   Server,
   Settings,
   Shapes,
-  Users,
+  Unplug,
   Wrench,
 } from "lucide-react";
+import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
+import { AgentIcon } from "../icons/AgentsIcon.tsx";
+import { MCPIcon } from "../icons/MCPIcon.tsx";
+import { MainNavIcon } from "../icons/MainNavIcon.tsx";
+import { PromptIcon } from "../icons/PromptIcon.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -26,10 +28,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarTrigger,
 } from "../ui/sidebar";
-import { GatewayIcon } from "../icons/GatewayIcon.tsx";
-import { MCPIcon } from "../icons/MCPIcon.tsx";
-import { MainNavIcon } from "../icons/MainNavIcon.tsx";
+import { TeamSwitcher } from "./TeamSwitcher";
 
 interface NavItem {
   labelKey: string;
@@ -39,25 +40,24 @@ interface NavItem {
 
 const MAIN_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.dashboard", path: "/app/", icon: House },
-  { labelKey: "navigation.gateways", path: "/app/gateways", icon: GatewayIcon },
+  { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
   { labelKey: "navigation.observability", path: "/app/observability", icon: ChartLine },
   { labelKey: "navigation.playground", path: "/app/playground", icon: MessageSquareMore },
 ];
 
 const COMPONENTS_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.servers", path: "/app/servers", icon: MCPIcon },
-  { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
-  { labelKey: "navigation.agents", path: "/app/agents", icon: Bot },
+  { labelKey: "navigation.agents", path: "/app/agents", icon: AgentIcon },
+  { labelKey: "navigation.restApi", path: "/app/rest-api", icon: Code },
+  { labelKey: "navigation.grpc", path: "/app/grpc", icon: Unplug },
   { labelKey: "navigation.tools", path: "/app/tools", icon: Wrench },
-  { labelKey: "navigation.resources", path: "/app/resources", icon: MonitorCog },
-  { labelKey: "navigation.prompts", path: "/app/prompts", icon: FileCode2 },
-  { labelKey: "navigation.plugins", path: "/app/plugins", icon: Blocks },
-  { labelKey: "navigation.serverCatalog", path: "/app/server-catalog", icon: Shapes },
+  { labelKey: "navigation.resources", path: "/app/resources", icon: Box },
+  { labelKey: "navigation.prompts", path: "/app/prompts", icon: PromptIcon },
 ];
 
-const TEAM_NAV_ITEMS: NavItem[] = [
-  { labelKey: "navigation.tokens", path: "/app/tokens", icon: KeyRound },
-  { labelKey: "navigation.members", path: "/app/members", icon: Users },
+const ECOSYSTEM_NAV_ITEMS: NavItem[] = [
+  { labelKey: "navigation.serverCatalog", path: "/app/server-catalog", icon: Shapes },
+  { labelKey: "navigation.plugins", path: "/app/plugins", icon: Blocks },
 ];
 
 const FOOTER_NAV_ITEM: NavItem = {
@@ -87,13 +87,21 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1">
-          <div className="flex h-8 w-8 items-center justify-center">
-            <span className="text-lg font-bold">
-              <MainNavIcon className="w-6 h-6" />
-            </span>
-          </div>
-        </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <div className="flex items-center gap-2 w-full">
+              <div className="flex h-8 w-8 items-center justify-center shrink-0">
+                <span className="text-lg font-bold">
+                  <MainNavIcon className="w-6 h-6" />
+                </span>
+              </div>
+              <SidebarTrigger className="shrink-0" />
+              <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
+                <TeamSwitcher />
+              </div>
+            </div>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent>
@@ -112,11 +120,11 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Team Section */}
+        {/* Ecosystem Section */}
         <SidebarGroup>
-          <SidebarGroupLabel>Team</SidebarGroupLabel>
+          <SidebarGroupLabel>Ecosystem</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>{renderNavItems(TEAM_NAV_ITEMS)}</SidebarMenu>
+            <SidebarMenu>{renderNavItems(ECOSYSTEM_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
