@@ -10,13 +10,13 @@ This document describes the complete release process for ContextForge, from pre-
 |-------|-------|
 | [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
 | [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
-| [3. Rust, Go & JS Dependency Updates](#3-rust-go--javascript-dependency-updates) | cargo update, go get -u, npm update |
+| [3. Rust, Go & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, go get -u, npm update |
 | [4. Quality Gates](#4-quality-gates) | Code formatting, linting, secrets scanning, security analysis |
 | [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
 | [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
 | [7. SSO Verification](#7-sso-verification) | Keycloak SSO login flow |
 | [8. Observability Verification](#8-observability-verification) | Monitoring stack under load |
-| [9. Security & Analysis](#9-security--analysis) | SonarQube, container scanning |
+| [9. Security & Analysis](#9-security-analysis) | SonarQube, container scanning |
 | [10. Deployment Verification](#10-deployment-verification) | Helm chart lint, IaC scanning, Minikube deploy |
 | [11. Documentation Verification](#11-documentation-verification) | Broken links, build, deploy |
 | [12. Plugin Testing](#12-plugin-testing) | PII filter, plugin framework, tool invocation hooks |

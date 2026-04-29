@@ -800,7 +800,7 @@ except Exception as e:
 - Enable response caching
 - Paginate large result sets
 - Use orjson for serialization (enabled by default)
-- Disable unused features (A2A, catalog, LLM chat, admin UI) — see [disable unused features](../manage/tuning.md#10---disable-unused-features) in the tuning guide
+- Disable unused features (A2A, catalog, LLM chat, admin UI) — see [disable unused features](../manage/tuning.md#10-disable-unused-features) in the tuning guide
 - Tune `GUNICORN_WORKERS` to match CPU cores (not exceed them)
 
 ---
