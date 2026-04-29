@@ -829,6 +829,13 @@ Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
 ```yaml
 - name: "PIIFilterPlugin"
   kind: "cpex_pii_filter.PIIFilterPlugin"
+  hooks:
+    [
+      "prompt_pre_fetch",
+      "prompt_post_fetch",
+      "tool_pre_invoke",
+      "tool_post_invoke",
+    ]
   mode: "enforce"  # Change from "disabled" to "enforce"
   priority: 50
   config:
@@ -857,53 +864,57 @@ Register a simple REST tool and invoke it with PII-laden arguments to verify the
 
 ```bash
 # Create a tool that echoes its input
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-       "name": "echo_tool",
-       "description": "Echoes input for testing",
-       "url": "https://httpbin.org/post",
-       "request_type": "POST",
-       "integration_type": "REST",
-       "input_schema": {
-         "type": "object",
-         "properties": {
-           "message": {"type": "string", "description": "Message to echo"}
+       "tool": {
+         "name": "echo_tool",
+         "description": "Echoes input for testing",
+         "url": "https://httpbin.org/post",
+         "request_type": "POST",
+         "integration_type": "REST",
+         "input_schema": {
+           "type": "object",
+           "properties": {
+             "message": {"type": "string", "description": "Message to echo"}
+           }
          }
        }
      }' \
-     $BASE_URL/tools | jq
+     "$BASE_URL/tools" | jq
 ```
+
+The create response returns the canonical tool name as `echo-tool` (hyphenated). Use that name for JSON-RPC tool calls.
 
 Invoke the tool with various PII types and verify masking:
 
 ```bash
 # Test with SSN
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "My SSN is 123-45-6789"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     "$BASE_URL/rpc" | jq
 
 # Test with credit card number
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Card: 4111-1111-1111-1111"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Card: 4111-1111-1111-1111"}}}' \
+     "$BASE_URL/rpc" | jq
 
 # Test with email address
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Contact john.doe@example.com for details"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Contact john.doe@example.com for details"}}}' \
+     "$BASE_URL/rpc" | jq
 
 # Test with AWS key
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Key: AKIAIOSFODNN7EXAMPLE"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Key: AKIAIOSFODNN7EXAMPLE"}}}' \
+     "$BASE_URL/rpc" | jq
 ```
 
-**Acceptance criteria:** Each response should show the PII values partially masked (e.g., `123-**-****`, `4111-****-****-1111`). The original PII must not appear in the tool invocation payload.
+**Acceptance criteria:** Each response should show the PII values masked in the upstream payload returned by httpbin (for example, `123-45-6789` becomes `***-**-6789`). The original PII must not appear in the tool invocation payload. If `tools/call` returns an ambiguous tool error, remove duplicate `echo-tool` entries or create the test tool with a unique name and invoke the returned canonical name.
 
 ### 12.3 Test PII detection via MCP protocol
 
