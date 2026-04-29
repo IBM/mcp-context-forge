@@ -975,10 +975,18 @@ curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
 
 ### 12.4 Verify plugin health and status
 
-Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, for example a platform admin token:
+Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
 
 ```bash
-curl -sS -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --admin \
+  --exp 10080 \
+  --secret "${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}" \
+  --algo HS256 \
+  2>/dev/null | tail -n 1)
+
+curl -sS -H "Authorization: Bearer $MCPGATEWAY_ADMIN_TOKEN" \
      -H "Accept: application/json" \
      "$BASE_URL/admin/plugins/PIIFilterPlugin" | jq '{name,status,mode,hooks,kind}'
 ```
