@@ -997,16 +997,7 @@ Verify:
 - The plugin has both `tool_pre_invoke` and `tool_post_invoke` in `hooks`
 - No plugin errors appear in the gateway logs (`make compose-logs | grep -i plugin`)
 
-### 12.5 Run plugin unit tests
-
-```bash
-# PII filter unit tests
-PII_FILTER_TESTS=$(find tests -path '*pii_filter*' -name 'test_*.py')
-test -n "$PII_FILTER_TESTS"
-./.venv/bin/pytest $PII_FILTER_TESTS -v
-```
-
-### 12.6 Cleanup
+### 12.5 Cleanup
 
 Reset the plugin config back to disabled mode before proceeding:
 
