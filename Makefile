@@ -8469,6 +8469,11 @@ migration-test-cross-db:                  ## Run cross-database schema consisten
 	        pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
 	        -v --tb=short --log-cli-level=INFO"
 	@echo "✅ Cross-database schema consistency check complete!"
+
+migration-setup:                          ## Setup migration test environment
+	@echo "🔧 Setting up migration test environment..."
+	@mkdir -p $(MIGRATION_REPORTS_DIR)
+	@mkdir -p $(MIGRATION_TEST_DIR)/logs
 	@echo "📦 Pulling required container images..."
 	@if command -v docker >/dev/null 2>&1; then \
 		for version in $(MIGRATION_VERSIONS); do \

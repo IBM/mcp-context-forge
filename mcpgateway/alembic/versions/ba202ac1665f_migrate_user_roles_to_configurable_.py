@@ -29,6 +29,7 @@ Configurable via:
 
 # Standard
 from datetime import datetime, timezone
+import logging
 from typing import Sequence, Union
 import uuid
 
@@ -39,6 +40,8 @@ from sqlalchemy import text
 
 # First-Party
 from mcpgateway.config import settings
+
+logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = "ba202ac1665f"  # pragma: allowlist secret
@@ -71,8 +74,10 @@ def _snapshot_config(bind, rev: str, values: dict) -> None:
     """
     inspector = sa.inspect(bind)
     if "migration_metadata" not in inspector.get_table_names():
-        print("  ⚠ migration_metadata table not found; skipping config snapshot."
-              " Downgrade will use live settings (non-hermetic).")
+        logger.warning(
+            "migration_metadata table not found; skipping config snapshot. "
+            "Downgrade will use live settings (non-hermetic)."
+        )
         return
     for key, value in values.items():
         bind.execute(
@@ -255,9 +260,9 @@ def upgrade() -> None:
         team_owner_role_id = _get_role_id(bind, new_team_owner_role, "team")
 
         if not team_member_role_id:
-            print(f"  ⚠ Team member role '{new_team_member_role}' not found, skipping backfill")
+            logger.warning("Team member role '%s' not found, skipping backfill", new_team_member_role)
         elif not team_owner_role_id:
-            print(f"  ⚠ Team owner role '{new_team_owner_role}' not found, skipping backfill")
+            logger.warning("Team owner role '%s' not found, skipping backfill", new_team_owner_role)
         else:
             # Find active team members who don't have any active team-scoped role
             # Include tm.role to map owners and members to correct RBAC roles
@@ -354,8 +359,10 @@ def downgrade() -> None:
         new_team_member_role = snapshot.get("default_team_member_role", settings.default_team_member_role)
         print(f"  ✓ Loaded config snapshot from migration_metadata (revision={revision})")
     else:
-        print("  ⚠ No config snapshot found in migration_metadata."
-              " Falling back to live settings — downgrade correctness depends on env vars matching upgrade time.")
+        logger.warning(
+            "No config snapshot found in migration_metadata. "
+            "Falling back to live settings — downgrade correctness depends on env vars matching upgrade time."
+        )
         new_admin_role = settings.default_admin_role
         new_user_role = settings.default_user_role
         new_team_owner_role = settings.default_team_owner_role
@@ -376,43 +383,46 @@ def downgrade() -> None:
             total += removed
             print(f"  ✓ Removed {removed} Phase 2 backfill rows (migration_source={MIGRATION_SOURCE})")
         except Exception as e:
-            print(f"  ⚠ Could not remove Phase 2 backfill rows: {e}")
+            logger.warning("Could not remove Phase 2 backfill rows: %s", e)
     else:
         print("  ℹ user_roles.migration_source column not present; cannot identify Phase 2 rows. Skipping cleanup.")
 
     # Revert Phase 1 role remap using the snapshotted (or fallback) config values.
-    if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE and new_team_member_role == OLD_TEAM_MEMBER_ROLE:
-        print("  All default roles match hardcoded values. No remap reversal needed.")
-    else:
-        total += _migrate_role(bind, new_admin_role, OLD_ADMIN_ROLE, "global")
-        total += _migrate_role(bind, new_user_role, OLD_USER_ROLE, "global")
-        total += _migrate_role(bind, new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team")
-        total += _migrate_role(bind, new_team_member_role, OLD_TEAM_MEMBER_ROLE, "team")
+    # Wrap in try/finally to ensure snapshot cleanup happens even if Phase 1 fails.
+    try:
+        if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE and new_team_member_role == OLD_TEAM_MEMBER_ROLE:
+            print("  All default roles match hardcoded values. No remap reversal needed.")
+        else:
+            total += _migrate_role(bind, new_admin_role, OLD_ADMIN_ROLE, "global")
+            total += _migrate_role(bind, new_user_role, OLD_USER_ROLE, "global")
+            total += _migrate_role(bind, new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team")
+            total += _migrate_role(bind, new_team_member_role, OLD_TEAM_MEMBER_ROLE, "team")
 
-        # Revert non-self-granted role assignments for all changed roles
-        non_self_pairs = []
-        if new_admin_role != OLD_ADMIN_ROLE:
-            non_self_pairs.append((new_admin_role, OLD_ADMIN_ROLE, "global"))
-        if new_user_role != OLD_USER_ROLE:
-            non_self_pairs.append((new_user_role, OLD_USER_ROLE, "global"))
-        if new_team_owner_role != OLD_TEAM_OWNER_ROLE:
-            non_self_pairs.append((new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team"))
-        if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
-            non_self_pairs.append((new_team_member_role, OLD_TEAM_MEMBER_ROLE, "team"))
+            # Revert non-self-granted role assignments for all changed roles
+            non_self_pairs = []
+            if new_admin_role != OLD_ADMIN_ROLE:
+                non_self_pairs.append((new_admin_role, OLD_ADMIN_ROLE, "global"))
+            if new_user_role != OLD_USER_ROLE:
+                non_self_pairs.append((new_user_role, OLD_USER_ROLE, "global"))
+            if new_team_owner_role != OLD_TEAM_OWNER_ROLE:
+                non_self_pairs.append((new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team"))
+            if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
+                non_self_pairs.append((new_team_member_role, OLD_TEAM_MEMBER_ROLE, "team"))
 
-        for current_name, old_name, scope in non_self_pairs:
-            current_role_id = _get_role_id(bind, current_name, scope)
-            old_role_id = _get_role_id(bind, old_name, scope)
-            if current_role_id and old_role_id:
-                result = bind.execute(
-                    text("UPDATE user_roles SET role_id = :old_id WHERE role_id = :new_id AND scope = :scope AND granted_by != user_email"),
-                    {"old_id": old_role_id, "new_id": current_role_id, "scope": scope},
-                )
-                reverted = getattr(result, "rowcount", 0)
-                total += reverted
-                print(f"  ✓ Reverted {reverted} non-self-granted assignments: '{current_name}' -> '{old_name}' ({scope})")
-
-    # Clean up this migration's snapshot rows now that downgrade is done.
-    _delete_config_snapshot(bind, revision)
+            for current_name, old_name, scope in non_self_pairs:
+                current_role_id = _get_role_id(bind, current_name, scope)
+                old_role_id = _get_role_id(bind, old_name, scope)
+                if current_role_id and old_role_id:
+                    result = bind.execute(
+                        text("UPDATE user_roles SET role_id = :old_id WHERE role_id = :new_id AND scope = :scope AND granted_by != user_email"),
+                        {"old_id": old_role_id, "new_id": current_role_id, "scope": scope},
+                    )
+                    reverted = getattr(result, "rowcount", 0)
+                    total += reverted
+                    print(f"  ✓ Reverted {reverted} non-self-granted assignments: '{current_name}' -> '{old_name}' ({scope})")
+    finally:
+        # Clean up this migration's snapshot rows now that downgrade is done.
+        # This runs unconditionally to prevent stale snapshots on retry.
+        _delete_config_snapshot(bind, revision)
 
     print(f"\n✅ Downgrade complete: {total} role assignments reverted")

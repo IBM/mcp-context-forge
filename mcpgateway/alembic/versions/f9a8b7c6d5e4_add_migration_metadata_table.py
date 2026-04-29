@@ -57,7 +57,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop migration_metadata table."""
+    """Drop migration_metadata table.
+
+    Raises:
+        RuntimeError: If snapshot rows remain in the table, indicating that
+            dependent migrations have not been downgraded first.
+    """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
@@ -67,8 +72,10 @@ def downgrade() -> None:
 
     count = bind.execute(text("SELECT COUNT(*) FROM migration_metadata")).scalar() or 0
     if count:
-        print(f"  ⚠ Dropping migration_metadata with {count} remaining row(s). "
-              "Some migration snapshots were not cleaned up during downgrade.")
+        raise RuntimeError(
+            f"Cannot drop migration_metadata — {count} snapshot row(s) remain. "
+            "Downgrade dependent migrations first (e.g., ba202ac1665f)."
+        )
 
     op.drop_table("migration_metadata")
     print("  ✓ Dropped migration_metadata table")
