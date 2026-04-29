@@ -174,6 +174,29 @@ class TestDiscovery:
         resources = await client.list_resources()
         print(f"    -> {len(resources)} resources")
 
+    async def test_resources_list_deduplicates_uris(self, client: Client) -> None:
+        """Verify that resources/list deduplicates resources by URI.
+
+        When multiple gateways expose the same resource URI (e.g., timezone://info),
+        the generic /mcp/ endpoint should return only one entry per unique URI.
+        This prevents ambiguity errors in resources/read.
+
+        Regression test for #4418.
+        """
+        resources = await client.list_resources()
+        if not resources:
+            pytest.skip("No resources registered on gateway")
+
+        # Check for duplicate URIs
+        uris = [str(r.uri) for r in resources]
+        unique_uris = set(uris)
+
+        assert len(uris) == len(unique_uris), (
+            f"resources/list returned duplicate URIs: {len(uris)} total, "
+            f"{len(unique_uris)} unique. Duplicates: {[u for u in uris if uris.count(u) > 1]}"
+        )
+        print(f"    -> all {len(resources)} resources have unique URIs")
+
     async def test_resources_read_roundtrip(self, client: Client) -> None:
         """Round-trip any advertised resource through resources/read.
 
@@ -181,32 +204,25 @@ class TestDiscovery:
         read path (content encoding, mime negotiation, gateway decoration).
         Skips cleanly when no resources are registered on the stack.
 
-        When the gateway federates multiple upstream servers the same
-        resource URI can appear on more than one server.  Reading such a
-        URI through the generic ``/mcp/`` endpoint (no server scope)
-        raises an ambiguity error.  We iterate through the advertised
-        resources so we can skip ambiguous URIs and still exercise the
-        read path.
+        After fix for #4418: resources/list deduplicates by URI when called
+        via the generic /mcp/ endpoint, and resources/read picks the first
+        match instead of raising an ambiguity error. This allows the test
+        to succeed without special handling for duplicate URIs.
         """
         resources = await client.list_resources()
         if not resources:
             pytest.skip("No resources registered on gateway — nothing to read")
-        last_error: McpError | None = None
-        for target in resources:
-            try:
-                contents = await client.read_resource(str(target.uri))
-            except McpError as exc:
-                # URI is ambiguous across servers — try the next one
-                last_error = exc
-                continue
-            assert contents, f"read_resource({target.uri}) returned empty contents"
-            first = contents[0]
-            # Empty string is still valid text content per spec; check attribute presence
-            # rather than truthiness so empty bodies don't trip the assertion.
-            assert hasattr(first, "text") or hasattr(first, "blob"), f"first content item has neither text nor blob attribute: {first}"
-            print(f"    -> read {target.uri} -> {len(contents)} content item(s)")
-            return
-        pytest.skip(f"All {len(resources)} resource(s) returned errors via generic /mcp/ (last: {last_error})")
+
+        # Pick the first resource to test
+        target = resources[0]
+        contents = await client.read_resource(str(target.uri))
+
+        assert contents, f"read_resource({target.uri}) returned empty contents"
+        first = contents[0]
+        # Empty string is still valid text content per spec; check attribute presence
+        # rather than truthiness so empty bodies don't trip the assertion.
+        assert hasattr(first, "text") or hasattr(first, "blob"), f"first content item has neither text nor blob attribute: {first}"
+        print(f"    -> read {target.uri} -> {len(contents)} content item(s)")
 
     async def test_prompts_list(self, client: Client) -> None:
         prompts = await client.list_prompts()
