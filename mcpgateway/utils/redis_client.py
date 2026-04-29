@@ -4,6 +4,12 @@
 This module provides a single source of truth for Redis client creation,
 ensuring all services use the same connection pool and settings.
 
+Supports both standalone Redis and Redis Cluster deployments. When
+``REDIS_CLUSTER_MODE=true``, the factory creates a
+``redis.asyncio.RedisCluster`` client that handles MOVED/ASK redirects
+automatically. Otherwise it creates a standard ``redis.asyncio.Redis``
+client via ``from_url``.
+
 Performance: Uses hiredis C parser by default (ADR-026) for up to 83x faster
 response parsing on large responses. Falls back to pure-Python parser if
 hiredis is unavailable or explicitly disabled via REDIS_PARSER setting.
@@ -25,6 +31,7 @@ Usage:
 # Standard
 import logging
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from mcpgateway.utils.db_isready import _sanitize
 
@@ -86,8 +93,139 @@ def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
     return None, "AsyncRESP2Parser (pure-Python, auto-detected)"
 
 
+def _strip_db_from_url(url: str) -> str:
+    """Remove the database number from a Redis URL for cluster mode.
+
+    Redis Cluster only supports database 0.  If the URL contains ``/0`` it is
+    silently stripped.  If it contains a non-zero database (``/1``, ``/2``, …)
+    a ``ValueError`` is raised so that misconfigurations fail fast instead of
+    being silently ignored.
+
+    Args:
+        url: Redis connection URL, e.g. ``redis://:pass@host:6379/0``
+
+    Returns:
+        str: URL without the trailing database path.
+
+    Raises:
+        ValueError: If the URL specifies a non-zero database number.
+
+    Examples:
+        >>> _strip_db_from_url("redis://:pass@host:6379/0")
+        'redis://:pass@host:6379'
+        >>> _strip_db_from_url("redis://:pass@host:6379")
+        'redis://:pass@host:6379'
+        >>> _strip_db_from_url("redis://:pass@host:6379/1")
+        Traceback (most recent call last):
+            ...
+        ValueError: Redis Cluster only supports database 0, but REDIS_URL specifies /1. Remove the database selector or use /0.
+    """
+    parsed = urlparse(url)
+    if parsed.path and parsed.path not in ("", "/"):
+        db_str = parsed.path.lstrip("/")
+        if db_str and db_str != "0":
+            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL " f"specifies /{db_str}. Remove the database selector or use /0.")
+        cleaned = parsed._replace(path="")
+        return cleaned.geturl()
+    return url
+
+
+def _mask_redis_url(url: str) -> str:
+    """Mask credentials in a Redis URL for safe logging.
+
+    Replaces the password portion of the URL with ``***`` so that
+    connection details can be logged without leaking secrets.
+
+    Args:
+        url: Redis connection URL, e.g. ``redis://:secret@host:6379``
+
+    Returns:
+        str: URL with password replaced by ``***``.
+
+    Examples:
+        >>> _mask_redis_url("redis://:secret@host:6379")
+        'redis://:***@host:6379'
+        >>> _mask_redis_url("redis://host:6379")
+        'redis://host:6379'
+    """
+    parsed = urlparse(url)
+    if parsed.password:
+        # Replace password in netloc
+        masked_netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
+        return parsed._replace(netloc=masked_netloc).geturl()
+    return url
+
+
+async def _create_cluster_client(settings: Any, aioredis: Any) -> Any:
+    """Create a ``redis.asyncio.RedisCluster`` client.
+
+    Args:
+        settings: Application settings object.
+        aioredis: The ``redis.asyncio`` module.
+
+    Returns:
+        An initialised ``RedisCluster`` async client.
+
+    Note:
+        ``RedisCluster`` does not accept ``retry_on_timeout``,
+        ``parser_class``, or ``single_connection_client``.  It does
+        accept ``max_connections`` and ``health_check_interval``.
+        ``publish()`` and ``pubsub()`` are **not** available on the
+        async cluster client (redis-py 7.x).
+    """
+    url = _strip_db_from_url(settings.redis_url)
+
+    cluster_kwargs: dict[str, Any] = {
+        "decode_responses": settings.redis_decode_responses,
+        "max_connections": settings.redis_max_connections,
+        "socket_timeout": settings.redis_socket_timeout,
+        "socket_connect_timeout": settings.redis_socket_connect_timeout,
+        "health_check_interval": settings.redis_health_check_interval,
+        "encoding": "utf-8",
+    }
+
+    client = aioredis.RedisCluster.from_url(url, **cluster_kwargs)
+    await client.ping()
+    return client
+
+
+async def _create_standalone_client(settings: Any, aioredis: Any, parser_class: Any) -> Any:
+    """Create a standard ``redis.asyncio.Redis`` client.
+
+    Args:
+        settings: Application settings object.
+        aioredis: The ``redis.asyncio`` module.
+        parser_class: Optional parser class override (or *None* for auto).
+
+    Returns:
+        An initialised ``Redis`` async client.
+    """
+    connection_kwargs: dict[str, Any] = {
+        "decode_responses": settings.redis_decode_responses,
+        "max_connections": settings.redis_max_connections,
+        "socket_timeout": settings.redis_socket_timeout,
+        "socket_connect_timeout": settings.redis_socket_connect_timeout,
+        "retry_on_timeout": settings.redis_retry_on_timeout,
+        "health_check_interval": settings.redis_health_check_interval,
+        "encoding": "utf-8",
+        "single_connection_client": False,
+    }
+
+    if parser_class is not None:
+        connection_kwargs["parser_class"] = parser_class
+
+    client = aioredis.from_url(settings.redis_url, **connection_kwargs)
+    await client.ping()
+    return client
+
+
 async def get_redis_client() -> Optional[Any]:
     """Get or create the shared async Redis client.
+
+    When ``REDIS_CLUSTER_MODE`` is enabled the factory returns a
+    ``redis.asyncio.RedisCluster`` instance that transparently handles
+    MOVED/ASK redirects across cluster shards.  Otherwise a standard
+    ``redis.asyncio.Redis`` client is returned.
 
     Uses hiredis C parser by default for up to 83x faster response parsing.
     Parser selection controlled by REDIS_PARSER setting (auto/hiredis/python).
@@ -132,34 +270,34 @@ async def get_redis_client() -> Optional[Any]:
         _initialized = True
         return None
 
+    # Validate cluster URL before attempting connection so
+    # misconfigurations (e.g. /1) crash immediately instead of
+    # being silently swallowed by the generic except below.
+    if settings.redis_cluster_mode:
+        _strip_db_from_url(settings.redis_url)
+
     try:
         # Get parser configuration (ADR-026)
         parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
 
-        # Build connection kwargs
-        connection_kwargs: dict[str, Any] = {
-            "decode_responses": settings.redis_decode_responses,
-            "max_connections": settings.redis_max_connections,
-            "socket_timeout": settings.redis_socket_timeout,
-            "socket_connect_timeout": settings.redis_socket_connect_timeout,
-            "retry_on_timeout": settings.redis_retry_on_timeout,
-            "health_check_interval": settings.redis_health_check_interval,
-            "encoding": "utf-8",
-            "single_connection_client": False,
-        }
-
-        # Only specify parser_class if explicitly set (not auto)
-        if parser_class is not None:
-            connection_kwargs["parser_class"] = parser_class
-
-        _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
-        await _client.ping()
-        logger.info(
-            f"Redis client initialized: parser={_parser_info}, "
-            f"pool_size={settings.redis_max_connections}, "
-            f"timeout={settings.redis_socket_timeout}s, "
-            f"health_check={settings.redis_health_check_interval}s"
-        )
+        if settings.redis_cluster_mode:
+            _client = await _create_cluster_client(settings, aioredis)
+            masked_url = _mask_redis_url(_strip_db_from_url(settings.redis_url))
+            logger.info(f"Redis Cluster client initialized: parser={_parser_info}, " f"timeout={settings.redis_socket_timeout}s, " f"url={masked_url}")
+            logger.warning(
+                "Redis Cluster mode: async RedisCluster does not support "
+                "publish()/pubsub(). Cross-worker cache invalidation, "
+                "session broadcasting, and cancellation propagation will "
+                "not function until those callers are migrated."
+            )
+        else:
+            _client = await _create_standalone_client(settings, aioredis, parser_class)
+            logger.info(
+                f"Redis client initialized: parser={_parser_info}, "
+                f"pool_size={settings.redis_max_connections}, "
+                f"timeout={settings.redis_socket_timeout}s, "
+                f"health_check={settings.redis_health_check_interval}s"
+            )
     except ImportError as e:
         logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
         _client = None

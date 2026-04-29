@@ -498,9 +498,12 @@ class SessionRegistry(SessionBackend):
             # Get shared Redis client from factory
             self._redis = await get_redis_client()
             if self._redis:
-                self._pubsub = self._redis.pubsub()
-                await self._pubsub.subscribe("mcp_session_events")
-                logger.info("Session registry connected to shared Redis client")
+                if hasattr(self._redis, "pubsub"):
+                    self._pubsub = self._redis.pubsub()
+                    await self._pubsub.subscribe("mcp_session_events")
+                    logger.info("Session registry connected to shared Redis client")
+                else:
+                    logger.warning("Session registry: Redis client does not support pubsub (cluster mode); cross-worker session events disabled")
 
         elif self._backend == "none":
             # Nothing to initialize for none backend
@@ -1551,6 +1554,9 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "redis":
             if not self._redis:
                 logger.warning(f"Redis client not initialized, cannot respond to {session_id}")
+                return
+            if not hasattr(self._redis, "pubsub"):
+                logger.warning(f"Redis client does not support pubsub (cluster mode), cannot respond to {session_id}")
                 return
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(session_id)

@@ -1995,6 +1995,14 @@ class Settings(BaseSettings):
         description="Redis protocol parser: auto (use hiredis if available), hiredis (require hiredis), python (pure-Python)",
     )
 
+    # Redis Cluster Mode
+    redis_cluster_mode: bool = Field(
+        default=False,
+        description="Use RedisCluster client for Redis Cluster deployments. "
+        "When enabled, the client handles MOVED/ASK redirects automatically. "
+        "The REDIS_URL must not include a database number (e.g. /0) in cluster mode.",
+    )
+
     # Redis Connection Pool - Performance Optimized
     redis_decode_responses: bool = Field(default=True, description="Return strings instead of bytes")
     redis_max_connections: int = Field(default=50, description="Connection pool size per worker")
