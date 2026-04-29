@@ -922,53 +922,95 @@ wheels = [
 
 [[package]]
 name = "cpex-encoded-exfil-detection"
-version = "0.2.1"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fencoded_exfil_detection&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cpex" },
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/24/d186169c1085f40af62852fadbe3c060a959ed5ad7e5ba00b3ac97c2db28/cpex_encoded_exfil_detection-0.2.0.tar.gz", hash = "sha256:b5c6e33bdddb5ccdf1c331040649fa2b2ea2373383042091c0f95299df1c6b58", size = 64296, upload-time = "2026-04-09T13:48:02.089Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/5d/1e4a55c7bd78a62b89341a00510f2a56f8915912fb4b240f2b356d3f1361/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:5511d0b403ba6d4014cb137fe7b83507959042fdfcb0b0b73119908c1a9b3901", size = 753563, upload-time = "2026-04-09T13:47:52.81Z" },
+    { url = "https://files.pythonhosted.org/packages/19/f9/41f86b8e9eeae36a6474ddb90ebf3955cae76a41335f403fc3bb2191e4af/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:d5912467a9a51738e74e78cde39a33961bb3a68884195c91dbb8a820d3bf61e6", size = 794176, upload-time = "2026-04-09T13:47:54.564Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/0e/72a4b2a1c58cea7aec50fcc43882d92fce34cf06df19abb977fd08035146/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:8d9d24a4861120612e5b1a0cd4ed1a408d4d203e03caee15cdceb9e37cdd62da", size = 880031, upload-time = "2026-04-09T13:47:56.084Z" },
+    { url = "https://files.pythonhosted.org/packages/65/33/974494234b94a784d10936ed1e66c7c04fa8ac5347dd6c12fe15de563858/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:ffb64b239e472d12d7c9eec95b5c39d650d009f1ae965b73e20df30917244dbc", size = 897589, upload-time = "2026-04-09T13:47:57.672Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/63/355ec76b4c112233e2661f1955d2acfde3e6dfa8626f1dcbcd98bf919281/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3845a368875da7e65f312e6359af2942ff1fb8af325a1227a2573a6a91b3890f", size = 856605, upload-time = "2026-04-09T13:47:59.262Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/b1/c0dcbdf1ab1b94e4907c75cdf392e74ab95e677abb29e5cbad283bead176/cpex_encoded_exfil_detection-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:a70ae294cfa64dcbf0b6f54412bafb6964dcc887e5684426f0eaeefe22408b95", size = 779979, upload-time = "2026-04-09T13:48:00.512Z" },
 ]
 
 [[package]]
 name = "cpex-pii-filter"
-version = "0.2.2"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fpii_filter&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
-dependencies = [
-    { name = "cpex" },
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/7a/5d74cab1b185b98247f27bf95ec62341a547d0cce367fcb26afd430ad5e8/cpex_pii_filter-0.2.1.tar.gz", hash = "sha256:5a1da596cceeba4f696a80c9f8523be765c366b3235ed9d2c82de72bb15214ee", size = 172335, upload-time = "2026-04-21T13:39:06.511Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bb/9e/fdfdc0c2101947270d99fdac5ce900c2a6d415ac13684ec3c5965e730440/cpex_pii_filter-0.2.1-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:d0e1de86d363f1696e8981108a2b26032934dfed8a091541f5eaebbd863c61fa", size = 807087, upload-time = "2026-04-21T13:38:56.589Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/c6/422cb7f376faf18ee217dd380663c4378f1c38a424138d18bb058fc94a65/cpex_pii_filter-0.2.1-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:072ef0daee9dc21ebd0593cdb07a5b5778a8268f6a14c6fa9458e66241aa39de", size = 851504, upload-time = "2026-04-21T13:38:58.238Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/0e/dde73f7653d00a9b7daa5ac178ab3a75c4d5112403fcc375a33dfe9a2afb/cpex_pii_filter-0.2.1-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:260e5eb27be5a0656dc4e56d910016314d1645370577fd13d9f51385a1d00c62", size = 950434, upload-time = "2026-04-21T13:39:00.043Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/c6/4de9e53797300680e84f3fdb27f3998697c2e7f14c08bc3cbe440a193a75/cpex_pii_filter-0.2.1-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:3f0b2a23649a9d436dd0ebe84c5a4d11ab2073a4c053378ea56b06661fea4948", size = 963511, upload-time = "2026-04-21T13:39:01.465Z" },
+    { url = "https://files.pythonhosted.org/packages/86/21/95dfd2308818f4e958637932fa2967ba992156d4a67038b20ed0c9ebaaca/cpex_pii_filter-0.2.1-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:79f40de40bd8beec0ea466b96629c62ea39e3efb00bf1412dcbc79fafc54ac50", size = 917718, upload-time = "2026-04-21T13:39:02.86Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/14/165d812e2d2fc3af9e3c08adbccd258230768521f62cbf62b93a85376106/cpex_pii_filter-0.2.1-cp311-abi3-win_amd64.whl", hash = "sha256:98a4b3fc5306987af07cf2c946a220f960860ca85cea6228c2a8add8d38b8921", size = 845594, upload-time = "2026-04-21T13:39:04.748Z" },
 ]
 
 [[package]]
 name = "cpex-rate-limiter"
-version = "0.0.5"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Frate_limiter&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
-dependencies = [
-    { name = "cpex" },
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/03/339f8cdfa1ff185ec40b595bb7e454fec0e5b4094dd1bcb2272629bb3532/cpex_rate_limiter-0.0.4.tar.gz", hash = "sha256:473b0f366e0c3de947f07052eecc39a4a780fcc0e0993630d611d31148960119", size = 86068, upload-time = "2026-04-22T14:29:27.579Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/22/b0/515bb8d2b09cc0601e2d3a0a99e689b55b9f7dd4f4e549901d01a0d78b73/cpex_rate_limiter-0.0.4-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:3848d6464951c98c1af446416460280db3846f10ebe0192e7c92a210ac54445d", size = 714183, upload-time = "2026-04-22T14:29:17.668Z" },
+    { url = "https://files.pythonhosted.org/packages/69/7f/c1b24497f0bfb7b109b755ceb43f35addaed627c5a7c7c80c15021173916/cpex_rate_limiter-0.0.4-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:b0f2289b5ea4aebb2a35268e8c10c83097717b7a7c13bdd0f524faf442650c01", size = 744062, upload-time = "2026-04-22T14:29:19.4Z" },
+    { url = "https://files.pythonhosted.org/packages/26/65/cdefe0dea2b1e41ed3f9faf91e08bccb2586c339e204013e2097a5727883/cpex_rate_limiter-0.0.4-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:14576c661c1a3decf2a42977f8b7736b83823dd7fdc90d07862be7dbb8c06817", size = 847363, upload-time = "2026-04-22T14:29:20.73Z" },
+    { url = "https://files.pythonhosted.org/packages/69/1e/5e161feccdf3b4fb4f570cce1b3af5a1965cd63fa09384e07539dfa1d63d/cpex_rate_limiter-0.0.4-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:cb1d2f5c95c0526792afc8d1049fa44373fad4c8cc768ed1d2def0d8386b28ba", size = 863562, upload-time = "2026-04-22T14:29:22.465Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/e3/e0bc22856fc21e210eb0084e51b5c691d848b4f8e10dc666faf2cc039513/cpex_rate_limiter-0.0.4-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:c6a1115e4351ad180d1bc3dd9f8ab9aac0ef8b0eccc8bfe93ed3b94f13f6bfba", size = 782003, upload-time = "2026-04-22T14:29:24.334Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/74/e3b9e937aee1950fcb8a3b57f1d2ee128768dff9f6926d3dfbe907f3a5de/cpex_rate_limiter-0.0.4-cp311-abi3-win_amd64.whl", hash = "sha256:58ef761b22eca7bfb7bc09e66867eb66a2518c72260755dabfdec36fe14c140f", size = 747459, upload-time = "2026-04-22T14:29:26.043Z" },
 ]
 
 [[package]]
 name = "cpex-retry-with-backoff"
-version = "0.2.1"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fretry_with_backoff&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cpex" },
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/f8/297311418b4c602e439db3dd5f2ec1aac6c0ec644236c3a225011617738d/cpex_retry_with_backoff-0.2.0.tar.gz", hash = "sha256:b574b38f046a9adfb78771ab6457befd8389ba8b00f0e1b6025ffc9bba159b8a", size = 40633, upload-time = "2026-04-28T13:30:05.3Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/aa/6a64a31a5192caa838aa94a81e1da128609b6d0eb48c028cc85b877fa9ed/cpex_retry_with_backoff-0.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:04baed7d7d95a4a9868274a11697f7505ede7fe92f46568fce5b05d02ce71cde", size = 255302, upload-time = "2026-04-28T13:29:56.57Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/d6/377a6d9a4c8399a3fbeca89262d41e9af8b9cb7657a69945003011c4fc33/cpex_retry_with_backoff-0.2.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:2e8fecba4c3640df47ba2d7d15a6e77fb78c9d1ed4959c1d393557b6db9d0cbc", size = 270408, upload-time = "2026-04-28T13:29:58.28Z" },
+    { url = "https://files.pythonhosted.org/packages/82/1a/99b3760c82fa72cc8e83e7310a8c90a3a8360c67373f7f99fbed41185042/cpex_retry_with_backoff-0.2.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:501066a091e4be4feb86b06f604e9ff5bfbcae26ad9a7520e9ae731cb7ada860", size = 310096, upload-time = "2026-04-28T13:29:59.669Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/07/9132c2ed62300f81beba272171d420b7c7a032a8c2e27e099b4ba48d46a2/cpex_retry_with_backoff-0.2.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:c8cfdf9bf501e57d0991c4d1425a28bf17315854eb1baafe5bb4b1e6dea4a6de", size = 319831, upload-time = "2026-04-28T13:30:00.847Z" },
+    { url = "https://files.pythonhosted.org/packages/44/eb/78fdb874c5d41f0e1282a0a618d793ef672a219ccb5c9349199eae0b7c32/cpex_retry_with_backoff-0.2.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:60a6873242a83b231e93e765daf9335ef4081616f35b65d07e39c89e603682e3", size = 279451, upload-time = "2026-04-28T13:30:02.56Z" },
+    { url = "https://files.pythonhosted.org/packages/78/82/085ccc65f16728f7b2f01284066c011344116794af17515d47309e5e0ef1/cpex_retry_with_backoff-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:7e50df56658ca887c0c8ba56b2c84924512cbe50efa5610220cdc2a0a213c4a0", size = 191479, upload-time = "2026-04-28T13:30:03.827Z" },
 ]
 
 [[package]]
 name = "cpex-secrets-detection"
-version = "0.2.1"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fsecrets_detection&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
-dependencies = [
-    { name = "cpex" },
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/3b/7d00ea04379123492826d14de806addc1dfdb089b138a11924dbe2397601/cpex_secrets_detection-0.2.0.tar.gz", hash = "sha256:419599e29688bfd7edd55a9244d3786ed4a646186482bae789395690b6dbc9c9", size = 149362, upload-time = "2026-04-20T11:05:18.324Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/c8/51b05aa5a6d195cd920e8f52f98c2ff6990dc41f156748b1ca1b08310385/cpex_secrets_detection-0.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:990ad5e352322013ae0c16a0f1d7bd5398b00eb1bb4ddcb825481bd5d535ff99", size = 738610, upload-time = "2026-04-20T11:05:07.648Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/e9/bd2c4367b6130e8fef04444328b3c51b23877a52aa046ee783cd59c67c65/cpex_secrets_detection-0.2.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:c80a1f4e609d2531fea040e219aacdf2b7eaf57cb043bdba4f19b5f8e6cdbe8c", size = 781367, upload-time = "2026-04-20T11:05:09.263Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/82/6bbec7d1e65ad5d16f986c653771e12ba8503018d6961eb3236ab1bf8e57/cpex_secrets_detection-0.2.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:fa3fcdd5bbcf3bcaea7a4758a7fa5f24c46e568e05654b4d770ee14bf0ca625f", size = 863723, upload-time = "2026-04-20T11:05:11.279Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/be/276d3b6bea355292f082c4a9d23410c1127d6744c8bcef75aa4e393eae8a/cpex_secrets_detection-0.2.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:e7af8fb3ac2fdd28a17263c9a89f548c6d27d5b4c2e8ec378cee7da4eb17f956", size = 880942, upload-time = "2026-04-20T11:05:13.161Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/d6/587cf20c1a3eec2839e094bcafb79b762b7a0be15411ee8154184310e880/cpex_secrets_detection-0.2.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:7ea4a5828b26614ff03348d442233b3547d6aff543dd123adc4b07af6ab5f3d4", size = 839711, upload-time = "2026-04-20T11:05:14.97Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/4f/4b6606235b3565072bf9995018836db6308df653e544579e63fb85e3b452/cpex_secrets_detection-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:8bf99b5f18697521e91a487bf85018df6628e3b3b2835b3db8a83a461b9b9d9f", size = 762663, upload-time = "2026-04-20T11:05:16.616Z" },
 ]
 
 [[package]]
 name = "cpex-url-reputation"
-version = "0.2.1"
-source = { git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Furl_reputation&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cpex" },
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/fc/b5e8e44734f953f58eb303a7c6470b8a104fad7de6eb7324a5bd21bd465a/cpex_url_reputation-0.2.0.tar.gz", hash = "sha256:b0b07753dd9cf5c31b0611211f2c67f6b5be21a7202864c602868ace14d247f2", size = 63032, upload-time = "2026-04-20T13:21:36.486Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/93/be/80d1e69b204683e721d1d5928e27668f6be80856633d83e1b85e4897b2d9/cpex_url_reputation-0.2.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:c9032fa14e94315bad39f5c3910f886a4a1ce262a8398aadd046bedfb0651525", size = 852911, upload-time = "2026-04-20T13:21:25.278Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/09/6ba1e001b710a588da0977e07944a00a90682606edae2edf63b0e48bc861/cpex_url_reputation-0.2.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:62c6479076d9867e45291e12c3f93127d4adce0e2bc03bba4c8eb7230898dd4e", size = 898729, upload-time = "2026-04-20T13:21:27.371Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/68/3a5f2fd1f73dca8c81424eaaa675464c89667121446005d4438ba5e009dc/cpex_url_reputation-0.2.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:3c61770d96a317151b20870512fc41d8c9fe0719bdd4eb8985ed9fd33e585430", size = 988787, upload-time = "2026-04-20T13:21:29.314Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/98/ffab241794ea092a4033ee2d7b8145ea8716eecf0529036e16503eb4b85b/cpex_url_reputation-0.2.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:92a4c14c1afb754a2e54126777779c7c7e04eb8f7d48a41255690bd76a3ffc1c", size = 1015581, upload-time = "2026-04-20T13:21:30.997Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/e0/0dfe8026584ef5ef679583a119a11f1fe8433026a2752665c8c78166a4dc/cpex_url_reputation-0.2.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:e721e0d99bb5e95e725333fc4597812380ca63e8aca4eb2f063964fa0b3fefc2", size = 955655, upload-time = "2026-04-20T13:21:32.913Z" },
+    { url = "https://files.pythonhosted.org/packages/05/62/d770be08148f482dcf3b4eb047f647704551b5f27fee9acce59941d078f5/cpex_url_reputation-0.2.0-cp311-abi3-win_amd64.whl", hash = "sha256:69c1bce591c197ed3ce996ff4b24c4da82775c9087cab2fb3526c7130e6eb7e7", size = 872783, upload-time = "2026-04-20T13:21:34.634Z" },
 ]
 
 [[package]]
@@ -3088,12 +3130,12 @@ requires-dist = [
     { name = "brotli", specifier = "==1.2.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = ">=0.1.0.dev11,<0.1.0.dev12" },
-    { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fencoded_exfil_detection&branch=fix%2Fuse-cpex-framework-dependency" },
-    { name = "cpex-pii-filter", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fpii_filter&branch=fix%2Fuse-cpex-framework-dependency" },
-    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Frate_limiter&branch=fix%2Fuse-cpex-framework-dependency" },
-    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fretry_with_backoff&branch=fix%2Fuse-cpex-framework-dependency" },
-    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fsecrets_detection&branch=fix%2Fuse-cpex-framework-dependency" },
-    { name = "cpex-url-reputation", marker = "extra == 'plugins'", git = "https://github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Furl_reputation&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
+    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.2.1" },
+    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.4" },
+    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.1.0" },
+    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
+    { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "filelock", specifier = ">=3.25.2" },
