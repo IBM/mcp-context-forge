@@ -453,7 +453,6 @@ For upgrade instructions, migration guides, and rollback procedures, see:
 
 - **[Upgrade Guide](manage/upgrade.md)** — General upgrade procedures
 - **[CHANGELOG.md](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)** — Version history and breaking changes
-- **[MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md)** — Multi-tenancy migration (v0.6.x → v0.7.x)
 
 ---
 
