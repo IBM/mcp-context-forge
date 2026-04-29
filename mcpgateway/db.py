@@ -1123,8 +1123,6 @@ class Base(DeclarativeBase):
 # ---------------------------------------------------------------------------
 
 
-
-
 class MigrationMetadata(Base):
     """Migration metadata for hermetic config snapshots.
 
@@ -1141,7 +1139,6 @@ class MigrationMetadata(Base):
     # Config value and timestamp
     value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
 
 
 class Role(Base):
