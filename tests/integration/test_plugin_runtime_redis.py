@@ -354,7 +354,7 @@ class TestTTLCacheExpiryRedis:
     @pytest.mark.asyncio
     async def test_cache_expires_after_ttl(self, async_redis, sync_redis):
         """Manager cache entry expires after TTL and triggers rebuild."""
-        from cpex.framework.manager import TenantPluginManagerFactory
+        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
         # Create a factory with very short TTL (1 second)
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)

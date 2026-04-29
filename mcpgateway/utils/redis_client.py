@@ -26,6 +26,7 @@ Usage:
 import logging
 from typing import Any, Optional
 
+# First-Party
 from mcpgateway.utils.db_isready import _sanitize
 
 logger = logging.getLogger(__name__)
