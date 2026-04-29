@@ -119,6 +119,17 @@ class TestIsTokenRevokedCaching:
 
         assert result is True
 
+    @pytest.mark.asyncio
+    async def test_set_not_revoked_error_is_silenced(self, service, mock_auth_cache):
+        """set_not_revoked raises → exception is silenced, False still returned."""
+        mock_auth_cache.is_token_revoked.return_value = None
+        mock_auth_cache.set_not_revoked.side_effect = RuntimeError("redis write error")
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache, create=True):
+            result = await service.is_token_revoked("clean-jti-error")
+
+        assert result is False
+
 
 # ---------------------------------------------------------------------------
 # get_token_revocation
@@ -185,3 +196,14 @@ class TestGetTokenRevocationCaching:
 
         assert result is not None
         assert result.jti == jti
+
+    @pytest.mark.asyncio
+    async def test_set_not_revoked_error_is_silenced(self, service, mock_auth_cache):
+        """set_not_revoked raises → exception is silenced, None still returned."""
+        mock_auth_cache.is_token_revoked.return_value = None
+        mock_auth_cache.set_not_revoked.side_effect = RuntimeError("redis write error")
+
+        with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache, create=True):
+            result = await service.get_token_revocation("clean-jti-error")
+
+        assert result is None
