@@ -5863,25 +5863,67 @@ class TestReadResourceCoverageEdges:
 
     @pytest.mark.asyncio
     async def test_read_resource_generic_uri_lookup_reports_ambiguity(self):
-        """Generic URI reads should fail cleanly when the same URI exists on multiple servers."""
+        """Test that ambiguous URIs are handled gracefully by returning the first match.
+
+        After fix for #4418: When MultipleResultsFound is raised for a generic /mcp/
+        endpoint request (no server_id), we log a warning and return the first match
+        instead of raising an error.
+        """
         # First-Party
         from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.common.models import ResourceContent
 
         svc = ResourceService()
         db = MagicMock()
         db.commit = MagicMock()
         db.close = MagicMock()
 
+        # Mock resource to return on second call (after MultipleResultsFound)
+        mock_resource = MagicMock()
+        mock_resource.id = "test-resource-id"
+        mock_resource.uri = "time://formats"
+        mock_resource.enabled = True
+        mock_resource.content = ResourceContent(
+            type="resource",
+            id="test-resource-id",
+            uri="time://formats",
+            text="Test content"
+        )
+        mock_resource.visibility = "public"
+        mock_resource.gateway = None
+        mock_resource.gateway_id = None
+
+        call_count = [0]
         def execute_side_effect(statement, *args, **kwargs):
             sql = str(statement)
+            call_count[0] += 1
             if "resources.uri" in sql and "resources.enabled" in sql:
-                raise MultipleResultsFound("duplicate URI across gateways")
-            raise AssertionError(sql)
+                if call_count[0] == 1:
+                    # First call raises MultipleResultsFound
+                    raise MultipleResultsFound("duplicate URI across gateways")
+                else:
+                    # Second call (with LIMIT 1) returns the first match
+                    result = MagicMock()
+                    result.scalar_one_or_none.return_value = mock_resource
+                    return result
+            # Mock gateway lookup (returns None since gateway_id is None)
+            if "gateways.id" in sql:
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+            raise AssertionError(f"Unexpected SQL: {sql}")
 
         db.execute.side_effect = execute_side_effect
 
-        with pytest.raises(ResourceError, match=r"ambiguous across multiple servers; use /servers/\{id\}/mcp"):
-            await svc.read_resource(db, resource_uri="time://formats")
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch.object(svc, "invoke_resource", new_callable=AsyncMock, return_value=mock_resource.content),
+        ):
+            # Should succeed and return the first match instead of raising an error
+            result = await svc.read_resource(db, resource_uri="time://formats")
+            assert result is not None
+            assert result.uri == "time://formats"
 
     @pytest.mark.asyncio
     async def test_read_resource_quack_branch_stateful_hasattr_covers_unreachable_elif_false_arc(self):
