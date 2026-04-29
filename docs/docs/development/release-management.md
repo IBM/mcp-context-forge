@@ -831,8 +831,6 @@ Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
   kind: "cpex_pii_filter.PIIFilterPlugin"
   hooks:
     [
-      "prompt_pre_fetch",
-      "prompt_post_fetch",
       "tool_pre_invoke",
       "tool_post_invoke",
     ]
