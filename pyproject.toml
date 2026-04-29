@@ -29,12 +29,12 @@ langchain-openai = "2026-04-22T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
-cpex-encoded-exfil-detection = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/encoded_exfil_detection" }
-cpex-pii-filter = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/pii_filter" }
-cpex-rate-limiter = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/rate_limiter" }
-cpex-retry-with-backoff = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/retry_with_backoff" }
-cpex-secrets-detection = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/secrets_detection" }
-cpex-url-reputation = { git = "ssh://git@github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/url_reputation" }
+cpex-encoded-exfil-detection = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/encoded_exfil_detection" }
+cpex-pii-filter = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/pii_filter" }
+cpex-rate-limiter = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/rate_limiter" }
+cpex-retry-with-backoff = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/retry_with_backoff" }
+cpex-secrets-detection = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/secrets_detection" }
+cpex-url-reputation = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/url_reputation" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
