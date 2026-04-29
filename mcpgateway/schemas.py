@@ -7555,7 +7555,17 @@ class PluginModeUpdateRequest(BaseModel):
 
     # Mirrors PluginMode.value; importing the enum here would create a cycle
     # (schemas -> plugins.framework -> services -> schemas), so use a Literal.
-    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled")
+    mode: Literal[
+        "enforce",
+        "enforce_ignore_error",
+        "permissive",
+        "disabled",
+        "sequential",
+        "concurrent",
+        "transform",
+        "audit",
+        "fire_and_forget",
+    ] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled, or cpex native modes")
 
 
 class PluginModeUpdateResponse(BaseModel):
@@ -8222,6 +8232,11 @@ class PluginBindingMode(str, Enum):
     ENFORCE = "enforce"
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
+    SEQUENTIAL = "sequential"
+    CONCURRENT = "concurrent"
+    TRANSFORM = "transform"
+    AUDIT = "audit"
+    FIRE_AND_FORGET = "fire_and_forget"
 
 
 # --- Policy item (one plugin, one or more tools) ---
@@ -8248,6 +8263,7 @@ class PluginPolicyItem(BaseModel):
         ...,
         description="Plugin-specific configuration. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
+    on_error: Optional[Literal["fail", "ignore", "disable"]] = Field(None, description="Error handling: fail (block on error), ignore (swallow errors), disable (disable plugin on error)")
     binding_reference_id: Optional[str] = Field(
         None,
         max_length=255,
@@ -8325,6 +8341,7 @@ class ToolPluginBindingResponse(BaseModelWithConfigDict):
     mode: str = Field(..., description="Execution mode")
     priority: int = Field(..., description="Execution priority")
     config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
     binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID for correlating with an upstream system")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="Email of creator")

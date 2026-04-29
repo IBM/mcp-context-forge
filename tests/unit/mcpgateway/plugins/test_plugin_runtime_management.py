@@ -386,7 +386,7 @@ class TestApplyRedisModeOverrides:
 
         # Previously the corrupt Redis value was logged then the loop fell
         # through to YAML; now it falls through to the local override.
-        assert result.plugins[0].mode.value == "audit"
+        assert result.plugins[0].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_invalid_mode_value_skipped_not_batch_aborted(self, caplog):
@@ -466,7 +466,7 @@ class TestApplyRedisModeOverrides:
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "audit"
+        assert result.plugins[0].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_expired_redis_synced_local_override_is_pruned(self):
@@ -493,7 +493,7 @@ class TestApplyRedisModeOverrides:
         # A expired → no override applied (YAML/config default preserved).
         assert result.plugins[0] is config.plugins[0]
         # B is durable → still applied.
-        assert result.plugins[1].mode.value == "audit"
+        assert result.plugins[1].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_mget_failure_warns_and_returns_input(self, caplog):

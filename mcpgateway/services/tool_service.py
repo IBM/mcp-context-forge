@@ -72,9 +72,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from cpex.framework import GlobalContext, HttpHeaderPayload, PluginContextTable, PluginError, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
-from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.transports.context import UserContext
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -92,6 +89,7 @@ from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, Ru
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify

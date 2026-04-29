@@ -205,6 +205,97 @@ class TestGetConfigFromDb:
         assert result[0].name == "FUTURE_PLUGIN_NOT_YET_KNOWN"
 
     @pytest.mark.asyncio
+    async def test_on_error_from_binding_propagated(self, db_session):
+        """When a binding has an on_error value, it propagates to the override."""
+        from mcpgateway.db import ToolPluginBinding, utc_now
+        import uuid
+
+        row = ToolPluginBinding(
+            id=uuid.uuid4().hex,
+            team_id="team-e",
+            tool_name="t",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=10,
+            config={},
+            on_error="ignore",
+            created_at=utc_now(),
+            created_by="admin@example.com",
+            updated_at=utc_now(),
+            updated_by="admin@example.com",
+        )
+        db_session.add(row)
+        db_session.flush()
+
+        factory = _make_factory(db_session)
+        overrides = await factory.get_config_from_db(make_context_id("team-e", "t"))
+
+        assert overrides is not None
+        assert len(overrides) == 1
+        o = overrides[0]
+        assert o.name == "OutputLengthGuardPlugin"
+        assert o.on_error is not None
+        assert o.on_error.value == "ignore"
+
+    @pytest.mark.asyncio
+    async def test_on_error_none_when_not_set(self, db_session):
+        """When a binding has no on_error, the override uses the mode-implied value."""
+        svc = ToolPluginBindingService()
+        req = ToolPluginBindingRequest(
+            teams={
+                "team-f": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["my_tool"],
+                            plugin_id="OutputLengthGuardPlugin",
+                            mode=PluginBindingMode.ENFORCE,
+                            priority=42,
+                            config={**_OLG, "max_chars": 500},
+                        )
+                    ]
+                )
+            }
+        )
+        svc.upsert_bindings(db_session, req, caller_email="admin@example.com")
+
+        factory = _make_factory(db_session)
+        overrides = await factory.get_config_from_db(make_context_id("team-f", "my_tool"))
+
+        assert overrides is not None
+        assert len(overrides) == 1
+        assert overrides[0].on_error is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_on_error_ignored(self, db_session):
+        """An invalid on_error value is ignored (not propagated)."""
+        from mcpgateway.db import ToolPluginBinding, utc_now
+        import uuid
+
+        row = ToolPluginBinding(
+            id=uuid.uuid4().hex,
+            team_id="team-g",
+            tool_name="t",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=10,
+            config={},
+            on_error="bogus_value",
+            created_at=utc_now(),
+            created_by="admin@example.com",
+            updated_at=utc_now(),
+            updated_by="admin@example.com",
+        )
+        db_session.add(row)
+        db_session.flush()
+
+        factory = _make_factory(db_session)
+        overrides = await factory.get_config_from_db(make_context_id("team-g", "t"))
+
+        assert overrides is not None
+        assert len(overrides) == 1
+        assert overrides[0].on_error is None
+
+    @pytest.mark.asyncio
     async def test_wildcard_binding_returned(self, db_session):
         """A wildcard '*' binding for the team is returned even for exact-tool queries."""
         svc = ToolPluginBindingService()
@@ -272,3 +363,51 @@ class TestReloadPluginContext:
             await reload_plugin_context("team-a::echo_text")
 
         mock_factory.reload_tenant.assert_awaited_once_with("team-a::echo_text")
+
+
+# ---------------------------------------------------------------------------
+# TenantPluginManagerFactory._merge_tenant_config with on_error
+# ---------------------------------------------------------------------------
+
+
+class TestMergeTenantConfigOnError:
+    """Verify that _merge_tenant_config propagates on_error from overrides."""
+
+    def _make_factory_with_base_config(self):
+        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
+
+        factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
+        factory._base_config = MagicMock()
+
+        plugin = MagicMock()
+        plugin.name = "TestPlugin"
+        plugin.config = {"key": "base_value"}
+        plugin.mode = PluginMode.SEQUENTIAL
+        plugin.priority = 50
+
+        captured_updates = []
+        plugin.model_copy = MagicMock(side_effect=lambda update: (captured_updates.append(update), MagicMock(**update, name="TestPlugin"))[-1])
+        factory._base_config.plugins = [plugin]
+        factory._base_config.model_copy = MagicMock(side_effect=lambda update, deep: MagicMock(plugins=update["plugins"]))
+        return factory, plugin, captured_updates
+
+    def test_on_error_applied_when_present(self):
+        from cpex.framework import OnError
+        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
+
+        factory, _plugin, captured = self._make_factory_with_base_config()
+        overrides = [PluginConfigOverride(name="TestPlugin", on_error=OnError.IGNORE)]
+
+        factory._merge_tenant_config(overrides)
+        assert len(captured) == 1
+        assert captured[0].get("on_error") == OnError.IGNORE
+
+    def test_on_error_not_applied_when_none(self):
+        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
+
+        factory, _plugin, captured = self._make_factory_with_base_config()
+        overrides = [PluginConfigOverride(name="TestPlugin")]
+
+        factory._merge_tenant_config(overrides)
+        assert len(captured) == 1
+        assert "on_error" not in captured[0]

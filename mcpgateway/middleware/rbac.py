@@ -21,6 +21,7 @@ import uuid
 import warnings
 
 # Third-Party
+from cpex.framework import GlobalContext
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -29,9 +30,8 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
-from cpex.framework import GlobalContext
-from mcpgateway.transports.context import UserContext
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
     set_trace_auth_method,

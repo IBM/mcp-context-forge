@@ -97,6 +97,7 @@ def _make_binding(
     mode="enforce",
     priority=50,
     config=None,
+    on_error=None,
     binding_reference_id=None,
     created_by="admin@example.com",
     updated_by="admin@example.com",
@@ -110,6 +111,7 @@ def _make_binding(
     b.mode = mode
     b.priority = priority
     b.config = config if config is not None else dict(_OLG)
+    b.on_error = on_error
     b.binding_reference_id = binding_reference_id
     b.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     b.created_by = created_by

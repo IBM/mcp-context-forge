@@ -15,21 +15,26 @@ pub/sub for plugin enable/disable and per-plugin mode changes.
 """
 
 # Standard
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import random
 import time
-from typing import Any, Callable, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
 
 # Third-Party
-from cpex.framework import ObservabilityProvider, TenantPluginManager, TenantPluginManagerFactory
+from cpex.framework import ObservabilityProvider, TenantPluginManager
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as _ValidationError
 
 # First-Party
 from mcpgateway.plugins import _state
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
+
+if TYPE_CHECKING:
+    from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
 # --- Global plugin manager factory singleton ---
 _PLUGINS_ENABLED = False
@@ -58,7 +63,17 @@ class _GlobalToggleMsg(BaseModel):
 class _ModeChangeMsg(BaseModel):
     type: Literal["mode_change"]
     plugin: str
-    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"]
+    mode: Literal[
+        "enforce",
+        "enforce_ignore_error",
+        "permissive",
+        "disabled",
+        "sequential",
+        "concurrent",
+        "transform",
+        "audit",
+        "fire_and_forget",
+    ]
     ttl_seconds: int = _PLUGIN_MODE_TTL_SECONDS
 
 
@@ -230,10 +245,13 @@ def init_plugin_manager_factory(
     global _plugin_manager_factory
     global _observability_service
     _observability_service = observability
-    if db_factory is not None:
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory  # pylint: disable=import-outside-toplevel
+    # First-Party
+    from mcpgateway.plugins.gateway_plugin_manager import (  # pylint: disable=import-outside-toplevel
+        GatewayTenantPluginManagerFactory,
+        TenantPluginManagerFactory,
+    )
 
+    if db_factory is not None:
         _plugin_manager_factory = GatewayTenantPluginManagerFactory(
             yaml_path=yaml_path,
             timeout=timeout,

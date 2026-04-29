@@ -4,16 +4,16 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhumohan Jaishankar
 
-Gateway-specific subclass of TenantPluginManagerFactory.
+Gateway-owned TenantPluginManagerFactory and PluginConfigOverride.
 
-Bridges the ToolPluginBinding DB table with the plugin framework by
-implementing get_config_from_db() to translate stored bindings into
-PluginConfigOverride objects the framework merges with base YAML config.
-
-Also provides gateway-layer cache management:
+cpex's TenantPluginManagerFactory is no longer imported or subclassed.
+This module provides a standalone factory that uses cpex's
+TenantPluginManager for actual plugin execution while adding
+gateway-specific features:
 - TTL-based cache with ``_CachedManager`` wrappers
 - Per-plugin Redis mode overrides via ``_apply_redis_mode_overrides``
 - ``invalidate_all`` / ``invalidate_team`` for cross-worker propagation
+- CF-owned ``PluginConfigOverride`` with ``on_error`` field
 
 Context ID convention: ``"<team_id>::<tool_name>"``
 """
@@ -25,11 +25,12 @@ import time
 from typing import Any, Callable, Optional
 
 # Third-Party
-from pydantic import ValidationError
+from cpex.framework import ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
+from cpex.framework.models import Config
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 # First-Party
-from cpex.framework import PluginConfigOverride, PluginMode, TenantPluginManager, TenantPluginManagerFactory
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 from mcpgateway.plugins._state import active_local_mode_overrides, prune_expired_local_overrides
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
@@ -38,18 +39,28 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
 
-_BINDING_MODE_TO_PLUGIN_MODE: dict[str, PluginMode] = {
-    "enforce": PluginMode.SEQUENTIAL,
-    "permissive": PluginMode.AUDIT,
-    "disabled": PluginMode.DISABLED,
+_BINDING_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
+    "enforce": (PluginMode.SEQUENTIAL, None),
+    "permissive": (PluginMode.TRANSFORM, None),
+    "disabled": (PluginMode.DISABLED, None),
 }
 
-_GATEWAY_MODE_TO_PLUGIN_MODE: dict[str, PluginMode] = {
-    "enforce": PluginMode.SEQUENTIAL,
-    "enforce_ignore_error": PluginMode.AUDIT,
-    "permissive": PluginMode.AUDIT,
-    "disabled": PluginMode.DISABLED,
+_GATEWAY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
+    "enforce": (PluginMode.SEQUENTIAL, None),
+    "enforce_ignore_error": (PluginMode.SEQUENTIAL, OnError.IGNORE),
+    "permissive": (PluginMode.TRANSFORM, None),
+    "disabled": (PluginMode.DISABLED, None),
 }
+
+
+class PluginConfigOverride(BaseModel):
+    """CF-owned plugin configuration override with on_error support."""
+
+    name: str
+    config: Optional[dict[str, Any]] = None
+    mode: Optional[PluginMode] = None
+    on_error: Optional[OnError] = None
+    priority: Optional[int] = None
 
 
 class _CachedManager:
@@ -65,43 +76,54 @@ class _CachedManager:
         return ttl > 0 and (time.monotonic() - self.created_at) > ttl
 
 
-class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
-    """TenantPluginManagerFactory wired to the gateway's ToolPluginBinding table.
+class TenantPluginManagerFactory:
+    """Standalone factory for context-scoped TenantPluginManager instances.
 
-    Context IDs must follow the ``"<team_id>::<tool_name>"`` convention.
-    Call sites should use :func:`make_context_id` to construct them.
-
-    When ``get_config_from_db`` is invoked for a context:
-
-    * Wildcard bindings (``tool_name == "*"``) provide team-wide defaults.
-    * Exact ``tool_name`` bindings override wildcards for the same plugin_id
-      (last-write-wins by ``updated_at``).
-    * The ``plugin_id`` column stores the plugin class name directly
-      (e.g. ``"OutputLengthGuardPlugin"``); unknown names are passed through
-      to the framework, which is responsible for ignoring unrecognised plugins.
-    * Returns ``None`` (not an empty list) when no bindings are found so the
-      framework falls back to the unmodified base YAML config.
+    TTL caching, Redis mode overrides, invalidate_all/invalidate_team,
+    and on_error support in _merge_tenant_config.
     """
 
     DEFAULT_CACHE_TTL = 30
-    CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
 
-    def __init__(self, *args: object, db_factory: Callable[[], Session], cache_ttl: Optional[int] = None, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
-        self._db_factory = db_factory
+    def __init__(
+        self,
+        yaml_path: str,
+        timeout: int = 30,
+        observability: Optional[ObservabilityProvider] = None,
+        hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
+        cache_ttl: Optional[int] = None,
+    ):
+        """Initialise the factory, loading base config from *yaml_path*."""
+        self._base_config: Config = ConfigLoader.load_config(yaml_path)
+        self._timeout = timeout
+        self._observability = observability
+        self._hook_policies = hook_policies
+        self._managers: dict[str, _CachedManager] = {}
+        self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
+        self._lock = asyncio.Lock()
         self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
 
+    @property
+    def observability(self) -> Optional[ObservabilityProvider]:
+        """Get the current observability provider."""
+        return self._observability
+
+    @observability.setter
+    def observability(self, value: Optional[ObservabilityProvider]) -> None:
+        self._observability = value
+
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
+        """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
 
         async with self._lock:
             entry = self._managers.get(context_id)
             if entry is not None:
-                if isinstance(entry, _CachedManager) and entry.is_expired(self._cache_ttl):
+                if entry.is_expired(self._cache_ttl):
                     self._managers.pop(context_id, None)
                     logger.debug("Cache TTL expired for context_id=%s, rebuilding", context_id)
                 else:
-                    return entry.manager if isinstance(entry, _CachedManager) else entry
+                    return entry.manager
 
             inflight = self._inflight.get(context_id)
             if inflight is None:
@@ -113,7 +135,7 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
             async with self._lock:
                 entry = self._managers.get(context_id)
                 if entry is not None:
-                    return entry.manager if isinstance(entry, _CachedManager) else entry
+                    return entry.manager
                 return manager
         finally:
             async with self._lock:
@@ -139,7 +161,7 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
                 old_entry = self._managers.get(context_id)
                 self._managers[context_id] = _CachedManager(manager=manager, created_at=time.monotonic())
 
-            old = old_entry.manager if isinstance(old_entry, _CachedManager) else old_entry
+            old = old_entry.manager if old_entry is not None else None
             if old is not None and old is not manager:
                 try:
                     await old.shutdown()
@@ -162,6 +184,30 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
                 except Exception:
                     logger.warning("Failed to shutdown manager after error for context_id=%s", context_id)
             raise
+
+    def _merge_tenant_config(self, tenant_cfg_override: Optional[list[PluginConfigOverride]]) -> Config:
+        if tenant_cfg_override is None:
+            return self._base_config
+
+        override_map = {p.name: p for p in tenant_cfg_override}
+        merged_plugins = []
+
+        for plugin in self._base_config.plugins or []:
+            override = override_map.get(plugin.name)
+            if not override:
+                merged_plugins.append(plugin)
+                continue
+            merged_config = {**(plugin.config or {}), **(override.config or {})}
+            update: dict[str, Any] = {
+                "config": merged_config,
+                "mode": override.mode if override.mode is not None else plugin.mode,
+                "priority": override.priority if override.priority is not None else plugin.priority,
+            }
+            if override.on_error is not None:
+                update["on_error"] = override.on_error
+            merged_plugins.append(plugin.model_copy(update=update))
+
+        return self._base_config.model_copy(update={"plugins": merged_plugins}, deep=True)
 
     async def _apply_redis_mode_overrides(self, config: Any) -> Any:
         """Apply per-plugin mode overrides. Redis is authoritative; the in-process map is the fallback."""
@@ -199,15 +245,21 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
             applied = False
             for source, mode_str in candidates:
-                mode = _GATEWAY_MODE_TO_PLUGIN_MODE.get(mode_str)
-                if mode is None:
+                mapping = _GATEWAY_MODE_TO_PLUGIN_MODE.get(mode_str)
+                if mapping is not None:
+                    mode, on_error = mapping
+                else:
                     try:
                         mode = PluginMode(mode_str)
+                        on_error = None
                     except ValueError:
                         logger.warning("Ignoring invalid %s mode override %r for plugin %s — value not in PluginMode", source, mode_str, plugin.name)
                         continue
                 try:
-                    updated_plugins.append(plugin.model_copy(update={"mode": mode}))
+                    update: dict[str, Any] = {"mode": mode}
+                    if on_error is not None:
+                        update["on_error"] = on_error
+                    updated_plugins.append(plugin.model_copy(update=update))
                     modified = True
                     applied = True
                     break
@@ -221,6 +273,57 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
             return config.model_copy(update={"plugins": updated_plugins}, deep=True)
         return config
 
+    async def reload_tenant(self, context_id: str) -> TenantPluginManager:
+        """Evict and rebuild the cached manager for *context_id*."""
+        async with self._lock:
+            old_entry = self._managers.pop(context_id, None)
+
+            inflight = self._inflight.get(context_id)
+            if inflight is not None:
+                inflight.cancel()
+                self._inflight.pop(context_id, None)
+
+            inflight = asyncio.create_task(self._build_manager(context_id))
+            self._inflight[context_id] = inflight
+
+        old = old_entry.manager if old_entry is not None else None
+        if old is not None:
+            try:
+                await old.shutdown()
+            except Exception:
+                logger.exception("Failed to shutdown old manager for context_id=%s", context_id)
+
+        try:
+            return await inflight
+        finally:
+            async with self._lock:
+                if self._inflight.get(context_id) is inflight:
+                    self._inflight.pop(context_id, None)
+
+    async def shutdown(self) -> None:
+        """Shut down all cached managers and cancel in-flight build tasks."""
+        async with self._lock:
+            entries = list(self._managers.values())
+            inflight = list(self._inflight.values())
+            self._managers.clear()
+            self._inflight.clear()
+
+        for task in inflight:
+            task.cancel()
+
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
+
+        for entry in entries:
+            try:
+                await entry.manager.shutdown()
+            except Exception:
+                logger.exception("Failed to shutdown plugin manager")
+
+    async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
+        """Base implementation returns None; overridden by GatewayTenantPluginManagerFactory."""
+        return None
+
     async def invalidate_all(self) -> None:
         """Reload every cached manager, logging failures instead of aborting the sweep."""
         async with self._lock:
@@ -233,7 +336,7 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
     async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
         """Reload every cached manager whose context_id starts with team_id plus separator."""
-        sep = separator if separator is not None else self.CONTEXT_ID_SEPARATOR
+        sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
         prefix = f"{team_id}{sep}"
         async with self._lock:
             context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
@@ -247,16 +350,27 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
         """Return a snapshot of the cached context IDs."""
         return list(self._managers.keys())
 
+
+class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
+    """TenantPluginManagerFactory wired to the gateway's ToolPluginBinding table.
+
+    Context IDs must follow the ``"<team_id>::<tool_name>"`` convention.
+    Call sites should use :func:`make_context_id` to construct them.
+    """
+
+    CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
+
+    def __init__(self, *args: Any, db_factory: Callable[[], Session], **kwargs: Any) -> None:
+        """Initialise with a *db_factory* for reading tool plugin bindings."""
+        super().__init__(*args, **kwargs)
+        self._db_factory = db_factory
+
     async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
         """Fetch per-tool plugin overrides from the DB for *context_id*.
 
-        Args:
-            context_id: Must be ``"<team_id>::<tool_name>"``.  Any other
-                format is treated as having no overrides (returns ``None``).
-
         Returns:
-            List of :class:`~cpex.framework.PluginConfigOverride`
-            for this tool, or ``None`` if no bindings exist.
+            List of :class:`PluginConfigOverride` for this tool,
+            or ``None`` if no bindings exist.
         """
         if CONTEXT_ID_SEPARATOR not in context_id:
             logger.debug("get_config_from_db: unrecognised context_id format %r, skipping", context_id)
@@ -285,12 +399,23 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
         overrides: list[PluginConfigOverride] = []
         for binding in bindings:
             plugin_name = binding.plugin_id
-            mode: Optional[PluginMode] = _BINDING_MODE_TO_PLUGIN_MODE.get(binding.mode) if binding.mode else None
+            mapping = _BINDING_MODE_TO_PLUGIN_MODE.get(binding.mode) if binding.mode else None
+            mode: Optional[PluginMode] = mapping[0] if mapping is not None else None
+            on_error: Optional[OnError] = mapping[1] if mapping is not None else None
+
+            binding_on_error = getattr(binding, "on_error", None)
+            if binding_on_error is not None:
+                try:
+                    on_error = OnError(binding_on_error)
+                except ValueError:
+                    logger.warning("get_config_from_db: invalid on_error=%r for binding %s, ignoring", binding_on_error, binding.plugin_id)
+
             overrides.append(
                 PluginConfigOverride(
                     name=plugin_name,
                     config=binding.config or {},
                     mode=mode,
+                    on_error=on_error,
                     priority=binding.priority,
                 )
             )
@@ -299,13 +424,5 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
 
 def make_context_id(team_id: str, tool_name: str) -> str:
-    """Build the context_id string expected by GatewayTenantPluginManagerFactory.
-
-    Args:
-        team_id: Team identifier.
-        tool_name: Tool name (use ``"*"`` for team-wide wildcard lookups).
-
-    Returns:
-        str: ``"<team_id>CONTEXT_ID_SEPARATOR<tool_name>"``
-    """
+    """Build the context_id string expected by GatewayTenantPluginManagerFactory."""
     return f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"

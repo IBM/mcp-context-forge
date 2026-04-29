@@ -111,7 +111,6 @@ from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
     init_plugin_manager_factory,
-    mark_factory_init_degraded,
     shutdown_plugin_manager_factory,
     start_plugin_invalidation_listener,
     stop_plugin_invalidation_listener,
