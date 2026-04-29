@@ -231,7 +231,7 @@ Important current behavior:
 
 Every enabled feature registers middleware, routers, or background tasks that consume resources even when not actively used. ContextForge has ~90 feature flags; each disabled feature removes its middleware and background tasks from the request path.
 
-The most impactful features to disable when not needed are: admin UI, A2A protocol, LLM chat, catalog, observability, audit trail, and database-backed structured logging. See the [disable unused features](../manage/tuning.md#10---disable-unused-features) section in the tuning guide for deployment profiles.
+The most impactful features to disable when not needed are: admin UI, A2A protocol, LLM chat, catalog, observability, audit trail, and database-backed structured logging. See the [disable unused features](../manage/tuning.md#10-disable-unused-features) section in the tuning guide for deployment profiles.
 
 ### Key Architectural Insight
 
