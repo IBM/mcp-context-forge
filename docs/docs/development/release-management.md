@@ -886,7 +886,7 @@ curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 The create response returns the canonical tool name as `echo-tool` (hyphenated). Use that name for JSON-RPC tool calls.
 
-Invoke the tool with various PII types and verify masking:
+Invoke the tool with supported PII types and verify masking:
 
 ```bash
 # Test with SSN
@@ -907,10 +907,10 @@ curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Contact john.doe@example.com for details"}}}' \
      "$BASE_URL/rpc" | jq
 
-# Test with AWS key
+# Test with phone number
 curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Key: AKIAIOSFODNN7EXAMPLE"}}}' \
+     -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Call me at 212-555-0199"}}}' \
      "$BASE_URL/rpc" | jq
 ```
 
@@ -918,31 +918,91 @@ curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ### 12.3 Test PII detection via MCP protocol
 
-Connect through a virtual server's SSE or Streamable HTTP endpoint and invoke a tool with PII via the MCP protocol (using MCP Inspector or `mcp-cli`) to verify the plugin hooks fire on the MCP transport path as well.
+Create a virtual server for the tool and invoke it through the Streamable HTTP MCP endpoint:
+
+```bash
+# Create a virtual server that exposes the echo tool.
+# Replace TOOL_ID with the id from the /tools create response above.
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "server": {
+         "name": "step12-pii-server",
+         "description": "Step 12 PII MCP verification",
+         "associated_tools": ["TOOL_ID"]
+       },
+       "visibility": "public"
+     }' \
+     "$BASE_URL/servers" | jq
+```
+
+Initialize an MCP session against the returned server id:
+
+```bash
+SERVER_ID="..."  # id from the /servers create response
+
+curl -i -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2025-11-25",
+         "capabilities": {},
+         "clientInfo": {"name": "step12-curl", "version": "1.0.0"}
+       }
+     }'
+```
+
+Copy the `mcp-session-id` response header, then call the tool through MCP:
+
+```bash
+MCP_SESSION_ID="..."  # mcp-session-id response header from initialize
+
+curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -H "mcp-session-id: $MCP_SESSION_ID" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     | jq
+```
+
+**Acceptance criteria:** The MCP `tools/call` response should show the SSN masked in the upstream payload, and the original `123-45-6789` value must not appear.
 
 ### 12.4 Verify plugin health and status
 
-Check the plugin framework is healthy via the Admin UI or API:
+Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, for example a platform admin token:
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     $BASE_URL/admin/api/plugins | jq
+curl -sS -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json" \
+     "$BASE_URL/admin/plugins/PIIFilterPlugin" | jq '{name,status,mode,hooks,kind}'
 ```
 
 Verify:
 
-- The PII filter plugin shows `status: active` and `mode: enforce`
-- Hook execution counts are incrementing after the test invocations above
+- The PII filter plugin shows `status: enabled` and `mode: enforce`
+- The plugin has both `tool_pre_invoke` and `tool_post_invoke` in `hooks`
 - No plugin errors appear in the gateway logs (`make compose-logs | grep -i plugin`)
 
 ### 12.5 Run plugin unit tests
 
 ```bash
-# PII filter unit tests
-pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
+# PII filter unit tests, when the plugin test source is present in the checkout
+if find tests/unit/mcpgateway/plugins/plugins/pii_filter -name 'test_*.py' | grep -q .; then
+  ./.venv/bin/pytest tests/unit/mcpgateway/plugins/plugins/pii_filter -v
+fi
 
-# Rust PII filter tests (if Rust toolchain is available)
-make rust-test
+# Rust plugin tests, if the Rust workspace crates are present
+if [ -f crates/validation_middleware_rust/Cargo.toml ]; then
+  make rust-test
+fi
 ```
 
 ### 12.6 Cleanup
@@ -1454,9 +1514,9 @@ cd docs && make deploy
 # 14. Plugin testing
 # ... enable PII filter in plugins/config.yaml (mode: "enforce") ...
 make compose-restart
-# ... invoke tools with PII (SSN, credit card, email, AWS key) ...
+# ... invoke tools with PII (SSN, credit card, email, phone number) ...
 # ... verify masking in responses ...
-pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
+# ... run PII filter unit tests if present ...
 # ... revert plugin config, restart ...
 
 # 15. Upgrade testing
