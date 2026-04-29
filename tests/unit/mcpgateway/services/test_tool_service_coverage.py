@@ -9497,7 +9497,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
         # First-Party
         from cpex.framework import ToolHookType
-
+        from mcpgateway.transports.context import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})

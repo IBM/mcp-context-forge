@@ -115,7 +115,7 @@ class TestSecretsDetectionHookDispatch:
             result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context=self._global_context())
             assert result.continue_processing is False
             assert result.violation.code == "SECRETS_DETECTED"
-            assert result.modified_payload == payload
+            assert result.modified_payload is None
         finally:
             await manager.shutdown()
 

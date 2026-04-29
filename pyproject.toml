@@ -29,6 +29,12 @@ langchain-openai = "2026-04-22T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
+cpex-encoded-exfil-detection = { path = "../cpex-plugins/plugins/rust/python-package/encoded_exfil_detection", editable = true }
+cpex-pii-filter = { path = "../cpex-plugins/plugins/rust/python-package/pii_filter", editable = true }
+cpex-rate-limiter = { path = "../cpex-plugins/plugins/rust/python-package/rate_limiter", editable = true }
+cpex-retry-with-backoff = { path = "../cpex-plugins/plugins/rust/python-package/retry_with_backoff", editable = true }
+cpex-secrets-detection = { path = "../cpex-plugins/plugins/rust/python-package/secrets_detection", editable = true }
+cpex-url-reputation = { path = "../cpex-plugins/plugins/rust/python-package/url_reputation", editable = true }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
