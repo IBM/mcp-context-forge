@@ -13,6 +13,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   # Job configuration
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished | default 300 }}
   backoffLimit: {{ .Values.migration.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
 
@@ -36,6 +37,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -126,6 +128,9 @@ spec:
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
 
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -133,4 +138,7 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

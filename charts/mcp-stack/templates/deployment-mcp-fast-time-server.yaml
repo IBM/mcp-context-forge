@@ -37,11 +37,25 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.mcpFastTimeServer.affinity }}
+      affinity: {{- toYaml .Values.mcpFastTimeServer.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: mcp-fast-time-server
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -75,4 +89,10 @@ spec:
           # ─── Resource limits & requests ───
           resources:
 {{- toYaml .Values.mcpFastTimeServer.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

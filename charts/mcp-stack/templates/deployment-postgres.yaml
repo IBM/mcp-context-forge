@@ -169,6 +169,13 @@ spec:
         - name: postgres
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           image: "{{ $postgresImage }}"
           imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
 
@@ -219,6 +226,10 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: postgres-initdb
               mountPath: /docker-entrypoint-initdb.d
+            - name: postgres-tmp
+              mountPath: /tmp
+            - name: postgres-run
+              mountPath: /var/run/postgresql
 
           # ─── Resource limits & requests ───
           resources:
@@ -233,5 +244,9 @@ spec:
           emptyDir: {}
           {{- end }}
         - name: postgres-initdb
+          emptyDir: {}
+        - name: postgres-tmp
+          emptyDir: {}
+        - name: postgres-run
           emptyDir: {}
 {{- end }}

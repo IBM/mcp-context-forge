@@ -83,9 +83,11 @@ mcpContextForge:
     targetCPUUtilizationPercentage: 90      # Scale up when avg CPU > 90 % of *request*
     targetMemoryUtilizationPercentage: 90   # Scale up when avg memory > 90 % of *request*
 
+  affinity: {}             # override to supply custom affinity; default applies preferred pod anti-affinity
+
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
+    tag: "d5076967c78361ebee3bb5f39b374b3283e28cd0"               # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
     pullPolicy: IfNotPresent    # use Always only for dev/testing with mutable tags
 
   # Service that fronts the gateway
@@ -1011,11 +1013,12 @@ migration:
   restartPolicy: Never                      # Job should not restart on failure
   backoffLimit: 3                           # Retry up to 3 times before giving up
   activeDeadlineSeconds: 600                # Kill job after 10 minutes
+  ttlSecondsAfterFinished: 300              # Auto-delete completed job pods after 5 minutes
 
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                             # Should match mcpContextForge.image.tag
+    tag: "1.0.0"                            # Should match mcpContextForge.image.tag
     pullPolicy: IfNotPresent                # use Always only for dev/testing with mutable tags
 
   # Resource limits for the migration job
@@ -1210,7 +1213,7 @@ redis:
 
   image:
     repository: redis
-    tag: latest
+    tag: "7.4-alpine"
     pullPolicy: IfNotPresent
 
   service:
@@ -1451,9 +1454,10 @@ minio:
 mcpFastTimeServer:
   enabled: true            # switch to true to deploy
   replicaCount: 2
+  affinity: {}             # override to supply custom affinity; default applies preferred pod anti-affinity
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "latest"
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
   port: 8080
   # Docker Compose parity flags (optional override)
