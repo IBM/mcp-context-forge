@@ -6461,7 +6461,7 @@ IMAGE            ?= $(IMAGE_LOCAL) # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TA
 # help: minikube-stop           - Stop the cluster
 # help: minikube-delete         - Delete the cluster completely
 # help: minikube-tunnel         - Run "minikube tunnel" (LoadBalancer) in foreground
-# help: minikube-port-forward   - Run kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
+# help: minikube-port-forward   - Run kubectl port-forward -n $(NAMESPACE) svc/mcp-stack-mcpgateway 8080:80
 # help: minikube-dashboard      - Print & (best-effort) open the Kubernetes dashboard URL
 # help: minikube-image-load     - Load $(IMAGE) into Minikube container runtime
 # help: minikube-k8s-apply      - Apply manifests from deployment/k8s/ - access with `kubectl port-forward svc/mcp-context-forge 8080:80`
@@ -6525,8 +6525,8 @@ minikube-tunnel:
 
 .PHONY: minikube-port-forward
 minikube-port-forward:
-	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace mcp-private  (Ctrl+C to stop)..."
-	kubectl port-forward -n mcp-private svc/mcp-stack-mcpgateway 8080:80
+	@echo "🔌 Forwarding http://localhost:8080 → svc/mcp-stack-mcpgateway:80 in namespace $(NAMESPACE)  (Ctrl+C to stop)..."
+	kubectl port-forward -n $(NAMESPACE) svc/mcp-stack-mcpgateway 8080:80
 
 .PHONY: minikube-dashboard
 minikube-dashboard:
@@ -6580,7 +6580,7 @@ minikube-registry-url:
 .PHONY: minikube-status
 minikube-status:
 	@echo "📊 Minikube cluster status:" && minikube status -p $(MINIKUBE_PROFILE)
-	@echo "\n📦 Addon status:" && minikube addons list | grep -E "$(subst $(space),|,$(MINIKUBE_ADDONS))"
+	@echo "\n📦 Addon status:" && minikube addons list | grep -E "$(shell echo '$(MINIKUBE_ADDONS)' | tr ' ' '|')"
 	@echo "\n🚦 Ingress controller:" && kubectl get pods -n ingress-nginx -o wide || true
 	@echo "\n🔍 Dashboard:" && kubectl get pods -n kubernetes-dashboard -o wide || true
 	@echo "\n🧩 Services:" && kubectl get svc || true
@@ -6598,10 +6598,11 @@ minikube-reset: minikube-delete minikube-start minikube-image-load minikube-k8s-
 # help: helm-lint            - Lint the Helm chart (static analysis)
 # help: helm-package         - Package the chart into dist/ as mcp-stack-<ver>.tgz
 # help: helm-deploy          - Upgrade/Install chart into Minikube (profile mcpgw)
+# help: helm-image-load      - Pull & load migration image into Minikube (required for pullPolicy: Never)
 # help: helm-delete          - Uninstall the chart release from Minikube
 # -----------------------------------------------------------------------------
 
-.PHONY: helm-install helm-lint helm-package helm-deploy helm-delete
+.PHONY: helm-install helm-lint helm-package helm-image-load helm-deploy helm-delete
 
 CHART_DIR      ?= charts/mcp-stack
 RELEASE_NAME   ?= mcp-stack
@@ -6632,11 +6633,33 @@ helm-package:
 	@mkdir -p dist
 	helm package $(CHART_DIR) -d dist
 
-helm-deploy: helm-lint
+helm-image-load:
+	@echo "📦 Loading all required images into Minikube (pullPolicy: Never requires local image)..."
+	@MIGRATION_TAG=$$(grep -A3 '^migration:' $(CHART_DIR)/values-minikube.yaml | grep 'tag:' | awk '{print $$2}' | tr -d '"'); \
+	 IMAGES=" \
+	   ghcr.io/ibm/mcp-context-forge:$$MIGRATION_TAG \
+	   ghcr.io/ibm/fast-time-server:latest \
+	   mcpgateway/fast-test-server:latest \
+	   locustio/locust:latest \
+	   redis:latest \
+	   postgres:18 \
+	 "; \
+	 for IMG in $$IMAGES; do \
+	   echo "🔍 $$IMG"; \
+	   if ! docker image inspect "$$IMG" >/dev/null 2>&1; then \
+	     echo "⬇️  Pulling $$IMG ..."; docker pull "$$IMG"; \
+	   fi; \
+	   echo "📤 Loading $$IMG into Minikube (profile: $(MINIKUBE_PROFILE))..."; \
+	   minikube image load "$$IMG" -p $(MINIKUBE_PROFILE); \
+	 done
+	@echo "✅ All images loaded."
+
+helm-deploy: helm-lint helm-image-load
 	@echo "🚀 Deploying $(RELEASE_NAME) into Minikube (ns=$(NAMESPACE))..."
 	helm upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 	  --namespace $(NAMESPACE) --create-namespace \
 	  -f $(VALUES) \
+	  -f $(CHART_DIR)/values-minikube.yaml \
 	  --wait
 	@echo "✅ Deployed."
 	@echo "\n📊 Release status:"

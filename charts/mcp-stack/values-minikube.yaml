@@ -11,7 +11,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.0-RC-3"
+    tag: "d5076967c78361ebee3bb5f39b374b3283e28cd0"
     pullPolicy: Never              # image is pre-loaded via minikube image load
 
   ingress:
@@ -61,11 +61,14 @@ mcpContextForge:
 migration:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "1.0.0-RC-3"
+    tag: "d5076967c78361ebee3bb5f39b374b3283e28cd0"
     pullPolicy: Never
 
 # Disable TLS on fast-time-server ingress for minikube
 mcpFastTimeServer:
+  image:
+    tag: "latest"
+    pullPolicy: Never
   ingress:
     tls:
       enabled: false
@@ -73,6 +76,9 @@ mcpFastTimeServer:
 # Infrastructure — minikube-sized
 postgres:
   enabled: true
+  image:
+    tag: "18"                  # postgres:18 is available locally; postgres:17 is not
+    pullPolicy: Never
   persistence:
     size: 2Gi
     storageClassName: standard
@@ -91,6 +97,8 @@ postgres:
 
 redis:
   enabled: true
+  image:
+    pullPolicy: Never          # redis:latest is pre-loaded in Minikube
   persistence:
     size: 1Gi
     storageClassName: standard
@@ -118,7 +126,7 @@ testing:
   registration:
     image:
       repository: ghcr.io/ibm/mcp-context-forge
-      tag: "1.0.0-RC-3"
+      tag: "d5076967c78361ebee3bb5f39b374b3283e28cd0"
       pullPolicy: Never
     jwt:
       secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
@@ -131,6 +139,11 @@ testing:
       pullPolicy: Never
   fastTest:
     register:
+      enabled: true
+  locust:
+    image:
+      pullPolicy: Never        # locustio/locust:latest is pre-loaded in Minikube
+    worker:
       enabled: true
   a2aEchoAgent:
     enabled: false
