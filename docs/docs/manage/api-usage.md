@@ -192,15 +192,15 @@ Sets `jwt_token` httpOnly cookie for subsequent requests.
 
 #### GET /auth/me
 
-Get current authenticated user. Works with both Bearer token and cookie.
+Get current authenticated user. **Cookie-only endpoint** - requires httpOnly cookie from `/auth/browser-login`.
+
+!!! note "API Client Alternative"
+    API clients using Bearer tokens should use the user information returned in the response body from `POST /auth/login` instead of calling this endpoint.
 
 **Request:**
 ```bash
-# Using cookie
+# Using cookie (browser clients only)
 curl -b cookies.txt $BASE_URL/auth/me | jq '.'
-
-# Using Bearer token
-curl -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/me | jq '.'
 ```
 
 **Response:**
@@ -218,7 +218,10 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/auth/me | jq '.'
 
 #### POST /auth/logout
 
-Clear authentication cookie (stateless - JWT remains valid until expiration).
+Clear authentication cookie and revoke token server-side. **Cookie-only endpoint** - requires httpOnly cookie from `/auth/browser-login`.
+
+!!! note "API Client Alternative"
+    API clients using Bearer tokens don't need to call logout. Simply discard the token when done.
 
 **Request:**
 ```bash
@@ -232,8 +235,8 @@ curl -b cookies.txt -X POST $BASE_URL/auth/logout | jq '.'
 }
 ```
 
-!!! note "Stateless Logout"
-    Logout clears the browser cookie but doesn't revoke the JWT token server-side. The token remains valid until expiration. This is consistent with the stateless JWT design.
+!!! note "Server-Side Revocation"
+    Logout now revokes the JWT token server-side via JTI blocklist, preventing token reuse even if captured. The token becomes immediately invalid.
 
 ## Pagination
 

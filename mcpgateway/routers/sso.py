@@ -404,7 +404,7 @@ async def handle_sso_callback(
     from mcpgateway.utils.security_cookies import CookieTooLargeError, set_auth_cookie
 
     try:
-        set_auth_cookie(redirect_response, access_token, remember_me=False)
+        set_auth_cookie(redirect_response, access_token)
     except CookieTooLargeError:
         redirect_response = RedirectResponse(
             url=f"{root_path}/admin/login?error=token_too_large",

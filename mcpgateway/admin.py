@@ -4033,7 +4033,7 @@ async def admin_ui(
             token = await create_jwt_token(payload)
 
             # Set HTTP-only cookie using centralized security cookie utility
-            set_auth_cookie(response, token, remember_me=False)
+            set_auth_cookie(response, token)
             LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
@@ -4286,7 +4286,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
                 # Set JWT token as secure cookie for the password change process
                 try:
-                    set_auth_cookie(response, token, remember_me=False)
+                    set_auth_cookie(response, token)
                 except CookieTooLargeError:
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
@@ -4304,7 +4304,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             # Set JWT token as secure cookie
             try:
-                set_auth_cookie(response, token, remember_me=False)
+                set_auth_cookie(response, token)
             except CookieTooLargeError:
                 return RedirectResponse(
                     url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
@@ -4916,7 +4916,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
                 # Update JWT token cookie
                 try:
-                    set_auth_cookie(response, token, remember_me=False)
+                    set_auth_cookie(response, token)
                 except CookieTooLargeError:
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large",

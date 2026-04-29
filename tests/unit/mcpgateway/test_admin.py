@@ -16886,7 +16886,7 @@ class TestAuthLogin:
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
         monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token: None)
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
@@ -16945,7 +16945,7 @@ class TestAuthLogin:
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
         monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token: None)
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
@@ -17028,7 +17028,7 @@ class TestAuthLogin:
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
         monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token: None)
 
         password_service = MagicMock()
         password_service.verify_password_async = AsyncMock(return_value=True)
@@ -17093,7 +17093,7 @@ class TestAuthLogin:
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
         monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
-        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token: None)
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}

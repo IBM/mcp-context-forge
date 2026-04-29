@@ -41,7 +41,7 @@ class CookieTooLargeError(Exception):
         super().__init__(f"Cookie size {cookie_size} bytes exceeds browser limit of {limit} bytes")
 
 
-def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -> None:
+def set_auth_cookie(response: Response, token: str) -> None:
     """
     Set authentication cookie with security flags and size validation.
 
@@ -51,7 +51,6 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     Args:
         response: FastAPI response object to set the cookie on
         token: JWT token to store in the cookie
-        remember_me: If True, sets longer expiration time (30 days vs 1 hour)
 
     Raises:
         CookieTooLargeError: If the cookie would exceed 4096 bytes
@@ -61,26 +60,20 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     - secure: HTTPS only in production environments
     - samesite: CSRF protection (configurable, defaults to 'lax')
     - path: Cookie scope limitation
-    - max_age: Automatic expiration
+    - max_age: Automatic expiration (1 hour)
 
     Examples:
-        Basic cookie set with remember_me disabled:
+        Basic cookie set:
         >>> from fastapi import Response
         >>> from mcpgateway.utils.security_cookies import set_auth_cookie
         >>> resp = Response()
-        >>> set_auth_cookie(resp, 'tok123', remember_me=False)
+        >>> set_auth_cookie(resp, 'tok123')
         >>> header = resp.headers.get('set-cookie')
         >>> 'jwt_token=' in header and 'HttpOnly' in header and 'Path=/' in header
         True
-
-        Extended expiration when remember_me is True:
-        >>> resp2 = Response()
-        >>> set_auth_cookie(resp2, 'tok123', remember_me=True)
-        >>> 'Max-Age=2592000' in resp2.headers.get('set-cookie')  # 30 days
-        True
     """
-    # Set expiration based on remember_me preference
-    max_age = 30 * 24 * 3600 if remember_me else 3600  # 30 days or 1 hour
+    # Set expiration to 1 hour
+    max_age = 3600
 
     # Determine if we should use secure flag
     # In production or when explicitly configured, require HTTPS

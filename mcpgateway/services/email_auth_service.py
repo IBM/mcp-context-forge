@@ -758,6 +758,21 @@ class EmailAuthService:
     async def authenticate_user(self, email: str, password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> Optional[EmailUser]:
         """Authenticate a user with email and password.
 
+        Security: Timing Attack Mitigation (CWE-208)
+        --------------------------------------------
+        This method implements constant-time authentication to prevent timing oracles:
+
+        1. All failure paths (user not found, account disabled, account locked, invalid password)
+           call _verify_dummy_password_for_timing() to match Argon2 verification timing
+        2. All failure paths call _apply_failed_login_floor() to enforce minimum response time
+        3. Success path naturally includes real Argon2 verification, matching failure timing
+
+        This ensures attackers cannot distinguish between "user exists" vs "user not found"
+        or "valid user, wrong password" vs other failure modes by measuring response time.
+
+        This is a deliberate security hardening decision to prevent account enumeration
+        and credential stuffing attacks via timing side channels.
+
         Args:
             email: User's email address
             password: Plain text password

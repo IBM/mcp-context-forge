@@ -30,7 +30,7 @@ class TestSecureCookies:
 
         with patch.object(settings, "environment", "development"):
             with patch.object(settings, "secure_cookies", False):
-                set_auth_cookie(response, "test_token", remember_me=False)
+                set_auth_cookie(response, "test_token")
 
         # Check that cookie was set
         set_cookie_header = response.headers.get("set-cookie", "")
@@ -48,23 +48,13 @@ class TestSecureCookies:
         response = Response()
 
         with patch.object(settings, "environment", "production"):
-            set_auth_cookie(response, "test_token", remember_me=False)
+            set_auth_cookie(response, "test_token")
 
         set_cookie_header = response.headers.get("set-cookie", "")
         assert "jwt_token=test_token" in set_cookie_header
         assert "HttpOnly" in set_cookie_header
         assert "Secure" in set_cookie_header  # Should be secure in production
         assert "SameSite=lax" in set_cookie_header
-
-    def test_set_auth_cookie_remember_me(self):
-        """Test auth cookie with remember_me option."""
-        response = Response()
-
-        set_auth_cookie(response, "test_token", remember_me=True)
-
-        set_cookie_header = response.headers.get("set-cookie", "")
-        # 30 days = 30 * 24 * 3600 = 2592000 seconds
-        assert "Max-Age=2592000" in set_cookie_header
 
     def test_set_auth_cookie_custom_samesite(self):
         """Test auth cookie with custom SameSite setting."""

@@ -13,7 +13,7 @@ It serves as the primary entry point for authentication workflows.
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -82,7 +82,6 @@ class LoginRequest(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None  # For compatibility
     password: str
-    remember_me: bool = False  # Cookie expiry: 30d if True, 1hr if False
 
     def get_email(self) -> str:
         """Get email from either email or username field.
@@ -137,7 +136,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
     Cookie is set automatically for browser clients; API clients use token from response body.
 
     Args:
-        login_request: Login credentials (email/username + password + optional remember_me)
+        login_request: Login credentials (email/username + password)
         request: FastAPI request object
         response: FastAPI response object (for setting cookie)
         db: Database session
@@ -152,8 +151,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         Email format (recommended):
             {
               "email": "admin@example.com",
-              "password": "ChangeMe_12345678$",
-              "remember_me": false
+              "password": "ChangeMe_12345678$"
             }
 
         Username format (compatibility):
@@ -196,7 +194,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         logger.warning(f"Login validation error: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Login error for {login_request.email or login_request.username}: {e}")
+        logger.error("Login error: %s", type(e).__name__)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
@@ -253,7 +251,7 @@ async def browser_login(login_request: LoginRequest, request: Request, response:
 
         # Set httpOnly cookie (token NOT in response body)
         try:
-            set_auth_cookie(response, access_token, max_age=expires_in)
+            set_auth_cookie(response, access_token)
         except CookieTooLargeError as e:
             logger.error(f"Cookie too large for user: {e}")
             raise HTTPException(
@@ -299,29 +297,64 @@ async def get_me(current_user: EmailUser = Depends(get_current_user_from_cookie)
 
 
 @auth_router.post("/logout")
-async def logout(response: Response, current_user: EmailUser = Depends(get_current_user_from_cookie)):
-    """Logout current user by clearing authentication cookie.
+async def logout(response: Response, request: Request, jwt_token: Optional[str] = Cookie(default=None)):
+    """Logout current user by clearing authentication cookie and revoking token.
 
     This endpoint is designed for browser clients using httpOnly cookies.
     It does NOT accept Bearer tokens from the Authorization header.
 
-    Stateless logout: Only clears the browser cookie. The JWT token itself
-    remains valid until expiration (no server-side revocation).
+    Logout always succeeds (returns 200) even if the cookie is expired, invalid,
+    or missing. This ensures users can always trigger logout regardless of token state.
+
+    Server-side revocation: Attempts to revoke the JWT token in the blocklist if
+    a valid token is present. If revocation fails or token is invalid, logout still
+    succeeds and the cookie is cleared.
 
     Args:
         response: FastAPI response object for setting cookies
-        current_user: Current authenticated user (from cookie)
+        request: FastAPI request object for reading cookies
+        jwt_token: Optional JWT token from cookie
 
     Returns:
-        Success response confirming logout
-
-    Raises:
-        HTTPException: 401 if no cookie or authentication fails
+        Success response confirming logout (always 200)
 
     Examples:
         Browser request with httpOnly cookie
     """
+    from datetime import datetime, timezone
 
+    from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
+    from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+
+    # Attempt token revocation if cookie present
+    if jwt_token:
+        try:
+            payload = await verify_jwt_token_cached(jwt_token, request)
+            jti = payload.get("jti")
+            email = payload.get("email", "unknown")
+
+            if jti:
+                blocklist_service = get_token_blocklist_service()
+
+                # Get token expiry from payload
+                exp_ts = payload.get("exp")
+                token_expiry = None
+                if exp_ts:
+                    token_expiry = datetime.fromtimestamp(exp_ts, tz=timezone.utc)
+
+                # Get last activity if present
+                last_activity = None
+                last_activity_ts = payload.get("last_activity")
+                if last_activity_ts:
+                    last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
+
+                blocklist_service.revoke_token(jti=jti, revoked_by=email, reason="user_logout", token_expiry=token_expiry, last_activity=last_activity)
+                logger.info(f"Token revoked during logout: jti={jti}")
+        except Exception as revoke_error:
+            # Log but don't fail logout if token revocation fails
+            logger.warning(f"Failed to revoke token during logout: {revoke_error}")
+
+    # Always clear cookie regardless of token validity
     clear_auth_cookie(response)
     logger.info("User logged out successfully")
 

@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException, Response
 
 # First-Party
-from mcpgateway.routers.auth import get_current_user_info, get_db, login, LoginRequest, logout
+from mcpgateway.routers.auth import get_db, login, LoginRequest, logout
 
 
 class TestLoginRequest:
@@ -303,38 +303,57 @@ class TestLogout:
         return user
 
     @pytest.mark.asyncio
-    async def test_logout_with_secret_str_jwt_key(self, mock_request, mock_db, mock_current_user):
-        """Test logout when jwt_secret_key is a SecretStr type (covers line 239)."""
-        from mcpgateway.routers.auth import logout
-
-        # Create a mock SecretStr
-        mock_secret_str = MagicMock()
-        mock_secret_str.get_secret_value.return_value = "test-secret-key"
+    async def test_logout_revokes_token_and_clears_cookie(self, mock_request):
+        """Test logout revokes token via JTI and clears cookie."""
+        mock_response = MagicMock()
+        mock_request.cookies = {"jwt_token": "test_token"}
 
         with (
+            patch("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
             patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_blocklist_service,
-            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.routers.auth.clear_auth_cookie") as mock_clear_cookie,
         ):
-            # Setup settings with SecretStr
-            mock_settings.jwt_secret_key = mock_secret_str
-            mock_settings.jwt_algorithm = "HS256"
+            # Mock token verification
+            mock_verify.return_value = {
+                "jti": "test-jti-123",
+                "email": "test@example.com",
+                "exp": 1234567890,
+            }
 
-            # Setup blocklist service
+            # Mock blocklist service
             mock_service = MagicMock()
-            mock_service.revoke_token.return_value = True
             mock_blocklist_service.return_value = mock_service
 
-            # Mock jwt.decode inside the function
-            with patch("jwt.decode") as mock_jwt_decode:
-                mock_jwt_decode.return_value = {
-                    "jti": "test-jti-123",
-                    "exp": 1234567890,
-                    "iat": 1234567800,
-                }
+            result = await logout(mock_response, mock_request, jwt_token="test_token")
 
-                response = await logout(mock_request, mock_current_user, mock_db)
+            assert result["message"] == "Logged out successfully"
+            mock_service.revoke_token.assert_called_once()
+            mock_clear_cookie.assert_called_once_with(mock_response)
 
-                assert response["message"] == "Logged out successfully"
-                assert response["revoked_token"] == "test-jti-123"
-                mock_secret_str.get_secret_value.assert_called_once()
-                mock_service.revoke_token.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_logout_succeeds_with_no_cookie(self, mock_request):
+        """Test logout succeeds even when no cookie is present."""
+        mock_response = MagicMock()
+
+        with patch("mcpgateway.routers.auth.clear_auth_cookie") as mock_clear_cookie:
+            result = await logout(mock_response, mock_request, jwt_token=None)
+
+            assert result["message"] == "Logged out successfully"
+            mock_clear_cookie.assert_called_once_with(mock_response)
+
+    @pytest.mark.asyncio
+    async def test_logout_succeeds_with_invalid_token(self, mock_request):
+        """Test logout succeeds even when token verification fails."""
+        mock_response = MagicMock()
+
+        with (
+            patch("mcpgateway.utils.verify_credentials.verify_jwt_token_cached", new_callable=AsyncMock) as mock_verify,
+            patch("mcpgateway.routers.auth.clear_auth_cookie") as mock_clear_cookie,
+        ):
+            # Mock token verification failure
+            mock_verify.side_effect = Exception("Invalid token")
+
+            result = await logout(mock_response, mock_request, jwt_token="invalid_token")
+
+            assert result["message"] == "Logged out successfully"
+            mock_clear_cookie.assert_called_once_with(mock_response)

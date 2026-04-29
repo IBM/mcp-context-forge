@@ -21,7 +21,7 @@ def test_set_auth_cookie_uses_short_expiry_and_insecure_in_dev(monkeypatch) -> N
     )
 
     resp = Response()
-    security_cookies.set_auth_cookie(resp, token="tok123", remember_me=False)
+    security_cookies.set_auth_cookie(resp, token="tok123")
 
     header = resp.headers.get("set-cookie") or ""
     assert "jwt_token=tok123" in header
@@ -29,23 +29,6 @@ def test_set_auth_cookie_uses_short_expiry_and_insecure_in_dev(monkeypatch) -> N
     assert "Path=/" in header
     assert "HttpOnly" in header
     assert "Secure" not in header
-
-
-def test_set_auth_cookie_remember_me_sets_long_expiry_and_secure_in_production(monkeypatch) -> None:
-    monkeypatch.setattr(
-        security_cookies,
-        "settings",
-        SimpleNamespace(environment="production", secure_cookies=False, cookie_samesite="strict", app_root_path="/mcp"),
-    )
-
-    resp = Response()
-    security_cookies.set_auth_cookie(resp, token="tok123", remember_me=True)
-
-    header = resp.headers.get("set-cookie") or ""
-    assert "Max-Age=2592000" in header  # 30 days
-    assert "Path=/mcp" in header
-    assert "SameSite=strict" in header
-    assert "Secure" in header
 
 
 def test_clear_auth_cookie_uses_same_security_attributes(monkeypatch) -> None:
@@ -56,7 +39,7 @@ def test_clear_auth_cookie_uses_same_security_attributes(monkeypatch) -> None:
     )
 
     resp = Response()
-    security_cookies.set_auth_cookie(resp, token="tok123", remember_me=False)
+    security_cookies.set_auth_cookie(resp, token="tok123")
     security_cookies.clear_auth_cookie(resp)
 
     # Starlette appends a second Set-Cookie header for the deletion.
@@ -93,7 +76,7 @@ def test_set_auth_cookie_best_effort_sub_extraction_swallows_decode_errors(monke
 
     resp = Response()
     # Second segment is intentionally not valid base64/json, triggering the best-effort except block.
-    security_cookies.set_auth_cookie(resp, token="header..sig", remember_me=False)
+    security_cookies.set_auth_cookie(resp, token="header..sig")
 
     header = resp.headers.get("set-cookie") or ""
     assert "jwt_token=header..sig" in header
@@ -109,7 +92,7 @@ def test_set_auth_cookie_warns_when_cookie_approaches_limit(monkeypatch, caplog)
 
     resp = Response()
     with caplog.at_level(logging.WARNING, logger=security_cookies.logger.name):
-        security_cookies.set_auth_cookie(resp, token="tok123", remember_me=False)
+        security_cookies.set_auth_cookie(resp, token="tok123")
 
     assert any("approaching" in rec.message for rec in caplog.records)
 
@@ -122,4 +105,4 @@ def test_set_auth_cookie_raises_when_cookie_exceeds_hard_limit(monkeypatch) -> N
     )
 
     with pytest.raises(security_cookies.CookieTooLargeError):
-        security_cookies.set_auth_cookie(Response(), token="x" * 5000, remember_me=False)
+        security_cookies.set_auth_cookie(Response(), token="x" * 5000)
