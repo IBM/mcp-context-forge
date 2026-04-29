@@ -165,6 +165,45 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
+    @patch("mcpgateway.main.tool_service.delete_tool", new_callable=AsyncMock)
+    @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
+    def test_delete_private_tool_non_owner_admin_returns_403(
+        self,
+        mock_delete_tool: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that non-owner admin cannot delete private tool owned by another admin.
+        """
+        TestSessionLocal, _ = test_db_and_client
+
+        # Mock service to raise PermissionError for private tool deletion
+        mock_delete_tool.side_effect = PermissionError("Only the owner can delete this private tool")
+
+        # Set up user context as admin but NOT the owner
+        mock_user = MagicMock()
+        mock_user.email = "admin-b@example.com"
+
+        app.dependency_overrides[require_auth] = lambda: "admin-b@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "admin-b@example.com", is_admin=True, TestSessionLocal=TestSessionLocal
+        )
+
+        client = TestClient(app)
+
+        # Attempt to delete private tool owned by admin-a@example.com
+        response = client.delete(
+            "/tools/private-tool-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
+
+        # Verify HTTP 403 Forbidden - admin cannot delete another admin's private tool
+        assert response.status_code == 403
+        assert "Only the owner can delete this private tool" in response.json()["detail"]
+
+        # Cleanup
+        app.dependency_overrides.clear()
+
     @patch("mcpgateway.main.tool_service.update_tool", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_update_tool_non_owner_returns_403(
