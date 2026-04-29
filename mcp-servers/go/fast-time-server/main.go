@@ -160,6 +160,7 @@ import (
     "bufio"
     "context"
     "encoding/json"
+    "fast-time-server/timestamp"
     "flag"
     "fmt"
     "io"
@@ -952,6 +953,7 @@ func main() {
         ),
     )
     s.AddTool(convertTimeTool, handleConvertTime)
+    timestamp.NewTimestampManager(s) // session var test
 
     /* ----------------------- register resources ---------------------- */
     // Register timezone information resource
