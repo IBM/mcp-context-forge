@@ -922,122 +922,53 @@ wheels = [
 
 [[package]]
 name = "cpex-encoded-exfil-detection"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/encoded_exfil_detection" }
+version = "0.2.1"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fencoded_exfil_detection&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" },
-    { name = "pydantic", specifier = ">=2,<3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
 ]
 
 [[package]]
 name = "cpex-pii-filter"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/pii_filter" }
+version = "0.2.2"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fpii_filter&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
 ]
 
 [[package]]
 name = "cpex-rate-limiter"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/rate_limiter" }
+version = "0.0.5"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Frate_limiter&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "redis", specifier = ">=5.0" },
 ]
 
 [[package]]
 name = "cpex-retry-with-backoff"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/retry_with_backoff" }
+version = "0.2.1"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fretry_with_backoff&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" },
-    { name = "pydantic", specifier = ">=2,<3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pydantic", specifier = ">=2,<3" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
 ]
 
 [[package]]
 name = "cpex-secrets-detection"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/secrets_detection" }
+version = "0.2.1"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fsecrets_detection&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pydantic", specifier = ">=2,<3" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
 name = "cpex-url-reputation"
-source = { editable = "../cpex-plugins/plugins/rust/python-package/url_reputation" }
+version = "0.2.1"
+source = { git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Furl_reputation&branch=fix%2Fuse-cpex-framework-dependency#0f086ae368d2b799d7325ec09376921467ec5010" }
 dependencies = [
     { name = "cpex" },
     { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cpex", specifier = ">=0.1.0.dev11,<0.2.0" },
-    { name = "pydantic", specifier = ">=2,<3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "maturin", specifier = ">=1.12.6" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
 ]
 
 [[package]]
@@ -3157,12 +3088,12 @@ requires-dist = [
     { name = "brotli", specifier = "==1.2.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = ">=0.1.0.dev11,<0.1.0.dev12" },
-    { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/encoded_exfil_detection" },
-    { name = "cpex-pii-filter", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/pii_filter" },
-    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/rate_limiter" },
-    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/retry_with_backoff" },
-    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/secrets_detection" },
-    { name = "cpex-url-reputation", marker = "extra == 'plugins'", editable = "../cpex-plugins/plugins/rust/python-package/url_reputation" },
+    { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fencoded_exfil_detection&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-pii-filter", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fpii_filter&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Frate_limiter&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fretry_with_backoff&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-secrets-detection", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Fsecrets_detection&branch=fix%2Fuse-cpex-framework-dependency" },
+    { name = "cpex-url-reputation", marker = "extra == 'plugins'", git = "ssh://git@github.com/IBM/cpex-plugins.git?subdirectory=plugins%2Frust%2Fpython-package%2Furl_reputation&branch=fix%2Fuse-cpex-framework-dependency" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastapi", specifier = ">=0.135.3" },
     { name = "filelock", specifier = ">=3.25.2" },
