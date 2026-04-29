@@ -1000,15 +1000,10 @@ Verify:
 ### 12.5 Run plugin unit tests
 
 ```bash
-# PII filter unit tests, when the plugin test source is present in the checkout
-if find tests/unit/mcpgateway/plugins/plugins/pii_filter -name 'test_*.py' | grep -q .; then
-  ./.venv/bin/pytest tests/unit/mcpgateway/plugins/plugins/pii_filter -v
-fi
-
-# Rust plugin tests, if the Rust workspace crates are present
-if [ -f crates/validation_middleware_rust/Cargo.toml ]; then
-  make rust-test
-fi
+# PII filter unit tests
+PII_FILTER_TESTS=$(find tests -path '*pii_filter*' -name 'test_*.py')
+test -n "$PII_FILTER_TESTS"
+./.venv/bin/pytest $PII_FILTER_TESTS -v
 ```
 
 ### 12.6 Cleanup
