@@ -46,7 +46,7 @@ mcpContextForge:
     # Dev credentials (match previous deployment)
     BASIC_AUTH_USER: admin
     BASIC_AUTH_PASSWORD: changeme
-    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes  # checkov:skip=CKV_SECRET_6:placeholder value, replace before production use
     AUTH_ENCRYPTION_SECRET: my-test-salt
     AUTH_REQUIRED: "true"
     MCP_REQUIRE_AUTH: "true"

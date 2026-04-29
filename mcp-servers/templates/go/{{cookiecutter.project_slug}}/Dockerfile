@@ -18,4 +18,5 @@ LABEL org.opencontainers.image.source=https://github.com/contextforge/mcp-contex
 COPY --from=builder /usr/local/bin/{{ cookiecutter.bin_name }} /{{ cookiecutter.bin_name }}
 
 USER 1001:1001
+# checkov:skip=CKV_DOCKER_2:scratch image has no shell or tooling for healthcheck
 ENTRYPOINT ["/{{ cookiecutter.bin_name }}"]

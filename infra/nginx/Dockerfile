@@ -38,5 +38,8 @@ EXPOSE 80 443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost/health || curl -fk https://localhost/health || exit 1
 
+# Run as nginx user (non-root)
+USER nginx
+
 # Run via entrypoint (handles env var processing)
 ENTRYPOINT ["/docker-entrypoint.sh"]

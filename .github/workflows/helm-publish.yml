@@ -30,6 +30,7 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    # checkov:skip=CKV_GHA_7:dry_run controls lint-only mode, does not affect build output content
     inputs:
       dry_run:
         description: "Lint only — skip publish"

@@ -49,7 +49,7 @@ plugins:
           events: ["violation", "rate_limit_exceeded"]
           authentication:
             type: "bearer"
-            token: "test-token-123"
+            token: "test-token-123"  # checkov:skip=CKV_SECRET_6:test placeholder token, not a real credential
           retry_attempts: 1
           retry_delay: 500
           timeout: 5

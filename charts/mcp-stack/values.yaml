@@ -804,7 +804,7 @@ mcpContextForge:
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
-    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes  # checkov:skip=CKV_SECRET_6:placeholder value, replace before production use            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
@@ -1240,7 +1240,7 @@ redis:
     # Use an existing secret for Redis password (optional)
     existingSecret: ""
     passwordKey: "REDIS_PASSWORD"
-    password: "change-me-redis"      # CHANGE ME in production!
+    password: "change-me-redis"  # checkov:skip=CKV_SECRET_6:placeholder value, replace before production use      # CHANGE ME in production!
   # Transport recommendation:
   # For production, prefer TLS (for example rediss:// via redis.external.url
   # or a managed Redis endpoint with TLS enabled).
@@ -1423,7 +1423,7 @@ minio:
   existingSecret: ""
   credentials:
     rootUser: minioadmin
-    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+    rootPassword: minioadminchangeme  # checkov:skip=CKV_SECRET_6:placeholder value, replace before production use # CHANGE IN PRODUCTION!
 
   service:
     type: ClusterIP
