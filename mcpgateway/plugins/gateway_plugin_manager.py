@@ -14,6 +14,7 @@ gateway-specific features:
 - Per-plugin Redis mode overrides via ``_apply_redis_mode_overrides``
 - ``invalidate_all`` / ``invalidate_team`` for cross-worker propagation
 - CF-owned ``PluginConfigOverride`` with ``on_error`` field
+- Optional DB wiring for per-tool plugin bindings
 
 Context ID convention: ``"<team_id>::<tool_name>"``
 """
@@ -73,6 +74,7 @@ class _CachedManager:
         self.created_at = created_at
 
     def is_expired(self, ttl: float) -> bool:
+        """Return True when ``ttl > 0`` and the entry is older than ``ttl`` seconds."""
         return ttl > 0 and (time.monotonic() - self.created_at) > ttl
 
 
@@ -80,10 +82,18 @@ class TenantPluginManagerFactory:
     """Standalone factory for context-scoped TenantPluginManager instances.
 
     TTL caching, Redis mode overrides, invalidate_all/invalidate_team,
-    and on_error support in _merge_tenant_config.
+    on_error support, and optional DB wiring for per-tool plugin bindings.
+
+    When *db_factory* is provided, ``get_config_from_db`` reads
+    ``ToolPluginBinding`` rows for the context.  Without it the method
+    returns ``None`` and the base YAML config is used as-is.
+
+    Context IDs must follow the ``"<team_id>::<tool_name>"`` convention.
+    Call sites should use :func:`make_context_id` to construct them.
     """
 
     DEFAULT_CACHE_TTL = 30
+    CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
 
     def __init__(
         self,
@@ -92,6 +102,7 @@ class TenantPluginManagerFactory:
         observability: Optional[ObservabilityProvider] = None,
         hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
         cache_ttl: Optional[int] = None,
+        db_factory: Optional[Callable[[], Session]] = None,
     ):
         """Initialise the factory, loading base config from *yaml_path*."""
         self._base_config: Config = ConfigLoader.load_config(yaml_path)
@@ -102,6 +113,7 @@ class TenantPluginManagerFactory:
         self._inflight: dict[str, asyncio.Task[TenantPluginManager]] = {}
         self._lock = asyncio.Lock()
         self._cache_ttl = cache_ttl if cache_ttl is not None else self.DEFAULT_CACHE_TTL
+        self._db_factory = db_factory
 
     @property
     def observability(self) -> Optional[ObservabilityProvider]:
@@ -321,57 +333,13 @@ class TenantPluginManagerFactory:
                 logger.exception("Failed to shutdown plugin manager")
 
     async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
-        """Base implementation returns None; overridden by GatewayTenantPluginManagerFactory."""
-        return None
-
-    async def invalidate_all(self) -> None:
-        """Reload every cached manager, logging failures instead of aborting the sweep."""
-        async with self._lock:
-            context_ids = list(self._managers.keys())
-        for ctx_id in context_ids:
-            try:
-                await self.reload_tenant(ctx_id)
-            except Exception as exc:
-                logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, exc)
-
-    async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
-        """Reload every cached manager whose context_id starts with team_id plus separator."""
-        sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
-        prefix = f"{team_id}{sep}"
-        async with self._lock:
-            context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
-        for ctx_id in context_ids:
-            try:
-                await self.reload_tenant(ctx_id)
-            except Exception as exc:
-                logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, exc)
-
-    def iter_context_ids(self) -> list[str]:
-        """Return a snapshot of the cached context IDs."""
-        return list(self._managers.keys())
-
-
-class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
-    """TenantPluginManagerFactory wired to the gateway's ToolPluginBinding table.
-
-    Context IDs must follow the ``"<team_id>::<tool_name>"`` convention.
-    Call sites should use :func:`make_context_id` to construct them.
-    """
-
-    CONTEXT_ID_SEPARATOR = CONTEXT_ID_SEPARATOR
-
-    def __init__(self, *args: Any, db_factory: Callable[[], Session], **kwargs: Any) -> None:
-        """Initialise with a *db_factory* for reading tool plugin bindings."""
-        super().__init__(*args, **kwargs)
-        self._db_factory = db_factory
-
-    async def get_config_from_db(self, context_id: str) -> Optional[list[PluginConfigOverride]]:
         """Fetch per-tool plugin overrides from the DB for *context_id*.
 
-        Returns:
-            List of :class:`PluginConfigOverride` for this tool,
-            or ``None`` if no bindings exist.
+        Returns ``None`` when no *db_factory* is configured or no bindings exist.
         """
+        if self._db_factory is None:
+            return None
+
         if CONTEXT_ID_SEPARATOR not in context_id:
             logger.debug("get_config_from_db: unrecognised context_id format %r, skipping", context_id)
             return None
@@ -422,7 +390,37 @@ class GatewayTenantPluginManagerFactory(TenantPluginManagerFactory):
 
         return overrides if overrides else None
 
+    async def invalidate_all(self) -> None:
+        """Reload every cached manager, logging failures instead of aborting the sweep."""
+        async with self._lock:
+            context_ids = list(self._managers.keys())
+        for ctx_id in context_ids:
+            try:
+                await self.reload_tenant(ctx_id)
+            except Exception as exc:
+                logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, exc)
+
+    async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
+        """Reload every cached manager whose context_id starts with team_id plus separator."""
+        sep = separator if separator is not None else CONTEXT_ID_SEPARATOR
+        prefix = f"{team_id}{sep}"
+        async with self._lock:
+            context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
+        for ctx_id in context_ids:
+            try:
+                await self.reload_tenant(ctx_id)
+            except Exception as exc:
+                logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, exc)
+
+    def iter_context_ids(self) -> list[str]:
+        """Return a snapshot of the cached context IDs."""
+        return list(self._managers.keys())
+
+
+# Keep the alias so existing imports don't break during transition.
+GatewayTenantPluginManagerFactory = TenantPluginManagerFactory
+
 
 def make_context_id(team_id: str, tool_name: str) -> str:
-    """Build the context_id string expected by GatewayTenantPluginManagerFactory."""
+    """Build the context_id string expected by TenantPluginManagerFactory."""
     return f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"

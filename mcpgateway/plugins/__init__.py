@@ -246,26 +246,15 @@ def init_plugin_manager_factory(
     global _observability_service
     _observability_service = observability
     # First-Party
-    from mcpgateway.plugins.gateway_plugin_manager import (  # pylint: disable=import-outside-toplevel
-        GatewayTenantPluginManagerFactory,
-        TenantPluginManagerFactory,
-    )
+    from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory  # pylint: disable=import-outside-toplevel
 
-    if db_factory is not None:
-        _plugin_manager_factory = GatewayTenantPluginManagerFactory(
-            yaml_path=yaml_path,
-            timeout=timeout,
-            hook_policies=hook_policies,
-            observability=observability,
-            db_factory=db_factory,
-        )
-    else:
-        _plugin_manager_factory = TenantPluginManagerFactory(
-            yaml_path=yaml_path,
-            timeout=timeout,
-            hook_policies=hook_policies,
-            observability=observability,
-        )
+    _plugin_manager_factory = TenantPluginManagerFactory(
+        yaml_path=yaml_path,
+        timeout=timeout,
+        hook_policies=hook_policies,
+        observability=observability,
+        db_factory=db_factory,
+    )
 
 
 async def get_plugin_manager(server_id: str = DEFAULT_SERVER_ID) -> Optional[TenantPluginManager]:
