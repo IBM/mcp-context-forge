@@ -36,7 +36,7 @@ describe("Gateways", () => {
     expect(screen.getByText("Translate a gRPC endpoint as a MCP tool.")).toBeInTheDocument();
   });
 
-  it("renders MCP server connect button that opens modal", async () => {
+  it("navigates to servers page with open parameter when MCP server connect button is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Gateways />);
 
@@ -47,12 +47,8 @@ describe("Gateways", () => {
     // Click the first button (MCP server)
     await user.click(buttons[0]!);
 
-    // Wait for the modal to appear and check for dialog
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog).toBeInTheDocument();
-
-    // Check for the modal content - look for the description text which is unique
-    expect(await screen.findByText("Create a new MCP server connection.")).toBeInTheDocument();
+    // Verify navigation to servers page with openForm=true parameter
+    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
 
   it("navigates to agents page when AI agent card button is clicked", async () => {
