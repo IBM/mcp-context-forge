@@ -119,6 +119,36 @@ class TestGetUser:
         assert "test@example.com" in cache._user_cache
 
     @pytest.mark.asyncio
+    async def test_redis_get_error_logs_warning_and_returns_none(self, cache, mock_redis):
+        """Line 438: except block in get_user when redis.get() raises."""
+        mock_redis.get = AsyncMock(side_effect=RuntimeError("Redis connection lost"))
+
+        with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+            result = await cache.get_user("test@example.com")
+
+        assert result is None
+        assert cache._miss_count == 1
+
+    @pytest.mark.asyncio
+    async def test_set_user_with_redis_stores_in_both_tiers(self, cache, mock_redis):
+        """Lines 463/466: import orjson and setex inside set_user try block."""
+        with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+            await cache.set_user("test@example.com", _USER_DICT)
+
+        mock_redis.setex.assert_awaited_once()
+        assert "test@example.com" in cache._user_cache
+
+    @pytest.mark.asyncio
+    async def test_set_user_redis_error_still_populates_l1(self, cache, mock_redis):
+        """Line 468: except block in set_user when redis.setex() raises."""
+        mock_redis.setex = AsyncMock(side_effect=RuntimeError("Redis write failed"))
+
+        with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+            await cache.set_user("test@example.com", _USER_DICT)
+
+        assert "test@example.com" in cache._user_cache
+
+    @pytest.mark.asyncio
     async def test_stats_includes_user_cache_size(self, cache):
         await cache.set_user("test@example.com", _USER_DICT)
         stats = cache.stats()

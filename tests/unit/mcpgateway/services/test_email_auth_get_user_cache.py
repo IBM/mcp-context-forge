@@ -94,6 +94,16 @@ def test_user_dict_to_obj_round_trip():
     assert obj.created_at.tzinfo is not None
 
 
+def test_user_dict_to_obj_accepts_datetime_objects():
+    """Line 110: _dt() returns v directly when v is already a datetime."""
+    d = dict(_USER_DICT)
+    d["created_at"] = _NOW
+    d["updated_at"] = _NOW
+    obj = _user_dict_to_obj(d)
+    assert obj.created_at == _NOW
+    assert obj.updated_at == _NOW
+
+
 # ---------- get_user_by_email cache hit ----------
 
 
@@ -188,3 +198,20 @@ async def test_deactivate_user_invalidates_cache(service, mock_db):
         await service.deactivate_user("test@example.com")
 
     mock_inv.assert_awaited_once_with("test@example.com")
+
+
+@pytest.mark.asyncio
+async def test_get_user_by_email_set_cache_error_still_returns_user(service, mock_db):
+    """Line 598: except block when auth_cache.set_user() raises."""
+    db_user = _make_email_user()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = db_user
+
+    mock_cache = AsyncMock()
+    mock_cache.get_user = AsyncMock(return_value=None)
+    mock_cache.set_user = AsyncMock(side_effect=RuntimeError("Cache write failed"))
+
+    with patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+        result = await service.get_user_by_email("test@example.com")
+
+    assert result is not None
+    assert result.email == "test@example.com"
