@@ -6,7 +6,7 @@ Authors: Mihai Criveti
 
 Add binding_reference_id to tool_plugin_bindings.
 
-Revision ID: ff03273d8f93
+Revision ID: d3e4f5a6b7c8
 Revises: 1a02944e2671
 Create Date: 2026-04-10
 """
@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "ff03273d8f93"  # pragma: allowlist secret
+revision: str = "d3e4f5a6b7c8"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "1a02944e2671"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
