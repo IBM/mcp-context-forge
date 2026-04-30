@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { ChevronsUpDown, Globe } from "lucide-react";
 import {
   DropdownMenu,
@@ -23,9 +23,16 @@ export function TeamSwitcher() {
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
   const { data, isLoading, error } = useQuery<TeamsResponse>("/teams");
 
-  const teams = data?.teams ?? [];
-  const currentTeam = selectedTeam ? teams.find((t) => t.id === selectedTeam) : null;
+  const teams = useMemo(() => data?.teams ?? [], [data?.teams]);
+  const currentTeam = useMemo(
+    () => (selectedTeam ? teams.find((t) => t.id === selectedTeam) : null),
+    [selectedTeam, teams]
+  );
   const displayName = currentTeam?.name ?? "All teams";
+
+  const handleSelectTeam = useCallback((teamId: string | null) => {
+    setSelectedTeam(teamId);
+  }, []);
 
   return (
     <DropdownMenu>
@@ -66,7 +73,7 @@ export function TeamSwitcher() {
         )}
         <DropdownMenuItem
           className="gap-2 p-2"
-          onClick={() => setSelectedTeam(null)}
+          onClick={() => handleSelectTeam(null)}
           aria-label="Select all teams"
           aria-current={selectedTeam === null ? "true" : "false"}
         >
@@ -79,7 +86,7 @@ export function TeamSwitcher() {
           <DropdownMenuItem
             key={team.id}
             className="gap-2 p-2"
-            onClick={() => setSelectedTeam(team.id)}
+            onClick={() => handleSelectTeam(team.id)}
             aria-label={`Select ${team.name} team${team.description ? `: ${team.description}` : ""}`}
             aria-current={selectedTeam === team.id ? "true" : "false"}
           >
