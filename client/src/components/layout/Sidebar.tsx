@@ -28,7 +28,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
 } from "../ui/sidebar";
 import { TeamSwitcher } from "./TeamSwitcher";
 
@@ -95,7 +94,6 @@ export function AppSidebar() {
                   <MainNavIcon className="w-6 h-6" />
                 </span>
               </div>
-              <SidebarTrigger className="shrink-0" />
               <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
                 <TeamSwitcher />
               </div>
