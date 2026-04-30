@@ -26,7 +26,7 @@ export function TeamSwitcher() {
   const teams = useMemo(() => data?.teams ?? [], [data?.teams]);
   const currentTeam = useMemo(
     () => (selectedTeam ? teams.find((t) => t.id === selectedTeam) : null),
-    [selectedTeam, teams]
+    [selectedTeam, teams],
   );
   const displayName = currentTeam?.name ?? "All teams";
 
@@ -61,11 +61,11 @@ export function TeamSwitcher() {
         side="bottom"
         sideOffset={4}
       >
-        {error && (
+        {error ? (
           <DropdownMenuItem disabled className="gap-2 p-2 text-destructive" role="alert">
             Failed to load teams
           </DropdownMenuItem>
-        )}
+        ) : null}
         {!error && teams.length === 0 && !isLoading && (
           <DropdownMenuItem disabled className="gap-2 p-2 text-muted-foreground" role="status">
             No teams available
@@ -77,7 +77,10 @@ export function TeamSwitcher() {
           aria-label="Select all teams"
           aria-current={selectedTeam === null ? "true" : "false"}
         >
-          <div className="flex size-6 items-center justify-center rounded-sm border bg-background" aria-hidden="true">
+          <div
+            className="flex size-6 items-center justify-center rounded-sm border bg-background"
+            aria-hidden="true"
+          >
             <Globe className="size-4 shrink-0 text-muted-foreground" />
           </div>
           All teams
@@ -90,7 +93,10 @@ export function TeamSwitcher() {
             aria-label={`Select ${team.name} team${team.description ? `: ${team.description}` : ""}`}
             aria-current={selectedTeam === team.id ? "true" : "false"}
           >
-            <div className="flex size-6 items-center justify-center rounded-sm border bg-background" aria-hidden="true">
+            <div
+              className="flex size-6 items-center justify-center rounded-sm border bg-background"
+              aria-hidden="true"
+            >
               <Globe className="size-4 shrink-0 text-muted-foreground" />
             </div>
             {team.name}
