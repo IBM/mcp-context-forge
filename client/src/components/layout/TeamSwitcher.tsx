@@ -33,14 +33,19 @@ export function TeamSwitcher() {
         <SidebarMenuButton
           size="default"
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+          aria-label={`Select team. Current: ${displayName}`}
+          aria-haspopup="menu"
+          aria-expanded={undefined}
         >
-          <div className="flex aspect-square size-6 items-center justify-center">
+          <div className="flex aspect-square size-6 items-center justify-center" aria-hidden="true">
             <Globe className="size-3 text-sidebar-foreground" />
           </div>
           <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">{isLoading ? "Loading..." : displayName}</span>
+            <span className="truncate font-semibold" aria-live={isLoading ? "polite" : "off"}>
+              {isLoading ? "Loading..." : displayName}
+            </span>
           </div>
-          <ChevronsUpDown className="ml-auto" />
+          <ChevronsUpDown className="ml-auto" aria-hidden="true" />
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -50,17 +55,22 @@ export function TeamSwitcher() {
         sideOffset={4}
       >
         {error && (
-          <DropdownMenuItem disabled className="gap-2 p-2 text-destructive">
+          <DropdownMenuItem disabled className="gap-2 p-2 text-destructive" role="alert">
             Failed to load teams
           </DropdownMenuItem>
         )}
         {!error && teams.length === 0 && !isLoading && (
-          <DropdownMenuItem disabled className="gap-2 p-2 text-muted-foreground">
+          <DropdownMenuItem disabled className="gap-2 p-2 text-muted-foreground" role="status">
             No teams available
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem className="gap-2 p-2" onClick={() => setSelectedTeam(null)}>
-          <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
+        <DropdownMenuItem
+          className="gap-2 p-2"
+          onClick={() => setSelectedTeam(null)}
+          aria-label="Select all teams"
+          aria-current={selectedTeam === null ? "true" : "false"}
+        >
+          <div className="flex size-6 items-center justify-center rounded-sm border bg-background" aria-hidden="true">
             <Globe className="size-4 shrink-0 text-muted-foreground" />
           </div>
           All teams
@@ -70,8 +80,10 @@ export function TeamSwitcher() {
             key={team.id}
             className="gap-2 p-2"
             onClick={() => setSelectedTeam(team.id)}
+            aria-label={`Select ${team.name} team${team.description ? `: ${team.description}` : ""}`}
+            aria-current={selectedTeam === team.id ? "true" : "false"}
           >
-            <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
+            <div className="flex size-6 items-center justify-center rounded-sm border bg-background" aria-hidden="true">
               <Globe className="size-4 shrink-0 text-muted-foreground" />
             </div>
             {team.name}
