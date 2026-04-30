@@ -10,7 +10,7 @@ export function Header() {
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4">
-      <SidebarTrigger className="md:hidden" />
+      <SidebarTrigger />
       <div className="flex items-center gap-3">
         <LanguageSwitcher />
         <ThemeToggle />
