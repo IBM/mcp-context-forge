@@ -42,6 +42,9 @@ from .pages.version_page import VersionPage
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
+# Ensure BASE_URL has trailing slash for proper Playwright relative URL resolution
+if not BASE_URL.endswith("/"):
+    BASE_URL = BASE_URL + "/"
 API_TOKEN = os.getenv("MCP_AUTH", "")
 DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
 PLAYWRIGHT_VIDEO_SIZE = os.getenv("PLAYWRIGHT_VIDEO_SIZE", "1920x1080")
@@ -474,13 +477,15 @@ def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
 
 
 @pytest.fixture
-def test_tool_data():
+def test_tool_data(base_url: str):
     """Provide test data for tool creation."""
     unique_id = uuid.uuid4()
+    # Use base_url/health to avoid SSRF protection issues
+    tool_url = f"{base_url.rstrip('/')}/health"
     return {
         "name": f"test-api-tool-{unique_id}",
         "description": "Test API tool for automation",
-        "url": "https://api.example.com/test",
+        "url": tool_url,
         "integrationType": "REST",
         "requestType": "GET",
         "headers": '{"Authorization": "Bearer test-token"}',
