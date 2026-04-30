@@ -17,6 +17,7 @@ import functools
 from functools import wraps
 import logging
 from typing import Any, Callable, Generator, List, Optional
+from urllib.parse import quote
 import uuid
 import warnings
 
@@ -39,6 +40,26 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
+
+
+def _login_url_with_next(request: Request) -> str:
+    """Build login redirect URL, preserving the original request path as ?next= parameter.
+
+    This ensures that after SSO login, the user is redirected back to the page
+    they were trying to access (e.g. /oauth/authorize/{gateway_id}).
+
+    Args:
+        request: The incoming request whose path should be preserved.
+
+    Returns:
+        Login URL with optional ?next= parameter.
+    """
+    login_url = f"{settings.app_root_path}/admin/login"
+    request_path = request.scope.get("path", "/")
+    # Don't add ?next= for the login page itself (avoid redirect loops) or root paths
+    if request_path and request_path != "/" and not request_path.rstrip("/").endswith("/admin/login"):
+        login_url = f"{login_url}?next={quote(request_path, safe='')}"
+    return login_url
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
@@ -268,7 +289,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                     raise HTTPException(
                         status_code=status.HTTP_302_FOUND,
                         detail="Authentication required",
-                        headers={"Location": f"{settings.app_root_path}/admin/login"},
+                        headers={"Location": _login_url_with_next(request)},
                     )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -302,7 +323,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 raise HTTPException(
                     status_code=status.HTTP_302_FOUND,
                     detail="Authentication required",
-                    headers={"Location": f"{settings.app_root_path}/admin/login"},
+                    headers={"Location": _login_url_with_next(request)},
                 )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -365,7 +386,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
         if is_browser_request:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": _login_url_with_next(request)})
 
         # AUTH_REQUIRED=false no longer implies admin access.
         # Preserve explicit unsafe override for local-only compatibility.
@@ -448,7 +469,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": _login_url_with_next(request)})
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
 

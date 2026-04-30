@@ -65,11 +65,11 @@ from starlette.types import Receive, Scope, Send
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
-from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
+from mcpgateway.meta_server.service import get_meta_server_service
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.models import UserContext
@@ -294,6 +294,9 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
         return [url]
     return []
 
+# Meta-server context: stores server_type for the current request
+server_type_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_type", default="standard")
+hide_underlying_tools_var: contextvars.ContextVar[bool] = contextvars.ContextVar("hide_underlying_tools", default=True)
 
 _shared_session_registry: Optional[Any] = None
 _rust_event_store_client: Optional[httpx.AsyncClient] = None
@@ -1396,8 +1399,14 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
+
                 # List tools with _meta forwarded
-                result = await session.list_tools(params=_build_paginated_params(meta))
+                result = await session.list_tools(params=params)
                 return result.tools
 
     except Exception as e:
@@ -1444,16 +1453,21 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
-            # CWE-532: log only key names, never values which may carry PII/tokens
-            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         # Use MCP SDK to connect and list resources
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
 
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug("Forwarding _meta to remote gateway: %s", meta)
+
                 # List resources with _meta forwarded
-                result = await session.list_resources(params=_build_paginated_params(meta))
+                result = await session.list_resources(params=params)
 
                 logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
                 return result.resources
@@ -1510,8 +1524,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
-            # CWE-532: log only key names, never values which may carry PII/tokens
-            logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+            logger.debug("Forwarding _meta to remote gateway: %s", meta)
 
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -1521,10 +1534,8 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 # Prepare request params with _meta if provided
                 if meta:
                     # Create params and inject _meta
-                    # by_alias=True ensures the alias "_meta" key is written so
-                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
                     request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump(by_alias=True)
+                    request_params_dict = request_params.model_dump()
                     request_params_dict["_meta"] = meta
 
                     # Send request with _meta
@@ -1636,6 +1647,9 @@ async def call_tool(name: str, arguments: dict) -> Union[
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
 
+    # Preserve actual email for OAuth token lookup before admin bypass nulls it
+    actual_user_email = user_email
+
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
     if is_admin and token_teams is None:
@@ -1667,6 +1681,20 @@ async def call_tool(name: str, arguments: dict) -> Union[
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
+
+    # Check if this is a meta-tool call on a meta-server
+    current_server_type = server_type_var.get()
+    meta_service = get_meta_server_service()
+    if meta_service.is_meta_server(current_server_type) and meta_service.is_meta_tool(name):
+        # Dispatch to meta-tool stub handler
+        # Use actual_user_email (not RBAC-filtered user_email) so OAuth token lookup works
+        result_data = await meta_service.handle_meta_tool_call(
+            name, arguments,
+            user_email=actual_user_email,
+            token_teams=token_teams,
+            request_headers=request_headers,
+        )
+        return [types.TextContent(type="text", text=orjson.dumps(result_data).decode())]
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -2173,6 +2201,15 @@ async def list_tools() -> List[types.Tool]:
     if not settings.mcp_require_auth:
         await _check_server_oauth_enforcement(server_id, user_context)
 
+    # Check if this is a meta-server that should expose meta-tools instead
+    current_server_type = server_type_var.get()
+    current_hide_underlying = hide_underlying_tools_var.get()
+    meta_service = get_meta_server_service()
+    if meta_service.should_hide_underlying_tools(current_server_type, current_hide_underlying):
+        # Return meta-tools instead of underlying real tools
+        meta_tool_defs = meta_service.get_meta_tool_definitions()
+        return [types.Tool(name=td["name"], description=td["description"], inputSchema=td["inputSchema"]) for td in meta_tool_defs]
+
     if server_id:
         try:
             async with get_db() as db:
@@ -2596,20 +2633,23 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         return ""
 
                     # Direct proxy mode: forward request to remote MCP server
-                    # SECURITY: CWE-532 protection - Log only meta_data key names, NEVER values
-                    # Metadata may contain PII, authentication tokens, or sensitive context that
-                    # MUST NOT be written to logs. This is a critical security control.
-                    logger.debug(
-                        "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta keys: %s",
-                        resource_uri,
-                        server_id,
-                        gateway.id,
-                        GATEWAY_ID_HEADER,
-                        sorted(meta_data.keys()) if meta_data else None,
-                    )
-                    # CWE-400: validate _meta limits before network I/O (bypassed in direct-proxy branch)
-                    _validate_meta_data(meta_data)
-                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
+                    # Get _meta from request context if available
+                    meta = None
+                    try:
+                        request_ctx = mcp_app.request_context
+                        meta = request_ctx.meta
+                        logger.info(
+                            "Using direct_proxy mode for resources/read %s, server %s, gateway %s (from %s header), forwarding _meta: %s",
+                            resource_uri,
+                            server_id,
+                            gateway.id,
+                            GATEWAY_ID_HEADER,
+                            meta,
+                        )
+                    except (LookupError, AttributeError) as e:
+                        logger.debug("No request context available for _meta extraction: %s", e)
+
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
                     if contents:
                         # Return first content (text or blob)
                         first_content = contents[0]
@@ -4337,6 +4377,21 @@ class SessionManagerWrapper:
         request_headers_var.set(headers)
 
         server_id_var.set(validated)
+
+        # Load server metadata for meta-server tool hiding
+        if validated:
+            try:
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+                db = SessionLocal()
+                try:
+                    srv = db.query(DbServer).filter(DbServer.id == validated).first()
+                    if srv:
+                        server_type_var.set(getattr(srv, "server_type", "standard") or "standard")
+                        hide_underlying_tools_var.set(getattr(srv, "hide_underlying_tools", True))
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.debug("Failed to load server metadata for meta-server: %s", e)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK
