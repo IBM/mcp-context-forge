@@ -6555,7 +6555,14 @@ minikube-ssh:
 minikube-image-load:
 	@echo "📦 Loading $(IMAGE) into Minikube ..."
 	@if ! docker image inspect $(IMAGE) >/dev/null 2>&1; then \
-	  echo "❌ $(IMAGE) not found locally. Build or pull it first."; exit 1; \
+	  if docker image inspect mcpgateway/mcpgateway:latest >/dev/null 2>&1; then \
+	    echo "🏷️  Using local mcpgateway/mcpgateway:latest for $(IMAGE)..."; \
+	    docker tag mcpgateway/mcpgateway:latest $(IMAGE); \
+	  else \
+	    echo "⬇️  Local mcpgateway/mcpgateway:latest not found. Pulling fallback image from GHCR..."; \
+	    docker pull ghcr.io/ibm/mcp-context-forge:d5076967c78361ebee3bb5f39b374b3283e28cd0; \
+	    docker tag ghcr.io/ibm/mcp-context-forge:d5076967c78361ebee3bb5f39b374b3283e28cd0 $(IMAGE); \
+	  fi; \
 	fi
 	minikube image load $(IMAGE) -p $(MINIKUBE_PROFILE)
 
@@ -6640,10 +6647,10 @@ helm-image-load:
 	   ghcr.io/ibm/mcp-context-forge:$$MIGRATION_TAG \
 	   ghcr.io/ibm/fast-time-server:latest \
 	   mcpgateway/fast-test-server:latest \
-	   locustio/locust:latest \
-	   redis:latest \
-	   postgres:18 \
-	 "; \
+	   locustio/locust@sha256:97323b226c7662fc0c7655d123b6a2e5b251ef85e1958e5ec1d26d5c15949f91 \
+	   redis:8.6 \
+	   postgres:14.22-trixie \
+	 ";  \
 	 for IMG in $$IMAGES; do \
 	   echo "🔍 $$IMG"; \
 	   if ! docker image inspect "$$IMG" >/dev/null 2>&1; then \
