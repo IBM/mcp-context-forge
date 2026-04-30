@@ -179,6 +179,8 @@ def get_user_email(user):
         return "unknown"
     if isinstance(user, dict):
         return user.get("email") or user.get("sub") or "unknown"
+    if hasattr(user, "email"):
+        return user.email
     return str(user) if user else "unknown"
 
 
@@ -348,12 +350,10 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         >>> is_admin
         True
     """
-    if hasattr(user, "email"):
-        user_email = getattr(user, "email", None)
-    elif isinstance(user, dict):
-        user_email = user.get("sub") or user.get("email")
-    else:
-        user_email = str(user) if user else None
+    # Use canonical get_user_email for consistent email-over-sub precedence
+    user_email = get_user_email(user)
+    if user_email == "unknown":
+        user_email = None
 
     token_teams = get_token_teams_from_request(request)
 
