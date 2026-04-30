@@ -1,7 +1,7 @@
+import { useState } from "react";
 import { useRouter } from "@/router";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { MainNavIcon } from "@/components/icons/MainNavIcon";
-import { NewMCPServerModal } from "@/components/mcpServers/NewMCPServerModal";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,12 +18,12 @@ interface ActionCard {
   title: string;
   description: string;
   buttonText: string;
-  onAction?: () => void;
-  renderButton?: () => React.ReactNode;
+  onAction: () => void;
 }
 
 export function Gateways() {
   const { navigate } = useRouter();
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   const actionCards: ActionCard[] = [
     {
@@ -31,14 +31,7 @@ export function Gateways() {
       title: "MCP server",
       description: "Register an endpoint implementing the Model Context Protocol",
       buttonText: "+ Connect",
-      renderButton: () => (
-        <NewMCPServerModal
-          triggerLabel="+ Connect"
-          triggerVariant="outline"
-          showTriggerIcon={false}
-          triggerClassName="w-full opacity-0 transition-opacity group-hover/action-card:opacity-100 bg-neutral-900 text-white hover:bg-neutral-800 hover:text-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 dark:hover:text-neutral-900"
-        />
-      ),
+      onAction: () => navigate("/app/servers?openForm=true"),
     },
     {
       icon: Bot,
@@ -84,35 +77,50 @@ export function Gateways() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {actionCards.map((card, index) => {
             const IconComponent = card.icon;
+            const isSelected = index === selectedIndex;
             return (
               <Card
                 key={index}
-                className="group/action-card flex flex-col transition-all hover:shadow-md hover:border-[#FF832B] hover:ring-[#FF832B]"
+                className={`group/action-card flex flex-col transition-all hover:shadow-md hover:border-[#FF832B] hover:ring-[#FF832B] cursor-pointer ${
+                  isSelected ? "shadow-md border-[#FF832B] ring-1 ring-[#FF832B]" : ""
+                }`}
+                onClick={() => setSelectedIndex(index)}
               >
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-muted-foreground transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white">
-                    <IconComponent className="h-5 w-5 text-muted-foreground transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white" />
+                  <CardTitle
+                    className={`flex items-center gap-2 transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white ${
+                      isSelected ? "text-neutral-900 dark:text-white" : "text-muted-foreground"
+                    }`}
+                  >
+                    <IconComponent
+                      className={`h-5 w-5 transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white ${
+                        isSelected ? "text-neutral-900 dark:text-white" : "text-muted-foreground"
+                      }`}
+                    />
                     {card.title}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="flex-grow">
-                  <CardDescription className="transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white">
+                  <CardDescription
+                    className={`transition-colors group-hover/action-card:text-neutral-900 dark:group-hover/action-card:text-white ${
+                      isSelected ? "text-neutral-900 dark:text-white" : ""
+                    }`}
+                  >
                     {card.description}
                   </CardDescription>
                 </CardContent>
                 <CardFooter className="mt-auto">
-                  {card.renderButton ? (
-                    card.renderButton()
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={card.onAction}
-                      className="w-full opacity-0 transition-opacity group-hover/action-card:opacity-100 bg-neutral-900 text-white hover:bg-neutral-800 hover:text-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 dark:hover:text-neutral-900"
-                    >
-                      {card.buttonText}
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      card.onAction();
+                    }}
+                    className="w-full bg-neutral-900 text-white hover:bg-neutral-800 hover:text-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 dark:hover:text-neutral-900"
+                  >
+                    {card.buttonText}
+                  </Button>
                 </CardFooter>
               </Card>
             );
