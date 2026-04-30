@@ -24,7 +24,7 @@ from mcpgateway.utils.create_slug import slugify
 
 # revision identifiers, used by Alembic.
 revision: str = "r2b3c4d5e6f7"
-down_revision: Union[str, Sequence[str], None] = ("k5e6f7g8h9i0", "4f07c116f917", "z1a2b3c4d5e6")
+down_revision: Union[str, Sequence[str], None] = "4f07c116f917"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -180,6 +180,14 @@ def run_migrations_online() -> None:
 
             with context.begin_transaction():
                 context.run_migrations()
+            
+            # Ensure all migration work is committed.
+            # When dialect-detection SQL triggers autobegin before configure(),
+            # Alembic sets _in_external_transaction=True and begin_transaction()
+            # becomes a no-op (nullcontext). In that case the transaction is
+            # never committed by begin_transaction().__exit__, so we commit here.
+            if connection.in_transaction():
+                connection.commit()
 
     else:
         # Alembic already has a connection (e.g., in tests)
