@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
-import { AgentIcon } from "../icons/AgentsIcon.tsx";
+import { AgentIcon } from "../icons/AgentIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
 import { MainNavIcon } from "../icons/MainNavIcon.tsx";
 import { PromptIcon } from "../icons/PromptIcon.tsx";
