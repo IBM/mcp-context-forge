@@ -54,14 +54,19 @@ def downgrade() -> None:
     if "token_revocations" not in inspector.get_table_names():
         return
 
-    # Drop indexes
+    # Drop indexes. SQLite's `create_all()` auto-creates an index named
+    # `ix_token_revocations_token_expiry` from the model's `index=True` flag,
+    # in addition to the explicit `idx_token_revocations_expiry_cleanup` from
+    # the migration. Both must be dropped before the column can be dropped.
     existing_indexes = [idx["name"] for idx in inspector.get_indexes("token_revocations")]
 
-    if "idx_token_revocations_expiry_cleanup" in existing_indexes:
-        op.drop_index("idx_token_revocations_expiry_cleanup", table_name="token_revocations")
-
-    if "idx_token_revocations_revoked_at" in existing_indexes:
-        op.drop_index("idx_token_revocations_revoked_at", table_name="token_revocations")
+    for index_name in (
+        "idx_token_revocations_expiry_cleanup",
+        "ix_token_revocations_token_expiry",
+        "idx_token_revocations_revoked_at",
+    ):
+        if index_name in existing_indexes:
+            op.drop_index(index_name, table_name="token_revocations")
 
     # Drop columns
     columns = [col["name"] for col in inspector.get_columns("token_revocations")]
