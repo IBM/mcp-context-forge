@@ -11,6 +11,8 @@
   "navigation.prompts": "Prompts",
   "navigation.plugins": "Plugins",
   "navigation.serverCatalog": "Server catalog",
+  "navigation.restApi": "REST API",
+  "navigation.grpc": "gRPC",
   "navigation.tokens": "API tokens",
   "navigation.members": "Members",
   "navigation.users": "Users",
