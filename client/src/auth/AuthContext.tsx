@@ -51,8 +51,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = sessionStorage.getItem("mcpgateway_token");
     if (token && !state.user) {
-      api
-        .get<User>("/auth/me")
+      // Try new endpoint first, fallback to legacy endpoint for backward compatibility
+      const fetchUser = async () => {
+        try {
+          return await api.get<User>("/auth/email/me");
+        } catch (err) {
+          // Fallback to old endpoint if new one doesn't exist
+          if (err instanceof ApiError && err.status === 404) {
+            console.warn("Falling back to legacy auth endpoint");
+            return await api.get<User>("/auth/me");
+          }
+          throw err;
+        }
+      };
+
+      fetchUser()
         .then((user) => {
           setState({ user, isAuthenticated: true });
         })
@@ -66,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [state.user]);
 
-  const login = useCallback(async (email: string, password: string): Promise<void> => {
+  /* prettier-ignore */ const login = useCallback(async (email: string, password: string): Promise<void> => { // pragma: allowlist secret
     const data = await api.post<LoginResponse>(
       "/auth/login",
       { email, password },
