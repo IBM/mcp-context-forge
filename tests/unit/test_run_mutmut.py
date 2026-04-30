@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for run_mutmut.py cleanup logic and results_store parameterized query.
+"""Location: ./tests/unit/test_run_mutmut.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for run_mutmut.py cleanup logic and results_store parameterized query.
 
 Covers the security changes in PR #3944:
 1. shutil.rmtree replacement for os.system in run_mutmut.py

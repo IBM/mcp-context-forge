@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/hooks/test_hook_patterns.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -50,9 +50,7 @@ class DemoPlugin(Plugin):
     """Demo plugin showing all three hook patterns."""
 
     # Pattern 1: Convention-based (method name matches hook type)
-    async def tool_pre_invoke(
-        self, payload: ToolPreInvokePayload, context: PluginContext
-    ) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Pattern 1: Convention-based hook.
 
         This method is found automatically because its name matches
@@ -65,16 +63,11 @@ class DemoPlugin(Plugin):
             headers=payload.headers,
         )
 
-        return ToolPreInvokeResult(
-            modified_payload=modified_payload,
-            metadata={"pattern": "convention", "hook": "tool_pre_invoke"}
-        )
+        return ToolPreInvokeResult(modified_payload=modified_payload, metadata={"pattern": "convention", "hook": "tool_pre_invoke"})
 
     # Pattern 2: Decorator-based with custom method name
     @hook(ToolHookType.TOOL_POST_INVOKE)
-    async def my_custom_tool_post_handler(
-        self, payload: ToolPostInvokePayload, context: PluginContext
-    ) -> ToolPostInvokeResult:
+    async def my_custom_tool_post_handler(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Pattern 2: Decorator-based hook with custom method name.
 
         This method is found via the @hook decorator even though
@@ -88,16 +81,11 @@ class DemoPlugin(Plugin):
             result=modified_result,
         )
 
-        return ToolPostInvokeResult(
-            modified_payload=modified_payload,
-            metadata={"pattern": "decorator", "hook": "tool_post_invoke"}
-        )
+        return ToolPostInvokeResult(modified_payload=modified_payload, metadata={"pattern": "decorator", "hook": "tool_post_invoke"})
 
     # Pattern 3: Custom hook with payload and result types
     @hook("email_pre_send", EmailPayload, EmailResult)
-    async def validate_email(
-        self, payload: EmailPayload, context: PluginContext
-    ) -> EmailResult:
+    async def validate_email(self, payload: EmailPayload, context: PluginContext) -> EmailResult:
         """Pattern 3: Custom hook with new hook type.
 
         This registers a completely new hook type 'email_pre_send'
@@ -110,15 +98,9 @@ class DemoPlugin(Plugin):
                 subject=payload.subject,
                 body=payload.body,
             )
-            return EmailResult(
-                modified_payload=modified_payload,
-                metadata={"pattern": "custom", "hook": "email_pre_send", "fixed_email": True}
-            )
+            return EmailResult(modified_payload=modified_payload, metadata={"pattern": "custom", "hook": "email_pre_send", "fixed_email": True})
 
-        return EmailResult(
-            continue_processing=True,
-            metadata={"pattern": "custom", "hook": "email_pre_send"}
-        )
+        return EmailResult(continue_processing=True, metadata={"pattern": "custom", "hook": "email_pre_send"})
 
 
 # ========== Pytest Tests ==========
@@ -129,19 +111,12 @@ async def test_pattern_1_convention_based_hook():
     await manager.initialize()
 
     # Create payload for tool_pre_invoke
-    payload = ToolPreInvokePayload(
-        name="my_calculator",
-        args={"operation": "add", "a": 5, "b": 3}
-    )
+    payload = ToolPreInvokePayload(name="my_calculator", args={"operation": "add", "a": 5, "b": 3})
 
     global_context = GlobalContext(request_id="test-1")
 
     # Invoke the hook
-    result, contexts = await manager.invoke_hook(
-        ToolHookType.TOOL_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload, global_context=global_context)
 
     # Assertions
     assert result is not None
@@ -166,19 +141,12 @@ async def test_pattern_2_decorator_based_hook():
     await manager.initialize()
 
     # Create payload for tool_post_invoke
-    payload = ToolPostInvokePayload(
-        name="my_calculator",
-        result={"sum": 8, "status": "success"}
-    )
+    payload = ToolPostInvokePayload(name="my_calculator", result={"sum": 8, "status": "success"})
 
     global_context = GlobalContext(request_id="test-2")
 
     # Invoke the hook
-    result, contexts = await manager.invoke_hook(
-        ToolHookType.TOOL_POST_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, global_context=global_context)
 
     # Assertions
     assert result is not None
@@ -202,19 +170,11 @@ async def test_pattern_3_custom_hook_valid_email():
     await manager.initialize()
 
     # Test with valid email
-    payload = EmailPayload(
-        recipient="user@example.com",
-        subject="Test Email",
-        body="This is a test."
-    )
+    payload = EmailPayload(recipient="user@example.com", subject="Test Email", body="This is a test.")
 
     global_context = GlobalContext(request_id="test-3a")
 
-    result, contexts = await manager.invoke_hook(
-        "email_pre_send",
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook("email_pre_send", payload, global_context=global_context)
 
     # Assertions
     assert result is not None
@@ -235,19 +195,11 @@ async def test_pattern_3_custom_hook_invalid_email():
     await manager.initialize()
 
     # Test with invalid email (missing @)
-    payload = EmailPayload(
-        recipient="invalid-email",
-        subject="Test Email 2",
-        body="This email address needs fixing."
-    )
+    payload = EmailPayload(recipient="invalid-email", subject="Test Email 2", body="This email address needs fixing.")
 
     global_context = GlobalContext(request_id="test-3b")
 
-    result, contexts = await manager.invoke_hook(
-        "email_pre_send",
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook("email_pre_send", payload, global_context=global_context)
 
     # Assertions
     assert result is not None
@@ -273,40 +225,18 @@ async def test_all_three_patterns_in_sequence():
     global_context = GlobalContext(request_id="test-all")
 
     # Test Pattern 1: Convention-based
-    payload1 = ToolPreInvokePayload(
-        name="test_tool",
-        args={"param": "value"}
-    )
-    result1, _ = await manager.invoke_hook(
-        ToolHookType.TOOL_PRE_INVOKE,
-        payload1,
-        global_context=global_context
-    )
+    payload1 = ToolPreInvokePayload(name="test_tool", args={"param": "value"})
+    result1, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload1, global_context=global_context)
     assert result1.modified_payload.args["pattern"] == "convention"
 
     # Test Pattern 2: Decorator-based
-    payload2 = ToolPostInvokePayload(
-        name="test_tool",
-        result={"data": "output"}
-    )
-    result2, _ = await manager.invoke_hook(
-        ToolHookType.TOOL_POST_INVOKE,
-        payload2,
-        global_context=global_context
-    )
+    payload2 = ToolPostInvokePayload(name="test_tool", result={"data": "output"})
+    result2, _ = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload2, global_context=global_context)
     assert result2.modified_payload.result["pattern"] == "decorator"
 
     # Test Pattern 3: Custom hook
-    payload3 = EmailPayload(
-        recipient="test",
-        subject="Test",
-        body="Test"
-    )
-    result3, _ = await manager.invoke_hook(
-        "email_pre_send",
-        payload3,
-        global_context=global_context
-    )
+    payload3 = EmailPayload(recipient="test", subject="Test", body="Test")
+    result3, _ = await manager.invoke_hook("email_pre_send", payload3, global_context=global_context)
     assert result3.modified_payload.recipient == "test@example.com"
 
     await manager.shutdown()

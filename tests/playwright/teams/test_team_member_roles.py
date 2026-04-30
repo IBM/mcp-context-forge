@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Team Member Role E2E Tests.
+"""Location: ./tests/playwright/teams/test_team_member_roles.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Team Member Role E2E Tests.
 
 Tests member role changes, member removal, and leaving teams.
 Team roles are "owner" or "member" (distinct from RBAC roles).

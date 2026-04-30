@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for BaggageMiddleware.
+"""Location: ./tests/integration/test_baggage_middleware.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for BaggageMiddleware.
 
 Tests cover:
 - Middleware integration with FastAPI
@@ -413,7 +418,7 @@ class TestMiddlewareEdgeCases:
         mock_receive = AsyncMock()
         mock_send = AsyncMock()
 
-        with patch('mcpgateway.middleware.baggage_middleware.OTEL_BAGGAGE_AVAILABLE', False):
+        with patch("mcpgateway.middleware.baggage_middleware.OTEL_BAGGAGE_AVAILABLE", False):
             middleware = BaggageMiddleware(app=mock_app)
             await middleware(mock_scope, mock_receive, mock_send)
 
@@ -428,7 +433,7 @@ class TestMiddlewareEdgeCases:
         mock_receive = AsyncMock()
         mock_send = AsyncMock()
 
-        with patch('mcpgateway.baggage.BaggageConfig.from_settings', side_effect=Exception("Config error")):
+        with patch("mcpgateway.baggage.BaggageConfig.from_settings", side_effect=Exception("Config error")):
             middleware = BaggageMiddleware(app=mock_app)
             await middleware(mock_scope, mock_receive, mock_send)
 
@@ -463,10 +468,7 @@ class TestMiddlewareEdgeCases:
     async def test_middleware_otel_context_unavailable(self):
         """Test middleware when OTEL context is unavailable."""
         mock_app = AsyncMock()
-        mock_scope = {
-            "type": "http",
-            "headers": [(b"x-tenant-id", b"tenant-123")]
-        }
+        mock_scope = {"type": "http", "headers": [(b"x-tenant-id", b"tenant-123")]}
         mock_receive = AsyncMock()
         mock_send = AsyncMock()
 
@@ -480,7 +482,7 @@ class TestMiddlewareEdgeCases:
             log_sanitization=False,
         )
 
-        with patch('mcpgateway.middleware.baggage_middleware.otel_get_current', return_value=None):
+        with patch("mcpgateway.middleware.baggage_middleware.otel_get_current", return_value=None):
             middleware = BaggageMiddleware(app=mock_app, config=config)
             await middleware(mock_scope, mock_receive, mock_send)
 
@@ -491,10 +493,7 @@ class TestMiddlewareEdgeCases:
     async def test_middleware_extraction_error(self):
         """Test middleware when header extraction fails."""
         mock_app = AsyncMock()
-        mock_scope = {
-            "type": "http",
-            "headers": [(b"x-tenant-id", b"tenant-123")]
-        }
+        mock_scope = {"type": "http", "headers": [(b"x-tenant-id", b"tenant-123")]}
         mock_receive = AsyncMock()
         mock_send = AsyncMock()
 
@@ -508,7 +507,7 @@ class TestMiddlewareEdgeCases:
             log_sanitization=False,
         )
 
-        with patch('mcpgateway.baggage.extract_baggage_from_headers', side_effect=Exception("Extraction error")):
+        with patch("mcpgateway.baggage.extract_baggage_from_headers", side_effect=Exception("Extraction error")):
             middleware = BaggageMiddleware(app=mock_app, config=config)
             await middleware(mock_scope, mock_receive, mock_send)
 
@@ -519,13 +518,7 @@ class TestMiddlewareEdgeCases:
     async def test_middleware_baggage_parsing_error(self):
         """Test middleware when inbound baggage parsing fails."""
         mock_app = AsyncMock()
-        mock_scope = {
-            "type": "http",
-            "headers": [
-                (b"x-tenant-id", b"tenant-123"),
-                (b"baggage", b"invalid-baggage")
-            ]
-        }
+        mock_scope = {"type": "http", "headers": [(b"x-tenant-id", b"tenant-123"), (b"baggage", b"invalid-baggage")]}
         mock_receive = AsyncMock()
         mock_send = AsyncMock()
 
@@ -539,7 +532,7 @@ class TestMiddlewareEdgeCases:
             log_sanitization=False,
         )
 
-        with patch('mcpgateway.baggage.parse_w3c_baggage_header', side_effect=Exception("Parse error")):
+        with patch("mcpgateway.baggage.parse_w3c_baggage_header", side_effect=Exception("Parse error")):
             middleware = BaggageMiddleware(app=mock_app, config=config)
             await middleware(mock_scope, mock_receive, mock_send)
 

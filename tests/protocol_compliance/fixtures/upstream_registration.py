@@ -1,4 +1,10 @@
-"""Register the reference server as a gateway upstream and build a virtual server.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/fixtures/upstream_registration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Register the reference server as a gateway upstream and build a virtual server.
 
 Sync fixtures — admin REST endpoints don't need async, and keeping them
 synchronous avoids pytest-asyncio's cross-loop issues with session-scoped

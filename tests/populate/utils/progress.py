@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Progress tracking utilities for REST API population."""
+"""Location: ./tests/populate/utils/progress.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Progress tracking utilities for REST API population.
+"""
 
 # Standard
 from collections import deque

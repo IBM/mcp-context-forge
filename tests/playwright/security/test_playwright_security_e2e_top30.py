@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Top-30 browser-driven security scenarios for Playwright."""
+"""Location: ./tests/playwright/security/test_playwright_security_e2e_top30.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Top-30 browser-driven security scenarios for Playwright.
+"""
 
 # Future
 from __future__ import annotations
@@ -506,11 +512,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
         if "/admin/login" in page.url:
-            assert (
-                "error=admin_required" in page.url
-                or "error=invalid_credentials" in page.url
-                or page.url.rstrip("/").endswith("/admin/login")
-            )
+            assert "error=admin_required" in page.url or "error=invalid_credentials" in page.url or page.url.rstrip("/").endswith("/admin/login")
             return
 
         # Some deployments keep URL at /admin and render denied content; ensure admin-only API is blocked.
@@ -706,7 +708,7 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
         login_xss_marker = admin_page.page.evaluate(f"Boolean(window.__pw_xss_login_{nonce})")
         assert login_xss_marker is False, "Error query parameter executed JavaScript in login page."
 
-        server_name = f'<script>window.__pw_xss_catalog_{nonce}=1</script>xss-{nonce}'
+        server_name = f"<script>window.__pw_xss_catalog_{nonce}=1</script>xss-{nonce}"
         create_resp = admin_api.post(
             "/servers",
             data={

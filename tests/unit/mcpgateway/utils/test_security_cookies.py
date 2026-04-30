@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.security_cookies."""
+"""Location: ./tests/unit/mcpgateway/utils/test_security_cookies.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.security_cookies.
+"""
 
 # Standard
 import logging

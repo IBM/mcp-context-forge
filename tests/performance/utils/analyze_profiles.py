@@ -1,7 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """Location: ./tests/performance/utils/analyze_profiles.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
@@ -126,7 +128,7 @@ def compare_profiles(baseline_path: str, current_path: str) -> None:
 
         diff = c_ct - b_ct
         if b_ct > 0:
-            pct = (diff / b_ct * 100)
+            pct = diff / b_ct * 100
             diff_str = f"{diff:+.6f}s ({pct:+.0f}%)"
         else:
             diff_str = "N/A"
@@ -166,11 +168,7 @@ def compare_all_profiles(baseline_dir: str, current_dir: str) -> None:
             baseline_total = sum(tt for cc, nc, tt, ct, callers in baseline_stats.stats.values())
             current_total = sum(tt for cc, nc, tt, ct, callers in current_stats.stats.values())
 
-            comparison_results.append({
-                'name': baseline_name,
-                'baseline_time': baseline_total,
-                'current_time': current_total
-            })
+            comparison_results.append({"name": baseline_name, "baseline_time": baseline_total, "current_time": current_total})
 
             # Show detailed comparison
             compare_profiles(baseline_path, current_path)
@@ -190,8 +188,8 @@ def compare_all_profiles(baseline_dir: str, current_dir: str) -> None:
     total_current = 0
 
     for result in comparison_results:
-        baseline_time = result['baseline_time']
-        current_time = result['current_time']
+        baseline_time = result["baseline_time"]
+        current_time = result["current_time"]
         total_baseline += baseline_time
         total_current += current_time
 
@@ -326,9 +324,7 @@ def main():
             print(f"{'Function':<60} {'Calls':>10} {'Time':>12} {'Cumul':>12}")
             print("-" * 100)
             for func in analysis["top_functions"]:
-                print(
-                    f"{func['function']:<60} {func['calls']:>10} {func['total_time']:>12.6f} {func['cumulative_time']:>12.6f}"
-                )
+                print(f"{func['function']:<60} {func['calls']:>10} {func['total_time']:>12.6f} {func['cumulative_time']:>12.6f}")
 
     elif len(args.profiles) == 1:
         analysis = analyze_profile(args.profiles[0], limit=args.limit)
@@ -341,11 +337,7 @@ def main():
         print(f"{'Function':<60} {'Calls':>10} {'Total':>12} {'Cumul':>12} {'Per Call':>12}")
         print("-" * 110)
         for func in analysis["top_functions"]:
-            print(
-                f"{func['function']:<60} {func['calls']:>10} "
-                f"{func['total_time']:>12.6f} {func['cumulative_time']:>12.6f} "
-                f"{func['per_call_time']:>12.9f}"
-            )
+            print(f"{func['function']:<60} {func['calls']:>10} " f"{func['total_time']:>12.6f} {func['cumulative_time']:>12.6f} " f"{func['per_call_time']:>12.9f}")
 
     else:
         parser.print_help()

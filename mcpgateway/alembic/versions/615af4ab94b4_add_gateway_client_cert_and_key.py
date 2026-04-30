@@ -1,9 +1,14 @@
-"""add_gateway_client_cert_and_key
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/615af4ab94b4_add_gateway_client_cert_and_key.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_gateway_client_cert_and_key
 
 Revision ID: 615af4ab94b4
 Revises: 20a0e0538ac5
 Create Date: 2026-03-20 10:47:06.592968
-
 """
 
 # Standard

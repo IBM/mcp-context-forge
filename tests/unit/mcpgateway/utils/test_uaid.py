@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for UAID (Universal Agent ID) utilities.
+"""Location: ./tests/unit/mcpgateway/utils/test_uaid.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for UAID (Universal Agent ID) utilities.
 
 Tests HCS-14 UAID parsing, validation, and generation logic.
 """

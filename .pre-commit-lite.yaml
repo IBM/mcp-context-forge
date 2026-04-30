@@ -514,7 +514,7 @@ repos:
     rev: 1.7.0  # or master if you're bold
     hooks:
       - id: interrogate
-        args: [--quiet, --fail-under=100]
+        args: [--fail-under=100]
         files: ^mcpgateway/
         exclude: _pb2(_grpc)?\.py$
 

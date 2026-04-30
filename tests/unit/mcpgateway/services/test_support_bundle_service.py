@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_support_bundle_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for support bundle service.
 Tests bundle generation, sanitization, and file operations.
@@ -250,7 +251,7 @@ class TestSupportBundleService:
         log_file = "mcpgateway.log"
         log_path = tmp_path / log_file
         log_path.write_text(
-            "line0\nline1\nline2\npassword: \"secret123\"\n",
+            'line0\nline1\nline2\npassword: "secret123"\n',
             encoding="utf-8",
         )
 

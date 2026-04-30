@@ -1,4 +1,10 @@
-"""Cross-target payload normalization for drift detection.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/helpers/drift.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Cross-target payload normalization for drift detection.
 
 The harness compares responses from ``reference``, ``gateway_proxy``, and
 ``gateway_virtual`` and asserts that — after accounting for legitimate

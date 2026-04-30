@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for dynamic environment variable injection.
-
-Location: ./tests/integration/test_translate_dynamic_env.py
-Copyright 2025
+"""Location: ./tests/integration/test_translate_dynamic_env.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
+Integration tests for dynamic environment variable injection.
 Integration tests for dynamic environment variable injection in mcpgateway.translate.
 """
 

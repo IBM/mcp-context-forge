@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the packaged rate limiter plugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the packaged rate limiter plugin.
+"""
 
 # Standard
 from types import SimpleNamespace

@@ -34,7 +34,7 @@ compliance-reference-server = { path = "mcp-servers/python/compliance_reference_
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.0-RC-3"
+version = "1.0.0"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -71,11 +71,11 @@ maintainers = [
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "brotli==1.2.0", # Transitive pin (starlette-compress)
     "base58>=2.1.1",
+    "brotli>=1.2.0", # Transitive pin (starlette-compress)
     "cryptography>=46.0.7",
-    "fastapi>=0.135.3",
-    "filelock>=3.25.2",
+    "fastapi>=0.136.0",
+    "filelock>=3.28.0",
     "gunicorn>=25.3.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -83,11 +83,12 @@ dependencies = [
     "jq>=1.11.0",
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
+    "Mako>=1.3.11", # Transitive pin (alembic)
     "mcp>=1.27.0",
     "orjson>=3.11.8",
     "parse>=1.21.1",
     "prometheus-fastapi-instrumentator>=7.1.0",
-    "prometheus_client>=0.24.1", # 0.25.0 exceeds 10-day min-release-age policy
+    "prometheus_client>=0.25.0", # 0.25.0 exceeds 10-day min-release-age policy
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",
@@ -96,7 +97,7 @@ dependencies = [
     "python-json-logger>=4.1.0",
     "python-multipart>=0.0.26", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
-    "requests==2.33.0", # Transivite pin (requests-oauthlib)
+    "requests>=2.33.1", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.49",
     "sse-starlette>=3.3.4",
@@ -104,8 +105,7 @@ dependencies = [
     "starlette-compress>=1.7.0",
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
-    "uvicorn[standard]>=0.42.0",
-    "Mako>=1.3.11", # Transitive pin (alembic)
+    "uvicorn[standard]>=0.44.0",
 ]
 
 # ----------------------------------------------------------------
@@ -211,20 +211,20 @@ postgres = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.28",
+    "langchain-core>=1.3.0",
     "langchain-mcp-adapters>=0.2.2",
-    "langchain-ollama>=1.0.1",
-    "langchain-openai>=1.1.14",
-    "langgraph>=1.1.6",
-    "langsmith>=0.7.31", # Transitive pin (langchain-core)
+    "langchain-ollama>=1.1.0",
+    "langchain-openai>=1.1.16",
+    "langgraph>=1.1.8",
+    "langsmith>=0.7.33", # Transitive pin (langchain-core)
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.151.9",
+    "hypothesis>=6.152.1",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.10.2,<4.11.0", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
+    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -234,17 +234,17 @@ fuzz-atheris = [
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.40.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.40.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.40.0",
-    "opentelemetry-sdk>=1.40.0",
+    "opentelemetry-api>=1.41.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.41.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.41.0",
+    "opentelemetry-sdk>=1.41.0",
 ]
 
 # Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
 # Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
 # Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
 granian = [
-    "granian[pname,uvloop,reload]>=2.7.2",
+    "granian[pname,uvloop,reload]>=2.7.3",
 ]
 
 # Async SQLite Driver (optional)
@@ -264,7 +264,7 @@ asyncpg = [
 #        memray flamegraph profile.bin -o flamegraph.html
 # See docs/docs/development/profiling.md for detailed usage
 profiling = [
-    "memray>=1.19.2",
+    "memray>=1.19.3",
     "py-spy>=0.4.1",
 ]
 
@@ -290,7 +290,7 @@ grpc = [
     "grpcio>=1.80.0",
     "grpcio-reflection>=1.80.0",
     "grpcio-tools>=1.80.0",
-    "protobuf>=5.29.0,<7.0.0", # grpcio-reflection 1.78.x caps at <7.0.0
+    "protobuf>=6.33.6", # grpcio-reflection 1.78.x caps at <7.0.0
 ]
 
 # UI Testing

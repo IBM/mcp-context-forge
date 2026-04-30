@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/u5f6g7h8i9j0_add_provider_metadata_to_sso_providers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Add provider_metadata column to sso_providers table.
 

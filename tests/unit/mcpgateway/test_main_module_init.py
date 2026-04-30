@@ -1,4 +1,10 @@
-"""Documentation for main.py module-level initialization coverage.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_main_module_init.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Documentation for main.py module-level initialization coverage.
 
 Lines 3149-3155 in main.py contain module-level initialization code that executes
 when the module is imported. This code configures the OTEL baggage middleware based

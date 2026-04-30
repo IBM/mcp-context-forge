@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for PluginExecutor observability span creation with attribute mapping (lines 436, 446, 448-450).
-
-Location: ./tests/unit/mcpgateway/plugins/framework/test_executor_observability_span.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_executor_observability_span.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for PluginExecutor observability span creation with attribute mapping (lines 436, 446, 448-450).
 """
 
 import pytest
@@ -35,12 +36,7 @@ async def test_executor_observability_span_with_mapping():
 
     # Create mock plugin
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     plugin_config = PluginConfig(
         name="TestPlugin",
@@ -115,12 +111,7 @@ async def test_executor_observability_span_without_mapping():
     context = PluginContext(global_context=global_context)
 
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     plugin_config = PluginConfig(
         name="TestPlugin",
@@ -179,12 +170,7 @@ async def test_executor_no_observability_span_without_trace():
     context = PluginContext(global_context=global_context)
 
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     plugin_config = PluginConfig(
         name="TestPlugin",

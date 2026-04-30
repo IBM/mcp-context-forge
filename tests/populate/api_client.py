@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Async HTTP client for REST API population.
+"""Location: ./tests/populate/api_client.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Async HTTP client for REST API population.
 
 Provides connection pooling, authentication, retry with exponential backoff,
 and rate-limit handling for high-throughput API population.

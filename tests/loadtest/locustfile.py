@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Locust load testing scenarios for ContextForge.
+"""Location: ./tests/loadtest/locustfile.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Locust load testing scenarios for ContextForge.
 This module provides comprehensive load testing for ContextForge using Locust.
 It includes multiple user types simulating different usage patterns.
-
 Usage:
     # Web UI mode (interactive)
     make load-test-ui
-
     # Headless mode (CI/scripts)
     make load-test
-
     # Direct invocation
     cd tests/loadtest && locust --host=http://localhost:8080
-
 Environment Variables (also reads from .env file):
     LOADTEST_HOST: Target host URL (default: http://localhost:8080)
     LOADTEST_USERS: Number of concurrent users (default: 1000)
@@ -30,9 +30,6 @@ Environment Variables (also reads from .env file):
     LOADTEST_BENCHMARK_START_PORT: First port for benchmark servers (default: 9000)
     LOADTEST_BENCHMARK_SERVER_COUNT: Number of benchmark servers available (default: 1000)
     LOADTEST_BENCHMARK_HOST: Host where benchmark servers run (default: benchmark_server for Docker, use localhost for native)
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

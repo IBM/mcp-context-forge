@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Base generator class for all data generators."""
+"""Location: ./tests/load/generators/base.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Base generator class for all data generators.
+"""
 
 import logging
 import time

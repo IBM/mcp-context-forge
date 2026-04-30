@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Analyze database query logs for N+1 patterns and performance issues.
-
-Copyright 2025
+"""Location: ./mcpgateway/utils/analyze_query_log.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Analyze database query logs for N+1 patterns and performance issues.
 Usage:
     python -m mcpgateway.utils.analyze_query_log [--json logs/db-queries.jsonl]
     make query-log-analyze

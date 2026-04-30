@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Admin Bypass Tests for RBAC System.
+"""Location: ./tests/unit/mcpgateway/middleware/test_rbac_admin_bypass.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Admin Bypass Tests for RBAC System.
 
 Verifies allow_admin_bypass=True (default) vs allow_admin_bypass=False
 (admin UI, RBAC CRUD) behavior using the require_permission decorator.

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for encoded exfiltration detector plugin."""
+"""Location: ./tests/unit/plugins/test_encoded_exfil_detector.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for encoded exfiltration detector plugin.
+"""
 
 # Standard
 import base64

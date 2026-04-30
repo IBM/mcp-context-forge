@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add explicit team read and token self-management permissions to default roles.
+"""Location: ./mcpgateway/alembic/versions/b2d9c6e4f1a7_add_explicit_team_and_token_permissions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add explicit team read and token self-management permissions to default roles.
 
 Revision ID: b2d9c6e4f1a7
 Revises: a4f1c7d8e9b0

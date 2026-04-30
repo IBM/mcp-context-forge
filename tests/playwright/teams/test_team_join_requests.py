@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Team Join Request E2E Tests.
+"""Location: ./tests/playwright/teams/test_team_join_requests.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Team Join Request E2E Tests.
 
 Tests the join request workflow: request, list, approve, reject.
 Join requests only work for public-visibility teams.

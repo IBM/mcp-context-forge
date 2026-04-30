@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Rust MCP session/auth isolation correctness load test.
-
-This Locust harness is intentionally separate from the throughput benchmarks.
-It validates that a live Rust MCP session remains usable for the owner while
-same-team peers and outsiders cannot hijack it under concurrent traffic.
-
+"""Location: ./tests/loadtest/locustfile_mcp_isolation.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Rust MCP session/auth isolation correctness load test.
+This Locust harness is intentionally separate from the throughput benchmarks.
+It validates that a live Rust MCP session remains usable for the owner while
+same-team peers and outsiders cannot hijack it under concurrent traffic.
 """
 
 # Future
@@ -94,9 +94,7 @@ def _request_json(
     **kwargs,
 ):
     response = client.request(method, f"{BASE_URL}{path}", timeout=20, **kwargs)
-    assert response.status_code in expected, (
-        f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code in expected, f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
     return response.json() if response.content else None
 
 
@@ -117,11 +115,7 @@ def _select_time_gateway(gateways: list[dict], tools: list[dict]) -> dict:
 
     for preferred_name in ("fast_time", "fast_test"):
         for gateway in gateways:
-            if (
-                gateway.get("name") == preferred_name
-                and gateway.get("transport") == "STREAMABLEHTTP"
-                and tool_counts_by_gateway.get(gateway.get("id"), 0) > 0
-            ):
+            if gateway.get("name") == preferred_name and gateway.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(gateway.get("id"), 0) > 0:
                 return gateway
 
     raise AssertionError("No compose-backed time-capable STREAMABLEHTTP gateway found")
@@ -231,9 +225,7 @@ def _bootstrap_state() -> None:
 
     health = requests.get(f"{BASE_URL}/health", timeout=10)
     health.raise_for_status()
-    assert (
-        health.headers.get("x-contextforge-mcp-runtime-mode") == "rust-managed"
-    ), f"Rust MCP runtime is not active at {BASE_URL}"
+    assert health.headers.get("x-contextforge-mcp-runtime-mode") == "rust-managed", f"Rust MCP runtime is not active at {BASE_URL}"
 
     admin_token = _make_jwt(_cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com"), is_admin=True, teams=None)
     admin_client = requests.Session()

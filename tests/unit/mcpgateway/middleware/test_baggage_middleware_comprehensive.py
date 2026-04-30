@@ -1,4 +1,10 @@
-"""Comprehensive coverage tests for baggage_middleware.py to reach 95%+.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_comprehensive.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive coverage tests for baggage_middleware.py to reach 95%+.
 
 This module adds tests for the main middleware flow and helper methods
 to achieve 95%+ coverage on baggage_middleware.py.

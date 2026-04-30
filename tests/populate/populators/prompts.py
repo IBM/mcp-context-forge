@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Prompt populator - creates prompts via POST /prompts."""
+"""Location: ./tests/populate/populators/prompts.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Prompt populator - creates prompts via POST /prompts.
+"""
 
 # Standard
 import random

@@ -3,6 +3,7 @@
 """Location: ./mcpgateway/utils/hash_password.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Generate Argon2id password hashes for emergency admin recovery operations.
 """

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for Metrics service."""
+"""Location: ./tests/unit/mcpgateway/services/test_metrics.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for Metrics service.
+"""
 
 # Standard
 from unittest.mock import MagicMock, patch
@@ -14,7 +20,6 @@ from mcpgateway.services.metrics import (
     setup_metrics,
     tool_timeout_counter,
 )
-
 
 _METRIC_GAUGE_NAMES = ("app_info", "database_info", "http_pool_max_connections", "http_pool_max_keepalive_connections")
 

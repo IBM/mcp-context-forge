@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Lifecycle enforcement tests for expiration, revocation, JTI, and session auth boundaries."""
+"""Location: ./tests/playwright/security/test_token_lifecycle_enforcement.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Lifecycle enforcement tests for expiration, revocation, JTI, and session auth boundaries.
+"""
 
 # Future
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_error_formatter.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -175,15 +175,27 @@ def make_mock_integrity_error(msg):
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
         # Token name uniqueness – new per-team constraint name
-        ("uq_email_api_tokens_user_name_team", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        (
+            "uq_email_api_tokens_user_name_team",
+            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+        ),
         # Token name uniqueness – legacy ORM constraint name (kept for backwards compat)
         ("uq_email_api_tokens_user_name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
         # Token name uniqueness – Alembic migration constraint name
-        ("uq_email_api_tokens_user_email_name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        (
+            "uq_email_api_tokens_user_email_name",
+            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+        ),
         # Token name uniqueness – SQLite column-path variant
-        ("UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        (
+            "UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name",
+            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+        ),
         # Token name uniqueness – partial unique index for global-scope tokens (team_id IS NULL)
-        ("uq_email_api_tokens_user_name_global", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
+        (
+            "uq_email_api_tokens_user_name_global",
+            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+        ),
     ],
 )
 def test_format_database_error_integrity_patterns(msg, expected):

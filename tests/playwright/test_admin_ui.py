@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_admin_ui.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
@@ -113,15 +113,13 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 375, "height": 667})
         admin_page.page.wait_for_timeout(300)
         # Alpine keeps sidebarOpen=true from desktop; force it closed
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const el = document.querySelector('[x-data]');
                 if (!el) return;
                 // Try Alpine v3 _x_dataStack, then v2 __x
                 if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
                 else if (el.__x) { el.__x.$data.sidebarOpen = false; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_timeout(500)
 
         hamburger = admin_page.page.locator("button.lg\\:hidden")
@@ -133,14 +131,12 @@ class TestAdminUI:
         expect(sidebar).to_be_visible(timeout=10000)
 
         # Close sidebar again
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const el = document.querySelector('[x-data]');
                 if (!el) return;
                 if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
                 else if (el.__x) { el.__x.$data.sidebarOpen = false; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_timeout(400)
 
         # Resize back to desktop — sidebar must reappear without page reload
@@ -160,8 +156,7 @@ class TestAdminUI:
 
         # Inject a tall spacer so the container is guaranteed to be scrollable
         # regardless of how much real content is loaded.
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const container = document.querySelector('[data-scroll-container]');
                 if (container) {
                     const spacer = document.createElement('div');
@@ -169,16 +164,13 @@ class TestAdminUI:
                     spacer.style.height = '5000px';
                     container.appendChild(spacer);
                 }
-            }"""
-        )
+            }""")
 
         # Scroll down and wait for the browser to apply it
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const container = document.querySelector('[data-scroll-container]');
                 if (container) { container.scrollTop = 500; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_function(
             "document.querySelector('[data-scroll-container]').scrollTop > 0",
             timeout=5000,
@@ -195,12 +187,10 @@ class TestAdminUI:
         )
 
         # Second round: verify consistency across another tab pair
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const container = document.querySelector('[data-scroll-container]');
                 if (container) { container.scrollTop = 300; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_function(
             "document.querySelector('[data-scroll-container]').scrollTop > 0",
             timeout=5000,

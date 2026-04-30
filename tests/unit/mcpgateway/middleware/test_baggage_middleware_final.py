@@ -1,4 +1,10 @@
-"""Final coverage tests for baggage_middleware.py to reach 95%+.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_final.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Final coverage tests for baggage_middleware.py to reach 95%+.
 
 This module targets the remaining uncovered lines in baggage_middleware.py:
 - Lines 38-42: ImportError handling for OpenTelemetry baggage API

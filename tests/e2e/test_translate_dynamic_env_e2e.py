@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""End-to-end tests for dynamic environment variable injection.
-
-Location: ./tests/e2e/test_translate_dynamic_env_e2e.py
-Copyright 2025
+"""Location: ./tests/e2e/test_translate_dynamic_env_e2e.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
+End-to-end tests for dynamic environment variable injection.
 End-to-end tests for complete HTTP flow with dynamic environment variable injection.
 """
 

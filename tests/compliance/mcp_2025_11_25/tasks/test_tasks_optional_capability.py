@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tasks capability checks (optional feature lane)."""
+"""Location: ./tests/compliance/mcp_2025_11_25/tasks/test_tasks_optional_capability.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tasks capability checks (optional feature lane).
+"""
 
 # Third-Party
 import pytest

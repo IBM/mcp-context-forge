@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Entity populators for REST API data population."""
+"""Location: ./tests/populate/populators/__init__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Entity populators for REST API data population.
+"""
 
 from .a2a_agents import A2AAgentPopulator
 from .gateways import GatewayPopulator

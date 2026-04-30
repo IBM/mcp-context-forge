@@ -1,4 +1,10 @@
-"""Comprehensive tests for baggage_middleware.py main __call__ flow (lines 210-237).
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_baggage_middleware_main_flow.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive tests for baggage_middleware.py main __call__ flow (lines 210-237).
 
 This module targets complete coverage of the main middleware request processing flow.
 """

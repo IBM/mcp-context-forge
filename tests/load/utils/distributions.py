@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Statistical distribution utilities for realistic data generation."""
+"""Location: ./tests/load/utils/distributions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Statistical distribution utilities for realistic data generation.
+"""
 
 import random
 from datetime import datetime, timedelta

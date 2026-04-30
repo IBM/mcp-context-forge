@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_well_known_rfc9728.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for RFC 9728 OAuth Protected Resource Metadata compliance.
 
@@ -29,10 +30,7 @@ def mock_server():
     server.enabled = True
     server.visibility = "public"
     server.oauth_enabled = True
-    server.oauth_config = {
-        "authorization_servers": ["https://auth.example.com"],
-        "scopes_supported": ["read", "write"]
-    }
+    server.oauth_config = {"authorization_servers": ["https://auth.example.com"], "scopes_supported": ["read", "write"]}
     return server
 
 
@@ -53,7 +51,7 @@ class TestRFC9728CompliantEndpoint:
             "resource": "http://testserver/servers/550e8400-e29b-41d4-a716-446655440000/mcp",
             "authorization_servers": ["https://auth.example.com"],
             "bearer_methods_supported": ["header"],
-            "scopes_supported": ["read", "write"]
+            "scopes_supported": ["read", "write"],
         }
 
         client = TestClient(app)
@@ -91,7 +89,7 @@ class TestRFC9728CompliantEndpoint:
         mock_service_instance.get_oauth_protected_resource_metadata.return_value = {
             "resource": "http://testserver/servers/550e8400-e29b-41d4-a716-446655440000/mcp",
             "authorization_servers": ["https://auth.example.com"],
-            "bearer_methods_supported": ["header"]
+            "bearer_methods_supported": ["header"],
         }
 
         client = TestClient(app)
@@ -302,9 +300,7 @@ class TestServiceLayerRFC9728Compliance:
         service = ServerService()
 
         result = service.get_oauth_protected_resource_metadata(
-            db=mock_db,
-            server_id="550e8400-e29b-41d4-a716-446655440000",
-            resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+            db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
         )
 
         # Verify RFC 9728 compliance: authorization_servers is plural, array
@@ -317,18 +313,13 @@ class TestServiceLayerRFC9728Compliance:
         """Test service handles authorization_servers config with multiple servers."""
         from mcpgateway.services.server_service import ServerService
 
-        mock_server.oauth_config = {
-            "authorization_servers": ["https://auth.example.com", "https://backup.example.com"],
-            "scopes_supported": ["read"]
-        }
+        mock_server.oauth_config = {"authorization_servers": ["https://auth.example.com", "https://backup.example.com"], "scopes_supported": ["read"]}
         mock_db = MagicMock()
         mock_db.get.return_value = mock_server
         service = ServerService()
 
         result = service.get_oauth_protected_resource_metadata(
-            db=mock_db,
-            server_id="550e8400-e29b-41d4-a716-446655440000",
-            resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+            db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
         )
 
         assert "authorization_servers" in result
@@ -340,18 +331,13 @@ class TestServiceLayerRFC9728Compliance:
         from mcpgateway.services.server_service import ServerService
 
         # Configure with singular form only (legacy)
-        mock_server.oauth_config = {
-            "authorization_server": "https://primary.example.com",
-            "scopes_supported": ["read"]
-        }
+        mock_server.oauth_config = {"authorization_server": "https://primary.example.com", "scopes_supported": ["read"]}
         mock_db = MagicMock()
         mock_db.get.return_value = mock_server
         service = ServerService()
 
         result = service.get_oauth_protected_resource_metadata(
-            db=mock_db,
-            server_id="550e8400-e29b-41d4-a716-446655440000",
-            resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+            db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
         )
 
         # Should wrap singular value into array for RFC 9728 response
@@ -367,9 +353,7 @@ class TestServiceLayerRFC9728Compliance:
         service = ServerService()
 
         result = service.get_oauth_protected_resource_metadata(
-            db=mock_db,
-            server_id="550e8400-e29b-41d4-a716-446655440000",
-            resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+            db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
         )
 
         assert result["resource"].endswith("/mcp")
@@ -385,9 +369,7 @@ class TestServiceLayerRFC9728Compliance:
 
         with pytest.raises(ServerNotFoundError):
             service.get_oauth_protected_resource_metadata(
-                db=mock_db,
-                server_id="550e8400-e29b-41d4-a716-446655440000",
-                resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+                db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
 
     def test_service_non_public_server_raises_not_found(self, mock_server):
@@ -401,9 +383,7 @@ class TestServiceLayerRFC9728Compliance:
 
         with pytest.raises(ServerNotFoundError):
             service.get_oauth_protected_resource_metadata(
-                db=mock_db,
-                server_id="550e8400-e29b-41d4-a716-446655440000",
-                resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+                db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
 
     def test_service_oauth_not_enabled_raises_error(self, mock_server):
@@ -417,9 +397,7 @@ class TestServiceLayerRFC9728Compliance:
 
         with pytest.raises(ServerError, match="OAuth not enabled"):
             service.get_oauth_protected_resource_metadata(
-                db=mock_db,
-                server_id="550e8400-e29b-41d4-a716-446655440000",
-                resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+                db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
 
 
@@ -484,16 +462,12 @@ class TestRFC9728SecurityValidation:
 
         with pytest.raises(ServerNotFoundError):
             service.get_oauth_protected_resource_metadata(
-                db=mock_db,
-                server_id="550e8400-e29b-41d4-a716-446655440000",
-                resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+                db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
 
         # Test team server
         mock_server.visibility = "team"
         with pytest.raises(ServerNotFoundError):
             service.get_oauth_protected_resource_metadata(
-                db=mock_db,
-                server_id="550e8400-e29b-41d4-a716-446655440000",
-                resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
+                db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )

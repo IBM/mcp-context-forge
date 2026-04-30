@@ -345,11 +345,11 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+  ghcr.io/ibm/mcp-context-forge:1.0.0
 
 # Tail logs and generate API key
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
@@ -367,7 +367,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
       -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
       -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
       -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+      ghcr.io/ibm/mcp-context-forge:1.0.0
     ```
 
     **Host networking** (access local MCP servers):
@@ -376,7 +376,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
     docker run -d --name mcpgateway --network=host \
       -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
       -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+      ghcr.io/ibm/mcp-context-forge:1.0.0
     ```
 
     **Airgapped deployment** (no internet):
@@ -394,7 +394,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
 ```bash
 podman run -d --name mcpgateway \
   -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+  ghcr.io/ibm/mcp-context-forge:1.0.0
 ```
 
 ---
@@ -453,7 +453,6 @@ For upgrade instructions, migration guides, and rollback procedures, see:
 
 - **[Upgrade Guide](manage/upgrade.md)** — General upgrade procedures
 - **[CHANGELOG.md](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)** — Version history and breaking changes
-- **[MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md)** — Multi-tenancy migration (v0.6.x → v0.7.x)
 
 ---
 
