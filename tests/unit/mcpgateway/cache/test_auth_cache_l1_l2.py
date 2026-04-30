@@ -779,6 +779,66 @@ class TestUserTeamObjectsL1L2:
         result = await auth_cache.get_user_team_objects("user@example.com:True")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_redis_miss(self, auth_cache, mock_redis):
+        """Redis client available but data=None increments redis_miss_count (line 859)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        mock_redis.get = AsyncMock(return_value=None)
+
+        before = auth_cache._redis_miss_count
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_team_objects(cache_key)
+
+        assert result is None
+        assert auth_cache._redis_miss_count == before + 1
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_redis_exception(self, auth_cache, mock_redis):
+        """Redis get() exception is caught and logs a warning (lines 860-861)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        mock_redis.get = AsyncMock(side_effect=RuntimeError("Redis timeout"))
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_team_objects(cache_key)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_disabled_returns_early(self, auth_cache):
+        """set_user_team_objects returns immediately when cache is disabled (line 879)."""
+        auth_cache._enabled = False
+        await auth_cache.set_user_team_objects("user@example.com:True", self._sample_dicts())
+        assert auth_cache._team_objects_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_redis_happy_path(self, auth_cache, mock_redis):
+        """Redis available: setex is called with serialised team dicts (lines 884-889)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.set_user_team_objects(cache_key, team_dicts)
+
+        mock_redis.setex.assert_called_once()
+        assert cache_key in auth_cache._team_objects_cache
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_redis_exception(self, auth_cache, mock_redis):
+        """Redis setex() exception is caught and logs a warning (lines 890-891)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+        mock_redis.setex = AsyncMock(side_effect=RuntimeError("write error"))
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.set_user_team_objects(cache_key, team_dicts)
+
+        # L1 should still be populated even when Redis write fails
+        assert cache_key in auth_cache._team_objects_cache
+
 
 @pytest.mark.asyncio
 async def test_redis_revocation_check_error_falls_through(monkeypatch):
