@@ -74,6 +74,62 @@ _GET_ALL_USERS_LIMIT = 10000
 _DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
 
 
+def _user_obj_to_dict(user: EmailUser) -> dict:
+    """Serialise an EmailUser ORM object to a plain dict safe for caching."""
+
+    def _iso(v: Optional[datetime]) -> Optional[str]:
+        return v.isoformat() if v is not None else None
+
+    return {
+        "email": user.email,
+        "password_hash": user.password_hash,
+        "full_name": user.full_name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "auth_provider": user.auth_provider,
+        "password_hash_type": user.password_hash_type,
+        "password_change_required": user.password_change_required,
+        "failed_login_attempts": user.failed_login_attempts,
+        "locked_until": _iso(user.locked_until),
+        "email_verified_at": _iso(user.email_verified_at),
+        "created_at": _iso(user.created_at),
+        "updated_at": _iso(user.updated_at),
+        "last_login": _iso(user.last_login),
+        "admin_origin": user.admin_origin,
+        "password_changed_at": _iso(user.password_changed_at),
+    }
+
+
+def _user_dict_to_obj(d: dict) -> EmailUser:
+    """Reconstruct a detached EmailUser from a cached dict."""
+
+    def _dt(v: Optional[str]) -> Optional[datetime]:
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        return datetime.fromisoformat(v)
+
+    return EmailUser(
+        email=d["email"],
+        password_hash=d.get("password_hash", ""),
+        full_name=d.get("full_name"),
+        is_admin=d.get("is_admin", False),
+        is_active=d.get("is_active", True),
+        auth_provider=d.get("auth_provider", "local"),
+        password_hash_type=d.get("password_hash_type", "argon2id"),
+        password_change_required=d.get("password_change_required", False),
+        failed_login_attempts=d.get("failed_login_attempts", 0),
+        locked_until=_dt(d.get("locked_until")),
+        email_verified_at=_dt(d.get("email_verified_at")),
+        created_at=_dt(d.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_dt(d.get("updated_at")) or datetime.now(timezone.utc),
+        last_login=_dt(d.get("last_login")),
+        admin_origin=d.get("admin_origin"),
+        password_changed_at=_dt(d.get("password_changed_at")),
+    )
+
+
 @dataclass(frozen=True)
 class UsersListResult:
     """Result for list_users queries."""
@@ -507,6 +563,8 @@ class EmailAuthService:
     async def get_user_by_email(self, email: str) -> Optional[EmailUser]:
         """Get user by email address.
 
+        Checks the auth cache (L1 → L2) before hitting the DB.
+
         Args:
             email: Email address to look up
 
@@ -518,10 +576,27 @@ class EmailAuthService:
             # user = await service.get_user_by_email("test@example.com")
             # user.email if user else None  # Returns: 'test@example.com'
         """
+        normalized = email.lower().strip()
         try:
-            stmt = select(EmailUser).where(EmailUser.email == email.lower())
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            cached = await auth_cache.get_user(normalized)
+            if cached is not None:
+                return _user_dict_to_obj(cached)
+        except Exception:
+            pass  # graceful fallback to DB
+
+        try:
+            stmt = select(EmailUser).where(EmailUser.email == normalized)
             result = self.db.execute(stmt)
             user = result.scalar_one_or_none()
+            if user is not None:
+                try:
+                    from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+                    await auth_cache.set_user(normalized, _user_obj_to_dict(user))
+                except Exception:
+                    pass
             return user
         except Exception as e:
             logger.error(f"Error getting user by email {SecurityValidator.sanitize_log_message(email)}: {e}")
@@ -1757,6 +1832,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             return user
 
@@ -1789,6 +1865,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} activated")
             return user
@@ -1822,6 +1899,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deactivated")
             return user

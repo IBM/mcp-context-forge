@@ -389,6 +389,92 @@ class AuthCache:
                 expiry=time.time() + ttl,
             )
 
+    async def get_user(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get cached user dict for a given email (L1 → L2 lookup).
+
+        Args:
+            email: Normalised user email address.
+
+        Returns:
+            Cached user dict or None on cache miss.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user("test@example.com"))
+            >>> result is None  # Cache miss on fresh cache
+            True
+        """
+        if not self._enabled:
+            return None
+
+        # L1 check
+        entry = self._user_cache.get(email)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # L2 check
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("user", email)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    # Third-Party
+                    import orjson  # pylint: disable=import-outside-toplevel
+
+                    user_dict = orjson.loads(data)
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    # Write-through to L1
+                    with self._lock:
+                        self._user_cache[email] = CacheEntry(
+                            value=user_dict,
+                            expiry=time.time() + self._user_ttl,
+                        )
+                    return user_dict
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user failed: {e}")
+
+        self._miss_count += 1
+        return None
+
+    async def set_user(self, email: str, user_dict: Dict[str, Any]) -> None:
+        """Store user dict in cache (L2 then L1).
+
+        Args:
+            email: Normalised user email address.
+            user_dict: Serialisable user data dict.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user("test@example.com", {"email": "test@example.com"}))
+        """
+        if not self._enabled:
+            return
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                # Third-Party
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                redis_key = self._get_redis_key("user", email)
+                await redis.setex(redis_key, self._user_ttl, orjson.dumps(user_dict))
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user failed: {e}")
+
+        # Store in L1
+        with self._lock:
+            self._user_cache[email] = CacheEntry(
+                value=user_dict,
+                expiry=time.time() + self._user_ttl,
+            )
+
     async def invalidate_user(self, email: str) -> None:
         """Invalidate cached data for a user.
 
@@ -1180,6 +1266,7 @@ class AuthCache:
             "redis_hit_rate": self._redis_hit_count / redis_total if redis_total > 0 else 0.0,
             "redis_available": self._redis_available,
             "revoked_tokens_cached": len(self._revoked_jtis),
+            "user_cache_size": len(self._user_cache),
             "context_cache_size": len(self._context_cache),
             "role_cache_size": len(self._role_cache),
             "teams_list_cache_size": len(self._teams_list_cache),
