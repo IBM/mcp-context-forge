@@ -180,7 +180,7 @@ def run_migrations_online() -> None:
 
             with context.begin_transaction():
                 context.run_migrations()
-            
+
             # Ensure all migration work is committed.
             # When dialect-detection SQL triggers autobegin before configure(),
             # Alembic sets _in_external_transaction=True and begin_transaction()
