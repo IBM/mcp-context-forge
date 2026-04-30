@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-04-13T23:59:59Z"
+cpex = "2026-05-07T23:59:59Z"
 cpex-url-reputation = "2026-04-20T23:59:59Z"
 cpex-rate-limiter = "2026-04-22T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
@@ -29,6 +29,12 @@ langchain-openai = "2026-04-22T23:59:59Z"
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
+cpex-encoded-exfil-detection = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/encoded_exfil_detection" }
+cpex-pii-filter = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/pii_filter" }
+cpex-rate-limiter = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/rate_limiter" }
+cpex-retry-with-backoff = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/retry_with_backoff" }
+cpex-secrets-detection = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/secrets_detection" }
+cpex-url-reputation = { git = "https://github.com/IBM/cpex-plugins.git", branch = "fix/use-cpex-framework-dependency", subdirectory = "plugins/rust/python-package/url_reputation" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -74,7 +80,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "brotli==1.2.0", # Transitive pin (starlette-compress)
     "base58>=2.1.1",
-    "cpex>=0.1.0.dev11,<0.1.0.dev12",
+    "cpex>=0.1.0.dev13",
     "cryptography>=46.0.7",
     "fastapi>=0.135.3",
     "filelock>=3.25.2",

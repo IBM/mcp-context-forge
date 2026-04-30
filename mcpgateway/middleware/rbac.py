@@ -233,7 +233,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                         authenticated_at=datetime.now(timezone.utc),
                     )
                     if plugin_global_context:
-                        plugin_global_context.state["user_context"] = user_ctx
+                        plugin_global_context.user_context = user_ctx
                     else:
                         # First-Party
                         from mcpgateway.utils.correlation_id import get_correlation_id  # pylint: disable=import-outside-toplevel

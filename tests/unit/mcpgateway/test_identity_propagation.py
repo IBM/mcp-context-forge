@@ -278,26 +278,26 @@ class TestFilterSensitiveAttributes:
 # GlobalContext.user_context tests
 # ---------------------------------------------------------------------------
 class TestGlobalContextUserContext:
-    """Tests for GlobalContext.state['user_context'] (cpex stores user_context in state dict)."""
+    """Tests for GlobalContext.user_context (typed UserContext field on the global context)."""
 
     def test_default_none(self):
         ctx = GlobalContext(request_id="req-1")
-        assert ctx.state.get("user_context") is None
+        assert ctx.user_context is None
 
     def test_set_user_context(self):
         uc = UserContext(user_id="alice@co.com", is_admin=True)
-        ctx = GlobalContext(request_id="req-1", state={"user_context": uc})
-        assert ctx.state["user_context"].user_id == "alice@co.com"
-        assert ctx.state["user_context"].is_admin is True
+        ctx = GlobalContext(request_id="req-1", user_context=uc)
+        assert ctx.user_context.user_id == "alice@co.com"
+        assert ctx.user_context.is_admin is True
 
     def test_backward_compat_user_dict(self):
         ctx = GlobalContext(
             request_id="req-1",
             user={"email": "alice@co.com", "is_admin": True},
-            state={"user_context": UserContext(user_id="alice@co.com")},
+            user_context=UserContext(user_id="alice@co.com"),
         )
         assert ctx.user["email"] == "alice@co.com"
-        assert ctx.state["user_context"].user_id == "alice@co.com"
+        assert ctx.user_context.user_id == "alice@co.com"
 
 
 # ---------------------------------------------------------------------------
@@ -305,12 +305,12 @@ class TestGlobalContextUserContext:
 # ---------------------------------------------------------------------------
 def _get_user_context(ctx: PluginContext):
     """Extract UserContext from plugin context, mirroring the production accessor pattern."""
-    return ctx.global_context.state.get("user_context")
+    return ctx.global_context.user_context
 
 
 def _get_user_email(ctx: PluginContext):
     """Extract user email from plugin context, mirroring the production accessor pattern."""
-    uc = ctx.global_context.state.get("user_context")
+    uc = ctx.global_context.user_context
     if uc is not None:
         return uc.email
     user = ctx.global_context.user
@@ -323,7 +323,7 @@ def _get_user_email(ctx: PluginContext):
 
 def _get_user_groups(ctx: PluginContext):
     """Extract user groups from plugin context, mirroring the production accessor pattern."""
-    uc = ctx.global_context.state.get("user_context")
+    uc = ctx.global_context.user_context
     if uc is not None:
         return uc.groups
     return []
@@ -334,7 +334,7 @@ class TestPluginContextHelpers:
 
     def test_user_context_property(self):
         uc = UserContext(user_id="alice@co.com", groups=["eng"])
-        gctx = GlobalContext(request_id="req-1", state={"user_context": uc})
+        gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_context(ctx) is uc
 
@@ -345,7 +345,7 @@ class TestPluginContextHelpers:
 
     def test_user_email_from_user_context(self):
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
-        gctx = GlobalContext(request_id="req-1", state={"user_context": uc})
+        gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_email(ctx) == "alice@co.com"
 
@@ -366,7 +366,7 @@ class TestPluginContextHelpers:
 
     def test_user_groups_from_context(self):
         uc = UserContext(user_id="alice@co.com", groups=["eng", "dev"])
-        gctx = GlobalContext(request_id="req-1", state={"user_context": uc})
+        gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_groups(ctx) == ["eng", "dev"]
 
@@ -377,13 +377,13 @@ class TestPluginContextHelpers:
 
     def test_user_email_none_when_uc_email_is_none(self):
         uc = UserContext(user_id="alice@co.com")  # email is None
-        gctx = GlobalContext(request_id="req-1", state={"user_context": uc})
+        gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_email(ctx) is None
 
     def test_user_groups_empty_list_from_uc(self):
         uc = UserContext(user_id="alice@co.com", groups=[])
-        gctx = GlobalContext(request_id="req-1", state={"user_context": uc})
+        gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
         assert _get_user_groups(ctx) == []
 
@@ -795,7 +795,7 @@ class TestInjectUserInfoUserContext:
 
         gctx = mock_request.state.plugin_global_context
         assert gctx is not None
-        uc = gctx.state.get("user_context")
+        uc = gctx.user_context
         assert uc is not None
         assert uc.user_id == "alice@example.com"
         assert uc.email == "alice@example.com"
@@ -829,7 +829,7 @@ class TestInjectUserInfoUserContext:
         gctx = mock_request.state.plugin_global_context
         assert gctx.user["email"] == "bob@example.com"
         assert gctx.user["is_admin"] is False
-        assert gctx.state["user_context"].teams is None  # None is not a list
+        assert gctx.user_context.teams is None  # None is not a list
 
     def test_with_existing_global_context(self):
         # First-Party
@@ -849,7 +849,7 @@ class TestInjectUserInfoUserContext:
 
         _inject_userinfo_instate(mock_request, mock_user)
 
-        uc = existing_gctx.state.get("user_context")
+        uc = existing_gctx.user_context
         assert uc is not None
         assert uc.auth_method == "basic"
         # [] is a list, so isinstance([], list) is True → teams = []
@@ -882,7 +882,7 @@ class TestInjectUserInfoUserContext:
             _inject_userinfo_instate(mock_request, None)
         # Should not create user_context when user is None
         gctx = mock_request.state.plugin_global_context
-        assert gctx.state.get("user_context") is None
+        assert gctx.user_context is None
 
 
 # ---------------------------------------------------------------------------
@@ -1202,7 +1202,7 @@ class TestRBACProxyUserContextFailure:
                     auth_method="proxy",
                 )
                 if plugin_global_context:
-                    plugin_global_context.state["user_context"] = None
+                    plugin_global_context.user_context = None
             except Exception as ctx_err:
                 caught = True
                 logging.getLogger("mcpgateway.middleware.rbac").debug(
@@ -1306,11 +1306,11 @@ class TestResourceServiceIdentityInjection:
         """build_identity_headers called in direct_proxy resource read path."""
         user_ctx = UserContext(user_id="bob@test.com", email="bob@test.com")
         mock_gateway = MagicMock()
-        plugin_global_context = GlobalContext(request_id="req-1", state={"user_context": user_ctx})
+        plugin_global_context = GlobalContext(request_id="req-1", user_context=user_ctx)
         headers = {"Authorization": "Bearer tok"}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            uc = plugin_global_context.state.get("user_context")
+            uc = plugin_global_context.user_context
             if plugin_global_context and uc:
                 headers.update(build_identity_headers(uc, mock_gateway))
 
@@ -1344,11 +1344,11 @@ class TestToolServiceIdentityInjection:
     def test_rest_tool_injects_identity_headers(self):
         """build_identity_headers called for REST tool invocation."""
         user_ctx = UserContext(user_id="bob@test.com", email="bob@test.com")
-        global_context = GlobalContext(request_id="req-1", state={"user_context": user_ctx})
+        global_context = GlobalContext(request_id="req-1", user_context=user_ctx)
         headers = {}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            uc = global_context.state.get("user_context")
+            uc = global_context.user_context
             if global_context and uc:
                 headers.update(build_identity_headers(uc))
 
@@ -1357,12 +1357,12 @@ class TestToolServiceIdentityInjection:
     def test_mcp_tool_injects_headers_and_meta(self):
         """build_identity_headers + build_identity_meta called for MCP tool invocation."""
         user_ctx = UserContext(user_id="charlie@test.com", email="charlie@test.com")
-        global_context = GlobalContext(request_id="req-2", state={"user_context": user_ctx})
+        global_context = GlobalContext(request_id="req-2", user_context=user_ctx)
         headers = {}
         meta_data = {}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            uc = global_context.state.get("user_context")
+            uc = global_context.user_context
             if global_context and uc:
                 headers.update(build_identity_headers(uc))
                 meta_data = build_identity_meta(uc, meta_data)
@@ -1722,7 +1722,7 @@ class TestResourceServiceIdentityPropagationCoverage:
         gateway = MagicMock(id="gw-1", gateway_mode="direct_proxy", url="https://gateway.example.com/mcp")
         resource_db = MagicMock(gateway=gateway, enabled=True)
         db.execute.return_value.scalar_one_or_none.return_value = resource_db
-        plugin_global_context = GlobalContext(request_id="req-1", state={"user_context": UserContext(user_id="user-1", email="user@example.com")})
+        plugin_global_context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
         mock_response = MagicMock()
         mock_response.contents = [MagicMock(text="hello", mimeType="text/plain")]
 
@@ -1749,7 +1749,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             )
 
         assert getattr(result, "text") == "hello"
-        mock_build_headers.assert_called_once_with(plugin_global_context.state["user_context"], gateway)
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context, gateway)
 
 
 class TestToolServiceIdentityPropagationCoverage:
@@ -1867,7 +1867,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 "gateway": None,
             }
         )
-        plugin_global_context = GlobalContext(request_id="req-1", state={"user_context": UserContext(user_id="user-1", email="user@example.com")})
+        plugin_global_context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
         mock_span = MagicMock()
         mock_span.__enter__.return_value = MagicMock()
         mock_span.__exit__.return_value = False
@@ -1888,7 +1888,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 plugin_global_context=plugin_global_context,
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.state["user_context"])
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
         assert service._http_client.request.call_args.kwargs["headers"]["X-Identity"] == "1"
 
     @pytest.mark.asyncio
@@ -1954,7 +1954,7 @@ class TestToolServiceIdentityPropagationCoverage:
                 },
             }
         )
-        plugin_global_context = GlobalContext(request_id="req-1", state={"user_context": UserContext(user_id="user-1", email="user@example.com")})
+        plugin_global_context = GlobalContext(request_id="req-1", user_context=UserContext(user_id="user-1", email="user@example.com"))
         mock_span = MagicMock()
         mock_span.__enter__.return_value = MagicMock()
         mock_span.__exit__.return_value = False
@@ -1979,8 +1979,8 @@ class TestToolServiceIdentityPropagationCoverage:
                 meta_data={"existing": True},
             )
 
-        mock_build_headers.assert_called_once_with(plugin_global_context.state["user_context"])
-        mock_build_meta.assert_called_once_with(plugin_global_context.state["user_context"], {"existing": True})
+        mock_build_headers.assert_called_once_with(plugin_global_context.user_context)
+        mock_build_meta.assert_called_once_with(plugin_global_context.user_context, {"existing": True})
 
 
 class TestStreamableHttpTransportIdentityPropagationCoverage:

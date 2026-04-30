@@ -3961,13 +3961,14 @@ class TestPluginExceptionHandlers:
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
-            details={"http_status_code": 429},
+            details={},
+            http_status_code=429,
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
 
-        assert result.status_code == 429  # Should use violation's HTTP status from details
+        assert result.status_code == 429  # Should use violation's HTTP status
         content = json.loads(result.body.decode())
         assert content["error"]["code"] == -32602
         assert "Too many requests" in content["error"]["message"]  # Uses description
@@ -3986,7 +3987,9 @@ class TestPluginExceptionHandlers:
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
-            details={"http_status_code": 429, "http_headers": {"Retry-After": "60", "X-RateLimit-Limit": "100"}},
+            details={},
+            http_status_code=429,
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
@@ -4062,8 +4065,9 @@ class TestPluginExceptionHandlers:
             reason="Error",
             description="Something failed",
             code="ERROR",
-            details={"http_status_code": 400},
-            # No http_headers in details
+            details={},
+            http_status_code=400,
+            # http_headers left unset
         )
         exc = PluginViolationError(message="Failed", violation=violation)
 
@@ -4089,7 +4093,8 @@ class TestPluginExceptionHandlers:
             reason="Rate limit",
             description="Service unavailable",
             code="RATE_LIMIT",
-            details={"http_status_code": 503},  # Explicit status should win
+            details={},
+            http_status_code=503,  # Explicit status should win over RATE_LIMIT mapping
         )
         exc = PluginViolationError(message="Limited", violation=violation)
 
@@ -4113,14 +4118,13 @@ class TestPluginExceptionHandlers:
             reason="Rate limit",
             description="Too many requests",
             code="RATE_LIMIT",
-            details={
-                "http_status_code": 429,
-                "http_headers": {
-                    "X-RateLimit-Limit": "60",
-                    "X-RateLimit-Remaining": "0",
-                    "X-RateLimit-Reset": "1737394800",
-                    "Retry-After": "35",
-                },
+            details={},
+            http_status_code=429,
+            http_headers={
+                "X-RateLimit-Limit": "60",
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "1737394800",
+                "Retry-After": "35",
             },
         )
         exc = PluginViolationError(message="Limited", violation=violation)
@@ -4174,7 +4178,8 @@ class TestPluginExceptionHandlers:
             reason="Invalid status",
             description="Status code below valid range",
             code="RATE_LIMIT",  # Has mapping to 429
-            details={"http_status_code": 99},  # Invalid: below 100
+            details={},
+            http_status_code=99,  # Invalid: below 100
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
@@ -4195,7 +4200,7 @@ class TestPluginExceptionHandlers:
         from cpex.framework.errors import PluginViolationError
         from cpex.framework.models import PluginViolation
 
-        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", details={"http_status_code": 512})  # Has mapping to 429  # Invalid: above 511
+        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", details={}, http_status_code=512)  # RATE_LIMIT maps to 429; 512 is invalid (above 511)
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
@@ -4219,7 +4224,8 @@ class TestPluginExceptionHandlers:
             reason="Invalid status",
             description="Status code invalid, no mapping",
             code="UNKNOWN_CODE",  # Not in mapping
-            details={"http_status_code": 1000},  # Invalid: way above 511
+            details={},
+            http_status_code=1000,  # Invalid: way above 511
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
@@ -4245,7 +4251,8 @@ class TestPluginExceptionHandlers:
             reason="Continue",
             description="Valid status 400",
             code="INFO",
-            details={"http_status_code": 400},  # Valid: exactly 400
+            details={},
+            http_status_code=400,  # Valid: exactly 400
         )
         exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
         result_400 = asyncio.run(plugin_violation_exception_handler(None, exc_400))
@@ -4256,7 +4263,8 @@ class TestPluginExceptionHandlers:
             reason="Network error",
             description="Valid status 511",
             code="ERROR",
-            details={"http_status_code": 511},  # Valid: exactly 511
+            details={},
+            http_status_code=511,  # Valid: exactly 511
         )
         exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
         result_511 = asyncio.run(plugin_violation_exception_handler(None, exc_511))

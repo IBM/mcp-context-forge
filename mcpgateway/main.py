@@ -2229,8 +2229,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         if exc.violation.plugin_name:
             violation_details["plugin_name"] = exc.violation.plugin_name
 
-        # Use HTTP status code from violation details if present (e.g., 429 for rate limiting)
-        http_status = exc.violation.details.get("http_status_code") if exc.violation.details else None
+        # Use HTTP status code from violation if present (e.g., 429 for rate limiting)
+        http_status = exc.violation.http_status_code if exc.violation.http_status_code else None
         if http_status and not VALID_HTTP_STATUS_CODES.get(http_status):
             logger.warning(f"Invalid HTTP status code {http_status} from violation, defaulting to 200")
             http_status = None
@@ -2244,8 +2244,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
 
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
 
-    # Collect HTTP headers from violation details if present
-    headers = exc.violation.details.get("http_headers") if exc.violation and exc.violation.details else None
+    # Collect HTTP headers from violation if present
+    headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
 
     response = ORJSONResponse(status_code=http_status, content={"error": json_rpc_error.model_dump()})
     if headers:

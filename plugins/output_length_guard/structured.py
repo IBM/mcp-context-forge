@@ -67,8 +67,9 @@ def _process_structured_data(
                         reason="Recursion depth exceeds security limit",
                         description=f"Nesting depth {depth} exceeds limit of {policy.max_recursion_depth}",
                         code="STRUCTURE_DEPTH_VIOLATION",
-                        details={"depth": depth, "max_depth": policy.max_recursion_depth, "location": path or "root", "http_status_code": 422},
+                        details={"depth": depth, "max_depth": policy.max_recursion_depth, "location": path or "root"},
                         mcp_error_code=-32000,
+                        http_status_code=422,
                     ),
                 )
             return data, False, None
@@ -108,9 +109,9 @@ def _process_structured_data(
                                 "chars_per_token": policy.chars_per_token,
                                 "strategy": policy.strategy,
                                 "location": path or "root",
-                                "http_status_code": 422,
                             },
                             mcp_error_code=-32000,
+                            http_status_code=422,
                         )
                         logger.warning("Token limit violation, blocking: location=%s, tokens=%d, max=%s", path or "root", token_count, policy.max_tokens)
                     elif above_max:
@@ -118,8 +119,9 @@ def _process_structured_data(
                             reason=f"String length out of bounds{location}",
                             description=f"String length {length} exceeds max_chars {policy.max_chars}{location}",
                             code="OUTPUT_LENGTH_VIOLATION",
-                            details={"length": length, "max_chars": policy.max_chars, "strategy": policy.strategy, "location": path or "root", "http_status_code": 422},
+                            details={"length": length, "max_chars": policy.max_chars, "strategy": policy.strategy, "location": path or "root"},
                             mcp_error_code=-32000,
+                            http_status_code=422,
                         )
                         logger.debug("Blocking: string at %s exceeds char limits (length=%d)", path or "root", length)
                     else:
@@ -127,8 +129,9 @@ def _process_structured_data(
                             reason=f"String length/tokens below minimum{location}",
                             description=f"String length {length} or tokens {token_count} below minimum{location}",
                             code="OUTPUT_LENGTH_VIOLATION",
-                            details={"length": length, "min_chars": policy.min_chars, "token_count": token_count, "min_tokens": policy.min_tokens, "location": path or "root", "http_status_code": 422},
+                            details={"length": length, "min_chars": policy.min_chars, "token_count": token_count, "min_tokens": policy.min_tokens, "location": path or "root"},
                             mcp_error_code=-32000,
+                            http_status_code=422,
                         )
                         logger.debug("Blocking: string at %s below minimum limits", path or "root")
 
@@ -163,8 +166,9 @@ def _process_structured_data(
                             reason="Structure size exceeds security limit",
                             description=f"List has {len(data)} items, exceeding limit of {policy.max_structure_size}",
                             code="STRUCTURE_SIZE_VIOLATION",
-                            details={"size": len(data), "max_size": policy.max_structure_size, "location": path or "root", "http_status_code": 422},
+                            details={"size": len(data), "max_size": policy.max_structure_size, "location": path or "root"},
                             mcp_error_code=-32000,
+                            http_status_code=422,
                         ),
                     )
                 return data, False, None
@@ -195,8 +199,9 @@ def _process_structured_data(
                             reason="Structure size exceeds security limit",
                             description=f"Dict has {len(data)} items, exceeding limit of {policy.max_structure_size}",
                             code="STRUCTURE_SIZE_VIOLATION",
-                            details={"size": len(data), "max_size": policy.max_structure_size, "location": path or "root", "http_status_code": 422},
+                            details={"size": len(data), "max_size": policy.max_structure_size, "location": path or "root"},
                             mcp_error_code=-32000,
+                            http_status_code=422,
                         ),
                     )
                 return data, False, None
