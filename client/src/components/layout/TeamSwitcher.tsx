@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ChevronsUpDown, Globe } from "lucide-react";
 import {
   DropdownMenu,
@@ -6,8 +7,26 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { SidebarMenuButton } from "../ui/sidebar";
+import { useQuery } from "../../hooks/useQuery";
+
+interface Team {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+interface TeamsResponse {
+  teams: Team[];
+}
 
 export function TeamSwitcher() {
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const { data, isLoading, error } = useQuery<TeamsResponse>("/teams");
+
+  const teams = data?.teams ?? [];
+  const currentTeam = selectedTeam ? teams.find((t) => t.id === selectedTeam) : null;
+  const displayName = currentTeam?.name ?? "All teams";
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -19,7 +38,7 @@ export function TeamSwitcher() {
             <Globe className="size-3 text-sidebar-foreground" />
           </div>
           <div className="grid flex-1 text-left text-sm leading-tight">
-            <span className="truncate font-semibold">All teams</span>
+            <span className="truncate font-semibold">{isLoading ? "Loading..." : displayName}</span>
           </div>
           <ChevronsUpDown className="ml-auto" />
         </SidebarMenuButton>
@@ -30,18 +49,34 @@ export function TeamSwitcher() {
         side="bottom"
         sideOffset={4}
       >
-        <DropdownMenuItem className="gap-2 p-2">
+        {error && (
+          <DropdownMenuItem disabled className="gap-2 p-2 text-destructive">
+            Failed to load teams
+          </DropdownMenuItem>
+        )}
+        {!error && teams.length === 0 && !isLoading && (
+          <DropdownMenuItem disabled className="gap-2 p-2 text-muted-foreground">
+            No teams available
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem className="gap-2 p-2" onClick={() => setSelectedTeam(null)}>
           <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
             <Globe className="size-4 shrink-0 text-muted-foreground" />
           </div>
-          Team 1
+          All teams
         </DropdownMenuItem>
-        <DropdownMenuItem className="gap-2 p-2">
-          <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
-            <Globe className="size-4 shrink-0 text-muted-foreground" />
-          </div>
-          Team 2
-        </DropdownMenuItem>
+        {teams.map((team) => (
+          <DropdownMenuItem
+            key={team.id}
+            className="gap-2 p-2"
+            onClick={() => setSelectedTeam(team.id)}
+          >
+            <div className="flex size-6 items-center justify-center rounded-sm border bg-background">
+              <Globe className="size-4 shrink-0 text-muted-foreground" />
+            </div>
+            {team.name}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
