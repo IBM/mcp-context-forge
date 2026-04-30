@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/unix/test_client_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -295,9 +295,7 @@ async def test_unix_plugin_manager_invoke_hook(unix_server_proc_for_manager):
     # Reset PluginManager singleton state
     PluginManager.reset()
 
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
     plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:
@@ -332,9 +330,7 @@ async def test_unix_plugin_manager_multiple_hooks(unix_server_proc_for_manager):
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
     plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:
@@ -375,9 +371,7 @@ async def test_unix_plugin_manager_context_persistence(unix_server_proc_for_mana
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
     plugin_manager.config.plugins[0].unix_socket.path = socket_path
 
     try:

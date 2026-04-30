@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Regression test suite for admin UI CRUD operations and state persistence.
+"""Location: ./tests/playwright/regression/test_admin_crud_regression.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Regression test suite for admin UI CRUD operations and state persistence.
 
 This test suite covers the core regression scenarios:
 1. Create flow - Entity creation succeeds

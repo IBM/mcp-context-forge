@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Authorization discovery checks for protected resource metadata endpoints."""
+"""Location: ./tests/compliance/mcp_2025_11_25/authorization/test_protected_resource_metadata.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Authorization discovery checks for protected resource metadata endpoints.
+"""
 
 # Third-Party
 import pytest

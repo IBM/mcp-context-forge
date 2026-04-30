@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for logout endpoint in auth router."""
+"""Location: ./tests/unit/mcpgateway/test_auth_logout.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for logout endpoint in auth router.
+"""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
@@ -37,7 +43,7 @@ def valid_token():
 
     # Handle both SecretStr and string types
     secret_key = settings.jwt_secret_key
-    if hasattr(secret_key, 'get_secret_value'):
+    if hasattr(secret_key, "get_secret_value"):
         secret_key = secret_key.get_secret_value()
 
     now = datetime.now(timezone.utc)
@@ -51,13 +57,9 @@ def valid_token():
         "email": "test@example.com",
         "is_admin": False,
         "teams": [],
-        "last_activity": int(now.timestamp())
+        "last_activity": int(now.timestamp()),
     }
-    return jwt.encode(
-        payload,
-        secret_key,
-        algorithm=settings.jwt_algorithm
-    )
+    return jwt.encode(payload, secret_key, algorithm=settings.jwt_algorithm)
 
 
 class TestLogoutEndpoint:
@@ -70,16 +72,13 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_service:
+            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
                 mock_blocklist.revoke_token.return_value = True
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
-                response = client.post(
-                    "/auth/logout",
-                    headers={"Authorization": f"Bearer {valid_token}"}
-                )
+                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
 
                 assert response.status_code == 200
                 data = response.json()
@@ -98,6 +97,7 @@ class TestLogoutEndpoint:
 
     def test_logout_missing_authorization_header(self, mock_db):
         """Test logout without Authorization header."""
+
         def mock_auth_fail():
             raise HTTPException(status_code=401, detail="Authentication required")
 
@@ -119,10 +119,7 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post(
-                "/auth/logout",
-                headers={"Authorization": "InvalidFormat token"}
-            )
+            response = client.post("/auth/logout", headers={"Authorization": "InvalidFormat token"})
 
             assert response.status_code == 401
             detail = response.json()["detail"]
@@ -137,7 +134,7 @@ class TestLogoutEndpoint:
 
         # Handle both SecretStr and string types
         secret_key = settings.jwt_secret_key
-        if hasattr(secret_key, 'get_secret_value'):
+        if hasattr(secret_key, "get_secret_value"):
             secret_key = secret_key.get_secret_value()
 
         # Create token without JTI
@@ -147,24 +144,17 @@ class TestLogoutEndpoint:
             "exp": int((now + timedelta(minutes=20)).timestamp()),
             "iat": int(now.timestamp()),
             "iss": settings.jwt_issuer,
-            "aud": settings.jwt_audience
+            "aud": settings.jwt_audience,
             # Missing JTI
         }
-        token = jwt.encode(
-            payload,
-            secret_key,
-            algorithm=settings.jwt_algorithm
-        )
+        token = jwt.encode(payload, secret_key, algorithm=settings.jwt_algorithm)
 
         app.dependency_overrides[get_current_user] = lambda: mock_current_user
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
             client = TestClient(app)
-            response = client.post(
-                "/auth/logout",
-                headers={"Authorization": f"Bearer {token}"}
-            )
+            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
 
             assert response.status_code == 400
             assert "does not support revocation" in response.json()["detail"]
@@ -178,10 +168,7 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post(
-                "/auth/logout",
-                headers={"Authorization": "Bearer invalid.token.format"}
-            )
+            response = client.post("/auth/logout", headers={"Authorization": "Bearer invalid.token.format"})
 
             assert response.status_code == 401
             detail = response.json()["detail"]
@@ -195,16 +182,13 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_service:
+            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                 mock_blocklist = MagicMock()
                 mock_blocklist.revoke_token.return_value = False
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
-                response = client.post(
-                    "/auth/logout",
-                    headers={"Authorization": f"Bearer {valid_token}"}
-                )
+                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
 
                 assert response.status_code == 500
                 assert "Failed to revoke token" in response.json()["detail"]
@@ -217,14 +201,11 @@ class TestLogoutEndpoint:
         app.dependency_overrides[get_db] = lambda: mock_db
 
         try:
-            with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_service:
+            with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                 mock_service.side_effect = Exception("Database error")
 
                 client = TestClient(app)
-                response = client.post(
-                    "/auth/logout",
-                    headers={"Authorization": f"Bearer {valid_token}"}
-                )
+                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
 
                 assert response.status_code == 500
                 assert "error" in response.json()["detail"].lower()
@@ -240,28 +221,22 @@ class TestLogoutEndpoint:
 
         try:
             # Mock settings to return SecretStr
-            with patch('mcpgateway.routers.auth.settings') as mock_settings:
+            with patch("mcpgateway.routers.auth.settings") as mock_settings:
                 from mcpgateway.config import get_settings
+
                 real_settings = get_settings()
 
                 # Create a SecretStr version of the key
-                mock_settings.jwt_secret_key = SecretStr(
-                    real_settings.jwt_secret_key.get_secret_value()
-                    if hasattr(real_settings.jwt_secret_key, 'get_secret_value')
-                    else real_settings.jwt_secret_key
-                )
+                mock_settings.jwt_secret_key = SecretStr(real_settings.jwt_secret_key.get_secret_value() if hasattr(real_settings.jwt_secret_key, "get_secret_value") else real_settings.jwt_secret_key)
                 mock_settings.jwt_algorithm = real_settings.jwt_algorithm
 
-                with patch('mcpgateway.services.token_blocklist_service.get_token_blocklist_service') as mock_service:
+                with patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_service:
                     mock_blocklist = MagicMock()
                     mock_blocklist.revoke_token.return_value = True
                     mock_service.return_value = mock_blocklist
 
                     client = TestClient(app)
-                    response = client.post(
-                        "/auth/logout",
-                        headers={"Authorization": f"Bearer {valid_token}"}
-                    )
+                    response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
 
                     # Should succeed - this covers the get_secret_value() path on line 244
                     assert response.status_code == 200

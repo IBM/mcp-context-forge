@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/test_gateway_plugin_manager.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhumohan Jaishankar
 
@@ -43,21 +43,33 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingService
 
-
 # ---------------------------------------------------------------------------
 # Canonical full-field configs (must include all schema fields)
 # ---------------------------------------------------------------------------
 
 _OLG: dict = {
-    "min_chars": 0, "max_chars": 2000, "min_tokens": 0, "max_tokens": None,
-    "chars_per_token": 4, "limit_mode": "character", "strategy": "truncate",
-    "ellipsis": "\u2026", "word_boundary": False, "max_text_length": 1_000_000,
-    "max_structure_size": 10_000, "max_recursion_depth": 100,
+    "min_chars": 0,
+    "max_chars": 2000,
+    "min_tokens": 0,
+    "max_tokens": None,
+    "chars_per_token": 4,
+    "limit_mode": "character",
+    "strategy": "truncate",
+    "ellipsis": "\u2026",
+    "word_boundary": False,
+    "max_text_length": 1_000_000,
+    "max_structure_size": 10_000,
+    "max_recursion_depth": 100,
 }
 _RL: dict = {
-    "by_user": None, "by_tenant": None, "by_tool": None,
-    "algorithm": "fixed_window", "backend": "memory",
-    "redis_url": None, "redis_key_prefix": "rl", "redis_fallback": True,
+    "by_user": None,
+    "by_tenant": None,
+    "by_tool": None,
+    "algorithm": "fixed_window",
+    "backend": "memory",
+    "redis_url": None,
+    "redis_key_prefix": "rl",
+    "redis_fallback": True,
 }
 
 

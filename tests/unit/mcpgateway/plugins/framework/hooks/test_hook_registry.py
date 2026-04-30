@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Copyright 2025 © IBM Corporation
+"""Location: ./tests/unit/mcpgateway/plugins/framework/hooks/test_hook_registry.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Test suite for hook registry functionality.
 """

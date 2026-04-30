@@ -1,4 +1,10 @@
-"""Transport wire-level semantics from MCP 2025-11-25 § Basic / Transports.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_transport_semantics.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Transport wire-level semantics from MCP 2025-11-25 § Basic / Transports.
 
 Unlike the parametrized matrix, these probes are transport-specific and
 use raw ``httpx`` against the live gateway. They cover the Streamable

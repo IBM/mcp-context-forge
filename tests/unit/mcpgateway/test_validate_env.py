@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/test_validate_env.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 # File: tests/unit/mcpgateway/test_validate_env.py
 import logging
 import os

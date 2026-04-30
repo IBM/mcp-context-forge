@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Test coverage for metrics aggregation edge cases.
+"""Location: ./tests/unit/mcpgateway/test_metrics_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Test coverage for metrics aggregation edge cases.
 This file specifically targets uncovered code paths in _compute_metrics_summary
 and metrics_summary methods to achieve 95%+ coverage.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

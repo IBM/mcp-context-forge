@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/pages/servers_page.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -570,8 +570,7 @@ class ServersPage(BasePage):
 
     def get_edit_checked_tools(self) -> list[str]:
         """Return values of checked tool checkboxes in the edit modal."""
-        return self.page.evaluate(
-            """
+        return self.page.evaluate("""
             () => {
                 const container = document.getElementById('edit-server-tools');
                 if (!container) return [];
@@ -579,13 +578,11 @@ class ServersPage(BasePage):
                     container.querySelectorAll('input[name="associatedTools"]:checked')
                 ).map(cb => cb.value);
             }
-        """
-        )
+        """)
 
     def get_edit_checked_resources(self) -> list[str]:
         """Return values of checked resource checkboxes in the edit modal."""
-        return self.page.evaluate(
-            """
+        return self.page.evaluate("""
             () => {
                 const container = document.getElementById('edit-server-resources');
                 if (!container) return [];
@@ -593,13 +590,11 @@ class ServersPage(BasePage):
                     container.querySelectorAll('input[name="associatedResources"]:checked')
                 ).map(cb => cb.value);
             }
-        """
-        )
+        """)
 
     def get_edit_checked_prompts(self) -> list[str]:
         """Return values of checked prompt checkboxes in the edit modal."""
-        return self.page.evaluate(
-            """
+        return self.page.evaluate("""
             () => {
                 const container = document.getElementById('edit-server-prompts');
                 if (!container) return [];
@@ -607,8 +602,7 @@ class ServersPage(BasePage):
                     container.querySelectorAll('input[name="associatedPrompts"]:checked')
                 ).map(cb => cb.value);
             }
-        """
-        )
+        """)
 
     def get_edit_tool_store_size(self) -> int:
         """Read the in-memory editServerSelections store size for tools."""

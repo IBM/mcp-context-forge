@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""fix_token_usage_logs_id_to_integer
+"""Location: ./mcpgateway/alembic/versions/9c99ec6872ed_fix_token_usage_logs_id_to_integer_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+fix_token_usage_logs_id_to_integer
 
 Revision ID: 9c99ec6872ed
 Revises: 2f67b12600b4
 Create Date: 2025-10-12 13:17:13.892897
-
 """
 
 # Standard

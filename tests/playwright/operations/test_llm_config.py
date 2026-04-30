@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""LLM Configuration E2E Tests.
+"""Location: ./tests/playwright/operations/test_llm_config.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+LLM Configuration E2E Tests.
 
 Tests LLM provider and model management endpoints.
 """

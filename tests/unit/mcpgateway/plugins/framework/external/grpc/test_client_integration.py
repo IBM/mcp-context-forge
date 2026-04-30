@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/grpc/test_client_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -269,6 +269,7 @@ async def test_grpc_client_over_uds(grpc_server_proc_uds):
 # =============================================================================
 # PluginManager Integration Tests
 # =============================================================================
+
 
 @pytest.fixture
 def grpc_server_proc_for_manager(tmp_path):

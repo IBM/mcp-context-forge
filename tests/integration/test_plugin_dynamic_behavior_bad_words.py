@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for dynamic plugin mode changes — ReplaceBadWordsPlugin worked example.
+"""Location: ./tests/integration/test_plugin_dynamic_behavior_bad_words.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for dynamic plugin mode changes — ReplaceBadWordsPlugin worked example.
 
 One concrete example proving that runtime plugin mode changes via the admin API
 actually affect plugin behavior on tool calls, not just the reported admin state.

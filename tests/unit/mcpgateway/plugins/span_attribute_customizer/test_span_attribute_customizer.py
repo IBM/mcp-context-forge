@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SpanAttributeCustomizer plugin.
-
-Location: ./tests/unit/mcpgateway/plugins/span_attribute_customizer/test_span_attribute_customizer.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/plugins/span_attribute_customizer/test_span_attribute_customizer.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for SpanAttributeCustomizer plugin.
 """
 
 import pytest
@@ -373,8 +374,6 @@ class TestSpanAttributeCustomizerPlugin:
         custom_attrs = plugin_context.global_context.state["custom_span_attributes"]
         # Should not crash, just skip the transformation
         assert "nonexistent_field" not in custom_attrs
-
-
 
     @pytest.mark.asyncio
     async def test_resource_pre_fetch_hook(self, basic_plugin_config, plugin_context):

@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""RBAC Admin E2E Tests.
+"""Location: ./tests/playwright/security/test_rbac_admin.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC Admin E2E Tests.
 
 Tests role CRUD, user role assignment/revocation, and permission checks
 through the /rbac REST API endpoints.

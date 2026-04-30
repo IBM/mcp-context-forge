@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SessionAffinity (cluster-affinity layer for #4205).
+"""Location: ./tests/unit/mcpgateway/services/test_session_affinity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit tests for SessionAffinity (cluster-affinity layer for #4205).
 After the #4205 refactor hollowed the pool-era machinery, ``SessionAffinity``
 is the Redis-backed ownership + routing layer that keeps a downstream MCP
 session pinned to one worker. No per-worker upstream-session state lives here
 anymore — ``UpstreamSessionRegistry`` owns that. These tests focus on the
 pure helpers, the Redis-mocked state machine, and the lifecycle hooks.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

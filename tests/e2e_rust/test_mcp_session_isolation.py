@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Compose-backed MCP session/auth isolation tests for the Rust transport path.
+"""Location: ./tests/e2e_rust/test_mcp_session_isolation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Compose-backed MCP session/auth isolation tests for the Rust transport path.
 
 These tests focus on security and correctness, not throughput. They validate
 that MCP session ownership stays bound to the original caller context and does

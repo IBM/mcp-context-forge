@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""adding original_description column to tools table
+"""Location: ./mcpgateway/alembic/versions/8a16a77260f0_adding_original_description_column_to_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+adding original_description column to tools table
 
 Revision ID: 8a16a77260f0
 Revises: ba202ac1665f
 Create Date: 2026-02-09 19:44:36.365036
-
 """
 
 # Standard

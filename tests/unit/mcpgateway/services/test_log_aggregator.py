@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for log_aggregator.py.
+"""Location: ./tests/unit/mcpgateway/services/test_log_aggregator.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for log_aggregator.py.
 
 Tests SQL-based and Python-based percentile computation paths.
 """

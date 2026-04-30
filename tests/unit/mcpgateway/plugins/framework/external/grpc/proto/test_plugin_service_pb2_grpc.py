@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/grpc/proto/test_plugin_service_pb2_grpc.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for generated gRPC plugin service stubs.
 Covers base servicer unimplemented methods, stubs, and experimental API.

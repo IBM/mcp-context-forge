@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for G1 + G2 — tenant-id end-to-end through the gateway.
+"""Location: ./tests/integration/test_rate_limiter_multi_tenant.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for G1 + G2 — tenant-id end-to-end through the gateway.
 
 Covers issue #4343:
   - G1: GlobalContext.tenant_id is populated so by_tenant rate limiting

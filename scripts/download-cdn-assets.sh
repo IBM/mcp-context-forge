@@ -43,7 +43,7 @@ curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror
 curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/monokai.min.css" \
   -o "${STATIC_DIR}/codemirror/theme/monokai.min.css"
 
-# Download Alpine.js (pinned to 3.15.8 for reproducibility)
+# Download Alpine.js (pinned to 3.15.11 for reproducibility)
 echo "  ⬇️  Alpine.js 3.15.8..."
 curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js" \
   -o "${STATIC_DIR}/alpinejs/alpine.min.js"
@@ -53,27 +53,27 @@ echo "  ⬇️  Chart.js 4.5.1..."
 curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
-# Download Marked (Markdown parser, pinned to 11.2.0 for reproducibility)
-echo "  ⬇️  Marked 11.2.0..."
+# Download Marked (Markdown parser, pinned to 18.0.2 for reproducibility)
+echo "  ⬇️  Marked 18.0.2..."
 mkdir -p "${STATIC_DIR}/marked"
-curl -fsSL "https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/marked@18.0.2/lib/marked.umd.js" \
   -o "${STATIC_DIR}/marked/marked.min.js"
 
-# Download DOMPurify (XSS sanitizer, pinned to 3.3.2 for reproducibility)
-echo "  ⬇️  DOMPurify 3.3.2..."
+# Download DOMPurify (XSS sanitizer, pinned to 3.4.1 for reproducibility)
+echo "  ⬇️  DOMPurify 3.4.1..."
 mkdir -p "${STATIC_DIR}/dompurify"
-curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.1/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"
 
-# Download Font Awesome (pinned to 6.7.2 for reproducibility)
-echo "  ⬇️  Font Awesome 6.7.2..."
-curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" \
+# Download Font Awesome (pinned to 7.0.1 for reproducibility)
+echo "  ⬇️  Font Awesome 7.0.1..."
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" \
   -o "${STATIC_DIR}/fontawesome/css/all.min.css"
 
 # Download Font Awesome webfonts (required for the CSS to work)
 echo "  ⬇️  Font Awesome webfonts..."
 for font in fa-solid-900.woff2 fa-regular-400.woff2 fa-brands-400.woff2; do
-  curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/webfonts/${font}" \
+  curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/webfonts/${font}" \
     -o "${STATIC_DIR}/fontawesome/webfonts/${font}"
 done
 

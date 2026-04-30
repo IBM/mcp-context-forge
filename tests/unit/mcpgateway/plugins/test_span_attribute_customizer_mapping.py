@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SpanAttributeCustomizer attribute name mapping.
-
-Location: ./tests/unit/mcpgateway/plugins/test_span_attribute_customizer_mapping.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/plugins/test_span_attribute_customizer_mapping.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for SpanAttributeCustomizer attribute name mapping.
 """
 
 import pytest
@@ -28,7 +29,7 @@ async def test_attribute_mapping_stored_in_context():
                 "tool.name": "controls.artifact.name",
                 "tool.arguments": "controls.artifact.inputs",
             }
-        }
+        },
     )
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)
@@ -54,16 +55,7 @@ async def test_attribute_mapping_stored_in_context():
 @pytest.mark.asyncio
 async def test_empty_attribute_mapping():
     """Test that empty mapping doesn't break functionality."""
-    plugin_config = PluginConfig(
-        name="SpanAttributeCustomizer",
-        kind="test",
-        hooks=[],
-        priority=10,
-        config={
-            "attribute_mapping": {},
-            "global_attributes": {"env": "test"}
-        }
-    )
+    plugin_config = PluginConfig(name="SpanAttributeCustomizer", kind="test", hooks=[], priority=10, config={"attribute_mapping": {}, "global_attributes": {"env": "test"}})
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)
 
@@ -97,7 +89,7 @@ async def test_plugin_span_attribute_mapping():
                 "plugin.mode": "controls.enforcement.mode",
                 "plugin.priority": "controls.execution.priority",
             }
-        }
+        },
     )
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)
@@ -133,7 +125,7 @@ async def test_combined_mapping_and_custom_attributes():
                 "team": "platform",
             },
             "remove_attributes": ["internal_debug"],
-        }
+        },
     )
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)
@@ -179,8 +171,8 @@ async def test_tool_override_with_mapping():
                         "cost_center": "engineering",
                     }
                 }
-            }
-        }
+            },
+        },
     )
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)
@@ -206,7 +198,7 @@ async def test_observability_service_applies_mapping():
     from mcpgateway.services.observability_service import ObservabilityService
 
     # Create mock observability service
-    with patch('mcpgateway.services.observability_service.SessionLocal') as mock_session:
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_session:
         mock_db = MagicMock()
         mock_session.return_value.__enter__.return_value = mock_db
 
@@ -228,7 +220,7 @@ async def test_observability_service_applies_mapping():
         }
 
         # Mock the start_span to capture the attributes
-        with patch.object(obs_service, 'start_span', return_value="span-123") as mock_start:
+        with patch.object(obs_service, "start_span", return_value="span-123") as mock_start:
             # Simulate the mapping logic from observability_service.py
             attribute_mapping = context.global_context.state.get("span_attribute_mapping", {})
             if attribute_mapping:

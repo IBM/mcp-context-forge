@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0-RC-3")
+    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
     pullPolicy: IfNotPresent    # use Always only for dev/testing with mutable tags
 
   # Service that fronts the gateway

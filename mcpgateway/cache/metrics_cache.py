@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Metrics aggregation cache for reducing database load.
+"""Location: ./mcpgateway/cache/metrics_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Metrics aggregation cache for reducing database load.
 
 This module provides in-memory caching for metrics aggregation queries
 with optional Redis support for distributed deployments.

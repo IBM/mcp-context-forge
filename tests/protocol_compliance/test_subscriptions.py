@@ -1,4 +1,10 @@
-"""Resource subscription compliance tests.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_subscriptions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Resource subscription compliance tests.
 
 MCP 2025-11-25 § Server / Resources specifies:
 - ``resources/subscribe`` registers interest in a specific URI.

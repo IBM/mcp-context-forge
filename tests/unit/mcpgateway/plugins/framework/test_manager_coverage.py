@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Coverage tests for mcpgateway.plugins.framework.manager — invoke_hook_for_plugin, _execute_with_timeout, permissive mode."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_manager_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage tests for mcpgateway.plugins.framework.manager — invoke_hook_for_plugin, _execute_with_timeout, permissive mode.
+"""
 
 # Standard
 import asyncio
@@ -24,7 +30,6 @@ from mcpgateway.plugins.framework.models import (
     PluginSettings,
     PluginViolation,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,9 +112,7 @@ class TestInvokeHookForPlugin:
 
         context = PluginContext(global_context=GlobalContext(request_id="1"))
 
-        result = await manager.invoke_hook_for_plugin(
-            "test", "test_hook", {"key": "val"}, context, payload_as_json=True
-        )
+        result = await manager.invoke_hook_for_plugin("test", "test_hook", {"key": "val"}, context, payload_as_json=True)
         plugin.json_to_payload.assert_called_once_with("test_hook", {"key": "val"})
         assert result.continue_processing is True
 
@@ -125,9 +128,7 @@ class TestInvokeHookForPlugin:
         context = PluginContext(global_context=GlobalContext(request_id="1"))
 
         with pytest.raises(ValueError, match="must be str or dict"):
-            await manager.invoke_hook_for_plugin(
-                "test", "test_hook", 12345, context, payload_as_json=True
-            )
+            await manager.invoke_hook_for_plugin("test", "test_hook", 12345, context, payload_as_json=True)
 
     @pytest.mark.asyncio
     async def test_wrong_payload_type_raises(self):
@@ -141,9 +142,7 @@ class TestInvokeHookForPlugin:
         context = PluginContext(global_context=GlobalContext(request_id="1"))
 
         with pytest.raises(ValueError, match="must be a PluginPayload"):
-            await manager.invoke_hook_for_plugin(
-                "test", "test_hook", "not-a-payload", context, payload_as_json=False
-            )
+            await manager.invoke_hook_for_plugin("test", "test_hook", "not-a-payload", context, payload_as_json=False)
 
     @pytest.mark.asyncio
     async def test_global_context_auto_wrap(self):
@@ -395,7 +394,10 @@ class TestCrossTypeUnexpectedPayload:
         global_ctx = GlobalContext(request_id="1")
 
         result, _ = await executor.execute(
-            [hook_ref], payload, global_ctx, hook_type="test_hook",
+            [hook_ref],
+            payload,
+            global_ctx,
+            hook_type="test_hook",
         )
         # The unexpected type should be ignored — modified_payload stays None
         assert result.modified_payload is None

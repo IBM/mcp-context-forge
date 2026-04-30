@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Custom JSON response class using orjson for high-performance JSON serialization.
+"""Location: ./mcpgateway/utils/orjson_response.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Custom JSON response class using orjson for high-performance JSON serialization.
 
 This module provides ORJSONResponse, a drop-in replacement for FastAPI's default
 JSONResponse that uses orjson for 2-3x faster JSON serialization/deserialization.

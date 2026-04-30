@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""decode html entities in descriptions
+"""Location: ./mcpgateway/alembic/versions/c1c2c3c4c5c6_decode_html_entities_in_descriptions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+decode html entities in descriptions
 
 Revision ID: c1c2c3c4c5c6
 Revises: v1a2b3c4d5e6
 Create Date: 2026-02-06 08:42:00.000000
-
 """
 
 # Standard

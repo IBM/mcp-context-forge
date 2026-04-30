@@ -1,41 +1,37 @@
 # -*- coding: utf-8 -*-
-"""Rate limiter correctness load test.
+"""Location: ./tests/loadtest/locustfile_rate_limiter_backend_correctness.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Rate limiter correctness load test.
 Validates that the RateLimiterPlugin enforces per-user limits correctly across
 multiple gateway instances.
-
 How it works
 ------------
 A single user sends requests at a fixed pace of 1 req/s (60 req/min) — exactly
 twice the default 30/m per-user limit.  nginx round-robins across 3 gateway
 instances, so each instance sees ~20 req/min from this user.
-
   Memory backend (broken, pre-fix)
     Each instance has its own counter.  20 req/min < 30/m limit on every
     instance → user is NEVER blocked.  Effective limit = 3 × 30 = 90/m.
     Expected result: ~0% failures.
-
   Redis backend (fixed)
     All instances share one counter.  60 req/min > 30/m → user is blocked
     after the first 30 requests in each 60-second window.
     Expected result: ~50% failures.
-
 The ~50% vs ~0% difference is visible at a glance in the results table.
-
 Usage
 -----
     make benchmark-rate-limiter
-
     # Or direct invocation:
     locust -f tests/loadtest/locustfile_rate_limiter_backend_correctness.py \\
         --host=http://localhost:8080 \\
         --users=1 --spawn-rate=1 --run-time=120s \\
         --headless RateLimitedUser
-
     # To test with a different limit, set by_user in plugins/config.yaml and
     # pass the configured value so the banner is accurate:
     RL_LIMIT_PER_MIN=60 make benchmark-rate-limiter
-
 Environment Variables
 ---------------------
     MCP_SERVER_ID:       Virtual server UUID  (auto-detected if empty)
@@ -46,9 +42,6 @@ Environment Variables
     PLATFORM_ADMIN_EMAIL Admin email for auth (default: admin@example.com)
     RL_LIMIT_PER_MIN:    Configured rate limit displayed in output banner
                          (default: 30)
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

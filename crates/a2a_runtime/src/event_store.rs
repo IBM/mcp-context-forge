@@ -636,6 +636,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::const_is_empty)]
     fn store_event_lua_script_is_valid_string() {
         assert!(!STORE_EVENT_LUA.is_empty());
         // Sanity-check key Lua constructs are present.

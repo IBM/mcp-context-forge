@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for mcpgateway unit tests."""
+"""Location: ./tests/unit/mcpgateway/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for mcpgateway unit tests.
+"""
 
 # Future
 from __future__ import annotations

@@ -1,4 +1,11 @@
-"""Direct unit tests for docker-entrypoint.sh plugin requirement reload logic."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_docker_entrypoint.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Direct unit tests for docker-entrypoint.sh plugin requirement reload logic.
+"""
 
 from __future__ import annotations
 

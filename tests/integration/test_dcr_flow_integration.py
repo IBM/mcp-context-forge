@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for DCR (Dynamic Client Registration) flow.
+"""Location: ./tests/integration/test_dcr_flow_integration.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for DCR (Dynamic Client Registration) flow.
 
 These tests validate the complete DCR flow with PKCE, including:
 - Authorization URL generation with PKCE

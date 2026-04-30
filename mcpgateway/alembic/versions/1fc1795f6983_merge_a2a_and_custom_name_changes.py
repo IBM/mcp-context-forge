@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/1fc1795f6983_merge_a2a_and_custom_name_changes.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CLI for cleaning up load test data.
+"""Location: ./tests/load/cleanup.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CLI for cleaning up load test data.
 
 Usage:
     python -m tests.load.cleanup --profile production --confirm

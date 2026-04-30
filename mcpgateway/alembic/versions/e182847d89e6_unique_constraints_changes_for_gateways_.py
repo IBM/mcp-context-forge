@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/e182847d89e6_unique_constraints_changes_for_gateways_.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

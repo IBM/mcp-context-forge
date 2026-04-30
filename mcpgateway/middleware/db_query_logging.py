@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Database query logging middleware for N+1 detection.
-
-Copyright 2025
+"""Location: ./mcpgateway/middleware/db_query_logging.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Database query logging middleware for N+1 detection.
 This middleware logs all database queries per request to help identify
 N+1 query patterns and other performance issues.
 

@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Request-scoped context variables shared across transports and services.
+"""Location: ./mcpgateway/transports/context.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Request-scoped context variables shared across transports and services.
 These ``ContextVar``s are populated by the transport layer (primarily
 ``streamablehttp_transport``) and read by service-layer code that needs
 request-scoped metadata without taking a dependency on the transport module.
 Keeping them in a neutral module breaks the cycle that otherwise exists
 between ``mcpgateway.services.*`` and
 ``mcpgateway.transports.streamablehttp_transport``.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

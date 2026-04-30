@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/tool_plugin_bindings.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhumohan Jaishankar
 

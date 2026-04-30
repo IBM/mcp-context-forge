@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""GatewayService helper tests."""
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+GatewayService helper tests.
+"""
 
 # Standard
 import tempfile

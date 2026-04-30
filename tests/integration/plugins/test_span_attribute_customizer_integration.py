@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for SpanAttributeCustomizer plugin with ObservabilityService.
-
-Location: ./tests/integration/plugins/test_span_attribute_customizer_integration.py
-Copyright 2025
+"""Location: ./tests/integration/plugins/test_span_attribute_customizer_integration.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for SpanAttributeCustomizer plugin with ObservabilityService.
 """
 
 import pytest

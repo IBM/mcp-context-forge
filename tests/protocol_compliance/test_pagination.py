@@ -1,4 +1,10 @@
-"""MCP pagination compliance tests — cursor-based iteration over long list responses.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_pagination.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP pagination compliance tests — cursor-based iteration over long list responses.
 
 The reference server registers 120 ``stub_NNN`` tools; any sensible default
 page size is exceeded, so a compliant client that iterates to exhaustion

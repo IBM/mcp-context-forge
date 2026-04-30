@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_logging_service_comprehensive.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -33,6 +33,7 @@ def _restore_root_logger_level():
     root.setLevel(saved_level)
     for handler, level in saved_handler_levels:
         handler.setLevel(level)
+
 
 # ---------------------------------------------------------------------------
 # Test file handler creation

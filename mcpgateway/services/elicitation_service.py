@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Elicitation service for tracking and routing elicitation requests.
+"""Location: ./mcpgateway/services/elicitation_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Elicitation service for tracking and routing elicitation requests.
 
 This service manages the lifecycle of MCP elicitation requests, which allow
 servers to request structured user input through connected clients.

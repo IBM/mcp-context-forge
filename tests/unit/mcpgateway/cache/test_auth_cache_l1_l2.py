@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/cache/test_auth_cache_l1_l2.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for AuthCache L1/L2 optimization (Issue #1881).
 

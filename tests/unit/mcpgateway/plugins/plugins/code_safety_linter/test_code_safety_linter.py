@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/code_safety_linter/test_code_safety_linter.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

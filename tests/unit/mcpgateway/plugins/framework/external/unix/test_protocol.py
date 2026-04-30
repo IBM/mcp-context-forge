@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/unix/test_protocol.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -25,6 +25,7 @@ try:
         write_message,
         write_message_async,
     )
+
     HAS_GRPC = True
 except ImportError:
     HAS_GRPC = False
@@ -32,6 +33,8 @@ except ImportError:
     Struct = None  # type: ignore
 
 pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed (required for protobuf)")
+
+
 class TestWriteMessage:
     """Tests for write_message function."""
 

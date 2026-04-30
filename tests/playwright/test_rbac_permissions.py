@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_rbac_permissions.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -1221,7 +1221,14 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {
+                        "name": tool_name,
+                        "description": "RPC RBAC regression test tool (#3515)",
+                        "url": f"{BASE_URL}/health",
+                        "integration_type": "REST",
+                        "input_schema": {},
+                        "visibility": "team",
+                    },
                     "team_id": team_id,
                 }
             ),

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/unix/test_runtime.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -76,6 +76,7 @@ class TestUnixRuntimeMain:
 
     def test_main_keyboard_interrupt(self):
         """Test main handles KeyboardInterrupt gracefully."""
+
         def _raise_keyboard_interrupt(awaitable):
             awaitable.close()
             raise KeyboardInterrupt()
@@ -89,6 +90,7 @@ class TestUnixRuntimeMain:
 
     def test_main_exception_exits(self):
         """Test main exits with code 1 on exception."""
+
         def _raise_runtime_error(awaitable):
             awaitable.close()
             raise RuntimeError("Server error")

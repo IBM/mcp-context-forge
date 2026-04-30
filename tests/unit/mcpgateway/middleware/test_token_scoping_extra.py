@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Additional tests for token scoping middleware helpers."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_token_scoping_extra.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Additional tests for token scoping middleware helpers.
+"""
 
 # Standard
 from datetime import datetime, timezone

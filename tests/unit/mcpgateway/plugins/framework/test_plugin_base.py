@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.plugins.framework.base."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_plugin_base.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.plugins.framework.base.
+"""
 
 # Standard
 from unittest.mock import MagicMock

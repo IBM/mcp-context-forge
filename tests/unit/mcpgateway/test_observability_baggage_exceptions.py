@@ -1,4 +1,10 @@
-"""Unit tests for observability.py baggage exception paths.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_observability_baggage_exceptions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for observability.py baggage exception paths.
 
 This module contains targeted tests for specific uncovered exception handling
 lines in mcpgateway/observability.py related to baggage operations.

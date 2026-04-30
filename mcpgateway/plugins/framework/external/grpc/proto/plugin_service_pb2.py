@@ -9,7 +9,13 @@
 # NO CHECKED-IN PROTOBUF GENCODE
 # source: plugin_service.proto
 # Protobuf Python Version: 6.31.1
-"""Generated protocol buffer code."""
+"""Location: ./mcpgateway/plugins/framework/external/grpc/proto/plugin_service_pb2.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Generated protocol buffer code.
+"""
 
 # Third-Party
 from google.protobuf import descriptor as _descriptor

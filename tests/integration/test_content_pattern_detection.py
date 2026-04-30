@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for malicious pattern detection
+"""Location: ./tests/integration/test_content_pattern_detection.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for malicious pattern detection
 
 This module tests the acceptance criteria:
 - XSS patterns in resources/prompts are blocked

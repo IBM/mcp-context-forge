@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_entra_id_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 End-to-end tests for Microsoft Entra ID integration.
 
@@ -34,7 +35,6 @@ Environment Variables:
 """
 
 from __future__ import annotations
-
 
 # Standard Library
 import asyncio

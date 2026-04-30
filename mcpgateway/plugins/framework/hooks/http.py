@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/plugins/framework/models/http.py
-Copyright 2025
+"""Location: ./mcpgateway/plugins/framework/hooks/http.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 

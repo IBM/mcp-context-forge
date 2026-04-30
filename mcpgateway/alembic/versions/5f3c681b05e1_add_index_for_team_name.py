@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add index for team name
+"""Location: ./mcpgateway/alembic/versions/5f3c681b05e1_add_index_for_team_name.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add index for team name
 
 Revision ID: 5f3c681b05e1
 Revises: t4d5e6f7g8h9

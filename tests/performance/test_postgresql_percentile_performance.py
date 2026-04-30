@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/test_postgresql_percentile_performance.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Performance benchmark test for PostgreSQL percentile_cont optimization.
 
 This test compares the performance of:
@@ -117,9 +121,7 @@ class TestPostgreSQLPercentilePerformance:
                 trace_id = f"trace_{entity_idx}_{span_idx}"
                 if trace_id not in trace_ids:
                     trace_ids.add(trace_id)
-                    timestamp = base_time + timedelta(
-                        minutes=entity_idx * spans_per_entity + span_idx
-                    )
+                    timestamp = base_time + timedelta(minutes=entity_idx * spans_per_entity + span_idx)
                     trace = ObservabilityTrace(
                         trace_id=trace_id,
                         name=f"test_trace_{entity_type}",
@@ -146,9 +148,7 @@ class TestPostgreSQLPercentilePerformance:
                 else:
                     duration_ms = 50 + (span_idx % 50) * 2
 
-                timestamp = base_time + timedelta(
-                    minutes=entity_idx * spans_per_entity + span_idx
-                )
+                timestamp = base_time + timedelta(minutes=entity_idx * spans_per_entity + span_idx)
 
                 span = ObservabilitySpan(
                     trace_id=f"trace_{entity_idx}_{span_idx}",
@@ -156,9 +156,7 @@ class TestPostgreSQLPercentilePerformance:
                     parent_span_id=None,
                     name=span_name,
                     start_time=timestamp.replace(tzinfo=None),
-                    end_time=(timestamp + timedelta(milliseconds=duration_ms)).replace(
-                        tzinfo=None
-                    ),
+                    end_time=(timestamp + timedelta(milliseconds=duration_ms)).replace(tzinfo=None),
                     duration_ms=duration_ms,
                     attributes={json_key: entity_id},
                     status="ok",
@@ -262,12 +260,8 @@ class TestPostgreSQLPercentilePerformance:
         SQLiteSession = sessionmaker(bind=sqlite_engine)
         sqlite_session = SQLiteSession()
         try:
-            self.generate_span_data(
-                sqlite_session, "tool", num_entities, spans_per_entity
-            )
-            sqlite_time, sqlite_results = self.measure_query_performance(
-                sqlite_session, "tool"
-            )
+            self.generate_span_data(sqlite_session, "tool", num_entities, spans_per_entity)
+            sqlite_time, sqlite_results = self.measure_query_performance(sqlite_session, "tool")
             print(f"\n📊 SQLite (Python percentile):")
             print(f"   Average query time: {sqlite_time:.2f} ms")
             print(f"   Results returned: {len(sqlite_results)}")
@@ -321,20 +315,14 @@ class TestPostgreSQLPercentilePerformance:
                 pg_val = pg_first[metric]
                 if sqlite_val > 0:
                     diff_pct = abs(sqlite_val - pg_val) / sqlite_val * 100
-                    assert (
-                        diff_pct < 5
-                    ), f"{metric} differs by {diff_pct:.1f}% (SQLite: {sqlite_val}, PG: {pg_val})"
+                    assert diff_pct < 5, f"{metric} differs by {diff_pct:.1f}% (SQLite: {sqlite_val}, PG: {pg_val})"
 
         # PostgreSQL should be faster for larger datasets
         if total_spans >= 10000:
-            assert (
-                pg_time < sqlite_time
-            ), f"PostgreSQL should be faster for {total_spans:,} spans"
+            assert pg_time < sqlite_time, f"PostgreSQL should be faster for {total_spans:,} spans"
 
     @pytest.mark.parametrize("entity_type", ["tool", "prompt", "resource"])
-    def test_all_entity_types_performance(
-        self, postgresql_engine, entity_type
-    ):
+    def test_all_entity_types_performance(self, postgresql_engine, entity_type):
         """Test performance for all entity types with PostgreSQL.
 
         Args:
@@ -384,9 +372,7 @@ class TestPostgreSQLPercentilePerformance:
                 ]
                 for key in required_keys:
                     assert key in result, f"Result missing {key}"
-                    assert isinstance(
-                        result[key], (int, float)
-                    ), f"{key} should be numeric"
+                    assert isinstance(result[key], (int, float)), f"{key} should be numeric"
 
         finally:
             session.close()
@@ -433,9 +419,7 @@ class TestPostgreSQLPercentilePerformance:
                     parent_span_id=None,
                     name="tool.invoke",
                     start_time=base_time.replace(tzinfo=None),
-                    end_time=(base_time + timedelta(milliseconds=duration_ms)).replace(
-                        tzinfo=None
-                    ),
+                    end_time=(base_time + timedelta(milliseconds=duration_ms)).replace(tzinfo=None),
                     duration_ms=duration_ms,
                     attributes={"tool.name": "test_tool"},
                     status="ok",
@@ -529,9 +513,7 @@ class TestPostgreSQLPercentilePerformance:
                 finally:
                     session.close()
 
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=num_concurrent
-            ) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_concurrent) as executor:
                 futures = [executor.submit(run_query) for _ in range(num_concurrent)]
                 times = [f.result() for f in concurrent.futures.as_completed(futures)]
 
@@ -627,8 +609,7 @@ class TestPostgreSQLPercentilePerformance:
                 python_first = python_results[0]
 
                 # Count should match exactly
-                assert native_first["count"] == python_first["count"], \
-                    f"Count mismatch: Native={native_first['count']}, Python={python_first['count']}"
+                assert native_first["count"] == python_first["count"], f"Count mismatch: Native={native_first['count']}, Python={python_first['count']}"
 
                 # Percentiles should be close (within 5%)
                 for metric in ["p50", "p90", "p95", "p99"]:
@@ -636,14 +617,12 @@ class TestPostgreSQLPercentilePerformance:
                     python_val = python_first[metric]
                     if native_val > 0:
                         diff_pct = abs(native_val - python_val) / native_val * 100
-                        assert diff_pct < 5, \
-                            f"{metric} differs by {diff_pct:.1f}% (Native: {native_val}, Python: {python_val})"
+                        assert diff_pct < 5, f"{metric} differs by {diff_pct:.1f}% (Native: {native_val}, Python: {python_val})"
 
                 print(f"\n✅ Both methods produce similar results (within 5% tolerance)")
 
             # Native should be faster for this dataset size
-            assert native_time < python_time, \
-                f"Native percentile_cont should be faster than Python percentiles for {total_spans:,} spans"
+            assert native_time < python_time, f"Native percentile_cont should be faster than Python percentiles for {total_spans:,} spans"
 
             print(f"\n✅ USE_POSTGRESDB_PERCENTILES configuration works correctly!")
 

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/test_token_blocklist_service.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/test_token_blocklist_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for Token Blocklist Service.
 

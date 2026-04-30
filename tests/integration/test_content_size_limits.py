@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for content size limits
+"""Location: ./tests/integration/test_content_size_limits.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for content size limits
 
 This module tests the acceptance criteria:
 - Resource content exceeding 100KB limit returns 413
@@ -8,6 +13,7 @@ This module tests the acceptance criteria:
 - Error responses include size limit information
 - Size validation applies to both create and update operations
 """
+
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -143,15 +149,7 @@ class TestResourceSizeLimits:
     def test_create_resource_within_limit(self, client, auth_headers):
         """Test creating resource with content within size limit (50KB)."""
         content = "x" * 50000  # 50KB - well under 100KB limit
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://resource-small",
-                "name": "Small Resource",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://resource-small", "name": "Small Resource", "content": content}, headers=auth_headers)
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
         assert data["uri"] == "test://resource-small"
@@ -159,30 +157,14 @@ class TestResourceSizeLimits:
     def test_create_resource_at_limit(self, client, auth_headers):
         """Test creating resource with content at exact size limit (100KB)."""
         content = "x" * 102400  # Exactly 100KB
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://resource-at-limit",
-                "name": "At Limit Resource",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://resource-at-limit", "name": "At Limit Resource", "content": content}, headers=auth_headers)
         # Should succeed at exact limit
         assert response.status_code == status.HTTP_201_CREATED
 
     def test_create_resource_exceeds_limit(self, client, auth_headers):
         """Test creating resource with oversized content returns 413."""
         content = "x" * 200000  # 200KB - over 100KB limit
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://resource-large",
-                "name": "Large Resource",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://resource-large", "name": "Large Resource", "content": content}, headers=auth_headers)
 
         # Should return 413 Payload Too Large
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
@@ -209,30 +191,14 @@ class TestResourceSizeLimits:
     def test_create_resource_one_byte_over(self, client, auth_headers):
         """Test creating resource one byte over limit returns 413."""
         content = "x" * 102401  # 100KB + 1 byte
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://resource-one-over",
-                "name": "One Over Resource",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://resource-one-over", "name": "One Over Resource", "content": content}, headers=auth_headers)
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
 
     def test_create_resource_unicode_content(self, client, auth_headers):
         """Test size validation handles Unicode content correctly."""
         # Unicode emoji characters are 4 bytes each in UTF-8
         content = "🎉" * 30000  # 30000 * 4 = 120KB
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://resource-unicode",
-                "name": "Unicode Resource",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://resource-unicode", "name": "Unicode Resource", "content": content}, headers=auth_headers)
         # Should be rejected as it exceeds 100KB
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
 
@@ -243,15 +209,7 @@ class TestPromptSizeLimits:
     def test_create_prompt_within_limit(self, client, auth_headers):
         """Test creating prompt with template within size limit (5KB)."""
         template = "x" * 5000  # 5KB - well under 10KB limit
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "small_prompt",
-                "template": template,
-                "description": "Small test prompt"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "small_prompt", "template": template, "description": "Small test prompt"}, headers=auth_headers)
         assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
         assert data["name"] == "small_prompt"
@@ -259,30 +217,14 @@ class TestPromptSizeLimits:
     def test_create_prompt_at_limit(self, client, auth_headers):
         """Test creating prompt with template at exact size limit (10KB)."""
         template = "x" * 10240  # Exactly 10KB
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "at_limit_prompt",
-                "template": template,
-                "description": "At limit test prompt"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "at_limit_prompt", "template": template, "description": "At limit test prompt"}, headers=auth_headers)
         # Should succeed at exact limit
         assert response.status_code == status.HTTP_201_CREATED
 
     def test_create_prompt_exceeds_limit(self, client, auth_headers):
         """Test creating prompt with oversized template returns 413."""
         template = "x" * 20000  # 20KB - over 10KB limit
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "large_prompt",
-                "template": template,
-                "description": "Large test prompt"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "large_prompt", "template": template, "description": "Large test prompt"}, headers=auth_headers)
 
         # Should return 413 Payload Too Large
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
@@ -309,30 +251,14 @@ class TestPromptSizeLimits:
     def test_create_prompt_one_byte_over(self, client, auth_headers):
         """Test creating prompt one byte over limit returns 413."""
         template = "x" * 10241  # 10KB + 1 byte
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "one_over_prompt",
-                "template": template,
-                "description": "One over test prompt"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "one_over_prompt", "template": template, "description": "One over test prompt"}, headers=auth_headers)
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
 
     def test_create_prompt_unicode_template(self, client, auth_headers):
         """Test size validation handles Unicode templates correctly."""
         # Unicode emoji characters are 4 bytes each in UTF-8
         template = "🎉" * 3000  # 3000 * 4 = 12KB
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "unicode_prompt",
-                "template": template,
-                "description": "Unicode test prompt"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "unicode_prompt", "template": template, "description": "Unicode test prompt"}, headers=auth_headers)
         # Should be rejected as it exceeds 10KB
         assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
 
@@ -344,25 +270,13 @@ class TestSizeValidationConsistency:
         """Test size validation applies to both create and update operations."""
         # First, create a small resource
         small_content = "x" * 1000  # 1KB
-        create_response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://update-test",
-                "name": "Update Test Resource",
-                "content": small_content
-            },
-            headers=auth_headers
-        )
+        create_response = client.post("/api/resources", json={"uri": "test://update-test", "name": "Update Test Resource", "content": small_content}, headers=auth_headers)
         assert create_response.status_code == status.HTTP_201_CREATED
         resource_id = create_response.json()["id"]
 
         # Try to update with oversized content
         large_content = "x" * 200000  # 200KB
-        update_response = client.put(
-            f"/api/resources/{resource_id}",
-            json={"content": large_content},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/resources/{resource_id}", json={"content": large_content}, headers=auth_headers)
 
         # Update should also be rejected with 413
         assert update_response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
@@ -377,25 +291,13 @@ class TestSizeValidationConsistency:
         """Test size validation applies to both create and update operations."""
         # First, create a small prompt
         small_template = "x" * 1000  # 1KB
-        create_response = client.post(
-            "/api/prompts",
-            json={
-                "name": "update_test_prompt",
-                "template": small_template,
-                "description": "Update test"
-            },
-            headers=auth_headers
-        )
+        create_response = client.post("/api/prompts", json={"name": "update_test_prompt", "template": small_template, "description": "Update test"}, headers=auth_headers)
         assert create_response.status_code == status.HTTP_201_CREATED
         prompt_id = create_response.json()["id"]
 
         # Try to update with oversized template
         large_template = "x" * 20000  # 20KB
-        update_response = client.put(
-            f"/api/prompts/{prompt_id}",
-            json={"template": large_template},
-            headers=auth_headers
-        )
+        update_response = client.put(f"/api/prompts/{prompt_id}", json={"template": large_template}, headers=auth_headers)
 
         # Update should also be rejected with 413
         assert update_response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
@@ -413,15 +315,7 @@ class TestErrorMessageClarity:
     def test_resource_error_message_clarity(self, client, auth_headers):
         """Test resource error message provides clear guidance."""
         content = "x" * 200000  # 200KB
-        response = client.post(
-            "/api/resources",
-            json={
-                "uri": "test://error-message-test",
-                "name": "Error Message Test",
-                "content": content
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/resources", json={"uri": "test://error-message-test", "name": "Error Message Test", "content": content}, headers=auth_headers)
 
         data = response.json()
         detail = data["detail"]
@@ -437,15 +331,7 @@ class TestErrorMessageClarity:
     def test_prompt_error_message_clarity(self, client, auth_headers):
         """Test prompt error message provides clear guidance."""
         template = "x" * 20000  # 20KB
-        response = client.post(
-            "/api/prompts",
-            json={
-                "name": "error_message_test",
-                "template": template,
-                "description": "Error message test"
-            },
-            headers=auth_headers
-        )
+        response = client.post("/api/prompts", json={"name": "error_message_test", "template": template, "description": "Error message test"}, headers=auth_headers)
 
         data = response.json()
         detail = data["detail"]
@@ -457,8 +343,6 @@ class TestErrorMessageClarity:
         assert "20000" in message  # Actual size
         assert "10240" in message  # Max size
         assert "exceeds" in message.lower()
-
-
 
 
 def test_bulk_resource_registration_with_oversized_content(test_app, client, auth_headers):
@@ -473,30 +357,10 @@ def test_bulk_resource_registration_with_oversized_content(test_app, client, aut
 
     # Create a mix of valid and oversized resources
     resources = [
-        ResourceCreate(
-            uri="resource://test/small1",
-            name="Small Resource 1",
-            content="x" * 1000,  # 1KB - OK
-            description="Small resource"
-        ),
-        ResourceCreate(
-            uri="resource://test/large1",
-            name="Large Resource 1",
-            content="x" * 200000,  # 200KB - Too large
-            description="Oversized resource"
-        ),
-        ResourceCreate(
-            uri="resource://test/small2",
-            name="Small Resource 2",
-            content="y" * 2000,  # 2KB - OK
-            description="Another small resource"
-        ),
-        ResourceCreate(
-            uri="resource://test/large2",
-            name="Large Resource 2",
-            content="z" * 150000,  # 150KB - Too large
-            description="Another oversized resource"
-        ),
+        ResourceCreate(uri="resource://test/small1", name="Small Resource 1", content="x" * 1000, description="Small resource"),  # 1KB - OK
+        ResourceCreate(uri="resource://test/large1", name="Large Resource 1", content="x" * 200000, description="Oversized resource"),  # 200KB - Too large
+        ResourceCreate(uri="resource://test/small2", name="Small Resource 2", content="y" * 2000, description="Another small resource"),  # 2KB - OK
+        ResourceCreate(uri="resource://test/large2", name="Large Resource 2", content="z" * 150000, description="Another oversized resource"),  # 150KB - Too large
     ]
 
     # Get database session
@@ -505,15 +369,8 @@ def test_bulk_resource_registration_with_oversized_content(test_app, client, aut
     # Call bulk registration
     service = ResourceService()
     import asyncio
-    result = asyncio.run(
-        service.register_resources_bulk(
-            db=db,
-            resources=resources,
-            created_by="test@example.com",
-            created_from_ip="127.0.0.1",
-            conflict_strategy="skip"
-        )
-    )
+
+    result = asyncio.run(service.register_resources_bulk(db=db, resources=resources, created_by="test@example.com", created_from_ip="127.0.0.1", conflict_strategy="skip"))
 
     # Verify results
     assert result["created"] == 2, "Should create 2 valid resources"
@@ -524,8 +381,7 @@ def test_bulk_resource_registration_with_oversized_content(test_app, client, aut
     errors_text = " ".join(result["errors"])
     assert "200000" in errors_text or "150000" in errors_text, "Errors should mention actual sizes"
     assert "102400" in errors_text, "Errors should mention the size limit"
-    assert "resource://test/large1" in errors_text or "resource://test/large2" in errors_text, \
-        "Errors should identify the problematic resources"
+    assert "resource://test/large1" in errors_text or "resource://test/large2" in errors_text, "Errors should identify the problematic resources"
 
 
 def test_prompt_update_with_oversized_template(test_app, client, auth_headers):
@@ -535,28 +391,14 @@ def test_prompt_update_with_oversized_template(test_app, client, auth_headers):
     and rejects oversized templates with appropriate error response.
     """
     # First create a prompt with valid template
-    response = client.post(
-        "/api/prompts",
-        json={
-            "name": "test-prompt-for-update",
-            "template": "Small template",
-            "description": "Test prompt"
-        },
-        headers=auth_headers
-    )
+    response = client.post("/api/prompts", json={"name": "test-prompt-for-update", "template": "Small template", "description": "Test prompt"}, headers=auth_headers)
     assert response.status_code == 201
     prompt_data = response.json()
     prompt_id = prompt_data["id"]
 
     # Try to update with oversized template (20KB)
     oversized_template = "x" * 20000
-    response = client.put(
-        f"/api/prompts/{prompt_id}",
-        json={
-            "template": oversized_template
-        },
-        headers=auth_headers
-    )
+    response = client.put(f"/api/prompts/{prompt_id}", json={"template": oversized_template}, headers=auth_headers)
 
     # Should return 413 Payload Too Large
     assert response.status_code == 413
@@ -586,28 +428,14 @@ def test_prompt_update_with_valid_template(test_app, client, auth_headers):
     This test verifies that templates within the size limit can be updated successfully.
     """
     # First create a prompt
-    response = client.post(
-        "/api/prompts",
-        json={
-            "name": "test-prompt-for-valid-update",
-            "template": "Original template",
-            "description": "Test prompt"
-        },
-        headers=auth_headers
-    )
+    response = client.post("/api/prompts", json={"name": "test-prompt-for-valid-update", "template": "Original template", "description": "Test prompt"}, headers=auth_headers)
     assert response.status_code == 201
     prompt_data = response.json()
     prompt_id = prompt_data["id"]
 
     # Update with valid-sized template (5KB)
     new_template = "y" * 5000
-    response = client.put(
-        f"/api/prompts/{prompt_id}",
-        json={
-            "template": new_template
-        },
-        headers=auth_headers
-    )
+    response = client.put(f"/api/prompts/{prompt_id}", json={"template": new_template}, headers=auth_headers)
 
     # Should succeed
     assert response.status_code == 200
@@ -627,14 +455,7 @@ def test_resource_update_with_oversized_content(test_app, client, auth_headers):
     """
     # First create a resource with valid content
     response = client.post(
-        "/api/resources",
-        json={
-            "uri": "resource://test/update-test",
-            "name": "Test Resource for Update",
-            "content": "Small content",
-            "description": "Test resource"
-        },
-        headers=auth_headers
+        "/api/resources", json={"uri": "resource://test/update-test", "name": "Test Resource for Update", "content": "Small content", "description": "Test resource"}, headers=auth_headers
     )
     assert response.status_code == 201
     resource_data = response.json()
@@ -642,13 +463,7 @@ def test_resource_update_with_oversized_content(test_app, client, auth_headers):
 
     # Try to update with oversized content (200KB)
     oversized_content = "x" * 200000
-    response = client.put(
-        f"/api/resources/{resource_id}",
-        json={
-            "content": oversized_content
-        },
-        headers=auth_headers
-    )
+    response = client.put(f"/api/resources/{resource_id}", json={"content": oversized_content}, headers=auth_headers)
 
     # Should return 413 Payload Too Large
     assert response.status_code == 413
@@ -679,14 +494,7 @@ def test_resource_update_with_valid_content(test_app, client, auth_headers):
     """
     # First create a resource
     response = client.post(
-        "/api/resources",
-        json={
-            "uri": "resource://test/valid-update",
-            "name": "Test Resource for Valid Update",
-            "content": "Original content",
-            "description": "Test resource"
-        },
-        headers=auth_headers
+        "/api/resources", json={"uri": "resource://test/valid-update", "name": "Test Resource for Valid Update", "content": "Original content", "description": "Test resource"}, headers=auth_headers
     )
     assert response.status_code == 201
     resource_data = response.json()
@@ -694,13 +502,7 @@ def test_resource_update_with_valid_content(test_app, client, auth_headers):
 
     # Update with valid-sized content (50KB)
     new_content = "y" * 50000
-    response = client.put(
-        f"/api/resources/{resource_id}",
-        json={
-            "content": new_content
-        },
-        headers=auth_headers
-    )
+    response = client.put(f"/api/resources/{resource_id}", json={"content": new_content}, headers=auth_headers)
 
     # Should succeed
     assert response.status_code == 200

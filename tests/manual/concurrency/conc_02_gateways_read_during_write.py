@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""CONC-02 manual concurrency check: read during write for /gateways/{id}."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/manual/concurrency/conc_02_gateways_read_during_write.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CONC-02 manual concurrency check: read during write for /gateways/{id}.
+"""
 
 # Future
 from __future__ import annotations

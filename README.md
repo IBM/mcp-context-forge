@@ -715,7 +715,6 @@ For upgrade instructions, migration guides, and rollback procedures, see:
 
 - **[Upgrade Guide](https://ibm.github.io/mcp-context-forge/manage/upgrade/)** — General upgrade procedures
 - **[CHANGELOG.md](./CHANGELOG.md)** — Version history and breaking changes
-- **[MIGRATION-0.7.0.md](./MIGRATION-0.7.0.md)** — Multi-tenancy migration (v0.6.x → v0.7.x)
 
 ---
 
@@ -757,7 +756,7 @@ Content size limits prevent DoS attacks and ensure system stability:
 | `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
 | `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
 
-**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated. See [Content Limits Migration Guide](docs/MIGRATION_CONTENT_LIMITS.md) for details.
+**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
 
 ### 🌐 UAID Cross-Gateway Routing Security
 

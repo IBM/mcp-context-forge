@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_resources_prompts.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -303,10 +303,7 @@ class TestOrphanedResourceUpsert:
         resource_with_deleted_gateway.uri = "file://resource/"
 
         # Check if it's orphaned
-        is_orphaned = (
-            resource_with_deleted_gateway.gateway_id is None
-            or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
-        )
+        is_orphaned = resource_with_deleted_gateway.gateway_id is None or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
 
         assert is_orphaned is True
 

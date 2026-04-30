@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01:2021 – Broken Access Control direct Playwright tests.
+"""Location: ./tests/playwright/security/owasp/test_a01_broken_access_control.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OWASP A01:2021 – Broken Access Control direct Playwright tests.
 
 Covers attack patterns NOT already tested in sibling security test files:
 

@@ -1,4 +1,10 @@
-"""Shared test helpers for the compliance harness.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/helpers/compliance.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared test helpers for the compliance harness.
 
 Includes:
   - ``resolve_tool`` — translate bare tool names to whatever the current

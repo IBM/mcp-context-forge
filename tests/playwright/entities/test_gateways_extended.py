@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/entities/test_gateways_extended.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -153,7 +153,7 @@ class TestGatewayTestModal:
         # Button should become disabled with "Testing..." text
         try:
             gateways_page.page.wait_for_selector(
-                '#gateway-test-submit:disabled',
+                "#gateway-test-submit:disabled",
                 timeout=3000,
             )
         except PlaywrightTimeoutError:
@@ -225,14 +225,12 @@ class TestGatewayTestModal:
 
         # Open test modal for first gateway and inject fake result content
         gateways_page.open_test_modal(0)
-        gateways_page.page.evaluate(
-            """() => {
+        gateways_page.page.evaluate("""() => {
                 const resultDiv = document.getElementById('gateway-test-result');
                 const responseDiv = document.getElementById('gateway-test-response-json');
                 if (resultDiv) resultDiv.classList.remove('hidden');
                 if (responseDiv) responseDiv.textContent = 'STALE_GATEWAY_RESULT_MARKER';
-            }"""
-        )
+            }""")
         gateways_page.close_test_modal()
 
         # Open test modal for second gateway
@@ -243,9 +241,7 @@ class TestGatewayTestModal:
 
         # Also verify the response text is cleared
         response_text = gateways_page.test_modal_response_json.text_content().strip()
-        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
-            "Gateway test result should not contain stale data from previous gateway"
-        )
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, "Gateway test result should not contain stale data from previous gateway"
 
         gateways_page.close_test_modal()
 
@@ -857,11 +853,11 @@ class TestCustomHeadersAuth:
         # Wait for the header row to be added
         gateways_page.page.wait_for_timeout(500)
 
-        count_before = container.locator('> div').count()
+        count_before = container.locator("> div").count()
         assert count_before >= 1, "Expected at least 1 header row"
 
         # Find the last header row (direct child div) and its remove button
-        last_header_row = container.locator('> div').last
+        last_header_row = container.locator("> div").last
         remove_button = last_header_row.locator('button[title="Remove header"]')
 
         # Wait for button to be attached and visible
@@ -872,9 +868,9 @@ class TestCustomHeadersAuth:
         remove_button.click()
 
         # Wait for the row count to decrease
-        expect(container.locator('> div')).to_have_count(count_before - 1, timeout=5000)
+        expect(container.locator("> div")).to_have_count(count_before - 1, timeout=5000)
 
-        count_after = container.locator('> div').count()
+        count_after = container.locator("> div").count()
         assert count_after == count_before - 1, f"Expected {count_before - 1} rows after removal, got {count_after}"
 
 
@@ -1543,12 +1539,12 @@ class TestGatewayAddFormAdvanced:
     def test_panel_description_text(self, gateways_page: GatewaysPage):
         """Test that the panel description text is correct."""
         gateways_page.navigate_to_gateways_tab()
-        description = gateways_page.page.locator('text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts')
+        description = gateways_page.page.locator("text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts")
         expect(description).to_be_visible()
 
     def test_tags_help_text(self, gateways_page: GatewaysPage):
         """Test that tags field has help text about normalization."""
         gateways_page.navigate_to_gateways_tab()
         # Scope to the add form to avoid matching the edit modal's tags help text
-        help_text = gateways_page.add_gateway_form.locator('text=Tags will be automatically normalized')
+        help_text = gateways_page.add_gateway_form.locator("text=Tags will be automatically normalized")
         expect(help_text).to_be_visible()

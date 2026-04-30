@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Schema-surface runtime checks for MCP 2025-11-25 methods."""
+"""Location: ./tests/compliance/mcp_2025_11_25/base/test_schema_surface_runtime.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schema-surface runtime checks for MCP 2025-11-25 methods.
+"""
 
 # Standard
 from pathlib import Path

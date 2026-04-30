@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

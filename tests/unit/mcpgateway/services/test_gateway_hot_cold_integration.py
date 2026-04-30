@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for hot/cold server classification with GatewayService.
-
-Tests the integration between ServerClassificationService and GatewayService
-for health checks and auto-refresh polling.
-
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_hot_cold_integration.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for hot/cold server classification with GatewayService.
+Tests the integration between ServerClassificationService and GatewayService
+for health checks and auto-refresh polling.
 """
 
 # Standard
@@ -655,9 +656,7 @@ class TestMarkPollCompletedInRefreshPath:
             )
 
         # mark_poll_completed must have been called with the base URL
-        mock_classification.mark_poll_completed.assert_awaited_once_with(
-            "http://refresh-gw:8000", "tool_discovery", gateway_id="gw-123"
-        )
+        mock_classification.mark_poll_completed.assert_awaited_once_with("http://refresh-gw:8000", "tool_discovery", gateway_id="gw-123")
 
     @pytest.mark.asyncio
     async def test_refresh_mark_poll_exception_ignored(self, gateway_service_with_classification, monkeypatch):
@@ -693,7 +692,8 @@ class TestMarkPollCompletedInRefreshPath:
 
             # Must not raise despite mark_poll_completed failure
             result = await gateway_service._refresh_gateway_tools_resources_prompts(
-                gateway_id="gw-123", gateway=mock_gateway,
+                gateway_id="gw-123",
+                gateway=mock_gateway,
             )
             assert result["success"]
 
@@ -813,6 +813,4 @@ class TestUpdateGatewayPollSchedule:
 
             await service.update_gateway(mock_db, "gw-update-1", gateway_update)
 
-        mock_classification.mark_poll_completed.assert_awaited_once_with(
-            "http://update-gw:8000", "tool_discovery", gateway_id="gw-update-1"
-        )
+        mock_classification.mark_poll_completed.assert_awaited_once_with("http://update-gw:8000", "tool_discovery", gateway_id="gw-update-1")

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_registry.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -118,6 +118,7 @@ async def test_registry_priority_sorting():
     registry.unregister("HighPriority")
     assert registry.plugin_count == 0
 
+
 @pytest.mark.asyncio
 async def test_registry_has_hooks_for():
     """Test has_hooks_for method for hook existence checking."""
@@ -144,6 +145,7 @@ async def test_registry_has_hooks_for():
     registry.unregister("TestPlugin")
 
     assert not registry.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
+
 
 @pytest.mark.asyncio
 async def test_registry_hook_filtering():
@@ -189,9 +191,13 @@ async def test_registry_shutdown():
     registry = PluginInstanceRegistry()
 
     # Create mock plugins with shutdown methods
-    mock_plugin1 = SimplePromptPlugin(PluginConfig(name="Plugin1", description="Test plugin 1", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_PRE_FETCH], config={}))
+    mock_plugin1 = SimplePromptPlugin(
+        PluginConfig(name="Plugin1", description="Test plugin 1", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_PRE_FETCH], config={})
+    )
 
-    mock_plugin2 = SimplePromptPlugin(PluginConfig(name="Plugin2", description="Test plugin 2", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_POST_FETCH], config={}))
+    mock_plugin2 = SimplePromptPlugin(
+        PluginConfig(name="Plugin2", description="Test plugin 2", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_POST_FETCH], config={})
+    )
 
     # Mock the shutdown methods
     mock_plugin1.shutdown = AsyncMock()
@@ -223,7 +229,9 @@ async def test_registry_shutdown_with_error():
 
     # Create mock plugin that fails during shutdown
     failing_plugin = SimplePromptPlugin(
-        PluginConfig(name="FailingPlugin", description="Plugin that fails shutdown", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_PRE_FETCH], config={})
+        PluginConfig(
+            name="FailingPlugin", description="Plugin that fails shutdown", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[PromptHookType.PROMPT_PRE_FETCH], config={}
+        )
     )
 
     # Mock shutdown to raise an exception

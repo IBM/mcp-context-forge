@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -943,48 +943,56 @@ class TestGetUserFromCredentials:
 
     def test_dict_with_sub(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials({"sub": "user@test.com", "is_admin": False})
         assert user == "user@test.com"
         assert is_admin is False
 
     def test_dict_with_email_fallback(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials({"email": "user@test.com"})
         assert user == "user@test.com"
         assert is_admin is False
 
     def test_dict_nested_admin(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials({"sub": "admin@test.com", "user": {"is_admin": True}})
         assert user == "admin@test.com"
         assert is_admin is True
 
     def test_dict_top_level_admin(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials({"sub": "admin@test.com", "is_admin": True})
         assert user == "admin@test.com"
         assert is_admin is True
 
     def test_string_credentials(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials("user@test.com")
         assert user == "user@test.com"
         assert is_admin is False
 
     def test_anonymous_credentials(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials("anonymous")
         assert user is None
         assert is_admin is False
 
     def test_none_credentials(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials(None)
         assert user is None
         assert is_admin is False
 
     def test_empty_string_credentials(self):
         from mcpgateway.routers.reverse_proxy import _get_user_from_credentials
+
         user, is_admin = _get_user_from_credentials("")
         assert user is None
         assert is_admin is False
@@ -995,29 +1003,34 @@ class TestValidateSessionOwnership:
 
     def test_no_session_user_allows_access(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
         session = ReverseProxySession("test-id", mock_websocket, None)
         # Should not raise
         _validate_session_ownership(session, "any-user", "test")
 
     def test_admin_bypasses_ownership(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
         session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
         # Admin should not raise
         _validate_session_ownership(session, {"sub": "admin@test.com", "is_admin": True}, "test")
 
     def test_owner_match_allows_access(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
         session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
         _validate_session_ownership(session, {"sub": "owner@test.com"}, "test")
 
     def test_owner_match_dict_user(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
+
         session = ReverseProxySession("test-id", mock_websocket, {"sub": "owner@test.com"})
         _validate_session_ownership(session, {"sub": "owner@test.com"}, "test")
 
     def test_non_owner_denied(self, mock_websocket):
         from mcpgateway.routers.reverse_proxy import _validate_session_ownership
         from fastapi import HTTPException
+
         session = ReverseProxySession("test-id", mock_websocket, "owner@test.com")
         with pytest.raises(HTTPException) as exc_info:
             _validate_session_ownership(session, {"sub": "other@test.com"}, "disconnect")
@@ -1154,9 +1167,12 @@ class TestListSessionsFiltering:
     @pytest.fixture
     def admin_client(self):
         from fastapi import FastAPI
+
         app = FastAPI()
+
         def mock_require_auth():
             return {"sub": "admin@test.com", "is_admin": True}
+
         app.dependency_overrides[require_auth] = mock_require_auth
         app.include_router(router)
         return TestClient(app)
@@ -1164,9 +1180,12 @@ class TestListSessionsFiltering:
     @pytest.fixture
     def user_client(self):
         from fastapi import FastAPI
+
         app = FastAPI()
+
         def mock_require_auth():
             return {"sub": "user@test.com", "is_admin": False}
+
         app.dependency_overrides[require_auth] = mock_require_auth
         app.include_router(router)
         return TestClient(app)

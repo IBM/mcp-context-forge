@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Streamable HTTP protocol header compliance checks."""
+"""Location: ./tests/compliance/mcp_2025_11_25/transport_core/test_streamable_http_protocol_header.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Streamable HTTP protocol header compliance checks.
+"""
 
 # Third-Party
 import pytest

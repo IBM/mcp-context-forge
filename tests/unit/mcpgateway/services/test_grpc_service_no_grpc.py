@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for GrpcService without requiring grpc packages."""
+"""Location: ./tests/unit/mcpgateway/services/test_grpc_service_no_grpc.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for GrpcService without requiring grpc packages.
+"""
 
 # Standard
 from datetime import datetime, timezone

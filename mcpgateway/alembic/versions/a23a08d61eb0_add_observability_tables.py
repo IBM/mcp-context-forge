@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_observability_tables
+"""Location: ./mcpgateway/alembic/versions/a23a08d61eb0_add_observability_tables.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_observability_tables
 
 Revision ID: a23a08d61eb0
 Revises: a706a3320c56
 Create Date: 2025-11-05 02:37:14.539024
-
 """
 
 # Standard

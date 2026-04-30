@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for rate limiter dynamic behavior.
+"""Location: ./tests/integration/test_rate_limiter_dynamic_behavior.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for rate limiter dynamic behavior.
 
 Verifies that runtime mode changes to the RateLimiterPlugin via the admin API
 actually affect rate limiting behavior on tool calls.

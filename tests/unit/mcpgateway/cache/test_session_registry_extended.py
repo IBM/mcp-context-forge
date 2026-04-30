@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/cache/test_session_registry_extended.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -379,9 +379,7 @@ class TestDatabaseBackendRespond:
 
                         await registry.add_session("test_session", mock_sse_transport)
 
-                        with patch.object(
-                            registry, "generate_response", new_callable=AsyncMock
-                        ) as mock_gen:
+                        with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
 
                             await registry.respond(
                                 server_id=None,
@@ -391,7 +389,6 @@ class TestDatabaseBackendRespond:
 
                             # Assert message was processed
                             mock_gen.assert_called_once()
-
 
     @pytest.mark.asyncio
     async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog, mock_sse_transport):
@@ -440,9 +437,7 @@ class TestDatabaseBackendRespond:
                         await registry.add_session("test_session", mock_sse_transport)
 
                         # Mock generate_response to avoid side effects
-                        with patch.object(
-                            registry, "generate_response", new_callable=AsyncMock
-                        ):
+                        with patch.object(registry, "generate_response", new_callable=AsyncMock):
                             await registry.respond(
                                 server_id=None,
                                 user={"token": "test"},
@@ -453,9 +448,7 @@ class TestDatabaseBackendRespond:
                             assert "Ready to respond" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_database_respond_message_remove_logging(
-        self, monkeypatch, caplog, mock_sse_transport
-    ):
+    async def test_database_respond_message_remove_logging(self, monkeypatch, caplog, mock_sse_transport):
         """Test database message removal logs correctly."""
 
         call_count = 0
@@ -503,9 +496,7 @@ class TestDatabaseBackendRespond:
 
                         await registry.add_session("test_session", mock_sse_transport)
 
-                        with patch.object(
-                            registry, "generate_response", new_callable=AsyncMock
-                        ):
+                        with patch.object(registry, "generate_response", new_callable=AsyncMock):
                             await registry.respond(
                                 server_id=None,
                                 user={"token": "test"},
@@ -514,6 +505,7 @@ class TestDatabaseBackendRespond:
 
                             # Assert message removal log
                             assert "Removed message from mcp_messages table" in caplog.text
+
 
 class TestDatabaseCleanupTask:
     """Test database cleanup task functionality."""

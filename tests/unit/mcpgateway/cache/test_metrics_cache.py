@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.cache.metrics_cache."""
+"""Location: ./tests/unit/mcpgateway/cache/test_metrics_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.cache.metrics_cache.
+"""
 
 # Standard
 import builtins

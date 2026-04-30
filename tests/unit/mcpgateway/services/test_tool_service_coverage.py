@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Additional coverage tests for tool_service.py.
+"""Location: ./tests/unit/mcpgateway/services/test_tool_service_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Additional coverage tests for tool_service.py.
 
 Targets uncovered lines identified in coverage report to improve overall
 branch coverage beyond the current 63%.
@@ -6746,9 +6751,9 @@ class TestInvokeToolRestSuccess:
         # isError=true upstream responses, symmetric with the REST fix.
         assert metrics_record.called, "record_tool_metric was not invoked"
         recorded_success = metrics_record.call_args.kwargs.get("success")
-        assert recorded_success is False, (
-            f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
-        )
+        assert (
+            recorded_success is False
+        ), f"Expected metrics success=False for MCP non-direct-proxy isError=true response, got {recorded_success}. This would silently inflate federated-tool success rates."
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,11 @@
-"""MCP notification compliance tests — tools/list_changed and resources/updated."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_notifications.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP notification compliance tests — tools/list_changed and resources/updated.
+"""
 
 from __future__ import annotations
 

@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""User Management E2E Tests.
+"""Location: ./tests/playwright/security/test_user_management.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+User Management E2E Tests.
 
 Tests the complete user lifecycle through the REST API and admin endpoints:
 create, list, get, update, activate/deactivate, force password change, delete.

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""No-regression tests for ServerClassificationService post-#4205.
+"""Location: ./tests/unit/mcpgateway/services/test_server_classification_no_regression.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+No-regression tests for ServerClassificationService post-#4205.
 
 With the upstream-session pool gone, ``_perform_classification`` can no
 longer produce a hot/cold split from per-URL pool usage. The service now

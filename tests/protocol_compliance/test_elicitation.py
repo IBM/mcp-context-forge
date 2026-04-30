@@ -1,4 +1,11 @@
-"""MCP elicitation compliance tests — server can request user-input from the client."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_elicitation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP elicitation compliance tests — server can request user-input from the client.
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""add prompt namespacing fields
+"""Location: ./mcpgateway/alembic/versions/r2b3c4d5e6f7_add_prompt_namespacing_fields.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add prompt namespacing fields
 
 Revision ID: r2b3c4d5e6f7
 Revises: k5e6f7g8h9i0, 4f07c116f917, z1a2b3c4d5e6
@@ -19,7 +24,7 @@ from mcpgateway.utils.create_slug import slugify
 
 # revision identifiers, used by Alembic.
 revision: str = "r2b3c4d5e6f7"
-down_revision: Union[str, Sequence[str], None] = ("k5e6f7g8h9i0", "4f07c116f917", "z1a2b3c4d5e6")
+down_revision: Union[str, Sequence[str], None] = "4f07c116f917"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

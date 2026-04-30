@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_output_schema_to_tools
+"""Location: ./mcpgateway/alembic/versions/9aaa90ad26d9_add_output_schema_to_tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_output_schema_to_tools
 
 Revision ID: 9aaa90ad26d9
 Revises: 9c99ec6872ed
 Create Date: 2025-10-15 17:29:38.801771
-
 """
 
 # Standard

@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/services/test_plugin_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from mcpgateway.services.plugin_service import PluginService, get_plugin_service

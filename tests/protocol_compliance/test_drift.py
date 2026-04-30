@@ -1,4 +1,10 @@
-"""Cross-target drift detection.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_drift.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Cross-target drift detection.
 
 Each test here opens a client against every available target, runs the
 same protocol probe, normalizes the results via ``helpers.drift``, and asserts

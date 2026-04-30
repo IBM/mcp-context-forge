@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/cache/test_session_registry_coverage.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Additional tests to improve coverage for session_registry.py.
 Targets specific uncovered lines and branches.

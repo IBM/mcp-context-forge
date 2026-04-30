@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/common/validators.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
@@ -78,9 +78,7 @@ logger = logging.getLogger(__name__)
 _HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
-_MIME_TYPE_RE: Pattern[str] = re.compile(
-    r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$'
-)
+_MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')
 _URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 _SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
 _ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")

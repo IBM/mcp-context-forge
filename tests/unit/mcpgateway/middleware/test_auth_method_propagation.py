@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test auth_method propagation from plugin to RBAC.
+"""Location: ./tests/unit/mcpgateway/middleware/test_auth_method_propagation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test auth_method propagation from plugin to RBAC.
 
 This test verifies that when a plugin authenticates a user via the
 HTTP_AUTH_RESOLVE_USER hook, the auth_method metadata flows through
@@ -34,6 +39,7 @@ from mcpgateway.plugins.framework import PluginResult
 @pytest.mark.asyncio
 async def test_auth_method_propagation_from_plugin():
     """Test that auth_method flows from plugin through to user_context."""
+
     # Create a mock request with a real object for state (not a MagicMock)
     # This is needed because we set attributes directly on request.state
     # Don't use spec=Request because it prevents setting custom attributes
@@ -105,6 +111,7 @@ async def test_auth_method_propagation_from_plugin():
 @pytest.mark.asyncio
 async def test_auth_method_in_user_context():
     """Test that get_current_user_with_permissions includes auth_method from request.state."""
+
     # Create a mock request with a real object for state
     class MockState:
         pass

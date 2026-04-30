@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for observability router SQL functions.
+"""Location: ./tests/unit/mcpgateway/routers/test_observability_sql.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for observability router SQL functions.
 
 Tests SQL-based and Python-based computation paths for query performance metrics.
 """

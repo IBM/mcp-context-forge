@@ -1,4 +1,10 @@
-"""ComplianceTarget abstraction.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/targets/base.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+ComplianceTarget abstraction.
 
 A target is a runnable MCP endpoint plus the logic to construct a FastMCP
 `Client` bound to it over a given transport. Each target declares which

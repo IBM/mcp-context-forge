@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for Redis-backed SessionRegistry.
-
-Location: ./tests/integration/test_session_registry_redis_integration.py
-Copyright 2025
+"""Location: ./tests/integration/test_session_registry_redis_integration.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Integration tests for Redis-backed SessionRegistry.
 End-to-end integration test validating Redis publish/subscribe
 behaviour for `SessionRegistry`. The test verifies that messages
 published by one registry are delivered to a transport registered

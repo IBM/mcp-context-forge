@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/unix/test_client.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -549,6 +549,7 @@ class TestUnixSocketExternalPluginInvokeHookEdgeCases:
 
         # Add context with state
         from google.protobuf import json_format as jf
+
         jf.ParseDict({"updated_key": "updated_value"}, response.context.state)
         response.context.global_context.request_id = "req-1"
 
@@ -579,6 +580,7 @@ class TestUnixSocketExternalPluginInvokeHookEdgeCases:
         response.error.plugin_name = "TestPlugin"
         response.error.code = "ERR"
         from google.protobuf import json_format as jf
+
         jf.ParseDict({"extra": "info"}, response.error.details)
 
         with patch(

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tool generator for load testing."""
+"""Location: ./tests/load/generators/tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tool generator for load testing.
+"""
 
 import random
 import uuid

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for correlation ID JSON formatter."""
+"""Location: ./tests/unit/mcpgateway/services/test_correlation_id_json_formatter.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for correlation ID JSON formatter.
+"""
 
 import json
 import logging
@@ -101,8 +107,8 @@ def test_formatter_includes_opentelemetry_trace_context(logger_with_formatter):
 
     # Mock OpenTelemetry span
     mock_span_context = Mock()
-    mock_span_context.trace_id = 0x1234567890abcdef1234567890abcdef
-    mock_span_context.span_id = 0x1234567890abcdef
+    mock_span_context.trace_id = 0x1234567890ABCDEF1234567890ABCDEF
+    mock_span_context.span_id = 0x1234567890ABCDEF
     mock_span_context.trace_flags = 0x01
     mock_span_context.is_valid = True
 
@@ -137,6 +143,7 @@ def test_formatter_handles_missing_opentelemetry(logger_with_formatter):
 
     # Simulate ImportError for opentelemetry
     import sys
+
     with patch.dict(sys.modules, {"opentelemetry.trace": None}):
         # Log a message
         logger.info("Test without OpenTelemetry")
@@ -199,7 +206,7 @@ def test_formatter_correlation_id_with_trace_context(logger_with_formatter):
 
     # Mock OpenTelemetry span
     mock_span_context = Mock()
-    mock_span_context.trace_id = 0xabcdef
+    mock_span_context.trace_id = 0xABCDEF
     mock_span_context.span_id = 0x123456
     mock_span_context.trace_flags = 0x01
     mock_span_context.is_valid = True

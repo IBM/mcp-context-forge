@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_user_context_to_oauth_tokens
+"""Location: ./mcpgateway/alembic/versions/14ac971cee42_add_user_context_to_oauth_tokens.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_user_context_to_oauth_tokens
 
 Revision ID: 14ac971cee42
 Revises: e182847d89e6
 Create Date: 2025-09-19 23:18:00.710347
-
 """
 
 # Standard

@@ -1,21 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Focused load test for secrets detection plugin performance comparison.
+"""Location: ./tests/loadtest/locustfile_secret_detection.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Focused load test for secrets detection plugin performance comparison.
 This locustfile is specifically designed to benchmark the secrets detection plugin
 by sending prompts with and without secrets to measure detection overhead.
-
 Usage:
     make load-test-secret-detection-compare
-
 Environment Variables:
     SECRET_DETECTION_LOADTEST_HOST: Target host URL (default: http://localhost:8080)
     SECRET_DETECTION_LOADTEST_USERS: Number of concurrent users (default: 100)
     SECRET_DETECTION_LOADTEST_SPAWN_RATE: Users spawned per second (default: 10)
     SECRET_DETECTION_LOADTEST_RUN_TIME: Test duration (default: 60s)
     MCPGATEWAY_BEARER_TOKEN: JWT token for authenticated requests
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 import os

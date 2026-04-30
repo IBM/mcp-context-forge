@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_translate_grpc.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Contributors
 
@@ -133,9 +133,7 @@ class TestGrpcEndpoint:
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2")
-    async def test_discover_services_success(
-        self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint
-    ):
+    async def test_discover_services_success(self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint):
         """Test successful service discovery."""
         # Setup mocks
         mock_channel = MagicMock()
@@ -159,11 +157,13 @@ class TestGrpcEndpoint:
 
         # Mock _discover_service_details to populate services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
+
             async def populate_service(stub, service_name):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
                 }
+
             mock_details.side_effect = populate_service
 
             await endpoint._discover_services()
@@ -173,9 +173,7 @@ class TestGrpcEndpoint:
 
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
-    async def test_discover_services_skip_reflection_service(
-        self, mock_reflection_grpc, mock_grpc, endpoint
-    ):
+    async def test_discover_services_skip_reflection_service(self, mock_reflection_grpc, mock_grpc, endpoint):
         """Test that ServerReflection service is skipped."""
         mock_channel = MagicMock()
         endpoint._channel = mock_channel
@@ -201,11 +199,13 @@ class TestGrpcEndpoint:
 
         # Mock _discover_service_details to populate only non-reflection services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
+
             async def populate_service(stub, service_name):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
                 }
+
             mock_details.side_effect = populate_service
 
             await endpoint._discover_services()
@@ -314,7 +314,7 @@ class TestGrpcToMcpTranslator:
                 "methods": [
                     {"name": "Method1", "input_type": ".test.Request1", "output_type": ".test.Response1"},
                     {"name": "Method2", "input_type": ".test.Request2", "output_type": ".test.Response2"},
-                ]
+                ],
             }
         }
         endpoint._pool = MagicMock()
@@ -643,9 +643,7 @@ async def test_invoke_streaming_validation_errors(monkeypatch):
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
-    endpoint._services = {
-        "svc": {"methods": [{"name": "Ping", "server_streaming": False, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}
-    }
+    endpoint._services = {"svc": {"methods": [{"name": "Ping", "server_streaming": False, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}}
 
     with pytest.raises(ValueError, match="Service .* not found"):
         async for _ in endpoint.invoke_streaming("missing", "Ping", {}):
@@ -672,9 +670,7 @@ async def test_invoke_streaming_message_type_missing(monkeypatch):
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
-    endpoint._services = {
-        "svc": {"methods": [{"name": "Stream", "server_streaming": True, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}
-    }
+    endpoint._services = {"svc": {"methods": [{"name": "Stream", "server_streaming": True, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}}
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = KeyError("missing")
 
@@ -700,9 +696,7 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
         pass
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
-    endpoint._services = {
-        "svc": {"methods": [{"name": "Stream", "server_streaming": True, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}
-    }
+    endpoint._services = {"svc": {"methods": [{"name": "Stream", "server_streaming": True, "client_streaming": False, "input_type": ".Input", "output_type": ".Output"}]}}
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object()]
     endpoint._factory = MagicMock()
@@ -784,6 +778,8 @@ async def test_expose_grpc_via_sse_keyboard_interrupt_unskipped(mock_sleep, mock
 
     mock_endpoint.start.assert_called_once()
     mock_endpoint.close.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_discover_service_details_success(monkeypatch):
     endpoint = GrpcEndpoint.__new__(GrpcEndpoint)

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for RBAC router endpoints."""
+"""Location: ./tests/unit/mcpgateway/routers/test_rbac_router.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for RBAC router endpoints.
+"""
 
 # Standard
 from datetime import datetime, timezone
@@ -455,9 +461,7 @@ async def test_my_permissions_forwards_token_teams(monkeypatch):
     result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
 
     assert result == ["tools.read"]
-    perm_service.get_user_permissions.assert_called_once_with(
-        user_email="user@example.com", team_id=None, token_teams=["team-a"]
-    )
+    perm_service.get_user_permissions.assert_called_once_with(user_email="user@example.com", team_id=None, token_teams=["team-a"])
 
 
 @pytest.mark.asyncio
@@ -471,6 +475,4 @@ async def test_my_permissions_forwards_empty_token_teams(monkeypatch):
     result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
 
     assert result == []
-    perm_service.get_user_permissions.assert_called_once_with(
-        user_email="user@example.com", team_id=None, token_teams=[]
-    )
+    perm_service.get_user_permissions.assert_called_once_with(user_email="user@example.com", team_id=None, token_teams=[])

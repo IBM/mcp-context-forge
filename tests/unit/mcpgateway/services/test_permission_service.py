@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for PermissionService."""
+"""Location: ./tests/unit/mcpgateway/services/test_permission_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for PermissionService.
+"""
 
 # Standard
 from datetime import datetime, timedelta, timezone

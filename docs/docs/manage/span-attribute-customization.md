@@ -397,4 +397,4 @@ grep "Failed to apply transformation" logs/gateway.log
 - [OpenTelemetry Span Attributes](../architecture/otel-span-attributes.md)
 - [Plugin Framework](../architecture/plugins.md)
 - [Observability Configuration](./observability.md)
-- [Plugin README](../../plugins/span_attribute_customizer/README.md)
+- [Plugin README](https://github.com/IBM/mcp-context-forge/blob/main/plugins/span_attribute_customizer/README.md)

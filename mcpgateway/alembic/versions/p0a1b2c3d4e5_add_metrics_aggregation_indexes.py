@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""add metrics aggregation indexes
+"""Location: ./mcpgateway/alembic/versions/p0a1b2c3d4e5_add_metrics_aggregation_indexes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add metrics aggregation indexes
 
 Revision ID: p0a1b2c3d4e5
 Revises: o9i0j1k2l3m4

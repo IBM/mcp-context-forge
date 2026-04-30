@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -307,7 +307,7 @@ class TestPassthroughHeaders:
         request_headers = None
         base_headers = {"Content-Type": "application/json"}
 
-        result = get_passthrough_headers(request_headers, base_headers, mock_db) # type: ignore[arg-type]
+        result = get_passthrough_headers(request_headers, base_headers, mock_db)  # type: ignore[arg-type]
 
         # Only base headers should remain
         expected = {"Content-Type": "application/json"}

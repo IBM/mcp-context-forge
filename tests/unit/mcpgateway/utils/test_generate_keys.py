@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for generate_keys utilities."""
+"""Location: ./tests/unit/mcpgateway/utils/test_generate_keys.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for generate_keys utilities.
+"""
 
 # Standard
 from pathlib import Path

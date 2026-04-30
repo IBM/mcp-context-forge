@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/plugins/framework/_redis.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Dependency-inversion shim for Redis access inside the plugin framework.
 

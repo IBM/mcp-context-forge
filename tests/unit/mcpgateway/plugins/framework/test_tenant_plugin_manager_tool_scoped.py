@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_tenant_plugin_manager_tool_scoped.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for TenantPluginManagerFactory using tool_id as context scoping.
 

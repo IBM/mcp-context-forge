@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/server_well_known.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Virtual Server Well-Known URI Handler Router.
 
