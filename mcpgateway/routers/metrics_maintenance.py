@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Metrics Maintenance Router.
-
-This router provides admin endpoints for metrics cleanup and rollup operations.
-
-Copyright 2025
+"""Location: ./mcpgateway/routers/metrics_maintenance.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Metrics Maintenance Router.
+This router provides admin endpoints for metrics cleanup and rollup operations.
 """
 
 # Standard

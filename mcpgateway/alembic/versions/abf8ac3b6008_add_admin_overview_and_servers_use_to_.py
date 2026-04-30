@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""Add admin.overview and servers.use permissions to viewer roles.
+"""Location: ./mcpgateway/alembic/versions/abf8ac3b6008_add_admin_overview_and_servers_use_to_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add admin.overview and servers.use permissions to viewer roles.
 
 Revision ID: abf8ac3b6008
 Revises: 64acf94cb7f2
@@ -14,7 +20,6 @@ Backfills default role permission sets so existing deployments receive:
 Note: developer and team_admin already have servers.use in their baseline
 definitions, so it is intentionally not included here to avoid a destructive
 downgrade that would strip a pre-existing permission.
-
 """
 
 # Standard

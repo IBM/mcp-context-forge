@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Dynamic plugin configuration load test.
+"""Location: ./tests/loadtest/locustfile_plugin_dynamic_config.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Dynamic plugin configuration load test.
 
 Tests that runtime plugin config changes propagate correctly across all
 gateway instances under concurrent load. Validates the full path:
@@ -228,7 +233,9 @@ def on_test_stop(environment, **kwargs):
         if entry.num_requests > 0:
             logger.error(
                 "  %-50s %6d reqs  %3d fails  avg %6.0fms",
-                entry.name, entry.num_requests, entry.num_failures,
+                entry.name,
+                entry.num_requests,
+                entry.num_failures,
                 entry.avg_response_time or 0,
             )
     logger.error("=" * 70)
@@ -511,9 +518,6 @@ class VerifierUser(FastHttpUser):
                 if actual == _plugins_enabled:
                     resp.success()
                 else:
-                    resp.failure(
-                        f"Inconsistency: expected={_plugins_enabled} actual={actual} "
-                        f"phase={_scenario_phase}"
-                    )
+                    resp.failure(f"Inconsistency: expected={_plugins_enabled} actual={actual} " f"phase={_scenario_phase}")
             else:
                 resp.failure(f"HTTP {resp.status_code}")

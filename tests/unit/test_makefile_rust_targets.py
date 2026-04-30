@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/test_makefile_rust_targets.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 from pathlib import Path
 
 MAKEFILE = Path(__file__).resolve().parents[2] / "Makefile"

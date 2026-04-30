@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/html_to_markdown/test_html_to_markdown.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -30,7 +30,7 @@ async def test_html_to_markdown_transforms_basic_html():
         )
     )
     html = "<h1>Title</h1><p>Hello <a href=\"https://x\">link</a></p><pre><code>print('x')</code></pre>"
-    content = ResourceContent(type="resource", id="123",uri="http://ex", mime_type="text/html", text=html)
+    content = ResourceContent(type="resource", id="123", uri="http://ex", mime_type="text/html", text=html)
     payload = ResourcePostFetchPayload(uri=content.uri, content=content)
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
     res = await plugin.resource_post_fetch(payload, ctx)

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ``mcpgateway.transports.rust_mcp_public_proxy``.
+"""Location: ./tests/unit/mcpgateway/transports/test_rust_mcp_public_proxy.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for ``mcpgateway.transports.rust_mcp_public_proxy``.
 
 The public proxy is the no-nginx-in-front ingress: it forwards client
 traffic to Rust's authenticated public listener with nginx-style

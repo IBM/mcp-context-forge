@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Schema method inventory guard for MCP 2025-11-25."""
+"""Location: ./tests/compliance/mcp_2025_11_25/base/test_method_inventory_guard.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schema method inventory guard for MCP 2025-11-25.
+"""
 
 # Standard
 from pathlib import Path

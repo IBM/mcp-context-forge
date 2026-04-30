@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add structured logging tables
+"""Location: ./mcpgateway/alembic/versions/k5e6f7g8h9i0_add_structured_logging_tables.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add structured logging tables
 
 Revision ID: k5e6f7g8h9i0
 Revises: 356a2d4eed6f
 Create Date: 2025-01-15 12:00:00.000000
-
 """
 
 # Third-Party

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SecurityLogger service."""
+"""Location: ./tests/unit/mcpgateway/services/test_security_logger.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for SecurityLogger service.
+"""
 
 # Standard
 from datetime import datetime, timezone

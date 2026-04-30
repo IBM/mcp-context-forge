@@ -1,4 +1,11 @@
-"""Unit tests for CONC-02 gateway read-during-write helper functions."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_conc_02_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for CONC-02 gateway read-during-write helper functions.
+"""
 
 # Future
 from __future__ import annotations

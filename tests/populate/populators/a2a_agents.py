@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""A2A agent populator - creates A2A agents via POST /a2a."""
+"""Location: ./tests/populate/populators/a2a_agents.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+A2A agent populator - creates A2A agents via POST /a2a.
+"""
 
 # Standard
 import random

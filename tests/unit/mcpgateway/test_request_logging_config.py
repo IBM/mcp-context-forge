@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Configuration tests for request-logging Rust integration."""
+"""Location: ./tests/unit/mcpgateway/test_request_logging_config.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Configuration tests for request-logging Rust integration.
+"""
 
 from mcpgateway.config import Settings
 

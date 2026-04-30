@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin_ids_search.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for the admin IDs endpoints with search query parameter.
 This module tests that the /admin/tools/ids, /admin/resources/ids, and
@@ -33,10 +34,12 @@ def mock_db():
 
 def setup_team_service(monkeypatch, team_ids):
     """Helper to mock team service for tests."""
+
     async def mock_get_user_team_ids(user, db):
         return team_ids
 
     from mcpgateway import admin
+
     monkeypatch.setattr(admin, "_get_user_team_ids", mock_get_user_team_ids)
 
 

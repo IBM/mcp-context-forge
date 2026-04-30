@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Progress tracking utilities with rich display."""
+"""Location: ./tests/load/utils/progress.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Progress tracking utilities with rich display.
+"""
 
 import sys
 import time

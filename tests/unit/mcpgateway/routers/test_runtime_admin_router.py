@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ``mcpgateway.routers.runtime_admin_router``.
+"""Location: ./tests/unit/mcpgateway/routers/test_runtime_admin_router.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for ``mcpgateway.routers.runtime_admin_router``.
 
 The endpoints are decorated with ``@require_permission("admin.system_config")``,
 which calls ``PermissionService(db).check_permission(...)``. We patch the

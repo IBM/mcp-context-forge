@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.main helper functions."""
+"""Location: ./tests/unit/mcpgateway/test_main_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.main helper functions.
+"""
 
 # Standard
 import asyncio

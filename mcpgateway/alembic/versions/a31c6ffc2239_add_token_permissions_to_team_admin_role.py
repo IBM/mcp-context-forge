@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add token permissions to team_admin role.
+"""Location: ./mcpgateway/alembic/versions/a31c6ffc2239_add_token_permissions_to_team_admin_role.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add token permissions to team_admin role.
 
 Revision ID: a31c6ffc2239
 Revises: 207d8bbddd61

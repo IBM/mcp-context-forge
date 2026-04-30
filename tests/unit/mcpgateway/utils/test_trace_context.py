@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for trace context helpers."""
+"""Location: ./tests/unit/mcpgateway/utils/test_trace_context.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for trace context helpers.
+"""
 
 # First-Party
 from mcpgateway.utils.trace_context import (

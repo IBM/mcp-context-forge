@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Shared fixtures for MCP 2025-11-25 compliance tests."""
+"""Location: ./tests/compliance/mcp_2025_11_25/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for MCP 2025-11-25 compliance tests.
+"""
 
 # Standard
 import os
@@ -78,9 +84,7 @@ def ensure_not_auth_error() -> Callable[[Any], None]:
 
     def _ensure(response: Any) -> None:
         if response.status_code in (401, 403):
-            pytest.skip(
-                "Endpoint requires auth. Set MCP_COMPLIANCE_BEARER_TOKEN for live runs."
-            )
+            pytest.skip("Endpoint requires auth. Set MCP_COMPLIANCE_BEARER_TOKEN for live runs.")
 
     return _ensure
 

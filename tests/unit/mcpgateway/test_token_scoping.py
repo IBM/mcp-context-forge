@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Token Scoping Tests for RBAC System.
+"""Location: ./tests/unit/mcpgateway/test_token_scoping.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Token Scoping Tests for RBAC System.
 
 Tests the normalize_token_teams() truth table from auth.py and
 request.state.team_id derivation logic.

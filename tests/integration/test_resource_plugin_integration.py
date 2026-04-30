@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_resource_plugin_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -54,12 +54,7 @@ class TestResourcePluginIntegration:
                 mock_manager._initialized = True
                 mock_manager.initialize = AsyncMock()
                 # Add default invoke_hook mock that returns success
-                mock_manager.invoke_hook = AsyncMock(
-                    return_value=(
-                        PluginResult(continue_processing=True, modified_payload=None),
-                        None  # contexts
-                    )
-                )
+                mock_manager.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, modified_payload=None), None))  # contexts
                 MockPluginManager.return_value = mock_manager
                 service = ResourceService()
                 service._plugin_manager = mock_manager
@@ -86,7 +81,6 @@ class TestResourcePluginIntegration:
         assert created.uri == "test://integration"
         assert created.name == "Integration Test Resource"
 
-
         # 2. Read the resource (should trigger plugins)
         content = await service.read_resource(
             test_db,
@@ -104,7 +98,6 @@ class TestResourcePluginIntegration:
         assert len(resources) == 1
         assert resources[0].uri == "test://integration"
 
-
         # 4. Update the resource
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
@@ -115,7 +108,6 @@ class TestResourcePluginIntegration:
         )
         updated = await service.update_resource(test_db, created.id, update_data)
         assert updated.name == "Updated Integration Resource"
-
 
         # 5. Delete the resource
         await service.delete_resource(test_db, created.id)
@@ -235,7 +227,6 @@ class TestResourcePluginIntegration:
 
                 create_response = await service.register_resource(test_db, resource_data)
 
-
                 # Read the resource - should be filtered
                 content = await service.read_resource(test_db, create_response.id)
                 assert "[REDACTED]" in content.text
@@ -253,7 +244,6 @@ class TestResourcePluginIntegration:
                     mime_type="text/plain",
                 )
                 await service.register_resource(test_db, blocked_resource)
-
 
                 # Find the blocked resource by uri to get its id
                 blocked, _ = await service.list_resources(test_db)
@@ -363,7 +353,6 @@ class TestResourcePluginIntegration:
 
         # Deactivate the resource
         await service.set_resource_state(test_db, created.id, activate=False)
-
 
         # Try to read inactive resource
         # First-Party

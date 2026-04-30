@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for MCP protocol version middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_protocol_version.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for MCP protocol version middleware.
+"""
 
 # Standard
 from typing import Dict, Iterable, Tuple

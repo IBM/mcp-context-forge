@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_auto_refresh.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for the auto-refresh tools/resources/prompts feature in GatewayService.
 """
@@ -275,9 +276,7 @@ class TestInitializeGatewayPreAuthHeaders:
         """Test that pre_auth_headers bypass OAuth token fetch."""
         pre_auth_headers = {"Authorization": "Bearer pre-fetched-token"}
 
-        with (
-            patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,
-        ):
+        with (patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,):
             mock_connect.return_value = ({}, [], [], [])
 
             await gateway_service._initialize_gateway(

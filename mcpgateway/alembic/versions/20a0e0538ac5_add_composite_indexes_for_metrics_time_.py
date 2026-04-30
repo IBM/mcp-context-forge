@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""add_composite_indexes_for_metrics_time_partitioning
+"""Location: ./mcpgateway/alembic/versions/20a0e0538ac5_add_composite_indexes_for_metrics_time_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_composite_indexes_for_metrics_time_partitioning
 
 Revision ID: 20a0e0538ac5
 Revises: 64acf94cb7f2

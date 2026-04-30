@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add tool_plugin_bindings table for per-tool per-tenant plugin policies
+"""Location: ./mcpgateway/alembic/versions/592625561893_add_tool_plugin_bindings_table.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add tool_plugin_bindings table for per-tool per-tenant plugin policies
 
 Revision ID: 592625561893
 Revises: cbedf4e580e0
 Create Date: 2026-04-03 00:00:00.000000
-
 """
 
 # Third-Party
@@ -52,6 +56,13 @@ def downgrade() -> None:
     if "tool_plugin_bindings" not in inspector.get_table_names():
         return
 
-    op.drop_index("ix_tool_plugin_bindings_tool_name", table_name="tool_plugin_bindings")
-    op.drop_index("ix_tool_plugin_bindings_team_id", table_name="tool_plugin_bindings")
+    indexes = {idx["name"] for idx in inspector.get_indexes("tool_plugin_bindings")}
+    for name in ("ix_tool_plugin_bindings_tool_name", "idx_tool_plugin_bindings_tool_name"):
+        if name in indexes:
+            op.drop_index(name, table_name="tool_plugin_bindings")
+            break
+    for name in ("ix_tool_plugin_bindings_team_id", "idx_tool_plugin_bindings_team_id"):
+        if name in indexes:
+            op.drop_index(name, table_name="tool_plugin_bindings")
+            break
     op.drop_table("tool_plugin_bindings")

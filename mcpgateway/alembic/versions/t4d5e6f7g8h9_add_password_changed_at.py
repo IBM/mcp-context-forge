@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add password_changed_at field to EmailUser
+"""Location: ./mcpgateway/alembic/versions/t4d5e6f7g8h9_add_password_changed_at.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add password_changed_at field to EmailUser
 
 Revision ID: t4d5e6f7g8h9
 Revises: c96c11c111b4

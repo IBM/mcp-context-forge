@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migrate user roles to configurable defaults
+"""Location: ./mcpgateway/alembic/versions/ba202ac1665f_migrate_user_roles_to_configurable_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migrate user roles to configurable defaults
 
 Revision ID: ba202ac1665f
 Revises: a31c6ffc2239

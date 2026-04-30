@@ -1,22 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Upstream MCP session registry (1:1 per downstream session).
+"""Location: ./mcpgateway/services/upstream_session_registry.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Jonathan Springer, Mihai Criveti
 
+Upstream MCP session registry (1:1 per downstream session).
 Replaces the previous ``SessionAffinity`` which keyed upstream sessions by
 ``(user_identity, url, identity_hash, transport_type, gateway_id)``. That
 sharing leaked state between downstream MCP sessions whose callers happened
 to share the same identity (issue #4205): two chat tabs opened by the same
 user would receive the same counter state, because both were wired to the
 same pooled upstream session.
-
 This registry enforces 1:1 binding between a downstream MCP session (as
 identified by its ``Mcp-Session-Id``) and each upstream gateway it talks to.
 Within one downstream session, tool calls still reuse a single upstream
 session per gateway — so the per-call latency win of pooling survives — but
 nothing is ever shared across downstream sessions.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
-Authors: Jonathan Springer, Mihai Criveti
 """
 
 # Future

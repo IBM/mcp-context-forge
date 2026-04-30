@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for TLS configuration on external MCP plugins."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_models_tls.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for TLS configuration on external MCP plugins.
+"""
 
 # Standard
 from pathlib import Path

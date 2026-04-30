@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for identity propagation utilities.
+"""Location: ./tests/unit/mcpgateway/test_identity_propagation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for identity propagation utilities.
 
 Tests cover:
 - UserContext model creation and serialization
@@ -460,7 +465,7 @@ class TestSignClaims:
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = "my-secret" # pragma: allowlist secret
+        mock_settings.identity_claims_secret = "my-secret"  # pragma: allowlist secret
         sig = _sign_claims("test-payload")
         assert len(sig) == 64  # SHA-256 hex
 
@@ -1165,6 +1170,7 @@ class TestRBACProxyUserContextFailure:
             caught = False
             try:
                 from mcpgateway.middleware.rbac import UserContext
+
                 UserContext(
                     user_id=proxy_user,
                     email=proxy_user,
@@ -1176,9 +1182,7 @@ class TestRBACProxyUserContextFailure:
                     plugin_global_context.user_context = None
             except Exception as ctx_err:
                 caught = True
-                logging.getLogger("mcpgateway.middleware.rbac").debug(
-                    f"Could not build UserContext for proxy auth: {ctx_err}"
-                )
+                logging.getLogger("mcpgateway.middleware.rbac").debug(f"Could not build UserContext for proxy auth: {ctx_err}")
 
             assert caught
 
@@ -1267,6 +1271,7 @@ class TestResourceServiceIdentityInjection:
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
             if user_identity:
                 from mcpgateway.plugins.framework.models import UserContext as UserCtx
+
                 if isinstance(user_identity, UserCtx):
                     headers.update(build_identity_headers(user_identity))
 

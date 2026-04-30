@@ -510,13 +510,11 @@ class SQLAlchemyTest:
 
                     # Test more complex query
                     try:
-                        result = conn.execute(
-                            text("""
+                        result = conn.execute(text("""
                             SELECT gateways.name, gateways.enabled, gateways.reachable
                             FROM gateways
                             LIMIT 5
-                        """)
-                        )
+                        """))
                         rows = result.fetchall()
                         print_status(f"Complex query successful: {len(rows)} gateway records")
 
@@ -638,13 +636,12 @@ def main():
         print_status("Some tests failed or issues detected", False)
         print("\nTroubleshooting recommendations:")
         print("1. Review the diagnostic output above")
-        print("2. Check the SQLite troubleshooting section in MIGRATION-0.7.0.md")
-        print("3. Ensure proper file permissions and disk space")
-        print("4. Kill any hanging ContextForge processes")
-        print("5. Remove WAL files if database was corrupted")
+        print("2. Ensure proper file permissions and disk space")
+        print("3. Kill any hanging ContextForge processes")
+        print("4. Remove WAL files if database was corrupted")
 
         if platform.system() == "Darwin":
-            print("6. Update SQLite on macOS: brew install sqlite3 && brew link --force sqlite3")
+            print("5. Update SQLite on macOS: brew install sqlite3 && brew link --force sqlite3")
 
         sys.exit(1)
 

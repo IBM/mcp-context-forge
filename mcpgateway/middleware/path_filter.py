@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Centralized path filtering for middleware chain optimization.
-
-Copyright 2025
+"""Location: ./mcpgateway/middleware/path_filter.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Centralized path filtering for middleware chain optimization.
 This module provides cached path exclusion checks for middleware to reduce
 per-request overhead. Each middleware has specific skip semantics that are
 preserved (exact vs prefix matching).

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test DCR Service (RFC 7591 Dynamic Client Registration).
+"""Location: ./tests/unit/mcpgateway/services/test_dcr_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test DCR Service (RFC 7591 Dynamic Client Registration).
 
 This test suite validates the DCR service implementation following TDD Red Phase.
 Tests will FAIL until implementation is complete.

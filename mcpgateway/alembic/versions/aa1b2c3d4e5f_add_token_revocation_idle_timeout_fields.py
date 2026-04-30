@@ -1,9 +1,14 @@
-"""add_token_revocation_idle_timeout_fields
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/aa1_add_token_revocation_idle_timeout_fields.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_token_revocation_idle_timeout_fields
 
 Revision ID: aa1b2c3d4e5f
-Revises: z1a2b3c4d5e6
+Revises: bb43712cae28
 Create Date: 2026-04-21 12:58:00.000000
-
 """
 
 # Third-Party
@@ -12,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "aa1b2c3d4e5f"  # pragma: allowlist secret
-down_revision = "z1a2b3c4d5e6"
+down_revision = "bb43712cae28"
 branch_labels = None
 depends_on = None
 
@@ -49,14 +54,19 @@ def downgrade() -> None:
     if "token_revocations" not in inspector.get_table_names():
         return
 
-    # Drop indexes
+    # Drop indexes. SQLite's `create_all()` auto-creates an index named
+    # `ix_token_revocations_token_expiry` from the model's `index=True` flag,
+    # in addition to the explicit `idx_token_revocations_expiry_cleanup` from
+    # the migration. Both must be dropped before the column can be dropped.
     existing_indexes = [idx["name"] for idx in inspector.get_indexes("token_revocations")]
 
-    if "idx_token_revocations_expiry_cleanup" in existing_indexes:
-        op.drop_index("idx_token_revocations_expiry_cleanup", table_name="token_revocations")
-
-    if "idx_token_revocations_revoked_at" in existing_indexes:
-        op.drop_index("idx_token_revocations_revoked_at", table_name="token_revocations")
+    for index_name in (
+        "idx_token_revocations_expiry_cleanup",
+        "ix_token_revocations_token_expiry",
+        "idx_token_revocations_revoked_at",
+    ):
+        if index_name in existing_indexes:
+            op.drop_index(index_name, table_name="token_revocations")
 
     # Drop columns
     columns = [col["name"] for col in inspector.get_columns("token_revocations")]

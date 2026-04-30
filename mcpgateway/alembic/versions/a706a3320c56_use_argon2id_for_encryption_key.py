@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Use Argon2id for encryption key
+"""Location: ./mcpgateway/alembic/versions/a706a3320c56_use_argon2id_for_encryption_key.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Use Argon2id for encryption key
 
 Revision ID: a706a3320c56
 Revises: h2b3c4d5e6f7
 Create Date: 2025-10-30 15:31:25.115536
-
 """
 
 # Standard

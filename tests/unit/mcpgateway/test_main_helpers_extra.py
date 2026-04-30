@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Extra tests for main helpers."""
+"""Location: ./tests/unit/mcpgateway/test_main_helpers_extra.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extra tests for main helpers.
+"""
 
 # Standard
 from types import SimpleNamespace

@@ -1,4 +1,10 @@
-"""Static-source coverage checks for RBAC permission decorators.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/security/test_rbac_decorator_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Static-source coverage checks for RBAC permission decorators.
 
 These assertions guard against a specific regression mode: a refactor
 silently dropping a ``@require_permission(...)`` decorator from an

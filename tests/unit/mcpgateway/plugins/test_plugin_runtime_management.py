@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for plugin runtime management.
+"""Location: ./tests/unit/mcpgateway/plugins/test_plugin_runtime_management.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for plugin runtime management.
 
 Tests cover:
     - Global plugin enable/disable via Redis (shared state)

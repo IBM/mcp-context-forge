@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add admin types to email_users
+"""Location: ./mcpgateway/alembic/versions/04cda6733305_add_admin_types_to_email_users.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add admin types to email_users
 
 Revision ID: 04cda6733305
 Revises: b1b2b3b4b5b6
@@ -13,7 +18,6 @@ Add admin_origin column to track how admin status was granted:
 
 This enables proper bidirectional sync for SSO-granted admins while
 preserving manual grants from being auto-revoked.
-
 """
 
 # Standard

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_llmchat_endpoints.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
@@ -21,8 +21,8 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
-
 # ==================== FIXTURES ====================
+
 
 @pytest.fixture
 def mock_redis():
@@ -58,14 +58,8 @@ def mock_agent():
     agent = AsyncMock()
 
     async def mock_astream_events(messages, version):
-        yield {
-            "event": "on_chat_model_stream",
-            "data": {"chunk": Mock(content="Test ")}
-        }
-        yield {
-            "event": "on_chat_model_stream",
-            "data": {"chunk": Mock(content="response")}
-        }
+        yield {"event": "on_chat_model_stream", "data": {"chunk": Mock(content="Test ")}}
+        yield {"event": "on_chat_model_stream", "data": {"chunk": Mock(content="response")}}
 
     async def mock_ainvoke(messages):
         return {"messages": [Mock(content="Test response")]}
@@ -77,6 +71,7 @@ def mock_agent():
 
 # ==================== HELPER FUNCTIONS ====================
 
+
 def create_connect_payload(user_id: str, model: str = "test-model") -> Dict[str, Any]:
     """Helper to create connect request payload.
 
@@ -85,29 +80,22 @@ def create_connect_payload(user_id: str, model: str = "test-model") -> Dict[str,
     """
     return {
         "user_id": user_id,
-        "server": {
-            "url": "http://test-mcp-server.com/mcp",
-            "transport": "streamable_http",
-            "auth_token": "test-token"
-        },
+        "server": {"url": "http://test-mcp-server.com/mcp", "transport": "streamable_http", "auth_token": "test-token"},
         "llm": {
             "model": model,
             "temperature": 0.7,
         },
-        "streaming": False
+        "streaming": False,
     }
 
 
 def create_chat_payload(user_id: str, message: str, streaming: bool = False) -> Dict[str, Any]:
     """Helper to create chat request payload"""
-    return {
-        "user_id": user_id,
-        "message": message,
-        "streaming": streaming
-    }
+    return {"user_id": user_id, "message": message, "streaming": streaming}
 
 
 # ==================== MULTI-WORKER COORDINATION TESTS ====================
+
 
 class TestMultiWorkerCoordination:
     """Tests for multi-worker coordination scenarios"""
@@ -117,8 +105,7 @@ class TestMultiWorkerCoordination:
         """Test session handoff when different workers handle requests"""
         from mcpgateway.routers.llmchat_router import set_active_session, _active_key
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "user123"
             mock_service = AsyncMock()
@@ -129,19 +116,17 @@ class TestMultiWorkerCoordination:
             call_args = mock_redis.set.call_args[0]
             assert _active_key(user_id) in str(call_args)
 
-            with patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-2'):
-                mock_redis.get = AsyncMock(return_value='worker-1')
+            with patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-2"):
+                mock_redis.get = AsyncMock(return_value="worker-1")
                 owner_result = await mock_redis.get(_active_key(user_id))
-                assert owner_result == 'worker-1'
-
+                assert owner_result == "worker-1"
 
     @pytest.mark.asyncio
     async def test_distributed_lock_acquisition_and_release(self, mock_redis):
         """Test distributed lock mechanism for session initialization"""
         from mcpgateway.routers.llmchat_router import _try_acquire_lock, _release_lock_safe
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "user123"
 
@@ -151,18 +136,16 @@ class TestMultiWorkerCoordination:
 
             mock_redis.set.assert_called()
 
-            mock_redis.get = AsyncMock(return_value='worker-1')
+            mock_redis.get = AsyncMock(return_value="worker-1")
             await _release_lock_safe(user_id)
             mock_redis.delete.assert_called()
-
 
     @pytest.mark.asyncio
     async def test_session_ttl_expiration_and_renewal(self, mock_redis):
         """Test session TTL expiration and automatic renewal"""
         from mcpgateway.routers.llmchat_router import get_active_session
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             # Import locally to avoid affecting other tests
             from mcpgateway.routers import llmchat_router as router_module
@@ -175,7 +158,7 @@ class TestMultiWorkerCoordination:
             router_module.active_sessions[user_id] = mock_service
 
             try:
-                mock_redis.get = AsyncMock(return_value='worker-1')
+                mock_redis.get = AsyncMock(return_value="worker-1")
                 mock_redis.expire = AsyncMock(return_value=True)
 
                 session = await get_active_session(user_id)
@@ -191,26 +174,20 @@ class TestMultiWorkerCoordination:
 
 # ==================== REDIS FAILURE SCENARIOS ====================
 
+
 class TestRedisFailureScenarios:
     """Tests for Redis failure and fallback scenarios"""
 
     @pytest.mark.asyncio
     async def test_graceful_degradation_redis_unavailable(self):
         """Test graceful degradation when Redis is unavailable"""
-        from mcpgateway.routers.llmchat_router import (
-            set_user_config, get_user_config, set_active_session, get_active_session
-        )
-        from mcpgateway.services.mcp_client_chat_service import (
-            MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
-        )
+        from mcpgateway.routers.llmchat_router import set_user_config, get_user_config, set_active_session, get_active_session
+        from mcpgateway.services.mcp_client_chat_service import MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', None):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", None):
 
             user_id = "test_user_" + str(uuid4())
-            config = MCPClientConfig(
-                mcp_server=MCPServerConfig(url="http://test.com/mcp"),
-                llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2"))
-            )
+            config = MCPClientConfig(mcp_server=MCPServerConfig(url="http://test.com/mcp"), llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2")))
 
             await set_user_config(user_id, config)
             retrieved_config = await get_user_config(user_id)
@@ -223,11 +200,11 @@ class TestRedisFailureScenarios:
 
             # Cleanup
             from mcpgateway.routers import llmchat_router as router_module
+
             if user_id in router_module.user_configs:
                 del router_module.user_configs[user_id]
             if user_id in router_module.active_sessions:
                 del router_module.active_sessions[user_id]
-
 
     @pytest.mark.asyncio
     async def test_redis_connection_loss_during_active_session(self, mock_redis):
@@ -235,8 +212,7 @@ class TestRedisFailureScenarios:
         from mcpgateway.routers.llmchat_router import get_active_session
         from mcpgateway.routers import llmchat_router as router_module
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "test_user_" + str(uuid4())
             mock_service = AsyncMock()
@@ -245,7 +221,7 @@ class TestRedisFailureScenarios:
             router_module.active_sessions[user_id] = mock_service
 
             try:
-                mock_redis.get = AsyncMock(return_value='worker-1')
+                mock_redis.get = AsyncMock(return_value="worker-1")
                 mock_redis.expire = AsyncMock(side_effect=ConnectionError("Redis connection lost"))
 
                 session = await get_active_session(user_id)
@@ -257,6 +233,7 @@ class TestRedisFailureScenarios:
 
 # ==================== CHAT HISTORY PERSISTENCE TESTS ====================
 
+
 class TestChatHistoryPersistence:
     """Tests for chat history persistence and management"""
 
@@ -267,10 +244,7 @@ class TestChatHistoryPersistence:
 
         user_id = "test_user_" + str(uuid4())
 
-        messages = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi there!"}
-        ]
+        messages = [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there!"}]
 
         # Mock Redis to return JSON data
         mock_redis.get = AsyncMock(return_value=json.dumps(messages))
@@ -283,7 +257,6 @@ class TestChatHistoryPersistence:
         assert len(history) == 2
         assert history[0]["content"] == "Hello"
         assert history[1]["content"] == "Hi there!"
-
 
     @pytest.mark.asyncio
     async def test_message_ordering_in_memory(self):
@@ -304,7 +277,6 @@ class TestChatHistoryPersistence:
         # Cleanup
         await history_manager.clear_history(user_id)
 
-
     @pytest.mark.asyncio
     async def test_history_size_limits(self):
         """Test chat history size limits and automatic trimming"""
@@ -323,7 +295,6 @@ class TestChatHistoryPersistence:
         # Cleanup
         await history_manager.clear_history(user_id)
 
-
     @pytest.mark.asyncio
     async def test_clear_history(self, mock_redis):
         """Test clear history operation"""
@@ -341,6 +312,7 @@ class TestChatHistoryPersistence:
 
 # ==================== CONFIGURATION TESTS ====================
 
+
 class TestConfigurationManagement:
     """Tests for configuration management"""
 
@@ -348,16 +320,11 @@ class TestConfigurationManagement:
     async def test_config_storage_and_retrieval(self):
         """Test storing and retrieving user configuration"""
         from mcpgateway.routers.llmchat_router import set_user_config, get_user_config
-        from mcpgateway.services.mcp_client_chat_service import (
-            MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
-        )
+        from mcpgateway.services.mcp_client_chat_service import MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', None):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", None):
             user_id = "test_user_" + str(uuid4())
-            config = MCPClientConfig(
-                mcp_server=MCPServerConfig(url="http://test.com/mcp"),
-                llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2"))
-            )
+            config = MCPClientConfig(mcp_server=MCPServerConfig(url="http://test.com/mcp"), llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2")))
 
             await set_user_config(user_id, config)
             retrieved = await get_user_config(user_id)
@@ -366,24 +333,19 @@ class TestConfigurationManagement:
 
             # Cleanup
             from mcpgateway.routers import llmchat_router as router_module
+
             if user_id in router_module.user_configs:
                 del router_module.user_configs[user_id]
-
 
     @pytest.mark.asyncio
     async def test_config_with_redis(self, mock_redis):
         """Test configuration storage with Redis"""
         from mcpgateway.routers.llmchat_router import set_user_config
-        from mcpgateway.services.mcp_client_chat_service import (
-            MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
-        )
+        from mcpgateway.services.mcp_client_chat_service import MCPClientConfig, MCPServerConfig, LLMConfig, OllamaConfig
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis):
             user_id = "test_user_" + str(uuid4())
-            config = MCPClientConfig(
-                mcp_server=MCPServerConfig(url="http://test.com/mcp"),
-                llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2"))
-            )
+            config = MCPClientConfig(mcp_server=MCPServerConfig(url="http://test.com/mcp"), llm=LLMConfig(provider="ollama", config=OllamaConfig(model="llama2")))
 
             mock_redis.set = AsyncMock(return_value=True)
             await set_user_config(user_id, config)
@@ -393,6 +355,7 @@ class TestConfigurationManagement:
 
 # ==================== LOCK MECHANISM TESTS ====================
 
+
 class TestLockMechanism:
     """Tests for distributed lock mechanism"""
 
@@ -401,8 +364,7 @@ class TestLockMechanism:
         """Test successful lock acquisition"""
         from mcpgateway.routers.llmchat_router import _try_acquire_lock
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "test_user_" + str(uuid4())
 
@@ -412,14 +374,12 @@ class TestLockMechanism:
             assert acquired is True
             mock_redis.set.assert_called()
 
-
     @pytest.mark.asyncio
     async def test_lock_failure(self, mock_redis):
         """Test failed lock acquisition"""
         from mcpgateway.routers.llmchat_router import _try_acquire_lock
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "test_user_" + str(uuid4())
 
@@ -428,18 +388,16 @@ class TestLockMechanism:
 
             assert acquired is False
 
-
     @pytest.mark.asyncio
     async def test_lock_release(self, mock_redis):
         """Test lock release"""
         from mcpgateway.routers.llmchat_router import _release_lock_safe
 
-        with patch('mcpgateway.routers.llmchat_router.redis_client', mock_redis), \
-             patch('mcpgateway.routers.llmchat_router.WORKER_ID', 'worker-1'):
+        with patch("mcpgateway.routers.llmchat_router.redis_client", mock_redis), patch("mcpgateway.routers.llmchat_router.WORKER_ID", "worker-1"):
 
             user_id = "test_user_" + str(uuid4())
 
-            mock_redis.get = AsyncMock(return_value='worker-1')
+            mock_redis.get = AsyncMock(return_value="worker-1")
             mock_redis.delete = AsyncMock(return_value=True)
 
             await _release_lock_safe(user_id)

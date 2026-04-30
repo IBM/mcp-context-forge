@@ -1,30 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Streamable HTTP echo-with-delay load test for ContextForge.
+"""Location: ./tests/loadtest/locustfile_echo_delay.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Streamable HTTP echo-with-delay load test for ContextForge.
 Measures gateway throughput when the backend MCP tool has an artificial delay,
 exercising the full Streamable HTTP path: /servers/{server_id}/mcp.
-
 Each Locust user establishes one MCP session (initialize + Mcp-Session-Id) and
 then repeatedly calls fast-test-echo with a configurable delay (default 500ms).
-
 Usage (containerized — recommended):
     make load-test-echo-delay          # headless, 200 users, 3min
     make load-test-echo-delay-ui       # web UI at http://localhost:8089
-
 Usage (local):
     cd tests/loadtest
     locust -f locustfile_echo_delay.py --host=http://localhost:4444 \\
            --users=200 --spawn-rate=20 --run-time=180s --headless
-
 Environment Variables:
     MCPGATEWAY_BEARER_TOKEN:   JWT token (auto-loaded from /tokens/gateway.jwt in container)
     ECHO_DELAY_MS:             Delay in milliseconds for each echo call (default: 500)
     ECHO_DELAY_SERVER_ID:      Virtual server ID (default: matches register_fast_test in docker-compose)
     JWT_SECRET_KEY:            Secret for auto-generating JWT if token not provided
     NUM_TENANTS:               Number of discrete tenants to simulate (default: 10)
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 import itertools

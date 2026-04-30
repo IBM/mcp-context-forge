@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Multi-worker session affinity for downstream MCP sessions.
+"""Location: ./mcpgateway/services/session_affinity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Multi-worker session affinity for downstream MCP sessions.
 Keeps each downstream MCP session (identified by its ``Mcp-Session-Id``)
 pinned to one gateway worker across the horizontal-scale deployment, so
 the worker-local ``UpstreamSessionRegistry`` can serve subsequent calls
 without rebuilding upstream state. Per-worker upstream ``ClientSession``
 state lives in ``mcpgateway.services.upstream_session_registry``; this
 module owns the cross-worker affinity layer only.
-
 Surface:
-
 * Redis-backed ``(downstream_session_id, url, transport, gateway_id)`` →
   owning-worker mapping so any worker can look up who owns a session.
 * Worker heartbeat (``SET EX``) so dead workers can be reclaimed.
@@ -17,10 +19,6 @@ Surface:
 * Session-owner HTTP/RPC forwarding for cross-worker fanout.
 * Pub/Sub listener for RPC-style cross-worker requests.
 * ``is_valid_mcp_session_id`` validation used by the transport layer.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 """
 
 # ruff: noqa: D417

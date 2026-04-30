@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the security headers middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_security_headers_middleware.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the security headers middleware.
+"""
 
 from unittest.mock import patch
 

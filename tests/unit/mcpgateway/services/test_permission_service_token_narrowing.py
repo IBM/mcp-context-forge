@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for session-token team narrowing in PermissionService.
+"""Location: ./tests/unit/mcpgateway/services/test_permission_service_token_narrowing.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for session-token team narrowing in PermissionService.
 
 Tests the fix for Layer 2 RBAC enforcement of Layer 1 token scoping.
 When a session token is narrowed to specific teams via JWT claims,

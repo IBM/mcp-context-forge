@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for role service duplicate handling.
+"""Location: ./tests/integration/test_role_service_duplicate_handling.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for role service duplicate handling.
 
 Tests the full revoke → re-assign flow that triggers the bug in #3505.
 Uses real database sessions, not mocks.
@@ -26,7 +31,7 @@ def test_role(test_db: Session):
         permissions=["tools.read", "tools.execute"],
         created_by="admin@example.com",
         is_system_role=False,
-        is_active=True
+        is_active=True,
     )
     test_db.add(role)
     test_db.commit()
@@ -37,11 +42,7 @@ def test_role(test_db: Session):
 @pytest.fixture
 def test_user(test_db: Session):
     """Create a test user."""
-    user = EmailUser(
-        email=f"testuser-{uuid.uuid4().hex[:8]}@example.com",
-        password_hash="dummy_hash",
-        is_active=True
-    )
+    user = EmailUser(email=f"testuser-{uuid.uuid4().hex[:8]}@example.com", password_hash="dummy_hash", is_active=True)
     test_db.add(user)
     test_db.commit()
     test_db.refresh(user)
@@ -63,56 +64,29 @@ async def test_revoke_and_reassign_no_duplicate_error(test_db: Session, test_rol
     role_service = RoleService(test_db)
 
     # Step 1: Assign role
-    assignment1 = await role_service.assign_role_to_user(
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-123",
-        granted_by="admin@example.com"
-    )
+    assignment1 = await role_service.assign_role_to_user(user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-123", granted_by="admin@example.com")
     assert assignment1 is not None
     assert assignment1.is_active is True
 
     # Step 2: Revoke role (soft delete)
-    revoked = await role_service.revoke_role_from_user(
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-123"
-    )
+    revoked = await role_service.revoke_role_from_user(user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-123")
     assert revoked is True
 
     # Verify revocation created inactive row
     test_db.expire_all()
-    inactive_check = await role_service.get_user_role_assignment(
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-123"
-    )
+    inactive_check = await role_service.get_user_role_assignment(user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-123")
     # After fix: should return None (no active assignment)
     assert inactive_check is None
 
     # Step 3: Re-assign role (creates new active row)
-    assignment2 = await role_service.assign_role_to_user(
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-123",
-        granted_by="admin@example.com"
-    )
+    assignment2 = await role_service.assign_role_to_user(user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-123", granted_by="admin@example.com")
     assert assignment2 is not None
     assert assignment2.is_active is True
     assert assignment2.id != assignment1.id  # Different row
 
     # Step 4: Query for assignment (CRITICAL TEST - should not raise MultipleResultsFound)
     test_db.expire_all()
-    result = await role_service.get_user_role_assignment(
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-123"
-    )
+    result = await role_service.get_user_role_assignment(user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-123")
 
     # After fix: should return the active assignment
     assert result is not None
@@ -120,12 +94,7 @@ async def test_revoke_and_reassign_no_duplicate_error(test_db: Session, test_rol
     assert result.id == assignment2.id
 
     # Verify database state: should have 1 inactive + 1 active row
-    all_assignments = test_db.query(UserRole).filter(
-        UserRole.user_email == test_user.email,
-        UserRole.role_id == test_role.id,
-        UserRole.scope == "team",
-        UserRole.scope_id == "team-123"
-    ).all()
+    all_assignments = test_db.query(UserRole).filter(UserRole.user_email == test_user.email, UserRole.role_id == test_role.id, UserRole.scope == "team", UserRole.scope_id == "team-123").all()
 
     assert len(all_assignments) == 2
     active_count = sum(1 for a in all_assignments if a.is_active)
@@ -148,18 +117,11 @@ async def test_migration_cleanup_removes_inactive_duplicates(test_db: Session, t
         scope_id="team-456",
         granted_by="admin@example.com",
         is_active=False,
-        granted_at=datetime.now(timezone.utc)
+        granted_at=datetime.now(timezone.utc),
     )
 
     active = UserRole(
-        id=str(uuid.uuid4()),
-        user_email=test_user.email,
-        role_id=test_role.id,
-        scope="team",
-        scope_id="team-456",
-        granted_by="admin@example.com",
-        is_active=True,
-        granted_at=datetime.now(timezone.utc)
+        id=str(uuid.uuid4()), user_email=test_user.email, role_id=test_role.id, scope="team", scope_id="team-456", granted_by="admin@example.com", is_active=True, granted_at=datetime.now(timezone.utc)
     )
 
     test_db.add(inactive)
@@ -167,12 +129,7 @@ async def test_migration_cleanup_removes_inactive_duplicates(test_db: Session, t
     test_db.commit()
 
     # Verify both exist
-    all_before = test_db.query(UserRole).filter(
-        UserRole.user_email == test_user.email,
-        UserRole.role_id == test_role.id,
-        UserRole.scope == "team",
-        UserRole.scope_id == "team-456"
-    ).all()
+    all_before = test_db.query(UserRole).filter(UserRole.user_email == test_user.email, UserRole.role_id == test_role.id, UserRole.scope == "team", UserRole.scope_id == "team-456").all()
     assert len(all_before) == 2
 
     # Simulate migration cleanup (using same SQL logic)
@@ -196,12 +153,7 @@ async def test_migration_cleanup_removes_inactive_duplicates(test_db: Session, t
     test_db.commit()
 
     # Verify only active remains
-    all_after = test_db.query(UserRole).filter(
-        UserRole.user_email == test_user.email,
-        UserRole.role_id == test_role.id,
-        UserRole.scope == "team",
-        UserRole.scope_id == "team-456"
-    ).all()
+    all_after = test_db.query(UserRole).filter(UserRole.user_email == test_user.email, UserRole.role_id == test_role.id, UserRole.scope == "team", UserRole.scope_id == "team-456").all()
     assert len(all_after) == 1
     assert all_after[0].is_active is True
     assert all_after[0].id == active.id

@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""iframe regression tests for innerHTML guard + data-action fix (PR #3373).
+"""Location: ./tests/playwright/security/test_innerhtml_guard_iframe.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+iframe regression tests for innerHTML guard + data-action fix (PR #3373).
 
 Verifies that dynamically loaded UI elements whose inline onclick/onchange
 handlers were converted to data-action + addEventListener still function
@@ -35,7 +40,6 @@ from typing import Any, Dict
 from playwright.sync_api import FrameLocator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helper: get the underlying Frame object from the iframe_host FrameLocator
@@ -78,9 +82,7 @@ class TestTeamSelectorInIframe:
     handles clicks.
     """
 
-    def test_team_selector_items_have_data_action_not_onclick(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_team_selector_items_have_data_action_not_onclick(self, iframe_host: FrameLocator, page: Page) -> None:
         """Team selector items rendered via innerHTML must have data-action, not onclick.
 
         Injects a synthetic team item into #team-selector-items (the same
@@ -89,8 +91,7 @@ class TestTeamSelectorInIframe:
         """
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 const container = document.getElementById('team-selector-items');
                 if (!container) return { skipped: true, reason: 'no #team-selector-items' };
@@ -119,25 +120,16 @@ class TestTeamSelectorInIframe:
                     dataTeamId: btn.getAttribute('data-team-id'),
                 };
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             pytest.skip(f"Team selector not present in iframe: {result.get('reason')}")
 
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must strip onclick from team selector items inside iframe"
-        )
-        assert result["dataAction"] == "select-team", (
-            "data-action='select-team' must survive innerHTML guard inside iframe"
-        )
-        assert result["dataTeamId"] == "test-team-1", (
-            "data-team-id must survive innerHTML guard inside iframe"
-        )
+        assert result["hasOnclick"] is False, "innerHTML guard must strip onclick from team selector items inside iframe"
+        assert result["dataAction"] == "select-team", "data-action='select-team' must survive innerHTML guard inside iframe"
+        assert result["dataTeamId"] == "test-team-1", "data-team-id must survive innerHTML guard inside iframe"
 
-    def test_team_selector_delegation_listener_fires_inside_iframe(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_team_selector_delegation_listener_fires_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """Clicking a team selector item inside the iframe must trigger selectTeamFromSelector.
 
         The DOMContentLoaded delegation listener on #team-selector-items is
@@ -146,8 +138,7 @@ class TestTeamSelectorInIframe:
         """
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 const container = document.getElementById('team-selector-items');
                 if (!container) return { skipped: true, reason: 'no #team-selector-items' };
@@ -184,27 +175,19 @@ class TestTeamSelectorInIframe:
                     container.innerHTML = '';
                 }
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             pytest.skip(f"Team selector not present in iframe: {result.get('reason')}")
 
-        assert result["called"], (
-            "selectTeamFromSelector must be called when a team item is clicked inside iframe"
-        )
-        assert result["calledWith"] == "iframe-team-99", (
-            "selectTeamFromSelector must receive the clicked button element inside iframe"
-        )
+        assert result["called"], "selectTeamFromSelector must be called when a team item is clicked inside iframe"
+        assert result["calledWith"] == "iframe-team-99", "selectTeamFromSelector must receive the clicked button element inside iframe"
 
-    def test_team_selector_search_retry_has_data_action_not_onclick(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_team_selector_search_retry_has_data_action_not_onclick(self, iframe_host: FrameLocator, page: Page) -> None:
         """Search error retry button rendered via innerHTML must use data-action inside iframe."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 const container = document.getElementById('team-selector-items');
                 if (!container) return { skipped: true, reason: 'no #team-selector-items' };
@@ -230,18 +213,13 @@ class TestTeamSelectorInIframe:
                     dataAction: retryBtn.getAttribute('data-action'),
                 };
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             pytest.skip(f"Team selector not present in iframe: {result.get('reason')}")
 
-        assert result["hasOnclick"] is False, (
-            "Retry button must not have onclick inside iframe"
-        )
-        assert result["dataAction"] == "retry-team-search", (
-            "Retry button must have data-action='retry-team-search' inside iframe"
-        )
+        assert result["hasOnclick"] is False, "Retry button must not have onclick inside iframe"
+        assert result["dataAction"] == "retry-team-search", "Retry button must have data-action='retry-team-search' inside iframe"
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +238,11 @@ class TestToolTableInIframe:
     buttons now carry data-action + event delegation on the wrapper.
     """
 
-    def test_tool_action_buttons_have_data_action_not_onclick(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_tool_action_buttons_have_data_action_not_onclick(self, iframe_host: FrameLocator, page: Page) -> None:
         """Tool action buttons rendered via innerHTML must have data-action, not onclick."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 // Inject a synthetic tool row into #toolBody (or create it)
                 let toolBody = document.getElementById('toolBody');
@@ -321,21 +296,14 @@ class TestToolTableInIframe:
 
                 return results;
             }
-            """
-        )
+            """)
 
         for action in ["view-tool", "edit-tool", "enrich-tool", "validate-tool", "generate-tool-tests"]:
             assert result[action]["found"], f"Button data-action='{action}' not found after innerHTML"
-            assert result[action]["hasOnclick"] is False, (
-                f"innerHTML guard must strip onclick from data-action='{action}' button inside iframe"
-            )
-            assert result[action]["dataToolId"] == "iframe-tool-1", (
-                f"data-tool-id must survive innerHTML guard for data-action='{action}' inside iframe"
-            )
+            assert result[action]["hasOnclick"] is False, f"innerHTML guard must strip onclick from data-action='{action}' button inside iframe"
+            assert result[action]["dataToolId"] == "iframe-tool-1", f"data-tool-id must survive innerHTML guard for data-action='{action}' inside iframe"
 
-    def test_tool_view_button_opens_modal_inside_iframe(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_tool_view_button_opens_modal_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """Clicking a View button inside the iframe must open the tool modal.
 
         This is the end-to-end delegation test: the click event bubbles up to
@@ -343,9 +311,7 @@ class TestToolTableInIframe:
         """
         # Wait for the tools tab to be available
         try:
-            iframe_host.locator('[data-testid="tools-tab"]').wait_for(
-                state="visible", timeout=15000
-            )
+            iframe_host.locator('[data-testid="tools-tab"]').wait_for(state="visible", timeout=15000)
         except PlaywrightTimeoutError:
             pytest.skip("Tools tab not visible in iframe — skipping modal test")
 
@@ -387,14 +353,11 @@ class TestMetricsRetryInIframe:
     The innerHTML guard must not strip data-action.
     """
 
-    def test_metrics_error_retry_button_has_data_action_not_onclick(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_metrics_error_retry_button_has_data_action_not_onclick(self, iframe_host: FrameLocator, page: Page) -> None:
         """showMetricsError() retry button must have data-action, not onclick, inside iframe."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 let container = document.getElementById('aggregated-metrics-content');
                 const created = !container;
@@ -418,27 +381,17 @@ class TestMetricsRetryInIframe:
                     else container.textContent = '';
                 }
             }
-            """
-        )
+            """)
 
-        assert result.get("found"), (
-            "Retry button with data-action='retry-metrics' not found inside iframe"
-        )
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must not strip data-action from retry button inside iframe"
-        )
-        assert result["dataAction"] == "retry-metrics", (
-            "data-action='retry-metrics' must survive innerHTML guard inside iframe"
-        )
+        assert result.get("found"), "Retry button with data-action='retry-metrics' not found inside iframe"
+        assert result["hasOnclick"] is False, "innerHTML guard must not strip data-action from retry button inside iframe"
+        assert result["dataAction"] == "retry-metrics", "data-action='retry-metrics' must survive innerHTML guard inside iframe"
 
-    def test_metrics_error_retry_button_calls_retryLoadMetrics_inside_iframe(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_metrics_error_retry_button_calls_retryLoadMetrics_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """Clicking the retry button inside the iframe must trigger retry behavior."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 let container = document.getElementById('aggregated-metrics-content');
                 const created = !container;
@@ -464,24 +417,16 @@ class TestMetricsRetryInIframe:
                     else container.textContent = '';
                 }
             }
-            """
-        )
+            """)
 
-        assert result.get("found"), (
-            "Retry button not found inside iframe"
-        )
-        assert result.get("dataAction") == "retry-metrics", (
-            "Retry button must have data-action='retry-metrics' attribute"
-        )
+        assert result.get("found"), "Retry button not found inside iframe"
+        assert result.get("dataAction") == "retry-metrics", "Retry button must have data-action='retry-metrics' attribute"
 
-    def test_metrics_empty_state_refresh_button_has_data_action_inside_iframe(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_metrics_empty_state_refresh_button_has_data_action_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """displayMetrics({}) empty-state button must have data-action, not onclick, inside iframe."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 // displayMetrics needs both section and content containers
                 let section = document.getElementById('aggregated-metrics-section');
@@ -515,18 +460,11 @@ class TestMetricsRetryInIframe:
                     else container.textContent = '';
                 }
             }
-            """
-        )
+            """)
 
-        assert result.get("found"), (
-            "Empty-state refresh button with data-action='retry-metrics' not found inside iframe"
-        )
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must not strip data-action from empty-state button inside iframe"
-        )
-        assert result["dataAction"] == "retry-metrics", (
-            "data-action='retry-metrics' must survive innerHTML guard inside iframe"
-        )
+        assert result.get("found"), "Empty-state refresh button with data-action='retry-metrics' not found inside iframe"
+        assert result["hasOnclick"] is False, "innerHTML guard must not strip data-action from empty-state button inside iframe"
+        assert result["dataAction"] == "retry-metrics", "data-action='retry-metrics' must survive innerHTML guard inside iframe"
 
 
 # ---------------------------------------------------------------------------
@@ -546,14 +484,11 @@ class TestGlobalSearchInIframe:
     listener is attached via addEventListener after innerHTML.
     """
 
-    def test_search_result_buttons_have_data_action_not_onclick(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_search_result_buttons_have_data_action_not_onclick(self, iframe_host: FrameLocator, page: Page) -> None:
         """Search result buttons rendered via innerHTML must have data-action, not onclick."""
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 // Simulate what the search handler injects into #global-search-results
                 let resultsContainer = document.getElementById('global-search-results');
@@ -593,26 +528,15 @@ class TestGlobalSearchInIframe:
 
                 return r;
             }
-            """
-        )
+            """)
 
         assert result.get("found"), "Search result button not found after innerHTML"
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must strip onclick from search result buttons inside iframe"
-        )
-        assert result["dataAction"] == "navigate-search-result", (
-            "data-action='navigate-search-result' must survive innerHTML guard inside iframe"
-        )
-        assert result["dataEntity"] == "tool", (
-            "data-entity must survive innerHTML guard inside iframe"
-        )
-        assert result["dataId"] == "search-tool-1", (
-            "data-id must survive innerHTML guard inside iframe"
-        )
+        assert result["hasOnclick"] is False, "innerHTML guard must strip onclick from search result buttons inside iframe"
+        assert result["dataAction"] == "navigate-search-result", "data-action='navigate-search-result' must survive innerHTML guard inside iframe"
+        assert result["dataEntity"] == "tool", "data-entity must survive innerHTML guard inside iframe"
+        assert result["dataId"] == "search-tool-1", "data-id must survive innerHTML guard inside iframe"
 
-    def test_live_search_results_have_data_action_inside_iframe(
-        self, iframe_host: FrameLocator, page: Page
-    ) -> None:
+    def test_live_search_results_have_data_action_inside_iframe(self, iframe_host: FrameLocator, page: Page) -> None:
         """Live global search inside iframe must produce data-action buttons (not onclick)."""
         search_input = iframe_host.locator("#global-search-input")
         try:
@@ -637,15 +561,11 @@ class TestGlobalSearchInIframe:
 
         # Verify data-action survived the innerHTML guard
         data_action = result_btn.get_attribute("data-action")
-        assert data_action == "navigate-search-result", (
-            "Live search result button must have data-action='navigate-search-result' inside iframe"
-        )
+        assert data_action == "navigate-search-result", "Live search result button must have data-action='navigate-search-result' inside iframe"
 
         # Verify no onclick attribute (guard stripped it)
         has_onclick = result_btn.evaluate("btn => btn.hasAttribute('onclick')")
-        assert has_onclick is False, (
-            "innerHTML guard must strip onclick from live search result buttons inside iframe"
-        )
+        assert has_onclick is False, "innerHTML guard must strip onclick from live search result buttons inside iframe"
 
         # Verify clicking closes the dropdown
         result_btn.click()

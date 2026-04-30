@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the Unified PDP – all engines, cache, orchestrator.
+"""Location: ./tests/unit/plugins/test_unified_pdp.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the Unified PDP – all engines, cache, orchestrator.
 
 Run::
 
@@ -44,7 +49,6 @@ from plugins.unified_pdp.engines.native_engine import NativeRBACAdapter
 from plugins.unified_pdp.engines.mac_engine import MACEngineAdapter
 from plugins.unified_pdp.cache import DecisionCache, _build_cache_key
 from plugins.unified_pdp.adapter import PolicyEvaluationError, PolicyEngineUnavailableError
-
 
 # ===========================================================================
 # Fixtures
@@ -535,9 +539,7 @@ class TestPDPCombination:
     @pytest.fixture
     def native_allow_all(self):
         """Native engine that allows everything."""
-        return NativeRBACAdapter(settings={
-            "rules": [{"id": "allow-all", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]
-        })
+        return NativeRBACAdapter(settings={"rules": [{"id": "allow-all", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]})
 
     @pytest.fixture
     def native_deny_all(self):
@@ -547,10 +549,12 @@ class TestPDPCombination:
     @pytest.mark.asyncio
     async def test_all_must_allow_passes_when_all_allow(self):
         """Two native engines both allowing → ALLOW."""
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                         settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
-        ], mode=CombinationMode.ALL_MUST_ALLOW)
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
+            ],
+            mode=CombinationMode.ALL_MUST_ALLOW,
+        )
 
         pdp = PolicyDecisionPoint(config)
         decision = await pdp.check_access(
@@ -564,9 +568,12 @@ class TestPDPCombination:
     @pytest.mark.asyncio
     async def test_all_must_allow_fails_when_one_denies(self):
         """Native with no rules → denies → aggregate DENY."""
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
-        ], mode=CombinationMode.ALL_MUST_ALLOW)
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
+            ],
+            mode=CombinationMode.ALL_MUST_ALLOW,
+        )
 
         pdp = PolicyDecisionPoint(config)
         decision = await pdp.check_access(
@@ -581,11 +588,13 @@ class TestPDPCombination:
     @pytest.mark.asyncio
     async def test_any_allow_passes_with_one_allow(self):
         """MAC denies (no clearance) but Native allows → ANY_ALLOW = ALLOW."""
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                         settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
-            EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
-        ], mode=CombinationMode.ANY_ALLOW)
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
+                EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
+            ],
+            mode=CombinationMode.ANY_ALLOW,
+        )
 
         pdp = PolicyDecisionPoint(config)
         decision = await pdp.check_access(
@@ -600,10 +609,13 @@ class TestPDPCombination:
     @pytest.mark.asyncio
     async def test_any_allow_denies_when_all_deny(self):
         """Both engines deny → ANY_ALLOW = DENY."""
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
-            EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
-        ], mode=CombinationMode.ANY_ALLOW)
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
+                EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
+            ],
+            mode=CombinationMode.ANY_ALLOW,
+        )
 
         pdp = PolicyDecisionPoint(config)
         decision = await pdp.check_access(
@@ -617,11 +629,13 @@ class TestPDPCombination:
     @pytest.mark.asyncio
     async def test_first_match_uses_highest_priority(self):
         """FIRST_MATCH with Native (priority 1, allows) → stops there."""
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                         settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
-            EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
-        ], mode=CombinationMode.FIRST_MATCH)
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
+                EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
+            ],
+            mode=CombinationMode.FIRST_MATCH,
+        )
 
         pdp = PolicyDecisionPoint(config)
         # Use sequential mode so first_match short-circuit works
@@ -645,8 +659,7 @@ class TestPDPCaching:
     @pytest.mark.asyncio
     async def test_second_call_hits_cache(self):
         config = _make_config(
-            [EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                          settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]})],
+            [EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]})],
             cache_enabled=True,
         )
         pdp = PolicyDecisionPoint(config)
@@ -671,11 +684,12 @@ class TestPDPCaching:
 class TestPDPExplain:
     @pytest.mark.asyncio
     async def test_explain_returns_all_engine_details(self):
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                         settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
-            EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
-        ])
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]}),
+                EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
+            ]
+        )
         pdp = PolicyDecisionPoint(config)
 
         explanation = await pdp.explain_decision(
@@ -699,11 +713,13 @@ class TestPDPExplain:
 class TestPDPHealth:
     @pytest.mark.asyncio
     async def test_health_reports_all_engines(self):
-        config = _make_config([
-            EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
-            EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
-            EngineConfig(name=EngineType.OPA, enabled=False, priority=3, settings={}),
-        ])
+        config = _make_config(
+            [
+                EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": []}),
+                EngineConfig(name=EngineType.MAC, enabled=True, priority=2, settings={}),
+                EngineConfig(name=EngineType.OPA, enabled=False, priority=3, settings={}),
+            ]
+        )
         pdp = PolicyDecisionPoint(config)
         report = await pdp.health()
 
@@ -735,8 +751,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_cache_stats_populated(self):
         config = _make_config(
-            [EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1,
-                          settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]})],
+            [EngineConfig(name=EngineType.NATIVE, enabled=True, priority=1, settings={"rules": [{"id": "r1", "roles": ["*"], "actions": ["*"], "resource_types": ["*"], "resource_ids": ["*"]}]})],
             cache_enabled=True,
         )
         pdp = PolicyDecisionPoint(config)

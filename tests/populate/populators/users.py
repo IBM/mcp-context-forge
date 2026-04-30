@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""User populator - creates users via POST /auth/email/admin/users and logs them in."""
+"""Location: ./tests/populate/populators/users.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+User populator - creates users via POST /auth/email/admin/users and logs them in.
+"""
 
 # Standard
 import asyncio

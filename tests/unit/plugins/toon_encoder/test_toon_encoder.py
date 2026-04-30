@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for TOON Encoder Plugin.
+"""Location: ./tests/unit/plugins/toon_encoder/test_toon_encoder.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for TOON Encoder Plugin.
 
 Tests the plugin integration with ContextForge plugin framework.
 """
@@ -157,9 +162,7 @@ class TestContentProcessing:
 
         # Small JSON that's under threshold
         small_json = json.dumps({"a": 1})
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": small_json}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": small_json}]})
         result = await plugin.tool_post_invoke(payload, context)
         assert result.continue_processing is True
 
@@ -177,9 +180,7 @@ class TestContentProcessing:
 
         # Large JSON that exceeds threshold
         large_json = json.dumps({"data": "x" * 100})
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": large_json}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": large_json}]})
         result = await plugin.tool_post_invoke(payload, context)
         assert result.continue_processing is True
 
@@ -194,9 +195,7 @@ class TestToonConversion:
         data = {"name": "alice", "age": 30, "active": True}
         json_str = json.dumps(data)
 
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json_str}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json_str}]})
         result = await plugin.tool_post_invoke(payload, context)
 
         # Should have modified payload
@@ -216,9 +215,7 @@ class TestToonConversion:
         assert result.metadata.get("bytes_saved", 0) > 0
 
     @pytest.mark.asyncio
-    async def test_preserves_existing_annotations(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_preserves_existing_annotations(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Existing annotations are preserved when adding format marker."""
         data = {"key": "value", "number": 12345}
         json_str = json.dumps(data)
@@ -262,9 +259,7 @@ class TestToonConversion:
         data = {"a": 1}
         json_str = json.dumps(data)
 
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json_str}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json_str}]})
         result = await plugin.tool_post_invoke(payload, context)
 
         # May or may not convert depending on exact encoding
@@ -274,9 +269,7 @@ class TestToonConversion:
             assert len(new_text) <= len(json_str)
 
     @pytest.mark.asyncio
-    async def test_handles_array_of_objects(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_handles_array_of_objects(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Arrays of objects benefit from columnar encoding."""
         data = [
             {"id": 1, "name": "alice", "score": 100},
@@ -285,9 +278,7 @@ class TestToonConversion:
         ]
         json_str = json.dumps(data)
 
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json_str}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json_str}]})
         result = await plugin.tool_post_invoke(payload, context)
 
         assert result.modified_payload is not None
@@ -296,9 +287,7 @@ class TestToonConversion:
         assert result.metadata.get("savings_percent", 0) > 10
 
     @pytest.mark.asyncio
-    async def test_handles_nested_structures(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_handles_nested_structures(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Nested structures are converted correctly."""
         data = {
             "user": {"name": "alice", "email": "alice@example.com"},
@@ -307,9 +296,7 @@ class TestToonConversion:
         }
         json_str = json.dumps(data)
 
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json_str}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json_str}]})
         result = await plugin.tool_post_invoke(payload, context)
 
         assert result.modified_payload is not None
@@ -319,9 +306,7 @@ class TestMultipleContentItems:
     """Test handling of multiple content items."""
 
     @pytest.mark.asyncio
-    async def test_processes_multiple_items(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_processes_multiple_items(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Multiple content items are all processed."""
         data1 = {"first": "item", "number": 12345}
         data2 = {"second": "item", "value": 67890}
@@ -377,18 +362,14 @@ class TestErrorHandling:
         assert result.continue_processing is True
 
     @pytest.mark.asyncio
-    async def test_handles_missing_content(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_handles_missing_content(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Missing content field is handled."""
         payload = ToolPostInvokePayload(name="test_tool", result={"other_field": "value"})
         result = await plugin.tool_post_invoke(payload, context)
         assert result.continue_processing is True
 
     @pytest.mark.asyncio
-    async def test_handles_non_dict_result(
-        self, plugin: ToonEncoderPlugin, context: PluginContext
-    ):
+    async def test_handles_non_dict_result(self, plugin: ToonEncoderPlugin, context: PluginContext):
         """Non-dict results are handled."""
         payload = ToolPostInvokePayload(name="test_tool", result="string_result")
         result = await plugin.tool_post_invoke(payload, context)
@@ -411,9 +392,7 @@ class TestStatistics:
 
         # Perform a conversion
         data = [{"id": i, "name": f"user{i}"} for i in range(5)]
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json.dumps(data)}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json.dumps(data)}]})
         await plugin.tool_post_invoke(payload, context)
 
         # Stats should be updated
@@ -439,9 +418,7 @@ class TestConfigOptions:
         plugin = ToonEncoderPlugin(config)
 
         data = {"name": "test", "value": 12345}
-        payload = ToolPostInvokePayload(
-            name="test_tool", result={"content": [{"type": "text", "text": json.dumps(data)}]}
-        )
+        payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": json.dumps(data)}]})
         result = await plugin.tool_post_invoke(payload, context)
 
         if result.modified_payload:

@@ -1,4 +1,10 @@
-"""Add a2a_push_notification_configs table
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/8f2e1c9b0d3a_a2a_push_notification_configs.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add a2a_push_notification_configs table
 
 Revision ID: 8f2e1c9b0d3a
 Revises: 3f7e9d1a2b4c

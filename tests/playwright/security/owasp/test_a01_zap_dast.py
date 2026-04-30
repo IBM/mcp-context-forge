@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01:2021 – ZAP DAST integration layer.
+"""Location: ./tests/playwright/security/owasp/test_a01_zap_dast.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OWASP A01:2021 – ZAP DAST integration layer.
 
 Activated only when the ``ZAP_BASE_URL`` environment variable is set.
 Skipped silently in normal CI runs.

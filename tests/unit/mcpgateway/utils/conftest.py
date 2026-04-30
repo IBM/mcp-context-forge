@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for mcpgateway.utils unit tests.
+"""Location: ./tests/unit/mcpgateway/utils/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for mcpgateway.utils unit tests.
 
 The passthrough-headers tests patch ``mcpgateway.utils.passthrough_headers.settings``
 (the module-level reference), but ``global_config_cache.get_passthrough_headers()``

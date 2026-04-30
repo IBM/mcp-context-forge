@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Helper tests for tool_service schema and jq utilities."""
+"""Location: ./tests/unit/mcpgateway/services/test_tool_service_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Helper tests for tool_service schema and jq utilities.
+"""
 
 # Third-Party
 import jsonschema

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for PluginExecutor OTEL attribute mapping (lines 478-482).
-
-Location: ./tests/unit/mcpgateway/plugins/framework/test_executor_otel_mapping.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_executor_otel_mapping.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for PluginExecutor OTEL attribute mapping (lines 478-482).
 """
 
 import pytest
@@ -34,12 +35,7 @@ async def test_executor_otel_attribute_mapping_applied():
 
     # Create a mock plugin that returns success
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     # Create plugin config and hook ref
     plugin_config = PluginConfig(
@@ -74,7 +70,7 @@ async def test_executor_otel_attribute_mapping_applied():
         return mock_span
 
     # Create executor and execute
-    with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
+    with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
@@ -109,12 +105,7 @@ async def test_executor_otel_no_mapping_when_empty():
 
     # Create mock plugin
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     plugin_config = PluginConfig(
         name="TestPlugin",
@@ -146,7 +137,7 @@ async def test_executor_otel_no_mapping_when_empty():
         mock_span.__exit__ = MagicMock(return_value=False)
         return mock_span
 
-    with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
+    with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
@@ -165,12 +156,7 @@ async def test_executor_otel_no_mapping_when_missing():
     context = PluginContext(global_context=global_context)
 
     mock_plugin = MagicMock()
-    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(
-        continue_processing=True,
-        modified_payload=None,
-        violation=None,
-        metadata={}
-    ))
+    mock_plugin.tool_pre_invoke = AsyncMock(return_value=ToolPreInvokeResult(continue_processing=True, modified_payload=None, violation=None, metadata={}))
 
     plugin_config = PluginConfig(
         name="TestPlugin",
@@ -202,7 +188,7 @@ async def test_executor_otel_no_mapping_when_missing():
         mock_span.__exit__ = MagicMock(return_value=False)
         return mock_span
 
-    with patch('mcpgateway.plugins.framework.manager.create_span', side_effect=mock_create_span):
+    with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=mock_create_span):
         executor = PluginExecutor(timeout=30)
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
 

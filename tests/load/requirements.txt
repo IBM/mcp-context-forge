@@ -1,5 +1,5 @@
 # Load testing dependencies
-faker>=40.13.0
+faker>=40.15.0
 numpy>=2.4.4
 pyyaml>=6.0.3
 rich>=15.0.0

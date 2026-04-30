@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Targeted tests for auth helper functions."""
+"""Location: ./tests/unit/mcpgateway/test_auth_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Targeted tests for auth helper functions.
+"""
 
 # Standard
 from contextlib import contextmanager
@@ -154,6 +160,7 @@ async def test_resolve_teams_from_db_async_cache_miss_sets_cache(monkeypatch):
 
     assert await auth._resolve_teams_from_db("user@example.com", {"is_admin": False}) == ["t1"]
     dummy_cache.set_user_teams.assert_awaited_once()
+
 
 @pytest.mark.asyncio
 async def test_get_team_from_token_variants(monkeypatch):

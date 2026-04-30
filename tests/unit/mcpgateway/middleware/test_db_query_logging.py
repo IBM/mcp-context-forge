@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for DB query logging middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_db_query_logging.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for DB query logging middleware.
+"""
 
 # Standard
 from types import SimpleNamespace

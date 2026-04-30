@@ -1,4 +1,11 @@
-"""MCP logging compliance tests — notifications/message delivery."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_logging.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP logging compliance tests — notifications/message delivery.
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Main CLI for REST API data population.
+"""Location: ./tests/populate/populate.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Main CLI for REST API data population.
 
 Usage:
     python -m tests.populate --profile small

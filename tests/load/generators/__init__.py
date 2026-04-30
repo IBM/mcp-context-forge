@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Data generators for load testing."""
+"""Location: ./tests/load/generators/__init__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Data generators for load testing.
+"""
 
 from .base import BaseGenerator
 from .users import UserGenerator

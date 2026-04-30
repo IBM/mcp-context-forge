@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for token_validation_service."""
+"""Location: ./tests/unit/mcpgateway/services/test_token_validation_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for token_validation_service.
+"""
 
 # Standard
 from unittest.mock import patch

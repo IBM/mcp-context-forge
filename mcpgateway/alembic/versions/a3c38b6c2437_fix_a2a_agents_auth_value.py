@@ -1,6 +1,12 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
 # -*- coding: utf-8 -*-
-"""fix_a2a_agents_auth_value
+"""Location: ./mcpgateway/alembic/versions/a3c38b6c2437_fix_a2a_agents_auth_value.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+fix_a2a_agents_auth_value
 
 Revision ID: a3c38b6c2437
 Revises: e1f2a3b4c5d6
@@ -16,7 +22,6 @@ This type mismatch caused issues with retrieval.
 This migration:
 1. Converts the column from JSON to TEXT type
 2. Cleans up empty/null JSON values before type change
-
 """
 
 # Standard

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/cache/test_session_registry.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -469,7 +469,6 @@ async def test_generate_response_initialize(registry: SessionRegistry):
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     # Implementation may emit 5 or 6 messages (roots/list_changed optional)
@@ -511,7 +510,6 @@ async def test_generate_response_ping(registry: SessionRegistry):
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
@@ -547,7 +545,6 @@ async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, 
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -586,7 +583,6 @@ async def test_generate_response_resources_list(registry: SessionRegistry, stub_
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -624,7 +620,6 @@ async def test_generate_response_prompts_list(registry: SessionRegistry, stub_db
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -663,7 +658,6 @@ async def test_generate_response_tools_call(registry: SessionRegistry, stub_db, 
             transport=tr,
             server_id=None,
             user={"token": "test_token"},
-
         )
 
     reply = tr.sent[-1]
@@ -701,7 +695,6 @@ async def test_generate_response_server_specific_tools_list(registry: SessionReg
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -739,7 +732,6 @@ async def test_generate_response_server_specific_resources_list(registry: Sessio
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -777,7 +769,6 @@ async def test_generate_response_server_specific_prompts_list(registry: SessionR
             transport=tr,
             server_id="server123",
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -814,7 +805,6 @@ async def test_generate_response_unknown_method(registry: SessionRegistry, stub_
             transport=tr,
             server_id=None,
             user={"token": "test"},
-
         )
 
     reply = tr.sent[-1]
@@ -1786,6 +1776,7 @@ async def test_refresh_redis_sessions_error(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_register_respond_task(registry: SessionRegistry):
     """Test registering a respond task for a session."""
+
     # Create a simple task
     async def dummy_task():
         await asyncio.sleep(10)

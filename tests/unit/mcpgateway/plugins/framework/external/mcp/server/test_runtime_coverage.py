@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Coverage tests for mcpgateway.plugins.framework.external.mcp.server.runtime."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/server/test_runtime_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage tests for mcpgateway.plugins.framework.external.mcp.server.runtime.
+"""
 
 # Standard
 import os
@@ -12,7 +18,6 @@ import pytest
 # First-Party
 from mcpgateway.plugins.framework.models import MCPServerConfig
 import mcpgateway.plugins.framework.external.mcp.server.runtime as runtime
-
 
 # ===========================================================================
 # Module-Level Tool Functions
@@ -473,6 +478,7 @@ class TestRunFunction:
             def tool(self, name):
                 def decorator(fn):
                     return fn
+
                 return decorator
 
             async def run_stdio_async(self):
@@ -550,6 +556,7 @@ class TestRunFunction:
             def tool(self, name):
                 def decorator(fn):
                     return fn
+
                 return decorator
 
             async def run_streamable_http_async(self):

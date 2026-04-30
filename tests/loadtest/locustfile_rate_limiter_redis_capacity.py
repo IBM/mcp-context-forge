@@ -1,21 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Rate limiter Redis capacity test on the prompt pre-fetch path.
+"""Location: ./tests/loadtest/locustfile_rate_limiter_redis_capacity.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Rate limiter Redis capacity test on the prompt pre-fetch path.
 This benchmark is intentionally narrower than the existing tools/call scale test.
 It exercises:
-
   client -> nginx -> 3 gateways -> auth -> prompt_pre_fetch -> Redis rate limiter -> prompt render
-
 It avoids downstream MCP tool invocation so the measurement stays focused on the
 Redis-backed rate limiter path. The benchmark is intended to answer:
-
   "How many concurrent users can the async Redis hot path sustain at a given pace
    while preserving correct shared-counter behavior?"
-
 Usage:
     docker exec mcp-context-forge-redis-1 redis-cli FLUSHDB
     make benchmark-rate-limiter-redis-capacity
-
 Environment Variables:
     RL_USERS:               Concurrent users (default: 100)
     RL_SPAWN_RATE:          User spawn rate (default: 10)
@@ -29,9 +28,6 @@ Environment Variables:
     JWT_ISSUER:             JWT issuer (default: mcpgateway)
     DOCKER_GATEWAY_PATTERN: Gateway container pattern (default: mcp-context-forge-gateway)
     DOCKER_REDIS_CONTAINER: Redis container name (default: mcp-context-forge-redis-1)
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

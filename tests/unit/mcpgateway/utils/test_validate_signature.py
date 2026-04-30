@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_validate_signature.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives import serialization
 
 from mcpgateway.utils.validate_signature import sign_data, validate_signature, resign_data
 import mcpgateway.utils.validate_signature as vs
+
 
 @pytest.fixture
 def ed25519_keys():
@@ -30,6 +31,7 @@ def ed25519_keys():
     ).decode()
     return private_pem, public_pem, private_key, public_key
 
+
 def test_sign_data_valid_key(ed25519_keys):
     private_pem, _, private_key, _ = ed25519_keys
     data = b"hello world"
@@ -40,6 +42,7 @@ def test_sign_data_valid_key(ed25519_keys):
     signature_bytes = bytes.fromhex(signature_hex)
     public_key = private_key.public_key()
     public_key.verify(signature_bytes, data)
+
 
 def test_sign_data_invalid_key_type(ed25519_keys):
     _, public_pem, _, _ = ed25519_keys
@@ -63,11 +66,13 @@ def test_sign_data_non_ed25519_private_key_raises_type_error(caplog):
 
     assert "Error signing data" in caplog.text
 
+
 def test_sign_data_invalid_pem_logs_error(caplog):
     caplog.set_level(logging.ERROR)
     with pytest.raises(Exception):
         sign_data(b"data", "not-a-valid-pem")
     assert "Error signing data" in caplog.text
+
 
 def test_validate_signature_valid(ed25519_keys):
     private_pem, public_pem, private_key, _ = ed25519_keys
@@ -75,11 +80,13 @@ def test_validate_signature_valid(ed25519_keys):
     signature = private_key.sign(data)
     assert validate_signature(data, signature, public_pem) is True
 
+
 def test_validate_signature_invalid_signature(ed25519_keys):
     private_pem, public_pem, private_key, _ = ed25519_keys
     data = b"message"
     bad_signature = b"wrong"
     assert validate_signature(data, bad_signature, public_pem) is False
+
 
 def test_validate_signature_invalid_hex(ed25519_keys, caplog):
     _, public_pem, _, _ = ed25519_keys
@@ -88,11 +95,13 @@ def test_validate_signature_invalid_hex(ed25519_keys, caplog):
     assert result is False
     assert "Invalid hex signature format" in caplog.text
 
+
 def test_validate_signature_data_as_string(ed25519_keys):
     private_pem, public_pem, private_key, _ = ed25519_keys
     data = "string data"
     signature = private_key.sign(data.encode())
     assert validate_signature(data, signature, public_pem) is True
+
 
 def test_validate_signature_non_ed25519_key(ed25519_keys, caplog):
     caplog.set_level(logging.ERROR)
@@ -104,12 +113,14 @@ def test_validate_signature_non_ed25519_key(ed25519_keys, caplog):
     assert result is False
     assert "Signature validation failed" in caplog.text
 
+
 def test_resign_data_no_old_signature(ed25519_keys):
     private_pem, public_pem, private_key, _ = ed25519_keys
     data = b"new data"
     new_signature = resign_data(data, public_pem, b"", private_pem)
     assert isinstance(new_signature, str)
     assert len(new_signature) > 0
+
 
 def test_resign_data_invalid_old_signature(ed25519_keys, caplog):
     caplog.set_level(logging.WARNING, logger="mcpgateway.utils.validate_signature")
@@ -118,6 +129,7 @@ def test_resign_data_invalid_old_signature(ed25519_keys, caplog):
     result = resign_data(data, public_pem, b"invalidsig", private_pem)
     assert result is None
     assert "Old signature invalid" in caplog.text
+
 
 def test_resign_data_valid_old_signature(ed25519_keys):
     old_private_pem, old_public_pem, old_private_key, _ = ed25519_keys
@@ -145,6 +157,7 @@ def test_resign_data_old_signature_as_str(ed25519_keys):
 def test_signature_validation_cached(ed25519_keys):
     """Verify that signature validation results are cached."""
     from mcpgateway.utils.validate_signature import clear_signature_caches
+
     clear_signature_caches()
 
     private_pem, public_pem, private_key, _ = ed25519_keys
@@ -181,6 +194,7 @@ def test_clear_signature_caches(ed25519_keys):
 def test_public_key_caching(ed25519_keys):
     """Verify that public keys are cached."""
     from mcpgateway.utils.validate_signature import clear_signature_caches
+
     clear_signature_caches()
 
     private_pem, public_pem, private_key, _ = ed25519_keys

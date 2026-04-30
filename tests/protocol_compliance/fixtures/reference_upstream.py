@@ -1,4 +1,10 @@
-"""Reference-server subprocess fixture.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/fixtures/reference_upstream.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Reference-server subprocess fixture.
 
 Spawns ``compliance-reference-server --transport http`` on an ephemeral port
 so the live gateway-under-test can register it as a real upstream and federate

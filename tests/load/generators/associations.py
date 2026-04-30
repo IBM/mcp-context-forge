@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Association table generators for load testing."""
+"""Location: ./tests/load/generators/associations.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Association table generators for load testing.
+"""
 
 import random
 from abc import abstractmethod

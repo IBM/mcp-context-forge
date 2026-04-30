@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""add grant_source to user_roles
+"""Location: ./mcpgateway/alembic/versions/e1f2a3b4c5d6_add_grant_source_to_user_roles.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add grant_source to user_roles
 
 Revision ID: e1f2a3b4c5d6
 Revises: d9e0f1a2b3c4

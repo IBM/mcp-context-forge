@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_sso_adfs_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -862,5 +862,6 @@ class TestADFSUserCreation:
         # Assert - user should not be created
         created_user = test_db.query(EmailUser).filter_by(email="testuser@untrusted.com").first()
         assert created_user is None
+
 
 # Made with Bob

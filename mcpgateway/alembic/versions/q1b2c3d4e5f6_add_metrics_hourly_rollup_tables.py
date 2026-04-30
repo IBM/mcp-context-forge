@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Add metrics hourly rollup tables.
+"""Location: ./mcpgateway/alembic/versions/q1b2c3d4e5f6_add_metrics_hourly_rollup_tables.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Add metrics hourly rollup tables.
 This migration creates hourly summary tables for all 5 metric types
 (tools, resources, prompts, servers, a2a_agents) to enable efficient
 historical queries without scanning millions of raw metrics.
-
 Revision ID: q1b2c3d4e5f6
 Revises: p0a1b2c3d4e5
 Create Date: 2025-01-01 00:00:00.000000
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Third-Party

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the metrics buffer service.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_buffer_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the metrics buffer service.
 """
 
 # Standard

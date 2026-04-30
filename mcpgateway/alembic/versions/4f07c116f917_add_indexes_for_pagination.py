@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add indexes for cursor pagination
+"""Location: ./mcpgateway/alembic/versions/4f07c116f917_add_indexes_for_pagination.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add indexes for cursor pagination
 
 Revision ID: 4f07c116f917
 Revises: q1b2c3d4e5f6

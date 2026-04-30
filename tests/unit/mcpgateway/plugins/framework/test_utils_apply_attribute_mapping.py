@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for apply_attribute_mapping utility function.
-
-Location: ./tests/unit/mcpgateway/plugins/framework/test_utils_apply_attribute_mapping.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_utils_apply_attribute_mapping.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for apply_attribute_mapping utility function.
 """
 
 import pytest
@@ -46,15 +47,8 @@ class TestApplyAttributeMapping:
 
     def test_multiple_attribute_mappings(self):
         """Test mapping multiple attributes."""
-        attributes = {
-            "tool.name": "weather",
-            "tool.version": "1.0",
-            "tool.arguments": '{"key": "value"}'
-        }
-        mapping = {
-            "tool.name": "controls.artifact.name",
-            "tool.arguments": "controls.artifact.inputs"
-        }
+        attributes = {"tool.name": "weather", "tool.version": "1.0", "tool.arguments": '{"key": "value"}'}
+        mapping = {"tool.name": "controls.artifact.name", "tool.arguments": "controls.artifact.inputs"}
 
         result = apply_attribute_mapping(attributes, mapping)
 
@@ -66,11 +60,7 @@ class TestApplyAttributeMapping:
 
     def test_unmapped_attributes_preserved(self):
         """Test that unmapped attributes are preserved with original names."""
-        attributes = {
-            "tool.name": "weather",
-            "tool.version": "1.0",
-            "custom.field": "value"
-        }
+        attributes = {"tool.name": "weather", "tool.version": "1.0", "custom.field": "value"}
         mapping = {"tool.name": "controls.artifact.name"}
 
         result = apply_attribute_mapping(attributes, mapping)
@@ -81,14 +71,8 @@ class TestApplyAttributeMapping:
 
     def test_mapping_with_special_characters(self):
         """Test mapping with special characters in attribute names."""
-        attributes = {
-            "plugin.name": "TestPlugin",
-            "plugin.hook.type": "tool_pre_invoke"
-        }
-        mapping = {
-            "plugin.name": "controls.artifact.name",
-            "plugin.hook.type": "controls.hook.type"
-        }
+        attributes = {"plugin.name": "TestPlugin", "plugin.hook.type": "tool_pre_invoke"}
+        mapping = {"plugin.name": "controls.artifact.name", "plugin.hook.type": "controls.hook.type"}
 
         result = apply_attribute_mapping(attributes, mapping)
 
@@ -97,20 +81,8 @@ class TestApplyAttributeMapping:
 
     def test_mapping_preserves_value_types(self):
         """Test that mapping preserves different value types."""
-        attributes = {
-            "string_attr": "value",
-            "int_attr": 42,
-            "bool_attr": True,
-            "float_attr": 3.14,
-            "none_attr": None,
-            "list_attr": [1, 2, 3],
-            "dict_attr": {"key": "value"}
-        }
-        mapping = {
-            "string_attr": "new.string",
-            "int_attr": "new.int",
-            "bool_attr": "new.bool"
-        }
+        attributes = {"string_attr": "value", "int_attr": 42, "bool_attr": True, "float_attr": 3.14, "none_attr": None, "list_attr": [1, 2, 3], "dict_attr": {"key": "value"}}
+        mapping = {"string_attr": "new.string", "int_attr": "new.int", "bool_attr": "new.bool"}
 
         result = apply_attribute_mapping(attributes, mapping)
 
@@ -142,14 +114,8 @@ class TestApplyAttributeMapping:
 
     def test_multiple_attributes_to_same_target(self):
         """Test mapping multiple source attributes to same target (last wins)."""
-        attributes = {
-            "tool.name": "weather",
-            "plugin.name": "TestPlugin"
-        }
-        mapping = {
-            "tool.name": "controls.artifact.name",
-            "plugin.name": "controls.artifact.name"
-        }
+        attributes = {"tool.name": "weather", "plugin.name": "TestPlugin"}
+        mapping = {"tool.name": "controls.artifact.name", "plugin.name": "controls.artifact.name"}
 
         result = apply_attribute_mapping(attributes, mapping)
 
@@ -165,4 +131,4 @@ class TestApplyAttributeMapping:
 
         result = apply_attribute_mapping(attrs, mapping)
 
-        assert result == {'controls.artifact.name': 'weather', 'tool.version': '1.0'}
+        assert result == {"controls.artifact.name": "weather", "tool.version": "1.0"}

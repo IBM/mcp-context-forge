@@ -1,4 +1,10 @@
-"""UAID (Universal Agent ID) utilities for HCS-14 support.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/utils/uaid.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+UAID (Universal Agent ID) utilities for HCS-14 support.
 
 This module implements parsing, validation, and generation of Universal Agent IDs
 following the HCS-14 standard. UAIDs embed routing metadata directly in the agent

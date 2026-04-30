@@ -44,7 +44,7 @@ authors = [
 ]
 
 dependencies = [
-    "cedarpy>=4.8.0",
+    "cedarpy>=4.8.1",
     "mcp>=1.27.0",
     "mcp-contextforge-gateway>=0.9.0",
 ]
@@ -75,8 +75,8 @@ dev = [
     "pytest-rerunfailures>=16.1",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.15.10",
-    "uv>=0.11.6",
+    "ruff>=0.15.12",
+    "uv>=0.11.8",
 ]
 
 # --------------------------------------------------------------------

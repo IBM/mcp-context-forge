@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Add binding_reference_id to tool_plugin_bindings.
+"""Location: ./mcpgateway/alembic/versions/ff03273d8f93_add_binding_reference_id_to_tool_plugin_bindings.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
-Revision ID: ff03273d8f93
+Add binding_reference_id to tool_plugin_bindings.
+
+Revision ID: d3e4f5a6b7c8
 Revises: 1a02944e2671
 Create Date: 2026-04-10
 """
@@ -14,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "ff03273d8f93"  # pragma: allowlist secret
+revision: str = "d3e4f5a6b7c8"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "1a02944e2671"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -56,13 +61,12 @@ def downgrade() -> None:
     if "tool_plugin_bindings" not in inspector.get_table_names():
         return
 
-    # Drop index if it exists
+    # Drop index if it exists (index may be named with either ix_ or idx_ prefix)
     indexes = [idx["name"] for idx in inspector.get_indexes("tool_plugin_bindings")]
-    if "ix_tool_plugin_bindings_binding_reference_id" in indexes:
-        op.drop_index(
-            "ix_tool_plugin_bindings_binding_reference_id",
-            table_name="tool_plugin_bindings",
-        )
+    for idx_name in ("ix_tool_plugin_bindings_binding_reference_id", "idx_tool_plugin_bindings_binding_reference_id"):
+        if idx_name in indexes:
+            op.drop_index(idx_name, table_name="tool_plugin_bindings")
+            break
 
     # Drop column if it exists
     columns = [col["name"] for col in inspector.get_columns("tool_plugin_bindings")]

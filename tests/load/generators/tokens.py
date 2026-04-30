@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""API token generator for load testing."""
+"""Location: ./tests/load/generators/tokens.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+API token generator for load testing.
+"""
 
 import random
 import secrets

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Trace context helpers for OpenTelemetry span enrichment."""
+"""Location: ./mcpgateway/utils/trace_context.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Trace context helpers for OpenTelemetry span enrichment.
+"""
 
 # Standard
 from contextvars import ContextVar

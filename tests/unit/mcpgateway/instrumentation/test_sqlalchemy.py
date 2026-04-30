@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/instrumentation/test_sqlalchemy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Unit tests for sqlalchemy instrumentation.
 """
+
 import pytest
 import threading
 import queue
@@ -54,6 +55,7 @@ def test_after_cursor_execute_inside_span_creation_skips():
 
 def test_after_cursor_execute_observability_table_skips(caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
@@ -78,6 +80,7 @@ def test_after_cursor_execute_with_trace_id_calls_create_query_span():
 
 def test_after_cursor_execute_without_trace_id_logs_debug(caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
@@ -91,6 +94,7 @@ def test_after_cursor_execute_without_trace_id_logs_debug(caplog):
 
 def test_create_query_span_enqueues_successfully(caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
@@ -108,6 +112,7 @@ def test_create_query_span_queue_full_warns(caplog):
 
 def test_create_query_span_exception_does_not_raise(caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
@@ -133,9 +138,11 @@ def test_write_span_to_db_success():
     mock_db = MagicMock()
     mock_span = MagicMock()
     mock_db.query().filter_by().first.return_value = mock_span
-    with patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service), \
-         patch("mcpgateway.db.SessionLocal", return_value=mock_db), \
-         patch("mcpgateway.db.ObservabilitySpan", MagicMock()):
+    with (
+        patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+        patch("mcpgateway.db.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.db.ObservabilitySpan", MagicMock()),
+    ):
         sa._write_span_to_db(span_data)
     mock_service.start_span.assert_called_once()
     mock_service.end_span.assert_called_once()
@@ -158,7 +165,11 @@ def test_write_span_to_db_when_span_row_missing():
     mock_service = MagicMock()
     mock_db = MagicMock()
     mock_db.query().filter_by().first.return_value = None
-    with patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service), patch("mcpgateway.db.SessionLocal", return_value=mock_db), patch("mcpgateway.db.ObservabilitySpan", MagicMock()):
+    with (
+        patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+        patch("mcpgateway.db.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.db.ObservabilitySpan", MagicMock()),
+    ):
         sa._write_span_to_db(span_data)
 
     mock_service.start_span.assert_called_once()
@@ -173,7 +184,17 @@ def test_write_span_to_db_exception_logs_warning(caplog):
 
 
 def test_span_writer_worker_processes_queue(monkeypatch):
-    span_data = {"trace_id": "t1", "name": "db.query.select", "kind": "client", "resource_type": "database", "resource_name": "SELECT", "start_attributes": {}, "end_attributes": {}, "status": "ok", "duration_ms": 10.0}
+    span_data = {
+        "trace_id": "t1",
+        "name": "db.query.select",
+        "kind": "client",
+        "resource_type": "database",
+        "resource_name": "SELECT",
+        "start_attributes": {},
+        "end_attributes": {},
+        "status": "ok",
+        "duration_ms": 10.0,
+    }
     sa._span_queue.put(span_data)
     mock_write = MagicMock()
     monkeypatch.setattr(sa, "_write_span_to_db", mock_write)
@@ -200,8 +221,7 @@ def test_span_writer_worker_logs_error_on_write_failure(monkeypatch, caplog):
 
 def test_instrument_sqlalchemy_starts_thread_and_registers_events():
     engine = MagicMock()
-    with patch("mcpgateway.instrumentation.sqlalchemy.event.listen") as mock_listen, \
-         patch("mcpgateway.instrumentation.sqlalchemy.threading.Thread") as mock_thread:
+    with patch("mcpgateway.instrumentation.sqlalchemy.event.listen") as mock_listen, patch("mcpgateway.instrumentation.sqlalchemy.threading.Thread") as mock_thread:
         mock_thread.return_value = MagicMock(is_alive=lambda: False)
         sa.instrument_sqlalchemy(engine)
         assert mock_listen.call_count == 2

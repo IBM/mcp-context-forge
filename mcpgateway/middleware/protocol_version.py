@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Middleware to validate MCP-Protocol-Version header for MCP HTTP endpoints."""
+"""Location: ./mcpgateway/middleware/protocol_version.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Middleware to validate MCP-Protocol-Version header for MCP HTTP endpoints.
+"""
 
 # Standard
 import logging

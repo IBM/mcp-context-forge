@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Team member generator for load testing."""
+"""Location: ./tests/load/generators/team_members.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Team member generator for load testing.
+"""
 
 import random
 import uuid

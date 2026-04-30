@@ -11,7 +11,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "1.0.0-BETA-3"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["ContextForge Contributors"]

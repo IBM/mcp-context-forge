@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Team Invitation E2E Tests.
+"""Location: ./tests/playwright/teams/test_team_invitations.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Team Invitation E2E Tests.
 
 Tests the invitation workflow: send, list, accept, cancel, and permission checks.
 """

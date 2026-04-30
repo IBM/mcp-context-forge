@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_teams.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -448,7 +448,9 @@ class TestTeamsRouter:
             result = await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
-            mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False)
+            mock_service.update_team.assert_called_once_with(
+                team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False
+            )
 
     @pytest.mark.asyncio
     async def test_update_team_insufficient_permissions(self, mock_user_context, mock_db):
@@ -569,14 +571,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_members
 
-            result = await list_team_members(
-                team_id=team_id,
-                cursor=None,
-                limit=None,
-                include_pagination=False,
-                current_user=mock_user_context,
-                db=mock_db
-            )
+            result = await list_team_members(team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db)
 
             assert isinstance(result, list)
             assert len(result) == 1

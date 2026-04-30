@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Fail-Closed Tests for RBAC System.
+"""Location: ./tests/unit/mcpgateway/services/test_rbac_fail_closed.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Fail-Closed Tests for RBAC System.
 
 Verifies that permission checks default to DENY on errors, exceptions,
 expired roles, deactivated roles, and corrupted state.

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tool populator - creates REST tools via POST /tools.
+"""Location: ./tests/populate/populators/tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tool populator - creates REST tools via POST /tools.
 
 Note: MCP tools cannot be manually created - they are auto-discovered from
 gateways. This populator creates REST integration tools instead.

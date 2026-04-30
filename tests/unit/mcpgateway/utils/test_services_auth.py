@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_services_auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -65,6 +65,7 @@ def test_get_key_without_secret_raises(monkeypatch):
 def test_crypto_cache_reuse(monkeypatch):
     """Verify that AESGCM and key are cached and reused."""
     from mcpgateway.utils.services_auth import clear_crypto_cache
+
     clear_crypto_cache()
 
     monkeypatch.setattr(settings, "auth_encryption_secret", "test-secret")
@@ -98,6 +99,7 @@ def test_clear_crypto_cache(monkeypatch):
 def test_encode_decode_uses_cached_aesgcm(monkeypatch):
     """Verify that encode/decode operations use cached AESGCM."""
     from mcpgateway.utils.services_auth import clear_crypto_cache
+
     clear_crypto_cache()
 
     monkeypatch.setattr(settings, "auth_encryption_secret", "cache-test")

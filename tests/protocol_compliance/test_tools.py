@@ -1,4 +1,11 @@
-"""MCP tools capability compliance tests."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools capability compliance tests.
+"""
 
 from __future__ import annotations
 

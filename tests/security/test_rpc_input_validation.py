@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_rpc_input_validation.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

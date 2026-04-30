@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_rpc_tool_invocation.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -301,6 +301,7 @@ class TestRPCServerIdScoping:
 
         async def mock_body():
             import orjson  # noqa: PLC0415
+
             return orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 10})
 
         mock_request.body = mock_body

@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2025 ContextForge Contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for scripts/demo_a2a_agent.py request parsing and agent logic.
+"""Location: ./tests/unit/scripts/test_demo_a2a_agent.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for scripts/demo_a2a_agent.py request parsing and agent logic.
 
 Uses the FastAPI TestClient to exercise the /run endpoint's multi-format
 request parsing (JSONRPC, A2A protocol, simple, nested message parts)
@@ -14,7 +19,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from scripts.demo_a2a_agent import SimpleAgent, app, calculator
-
 
 # ---------------------------------------------------------------------------
 # TestClient fixture

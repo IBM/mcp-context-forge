@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Lifecycle wiring tests for UpstreamSessionRegistry (issue #4205).
+"""Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Lifecycle wiring tests for UpstreamSessionRegistry (issue #4205).
 These tests verify the registry's integration points outside the registry
 itself: startup/shutdown in main.py, and the DELETE-triggered eviction that
 SessionRegistry.remove_session() now forwards into the upstream registry.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

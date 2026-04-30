@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for admin import/export endpoints."""
+"""Location: ./tests/unit/mcpgateway/test_admin_import_export.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for admin import/export endpoints.
+"""
 
 # Standard
 import json

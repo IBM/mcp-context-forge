@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Shared OAuth helpers and sensitive-key definitions."""
+"""Location: ./mcpgateway/common/oauth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared OAuth helpers and sensitive-key definitions.
+"""
 
 # Standard
 from typing import Any

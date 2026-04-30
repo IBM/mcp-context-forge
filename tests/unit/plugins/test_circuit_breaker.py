@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for Circuit Breaker Plugin.
+"""Location: ./tests/unit/plugins/test_circuit_breaker.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for Circuit Breaker Plugin.
 
 Verifies all functionality:
 1. Closed state - allows requests
@@ -340,9 +345,7 @@ class TestPerToolOverrides:
             order=0,
             config={
                 "consecutive_failure_threshold": 5,
-                "tool_overrides": {
-                    "critical_tool": {"consecutive_failure_threshold": 10}
-                },
+                "tool_overrides": {"critical_tool": {"consecutive_failure_threshold": 10}},
             },
         )
         plugin = CircuitBreakerPlugin(config)
@@ -379,6 +382,7 @@ class TestHelperFunctions:
 
     def test_is_error_with_object(self):
         """_is_error should detect error in object result."""
+
         class MockResult:
             is_error = True
 
