@@ -41,8 +41,8 @@ describe("App", () => {
     // Wait for dashboard to load after successful login
     await screen.findByRole("heading", { name: /dashboard/i });
 
-    // Click on Gateways in the sidebar
-    const gatewaysLink = screen.getByRole("button", { name: /gateways/i });
+    // Click on Virtual Servers in the sidebar
+    const gatewaysLink = screen.getByRole("button", { name: /virtual servers/i });
     await user.click(gatewaysLink);
 
     // Verify Gateways page is displayed

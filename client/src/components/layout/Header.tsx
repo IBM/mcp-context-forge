@@ -1,6 +1,5 @@
 import { useIntl } from "react-intl";
 import { useAuth } from "../../auth/useAuth";
-import { SidebarTrigger } from "../ui/sidebar";
 import { LanguageSwitcher } from "../ui/LanguageSwitcher";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
@@ -9,8 +8,7 @@ export function Header() {
   const { user, logout } = useAuth();
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4">
-      <SidebarTrigger />
+    <header className="flex h-12 shrink-0 items-center justify-end border-b border-border bg-background px-4">
       <div className="flex items-center gap-3">
         <LanguageSwitcher />
         <ThemeToggle />
