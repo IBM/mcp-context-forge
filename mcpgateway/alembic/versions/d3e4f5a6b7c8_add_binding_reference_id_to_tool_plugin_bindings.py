@@ -61,13 +61,12 @@ def downgrade() -> None:
     if "tool_plugin_bindings" not in inspector.get_table_names():
         return
 
-    # Drop index if it exists
+    # Drop index if it exists (index may be named with either ix_ or idx_ prefix)
     indexes = [idx["name"] for idx in inspector.get_indexes("tool_plugin_bindings")]
-    if "ix_tool_plugin_bindings_binding_reference_id" in indexes:
-        op.drop_index(
-            "ix_tool_plugin_bindings_binding_reference_id",
-            table_name="tool_plugin_bindings",
-        )
+    for idx_name in ("ix_tool_plugin_bindings_binding_reference_id", "idx_tool_plugin_bindings_binding_reference_id"):
+        if idx_name in indexes:
+            op.drop_index(idx_name, table_name="tool_plugin_bindings")
+            break
 
     # Drop column if it exists
     columns = [col["name"] for col in inspector.get_columns("tool_plugin_bindings")]
