@@ -2065,7 +2065,7 @@ class TestTeamManagementService:
         mock_cache = AsyncMock()
         mock_cache.get_user_team_objects = AsyncMock(return_value=None)  # Cache miss
         mock_cache.set_user_team_objects = AsyncMock()
-        mock_cache._team_to_dict = MagicMock(return_value={"id": "team-1", "name": "Team One"})
+        mock_cache.team_to_dict = MagicMock(return_value={"id": "team-1", "name": "Team One"})
         service._get_auth_cache = MagicMock(return_value=mock_cache)
 
         result = await service.get_user_teams("user@test.com")

@@ -520,7 +520,7 @@ class TestGetUserTeamsCachePaths:
         mock_cache = MagicMock()
         mock_cache.get_user_team_objects = AsyncMock(return_value=None)  # cache miss
         mock_cache.set_user_team_objects = AsyncMock()
-        mock_cache._team_to_dict = MagicMock(return_value={"id": "t1"})
+        mock_cache.team_to_dict = MagicMock(return_value={"id": "t1"})
 
         team1 = _mock_team(id="t1")
         mock_query = MagicMock()

@@ -48,7 +48,7 @@ def _team_from_dict(d: Dict[str, Any]) -> EmailTeam:
     """Construct a transient EmailTeam from a serialised dict (no DB session needed).
 
     Args:
-        d: Dict produced by AuthCache._team_to_dict()
+        d: Dict produced by AuthCache.team_to_dict()
 
     Returns:
         EmailTeam instance with scalar attributes set; never attached to a session.
@@ -1100,7 +1100,7 @@ class TeamManagementService:
 
             # Update cache with full team objects
             if cache:
-                team_dicts = [cache._team_to_dict(t) for t in teams]
+                team_dicts = [cache.team_to_dict(t) for t in teams]
                 await cache.set_user_team_objects(cache_key, team_dicts)
 
             return teams

@@ -784,7 +784,7 @@ class AuthCache:
             )
 
     @staticmethod
-    def _team_to_dict(team: Any) -> Dict[str, Any]:
+    def team_to_dict(team: Any) -> Dict[str, Any]:
         """Serialise an EmailTeam ORM instance to a JSON-safe dict of scalar fields.
 
         Args:
