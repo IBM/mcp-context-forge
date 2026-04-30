@@ -49,13 +49,18 @@ function validateDestination(to: string): string | null {
   if (/[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(to)) return null;
   // Reject protocol-relative URLs
   if (to.startsWith("//")) return null;
-  // Reject path traversal sequences
-  if (to.includes("..")) return null;
 
-  const isAppPath = to === APP_PREFIX || to.startsWith(APP_PREFIX + "/");
+  // Split path and query string
+  const [pathname, queryString] = to.split("?");
+
+  // Reject path traversal sequences in pathname
+  if (pathname.includes("..")) return null;
+
+  const isAppPath = pathname === APP_PREFIX || pathname.startsWith(APP_PREFIX + "/");
   if (!isAppPath) return null;
 
-  return to;
+  // Reconstruct with query string if present
+  return queryString ? `${pathname}?${queryString}` : pathname;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +129,7 @@ function matchPath(pattern: string, path: string): Record<string, string> | null
 // ---------------------------------------------------------------------------
 
 export function RouterProvider({ children }: { children: ReactNode }) {
-  const [path, setPath] = useState(() => window.location.pathname);
+  const [path, setPath] = useState(() => window.location.pathname + window.location.search);
 
   const navigate = useCallback((to: string) => {
     const safe = validateDestination(to);
@@ -140,7 +145,7 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
+    const onPop = () => setPath(window.location.pathname + window.location.search);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
@@ -174,7 +179,9 @@ interface RouteProps {
 
 export function Route({ path: pattern, component: Component }: RouteProps) {
   const { path } = useRouter();
-  const params = matchPath(pattern, path);
+  // Strip query string for matching
+  const pathname = path.split("?")[0];
+  const params = matchPath(pattern, pathname);
   if (params === null) return null;
   return <Component {...params} />;
 }
