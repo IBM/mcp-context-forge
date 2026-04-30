@@ -1,0 +1,7 @@
+# Checkov configuration file
+# https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+
+# Exclude files that cannot use inline skip comments (JSON) and contain
+# only example/placeholder credentials for local development.
+skip-path:
+  - infra/keycloak/realm-export.json

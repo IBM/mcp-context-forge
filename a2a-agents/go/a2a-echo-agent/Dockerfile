@@ -17,4 +17,6 @@ RUN apt-get update && \
 COPY --from=builder /usr/local/bin/a2a-echo-agent /usr/local/bin/a2a-echo-agent
 USER 1001:1001
 EXPOSE 9100
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:9100/health || exit 1
 ENTRYPOINT ["/usr/local/bin/a2a-echo-agent"]

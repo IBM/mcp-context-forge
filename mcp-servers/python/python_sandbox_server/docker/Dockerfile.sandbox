@@ -28,5 +28,6 @@ USER sandbox
 # Set working directory
 WORKDIR /app
 
+# checkov:skip=CKV_DOCKER_2:sandbox executes ad-hoc code, no listening service to healthcheck
 # Default command to execute Python code from /tmp/code.py
 CMD ["python", "/tmp/code.py"]

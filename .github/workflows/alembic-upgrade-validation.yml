@@ -9,6 +9,7 @@ on:
       - "scripts/ci/run_upgrade_validation.sh"
       - ".github/workflows/alembic-upgrade-validation.yml"
   workflow_dispatch:
+    # checkov:skip=CKV_GHA_7:base_image selects the upgrade source image, required for validation workflow
     inputs:
       base_image:
         description: "Base release image used for upgrade checks"

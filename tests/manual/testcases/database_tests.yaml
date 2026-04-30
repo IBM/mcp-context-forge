@@ -76,7 +76,7 @@ tests:
     database_type: "PostgreSQL"
     feature: "Migration Execution"
     test_commands: |
-      1. export DATABASE_URL=postgresql://user:pass@localhost:5432/mcp_test
+      1. export DATABASE_URL=postgresql://localhost:5432/mcp_test
       2. createdb mcp_test
       3. python3 -m mcpgateway.bootstrap_db
       4. psql mcp_test -c '\dt' | grep email

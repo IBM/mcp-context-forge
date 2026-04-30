@@ -9,7 +9,7 @@ hooks:
   - HTTP_AUTH_RESOLVE_USER
   - HTTP_POST_REQUEST
 config:
-  token_header: x-auth-token
+  token_header: x-auth-token  # checkov:skip=CKV_SECRET_6:header name, not a credential value
   storage_file: data/auth_tokens.json
   default_token_expiry_days: 30
   transform_to_bearer: true

@@ -47,5 +47,6 @@ COPY --from=builder /usr/local/bin/fast-time-server /fast-time-server
 
 # --- default: SSE + HTTP on 8080 ---
 USER 1001:1001
+# checkov:skip=CKV_DOCKER_2:scratch image has no shell or tooling for healthcheck
 ENTRYPOINT ["/fast-time-server"]
 CMD ["-transport=dual", "-port=8080", "-listen=0.0.0.0"]

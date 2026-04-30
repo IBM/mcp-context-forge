@@ -54,5 +54,8 @@ EXPOSE 8084
 # Environment
 ENV RUST_LOG=info
 
-# Entrypoint
+# Run as non-root user (scratch supports numeric UIDs)
+USER 1001:1001
+
+# checkov:skip=CKV_DOCKER_2:scratch image has no shell or tooling for healthcheck
 ENTRYPOINT ["/filesystem-server"]

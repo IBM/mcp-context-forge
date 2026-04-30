@@ -42,11 +42,25 @@ spec:
       securityContext:
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.mcpContextForge.affinity }}
+      affinity: {{- toYaml .Values.mcpContextForge.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       containers:
         - name: mcp-context-forge
           securityContext:
             allowPrivilegeEscalation: false
             runAsNonRoot: true
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
@@ -262,16 +276,28 @@ spec:
           {{- /* Plugins enabled need the plugins configuration */}}
           {{- if .Values.mcpContextForge.pluginConfig.enabled }}
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
             - name: plugin-config-volume
               mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
+          {{- else }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           {{- end }}
 {{- if .Values.mcpContextForge.pluginConfig.enabled }}
       volumes:
-      - name: plugin-config-volume
-        configMap:
-          name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
-          items:
-          - key: config.yaml
-            path: config.yaml
+        - name: tmp
+          emptyDir: {}
+        - name: plugin-config-volume
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+            items:
+            - key: config.yaml
+              path: config.yaml
+{{- else }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
 {{- end }}

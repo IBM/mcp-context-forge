@@ -10,4 +10,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/b
 FROM scratch
 COPY --from=builder /usr/local/bin/benchmark-server /benchmark-server
 USER 1001:1001
+# checkov:skip=CKV_DOCKER_2:scratch image has no shell or tooling for healthcheck
 ENTRYPOINT ["/benchmark-server"]
