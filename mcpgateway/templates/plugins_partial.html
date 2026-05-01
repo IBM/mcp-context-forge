@@ -82,7 +82,7 @@
       </div>
       <div class="text-center">
         <div class="text-3xl font-bold">
-          {{ (stats.plugins_by_mode.enforce | default(0)) + (stats.plugins_by_mode.sequential | default(0)) + (stats.plugins_by_mode.enforce_ignore_error | default(0)) }}
+          {{ (stats.plugins_by_mode.enforce | default(0)) + (stats.plugins_by_mode.sequential | default(0)) + (stats.plugins_by_mode.enforce_ignore_error | default(0)) + (stats.plugins_by_mode.concurrent | default(0)) }}
         </div>
         <div class="text-purple-100 text-sm">Enforcing</div>
       </div>
