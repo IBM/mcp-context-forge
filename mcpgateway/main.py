@@ -2882,9 +2882,6 @@ if settings.compression_enabled:
 else:
     logger.info("🚫 Response compression disabled")
 
-# Add security headers middleware
-app.add_middleware(SecurityHeadersMiddleware)
-
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
@@ -2932,6 +2929,10 @@ app.add_middleware(AdminAuthMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Add security headers after auth middlewares so their short-circuit responses
+# receive the same defense-in-depth headers as route-generated responses.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Add correlation ID middleware if enabled
 # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
