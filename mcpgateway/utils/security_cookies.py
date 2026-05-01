@@ -41,7 +41,7 @@ class CookieTooLargeError(Exception):
         super().__init__(f"Cookie size {cookie_size} bytes exceeds browser limit of {limit} bytes")
 
 
-def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -> None:
+def set_auth_cookie(response: Response, token: str, remember_me: bool = False, path: str | None = None) -> None:
     """
     Set authentication cookie with security flags and size validation.
 
@@ -51,7 +51,10 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     Args:
         response: FastAPI response object to set the cookie on
         token: JWT token to store in the cookie
-        remember_me: If True, sets longer expiration time (30 days vs 1 hour)
+        remember_me: If True, sets longer expiration time (30 days)
+        path: Cookie path scope. Defaults to settings.app_root_path or "/".
+              Use "/app" for the React client so the cookie is not sent to
+              unrelated endpoints (/admin, /api, etc.).
 
     Raises:
         CookieTooLargeError: If the cookie would exceed 4096 bytes
@@ -79,14 +82,16 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
         >>> 'Max-Age=2592000' in resp2.headers.get('set-cookie')  # 30 days
         True
     """
-    # Set expiration based on remember_me preference
-    max_age = 30 * 24 * 3600 if remember_me else 3600  # 30 days or 1 hour
+    # Set expiration based on remember_me preference.
+    # Non-remember-me uses settings.token_expiry to stay in sync with the CSRF cookie
+    # (set by set_csrf_cookie, which also uses settings.token_expiry * 60).
+    max_age = 30 * 24 * 3600 if remember_me else settings.token_expiry * 60
 
     # Determine if we should use secure flag
     # In production or when explicitly configured, require HTTPS
     use_secure = (settings.environment == "production") or settings.secure_cookies
     samesite = settings.cookie_samesite
-    path = settings.app_root_path or "/"
+    path = path if path is not None else (settings.app_root_path or "/")
 
     # Estimate cookie size in bytes (Set-Cookie header format)
     # The cookie name, value, and attributes all count toward the limit
@@ -128,7 +133,7 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     )
 
 
-def clear_auth_cookie(response: Response) -> None:
+def clear_auth_cookie(response: Response, path: str | None = None) -> None:
     """
     Clear authentication cookie securely.
 
@@ -137,6 +142,8 @@ def clear_auth_cookie(response: Response) -> None:
 
     Args:
         response: FastAPI response object to clear the cookie from
+        path: Must match the path used in set_auth_cookie. Defaults to
+              settings.app_root_path or "/".
 
     Examples:
         >>> from fastapi import Response
@@ -147,12 +154,12 @@ def clear_auth_cookie(response: Response) -> None:
         >>> 'jwt_token=' in resp.headers.get('set-cookie')
         True
     """
-    # Use same security settings as when setting the cookie
     use_secure = (settings.environment == "production") or settings.secure_cookies
+    effective_path = path if path is not None else (settings.app_root_path or "/")
 
     response.delete_cookie(
         key="jwt_token",
-        path=settings.app_root_path or "/",
+        path=effective_path,
         secure=use_secure,
         httponly=True,
         samesite=settings.cookie_samesite,
