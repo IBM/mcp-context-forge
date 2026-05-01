@@ -1446,10 +1446,10 @@ class TestMain:
                                                     with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                                                         await main()
 
-                                                        mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                        mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_command.upgrade.assert_not_called()
-                                                        mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
+                                                        mock_base.metadata.create_all.assert_not_called()
+                                                        mock_command.stamp.assert_not_called()
+                                                        mock_command.upgrade.assert_called_once_with(mock_config, "head")
+                                                        mock_logger.info.assert_any_call("Empty DB detected - running Alembic migrations to create baseline schema")
 
     @pytest.mark.asyncio
     async def test_main_existing_database(self, mock_settings):
