@@ -63,6 +63,9 @@ email_auth_router = APIRouter()
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# Exported for startup token-expiry synchronization check in _validate_token_expiry_sync
+TOKEN_EXPIRY_MINUTES = settings.token_expiry
+
 
 def get_db():
     """Database dependency.
