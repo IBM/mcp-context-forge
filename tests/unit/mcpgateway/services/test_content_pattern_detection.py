@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.services.content_security import ContentPatternError, ContentSecurityService
+from mcpgateway.services.content_security import _supports_native_regex_timeout, ContentPatternError, ContentSecurityService
 
 
 class TestMaliciousPatternDetection:
@@ -240,6 +240,10 @@ class TestClassifyViolation:
 
 class TestTimeoutAndEdgeCases:
     """Test timeout handling and edge cases for coverage."""
+
+    def test_stdlib_re_search_has_no_native_timeout(self):
+        """Test stdlib re.Pattern.search does not enable the native timeout path."""
+        assert _supports_native_regex_timeout() is False
 
     def test_timeout_error_handling(self):
         """Test TimeoutError is caught and converted to ContentPatternError."""
