@@ -6202,6 +6202,7 @@ class EmailUserResponse(BaseModel):
     is_active: bool = Field(..., description="Whether account is active")
     auth_provider: str = Field(..., description="Authentication provider")
     created_at: datetime = Field(..., description="Account creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last account update timestamp")
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
@@ -6234,6 +6235,7 @@ class EmailUserResponse(BaseModel):
             is_active=user.is_active,
             auth_provider=user.auth_provider,
             created_at=user.created_at,
+            updated_at=getattr(user, "updated_at", None),
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
             password_change_required=user.password_change_required,
