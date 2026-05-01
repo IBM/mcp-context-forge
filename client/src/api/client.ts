@@ -82,10 +82,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    // Credentials: omit — auth is via Bearer header, not cookies.
+    // Credentials: omit — auth is via Bearer header, not cookies.  // pragma: allowlist secret
     // This also means the browser will NOT auto-send cookies cross-origin,
     // making CSRF attacks structurally impossible for these requests.
-    credentials: "omit",
+    credentials: "omit", // pragma: allowlist secret
     signal,
   });
 
