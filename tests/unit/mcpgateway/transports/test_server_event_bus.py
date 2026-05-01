@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the server-to-client event bus (ADR-052).
+"""Location: ./tests/unit/mcpgateway/transports/test_server_event_bus.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the server-to-client event bus (ADR-052).
 
 Covers the in-memory backend end-to-end (publish/subscribe/replay/overflow)
 and the factory's backend selection. The Redis backend's network-bound paths

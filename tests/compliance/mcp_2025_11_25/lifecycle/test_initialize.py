@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Initialize lifecycle checks for MCP 2025-11-25."""
+"""Location: ./tests/compliance/mcp_2025_11_25/lifecycle/test_initialize.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Initialize lifecycle checks for MCP 2025-11-25.
+"""
 
 # Third-Party
 import pytest

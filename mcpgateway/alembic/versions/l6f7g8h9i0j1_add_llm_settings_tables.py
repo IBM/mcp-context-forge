@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add LLM settings tables for internal LLM Chat feature.
+"""Location: ./mcpgateway/alembic/versions/l6f7g8h9i0j1_add_llm_settings_tables.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add LLM settings tables for internal LLM Chat feature.
 
 Revision ID: l6f7g8h9i0j1
 Revises: k5e6f7g8h9i0
 Create Date: 2025-12-13 10:00:00.000000
-
 """
 
 # Standard

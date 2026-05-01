@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/agent/test_agent_plugins.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -33,23 +33,12 @@ async def test_agent_passthrough_plugin():
     assert AgentHookType.AGENT_POST_INVOKE.value in manager.config.plugins[0].hooks
 
     # Create test payload
-    messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Hello agent!"))
-    ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=messages,
-        tools=["search", "calculator"],
-        model="claude-3-5-sonnet-20241022"
-    )
+    messages = [Message(role=Role.USER, content=TextContent(type="text", text="Hello agent!"))]
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=messages, tools=["search", "calculator"], model="claude-3-5-sonnet-20241022")
 
     # Invoke pre-hook
     global_context = GlobalContext(request_id="test-req-1")
-    result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context)
 
     # Verify passthrough (no modification)
     assert result.continue_processing is True
@@ -57,21 +46,11 @@ async def test_agent_passthrough_plugin():
     assert result.violation is None
 
     # Create response payload
-    response_messages = [
-        Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Hello user!"))
-    ]
-    post_payload = AgentPostInvokePayload(
-        agent_id="test-agent",
-        messages=response_messages
-    )
+    response_messages = [Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Hello user!"))]
+    post_payload = AgentPostInvokePayload(agent_id="test-agent", messages=response_messages)
 
     # Invoke post-hook
-    result, _ = await manager.invoke_hook(
-        AgentHookType.AGENT_POST_INVOKE,
-        post_payload,
-        global_context=global_context,
-        local_contexts=contexts
-    )
+    result, _ = await manager.invoke_hook(AgentHookType.AGENT_POST_INVOKE, post_payload, global_context=global_context, local_contexts=contexts)
 
     # Verify passthrough (no modification)
     assert result.continue_processing is True
@@ -88,43 +67,24 @@ async def test_agent_filter_plugin_pre_invoke():
     await manager.initialize()
 
     # Create test payload with clean message
-    clean_messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Hello agent!"))
-    ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=clean_messages
-    )
+    clean_messages = [Message(role=Role.USER, content=TextContent(type="text", text="Hello agent!"))]
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=clean_messages)
 
     # Invoke pre-hook with clean message
     global_context = GlobalContext(request_id="test-req-2")
-    result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context)
 
     # Clean message should pass through
     assert result.continue_processing is True
     assert result.modified_payload is None
 
     # Create payload with blocked word
-    blocked_messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Click here for spam offers!"))
-    ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=blocked_messages
-    )
+    blocked_messages = [Message(role=Role.USER, content=TextContent(type="text", text="Click here for spam offers!"))]
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=blocked_messages)
 
     # Invoke pre-hook with blocked message - should raise violation
     with pytest.raises(PluginViolationError) as exc_info:
-        result, contexts = await manager.invoke_hook(
-            AgentHookType.AGENT_PRE_INVOKE,
-            payload,
-            global_context=global_context,
-            violations_as_exceptions=True
-        )
+        result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context, violations_as_exceptions=True)
 
     assert exc_info.value.violation.code == "BLOCKED_CONTENT"
     assert "blocked content" in exc_info.value.violation.reason.lower()
@@ -139,43 +99,24 @@ async def test_agent_filter_plugin_post_invoke():
     await manager.initialize()
 
     # Create test payload with clean response
-    clean_messages = [
-        Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Here is your answer."))
-    ]
-    payload = AgentPostInvokePayload(
-        agent_id="test-agent",
-        messages=clean_messages
-    )
+    clean_messages = [Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Here is your answer."))]
+    payload = AgentPostInvokePayload(agent_id="test-agent", messages=clean_messages)
 
     # Invoke post-hook with clean message
     global_context = GlobalContext(request_id="test-req-3")
-    result, _ = await manager.invoke_hook(
-        AgentHookType.AGENT_POST_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, _ = await manager.invoke_hook(AgentHookType.AGENT_POST_INVOKE, payload, global_context=global_context)
 
     # Clean message should pass through
     assert result.continue_processing is True
     assert result.modified_payload is None
 
     # Create payload with blocked word
-    blocked_messages = [
-        Message(role=Role.ASSISTANT, content=TextContent(type="text", text="This looks like malware to me."))
-    ]
-    payload = AgentPostInvokePayload(
-        agent_id="test-agent",
-        messages=blocked_messages
-    )
+    blocked_messages = [Message(role=Role.ASSISTANT, content=TextContent(type="text", text="This looks like malware to me."))]
+    payload = AgentPostInvokePayload(agent_id="test-agent", messages=blocked_messages)
 
     # Invoke post-hook with blocked message - should raise violation
     with pytest.raises(PluginViolationError) as exc_info:
-        result, _ = await manager.invoke_hook(
-            AgentHookType.AGENT_POST_INVOKE,
-            payload,
-            global_context=global_context,
-            violations_as_exceptions=True
-        )
+        result, _ = await manager.invoke_hook(AgentHookType.AGENT_POST_INVOKE, payload, global_context=global_context, violations_as_exceptions=True)
 
     assert exc_info.value.violation.code == "BLOCKED_CONTENT"
     assert "blocked content" in exc_info.value.violation.reason.lower()
@@ -193,20 +134,13 @@ async def test_agent_filter_plugin_partial_filtering():
     mixed_messages = [
         Message(role=Role.USER, content=TextContent(type="text", text="Hello agent!")),
         Message(role=Role.USER, content=TextContent(type="text", text="Check out this spam!")),
-        Message(role=Role.USER, content=TextContent(type="text", text="What's the weather?"))
+        Message(role=Role.USER, content=TextContent(type="text", text="What's the weather?")),
     ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=mixed_messages
-    )
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=mixed_messages)
 
     # Invoke pre-hook
     global_context = GlobalContext(request_id="test-req-4")
-    result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context)
 
     # Should have modified payload with only 2 messages
     assert result.modified_payload is not None
@@ -224,40 +158,21 @@ async def test_agent_context_persistence():
     await manager.initialize()
 
     # Create pre-invoke payload
-    messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Hello!"))
-    ]
-    pre_payload = AgentPreInvokePayload(
-        agent_id="test-agent-123",
-        messages=messages
-    )
+    messages = [Message(role=Role.USER, content=TextContent(type="text", text="Hello!"))]
+    pre_payload = AgentPreInvokePayload(agent_id="test-agent-123", messages=messages)
 
     # Invoke pre-hook
     global_context = GlobalContext(request_id="test-req-5")
-    pre_result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        pre_payload,
-        global_context=global_context
-    )
+    pre_result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, pre_payload, global_context=global_context)
 
     assert pre_result.continue_processing is True
 
     # Create post-invoke payload
-    response_messages = [
-        Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Hi there!"))
-    ]
-    post_payload = AgentPostInvokePayload(
-        agent_id="test-agent-123",
-        messages=response_messages
-    )
+    response_messages = [Message(role=Role.ASSISTANT, content=TextContent(type="text", text="Hi there!"))]
+    post_payload = AgentPostInvokePayload(agent_id="test-agent-123", messages=response_messages)
 
     # Invoke post-hook with same contexts
-    post_result, _ = await manager.invoke_hook(
-        AgentHookType.AGENT_POST_INVOKE,
-        post_payload,
-        global_context=global_context,
-        local_contexts=contexts
-    )
+    post_result, _ = await manager.invoke_hook(AgentHookType.AGENT_POST_INVOKE, post_payload, global_context=global_context, local_contexts=contexts)
 
     # Verify context was verified (metadata added by post hook)
     assert post_result.continue_processing is True
@@ -275,22 +190,12 @@ async def test_agent_plugin_with_tools():
     await manager.initialize()
 
     # Create payload with tools
-    messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Search for Python tutorials"))
-    ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=messages,
-        tools=["web_search", "code_search", "calculator"]
-    )
+    messages = [Message(role=Role.USER, content=TextContent(type="text", text="Search for Python tutorials"))]
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=messages, tools=["web_search", "code_search", "calculator"])
 
     # Invoke pre-hook
     global_context = GlobalContext(request_id="test-req-6")
-    result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context)
 
     # Verify tools are preserved
     assert result.continue_processing is True
@@ -305,23 +210,12 @@ async def test_agent_plugin_with_model_override():
     await manager.initialize()
 
     # Create payload with model override
-    messages = [
-        Message(role=Role.USER, content=TextContent(type="text", text="Analyze this code"))
-    ]
-    payload = AgentPreInvokePayload(
-        agent_id="test-agent",
-        messages=messages,
-        model="claude-3-opus-20240229",
-        parameters={"temperature": 0.7, "max_tokens": 1000}
-    )
+    messages = [Message(role=Role.USER, content=TextContent(type="text", text="Analyze this code"))]
+    payload = AgentPreInvokePayload(agent_id="test-agent", messages=messages, model="claude-3-opus-20240229", parameters={"temperature": 0.7, "max_tokens": 1000})
 
     # Invoke pre-hook
     global_context = GlobalContext(request_id="test-req-7")
-    result, contexts = await manager.invoke_hook(
-        AgentHookType.AGENT_PRE_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, contexts = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, payload, global_context=global_context)
 
     # Verify model and parameters are preserved
     assert result.continue_processing is True
@@ -336,28 +230,13 @@ async def test_agent_plugin_with_tool_calls():
     await manager.initialize()
 
     # Create post-invoke payload with tool calls
-    messages = [
-        Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll search for that."))
-    ]
-    tool_calls = [
-        {
-            "name": "web_search",
-            "arguments": {"query": "Python tutorials", "num_results": 5}
-        }
-    ]
-    payload = AgentPostInvokePayload(
-        agent_id="test-agent",
-        messages=messages,
-        tool_calls=tool_calls
-    )
+    messages = [Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll search for that."))]
+    tool_calls = [{"name": "web_search", "arguments": {"query": "Python tutorials", "num_results": 5}}]
+    payload = AgentPostInvokePayload(agent_id="test-agent", messages=messages, tool_calls=tool_calls)
 
     # Invoke post-hook
     global_context = GlobalContext(request_id="test-req-8")
-    result, _ = await manager.invoke_hook(
-        AgentHookType.AGENT_POST_INVOKE,
-        payload,
-        global_context=global_context
-    )
+    result, _ = await manager.invoke_hook(AgentHookType.AGENT_POST_INVOKE, payload, global_context=global_context)
 
     # Verify tool calls are preserved
     assert result.continue_processing is True

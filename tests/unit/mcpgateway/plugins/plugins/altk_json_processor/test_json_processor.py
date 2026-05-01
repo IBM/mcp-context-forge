@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/altk_json_processor/test_json_processor.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Jason Tsay
 
@@ -39,7 +39,10 @@ except ModuleNotFoundError:
 async def test_threshold():
     plugin = ALTKJsonProcessor(  # type: ignore
         PluginConfig(
-            name="jsonprocessor", kind="plugins.altk_json_processor.json_processor.ALTKJsonProcessor", hooks=[ToolHookType.TOOL_POST_INVOKE], config={"llm_provider": "pytestmock", "length_threshold": 50}
+            name="jsonprocessor",
+            kind="plugins.altk_json_processor.json_processor.ALTKJsonProcessor",
+            hooks=[ToolHookType.TOOL_POST_INVOKE],
+            config={"llm_provider": "pytestmock", "length_threshold": 50},
         )
     )
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))

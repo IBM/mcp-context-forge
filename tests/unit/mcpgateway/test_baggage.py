@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.baggage module.
+"""Location: ./tests/unit/mcpgateway/test_baggage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.baggage module.
 
 Tests cover:
 - Configuration validation

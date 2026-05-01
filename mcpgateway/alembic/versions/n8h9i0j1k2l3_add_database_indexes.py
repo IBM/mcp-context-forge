@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""add database indexes
+"""Location: ./mcpgateway/alembic/versions/n8h9i0j1k2l3_add_database_indexes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add database indexes
 
 Revision ID: n8h9i0j1k2l3
 Revises: m7g8h9i0j1k2

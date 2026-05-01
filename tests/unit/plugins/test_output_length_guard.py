@@ -1,4 +1,9 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/plugins/test_output_length_guard.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Comprehensive test suite for OutputLengthGuard plugin.
 
 Test Coverage:
@@ -2035,9 +2040,9 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         payload = Mock()
         payload.name = "echo"
         payload.result = {
-            'content': [{'type': 'text', 'text': 'asdiusahdi shidasdhsd hosahdosadoas dasodasod asd asooasdoasdsh'}],
-            'isError': False,
-            'structuredContent': None  # <-- Bug case: null should not block content processing
+            "content": [{"type": "text", "text": "asdiusahdi shidasdhsd hosahdosadoas dasodasod asd asooasdoasdsh"}],
+            "isError": False,
+            "structuredContent": None,  # <-- Bug case: null should not block content processing
         }
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
@@ -2045,7 +2050,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         # Verify content was truncated
         self.assertIsNotNone(result.modified_payload, "Plugin should modify payload when structuredContent is null")
         modified_result = result.modified_payload.result
-        content_text = modified_result['content'][0]['text']
+        content_text = modified_result["content"][0]["text"]
 
         # Should be truncated to 10 chars (max_chars=10)
         self.assertEqual(len(content_text), 10, f"Expected 10 chars, got {len(content_text)}: '{content_text}'")

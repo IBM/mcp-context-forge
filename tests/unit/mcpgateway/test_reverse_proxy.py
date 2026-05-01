@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -472,6 +472,7 @@ class TestReverseProxyClient:
             with patch.object(self.client.stdio_process, "start", new_callable=AsyncMock):
                 with patch.object(self.client, "_register", new_callable=AsyncMock):
                     with patch("asyncio.create_task") as mock_create_task:
+
                         def _create_task(coro, *args, **kwargs):
                             # Prevent unawaited coroutine warnings in tests.
                             coro.close()
@@ -508,6 +509,7 @@ class TestReverseProxyClient:
             with patch.object(client, "_connect_sse", new_callable=AsyncMock) as mock_connect_sse:
                 with patch.object(client, "_register", new_callable=AsyncMock):
                     with patch("asyncio.create_task") as mock_create_task:
+
                         def _create_task(coro, *args, **kwargs):
                             coro.close()
                             return MagicMock()
@@ -545,6 +547,7 @@ class TestReverseProxyClient:
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())
             with patch("asyncio.create_task") as mock_create_task:
+
                 def _create_task(coro, *args, **kwargs):
                     coro.close()
                     return MagicMock()
@@ -563,6 +566,7 @@ class TestReverseProxyClient:
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(return_value=AsyncMock())
             with patch("asyncio.create_task") as mock_create_task:
+
                 def _create_task(coro, *args, **kwargs):
                     coro.close()
                     return MagicMock()

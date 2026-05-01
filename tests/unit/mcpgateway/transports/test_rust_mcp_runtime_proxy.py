@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the experimental Rust MCP runtime proxy."""
+"""Location: ./tests/unit/mcpgateway/transports/test_rust_mcp_runtime_proxy.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the experimental Rust MCP runtime proxy.
+"""
 
 # Standard
 import base64

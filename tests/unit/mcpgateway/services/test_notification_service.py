@@ -2,6 +2,8 @@
 """Location: ./tests/unit/mcpgateway/services/test_notification_service.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Author: Keval Mahajan
 
 Unit tests for the NotificationService.

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for SpanAttributeCustomizer attribute mapping feature.
-
-Location: ./tests/integration/test_span_attribute_mapping_integration.py
-Copyright 2025
+"""Location: ./tests/integration/test_span_attribute_mapping_integration.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for SpanAttributeCustomizer attribute mapping feature.
 """
 
 import pytest
@@ -38,7 +39,7 @@ async def test_plugin_manager_applies_attribute_mapping():
                 "plugin.mode": "controls.enforcement.mode",
                 "plugin.priority": "controls.execution.priority",
             }
-        }
+        },
     )
 
     # Create plugin instance
@@ -94,7 +95,7 @@ async def test_plugin_manager_applies_attribute_mapping():
 @pytest.mark.asyncio
 async def test_observability_service_applies_attribute_mapping():
     """Test that ObservabilityService applies attribute mapping when creating spans."""
-    with patch('mcpgateway.services.observability_service.SessionLocal') as mock_session:
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_session:
         mock_db = MagicMock()
         mock_session.return_value.__enter__.return_value = mock_db
 
@@ -133,9 +134,6 @@ async def test_observability_service_applies_attribute_mapping():
         # We can't directly verify this without mocking deeper, but we've covered the code path
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_end_to_end_attribute_mapping_flow():
     """Test complete flow: plugin sets mapping, manager and observability use it."""
@@ -150,7 +148,7 @@ async def test_end_to_end_attribute_mapping_flow():
                 "plugin.name": "controls.artifact.name",
                 "tool.name": "controls.artifact.name",
             }
-        }
+        },
     )
 
     plugin = SpanAttributeCustomizerPlugin(plugin_config)

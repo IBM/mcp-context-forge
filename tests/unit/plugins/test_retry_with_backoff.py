@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for Retry With Backoff Plugin.
+"""Location: ./tests/unit/plugins/test_retry_with_backoff.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for Retry With Backoff Plugin.
 
 Verifies:
 1. _compute_delay_ms — no-jitter exact values, jitter range, exponential growth, cap

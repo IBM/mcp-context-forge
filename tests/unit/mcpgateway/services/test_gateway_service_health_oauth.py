@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Additional health check and OAuth tests for GatewayService to improve coverage.
-Location: ./tests/unit/mcpgateway/services/test_gateway_service_health_oauth.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service_health_oauth.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Claude Code for coverage improvement
 
+Additional health check and OAuth tests for GatewayService to improve coverage.
 These tests specifically target uncovered areas in gateway_service.py including:
 - Health check functionality
 - OAuth integration

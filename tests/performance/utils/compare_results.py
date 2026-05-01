@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/utils/compare_results.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Performance Results Comparison Utility
 
 Compares performance test results across different configurations.

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/performance/utils/report_generator.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 HTML Performance Test Report Generator
 
 Generates comprehensive HTML reports from performance test results including:
@@ -20,7 +24,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import yaml
-
 
 # HTML Template with embedded CSS and Chart.js
 HTML_TEMPLATE = """

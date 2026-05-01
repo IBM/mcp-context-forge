@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for LLM proxy service."""
+"""Location: ./tests/unit/mcpgateway/services/test_llm_proxy_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for LLM proxy service.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -269,8 +275,8 @@ def test_transform_anthropic_stream_chunk(service):
     chunk = service._transform_anthropic_stream_chunk(text_delta, "id", 1, "model")
     stop_chunk = service._transform_anthropic_stream_chunk(stop_event, "id", 1, "model")
 
-    assert "\"content\":\"hi\"" in chunk
-    assert "\"finish_reason\":\"stop\"" in stop_chunk
+    assert '"content":"hi"' in chunk
+    assert '"finish_reason":"stop"' in stop_chunk
     assert service._transform_anthropic_stream_chunk({"type": "other"}, "id", 1, "model") is None
 
 
@@ -278,8 +284,8 @@ def test_transform_ollama_stream_chunk(service):
     chunk = service._transform_ollama_stream_chunk({"message": {"content": "hi"}, "done": False}, "id", 1, "model")
     stop_chunk = service._transform_ollama_stream_chunk({"message": {"content": ""}, "done": True}, "id", 1, "model")
 
-    assert "\"content\":\"hi\"" in chunk
-    assert "\"finish_reason\":\"stop\"" in stop_chunk
+    assert '"content":"hi"' in chunk
+    assert '"finish_reason":"stop"' in stop_chunk
 
 
 @pytest.mark.asyncio
@@ -358,7 +364,7 @@ async def test_chat_completion_stream_openai(service):
             for line in self._lines:
                 yield line
 
-    stream_response = DummyStreamResponse(["data: {\"choices\": []}", "data: [DONE]"])
+    stream_response = DummyStreamResponse(['data: {"choices": []}', "data: [DONE]"])
     service._client = MagicMock()
     service._client.stream = MagicMock(return_value=stream_response)
 
@@ -366,7 +372,7 @@ async def test_chat_completion_stream_openai(service):
     async for chunk in service.chat_completion_stream(MagicMock(), request):
         chunks.append(chunk)
 
-    assert "data: {\"choices\": []}\n\n" in chunks
+    assert 'data: {"choices": []}\n\n' in chunks
     assert "data: [DONE]\n\n" in chunks
 
 

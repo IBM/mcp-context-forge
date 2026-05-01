@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""tag records changes list[str] to list[Dict[str,str]]
+"""Location: ./mcpgateway/alembic/versions/9e028ecf59c4_tag_records_changes_list_str_to_list_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+tag records changes list[str] to list[Dict[str,str]]
 
 Revision ID: 9e028ecf59c4
 Revises: add_toolops_test_cases_table
 Create Date: 2025-11-26 18:15:07.113528
-
 """
 
 # Standard

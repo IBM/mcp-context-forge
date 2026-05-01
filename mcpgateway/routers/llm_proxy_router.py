@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/llm_proxy_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 LLM Proxy Router.
 This module provides OpenAI-compatible API endpoints for the internal

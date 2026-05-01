@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Benchmark the request-logging masking Rust native extension against the Python path."""
+"""Location: ./tests/performance/test_request_logging_masking_native_extension_benchmark.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Benchmark the request-logging masking Rust native extension against the Python path.
+"""
 
 # Standard
 from __future__ import annotations

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tenant-id population in the tool-service GlobalContext fallback paths (G1).
+"""Location: ./tests/unit/mcpgateway/services/test_tool_service_tenant_id.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tenant-id population in the tool-service GlobalContext fallback paths (G1).
 
 Covers ``ToolService._build_rust_tool_hook_global_context`` and the same
 ``else`` branch inside ``invoke_tool`` that fires when middleware didn't

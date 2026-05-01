@@ -1,9 +1,14 @@
-"""add_grant_source_to_team_members
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/225bde88217e_add_grant_source_to_team_members.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_grant_source_to_team_members
 
 Revision ID: 225bde88217e
 Revises: 615af4ab94b4
 Create Date: 2026-03-25 12:51:19.526274
-
 """
 
 # Standard

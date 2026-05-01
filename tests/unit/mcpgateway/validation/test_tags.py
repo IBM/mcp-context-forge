@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/validation/test_tags.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -48,11 +48,11 @@ class TestTagValidator:
         """Test validation of tag lists."""
         # Basic test with duplicates
         result = TagValidator.validate_list(["Analytics", "ANALYTICS", "ml"])
-        assert result == [{'id':'analytics','label':'Analytics'}, {'id':'ml','label':'ml'}]
+        assert result == [{"id": "analytics", "label": "Analytics"}, {"id": "ml", "label": "ml"}]
 
         # Test with invalid tags
         result = TagValidator.validate_list(["", "a", "valid-tag", "-invalid"])
-        assert result == [{'id':'valid-tag','label':'valid-tag'}]
+        assert result == [{"id": "valid-tag", "label": "valid-tag"}]
 
         # Test with None
         assert TagValidator.validate_list(None) == []
@@ -62,7 +62,7 @@ class TestTagValidator:
 
         # Test preserving order
         result = TagValidator.validate_list(["zebra", "apple", "banana"])
-        assert result == [{'id':'zebra','label':'zebra'}, {'id':'apple','label':'apple'}, {'id':'banana','label':'banana'}]
+        assert result == [{"id": "zebra", "label": "zebra"}, {"id": "apple", "label": "apple"}, {"id": "banana", "label": "banana"}]
 
     def test_get_validation_errors(self):
         """Test getting validation errors."""
@@ -88,7 +88,7 @@ class TestValidateTagsField:
     def test_validate_tags_field_valid(self):
         """Test field validation with valid tags."""
         result = validate_tags_field(["Analytics", "ml", "production"])
-        assert result == [{'id':'analytics','label':'Analytics'}, {'id':'ml','label':'ml'}, {'id':'production','label':'production'}]
+        assert result == [{"id": "analytics", "label": "Analytics"}, {"id": "ml", "label": "ml"}, {"id": "production", "label": "production"}]
 
     def test_validate_tags_field_none(self):
         """Test field validation with None."""
@@ -102,7 +102,7 @@ class TestValidateTagsField:
         """Test field validation with some invalid tags."""
         # Should filter out invalid tags silently
         result = validate_tags_field(["valid", "", "a"])
-        assert result == [{'id':'valid','label':'valid'}]
+        assert result == [{"id": "valid", "label": "valid"}]
 
     def test_validate_tags_field_all_invalid(self):
         """Test field validation with all invalid tags."""
@@ -113,22 +113,22 @@ class TestValidateTagsField:
     def test_validate_tags_field_duplicates(self):
         """Test field validation removes duplicates."""
         result = validate_tags_field(["finance", "Finance", "FINANCE"])
-        assert result == [{'id':'finance','label':'finance'}]
+        assert result == [{"id": "finance", "label": "finance"}]
 
     def test_validate_tags_field_special_chars(self):
         """Test field validation with special characters."""
         result = validate_tags_field(["high-priority", "team:backend", "v2.0"])
-        assert result == [{'id':'high-priority','label':'high-priority'}, {'id':'team:backend','label':'team:backend'}, {'id':'v2.0','label':'v2.0'}]
+        assert result == [{"id": "high-priority", "label": "high-priority"}, {"id": "team:backend", "label": "team:backend"}, {"id": "v2.0", "label": "v2.0"}]
 
     def test_validate_tags_field_string_input(self):
         """Single string passed by mistake should be treated as a 1-item list."""
         result = validate_tags_field("Analytics")
-        assert result == [{'id':'analytics','label':'Analytics'}]
+        assert result == [{"id": "analytics", "label": "Analytics"}]
 
     def test_validate_tags_field_comma_separated_values(self):
         """Comma-separated values in a single tag entry should be expanded."""
         result = validate_tags_field(["tag1, tag2, tag3"])
-        assert result == [{'id':'tag1','label':'tag1'}, {'id':'tag2','label':'tag2'}, {'id':'tag3','label':'tag3'}]
+        assert result == [{"id": "tag1", "label": "tag1"}, {"id": "tag2", "label": "tag2"}, {"id": "tag3", "label": "tag3"}]
 
 
 class TestTagPatterns:

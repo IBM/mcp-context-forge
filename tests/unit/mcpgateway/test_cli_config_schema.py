@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/test_cli_config_schema.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 import json
 import subprocess
 import sys

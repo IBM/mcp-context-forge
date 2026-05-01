@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ``mcpgateway.runtime_state``."""
+"""Location: ./tests/unit/mcpgateway/test_runtime_state.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for ``mcpgateway.runtime_state``.
+"""
 
 # Standard
 from typing import Any

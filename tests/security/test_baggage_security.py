@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Security tests for baggage implementation.
+"""Location: ./tests/security/test_baggage_security.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Security tests for baggage implementation.
 
 Tests cover:
 - Deny-path scenarios (unauthenticated, wrong team, insufficient permissions)

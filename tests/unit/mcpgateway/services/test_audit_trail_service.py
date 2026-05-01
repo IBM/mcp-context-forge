@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for audit_trail_service."""
+"""Location: ./tests/unit/mcpgateway/services/test_audit_trail_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for audit_trail_service.
+"""
 
 # Standard
 from unittest.mock import MagicMock
@@ -253,3 +259,44 @@ def test_get_audit_trail_applies_filters(monkeypatch):
         offset=0,
     )
     assert len(result) == 1
+
+
+def test_log_action_user_identity_extraction_exception_logs_debug(monkeypatch, caplog):
+    """Test that exceptions during user identity extraction are logged with correct parameters."""
+    import logging
+    from unittest.mock import patch
+
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+    monkeypatch.setattr(svc, "AuditTrail", lambda **_kwargs: MagicMock())
+
+    service = svc.AuditTrailService()
+
+    # Mock the user_identity_var at the import location to raise an exception
+    mock_identity_var = MagicMock()
+    mock_identity_var.get.side_effect = RuntimeError("Identity extraction failed")
+
+    # Patch the module where user_identity_var is imported from
+    with patch("mcpgateway.transports.context.user_identity_var", mock_identity_var):
+        # Capture logs at DEBUG level
+        with caplog.at_level(logging.DEBUG):
+            result = service.log_action(
+                action="CREATE",
+                resource_type="tool",
+                resource_id="tool-1",
+                user_id="user-1",
+            )
+
+        # Verify the audit entry was still created despite the exception
+        assert result is not None
+        assert dummy_session.committed is True
+
+        # Verify the debug log was called with correct parameters
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG" and "Failed to extract user identity context for audit trail" in r.message]
+        assert len(debug_records) == 1
+        record = debug_records[0]
+        assert hasattr(record, "error")
+        assert record.error == "Identity extraction failed"
+        assert hasattr(record, "correlation_id")
+        assert record.correlation_id is not None  # correlation_id is auto-generated

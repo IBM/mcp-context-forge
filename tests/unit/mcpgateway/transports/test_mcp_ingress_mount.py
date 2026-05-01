@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ``mcpgateway.transports.mcp_ingress_mount.MCPIngressMount``.
+"""Location: ./tests/unit/mcpgateway/transports/test_mcp_ingress_mount.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for ``mcpgateway.transports.mcp_ingress_mount.MCPIngressMount``.
 
 The mount is intentionally tiny: a registry of named ASGI apps + a
 selector function. These tests exercise the registry/selector/fallback

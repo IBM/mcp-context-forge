@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_innerhtml_guard.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Regression tests for innerHTML sanitizer guard (PR #3129).
 
@@ -860,11 +861,14 @@ class TestChatServerSelection:
         page = admin_page.page
 
         # Intercept /admin/servers to return mock server data
-        page.route("**/admin/servers**", lambda route: route.fulfill(
-            status=200,
-            content_type="application/json",
-            body='{"data": [{"id": "srv-1", "name": "Test Server", "isActive": true, "enabled": true, "visibility": "public", "description": "A test server", "associatedTools": ["t1"], "tools": [], "resources": [], "prompts": []}]}',
-        ))
+        page.route(
+            "**/admin/servers**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"data": [{"id": "srv-1", "name": "Test Server", "isActive": true, "enabled": true, "visibility": "public", "description": "A test server", "associatedTools": ["t1"], "tools": [], "resources": [], "prompts": []}]}',
+            ),
+        )
 
         try:
             result = page.evaluate("""
@@ -922,11 +926,14 @@ class TestChatServerSelection:
         page = admin_page.page
 
         # Intercept /admin/servers to return mock data with 2 servers
-        page.route("**/admin/servers**", lambda route: route.fulfill(
-            status=200,
-            content_type="application/json",
-            body='{"data": [{"id": "srv-a", "name": "Server A", "isActive": true, "visibility": "public", "description": "A", "associatedTools": []}, {"id": "srv-b", "name": "Server B", "isActive": true, "visibility": "public", "description": "B", "associatedTools": []}]}',
-        ))
+        page.route(
+            "**/admin/servers**",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"data": [{"id": "srv-a", "name": "Server A", "isActive": true, "visibility": "public", "description": "A", "associatedTools": []}, {"id": "srv-b", "name": "Server B", "isActive": true, "visibility": "public", "description": "B", "associatedTools": []}]}',
+            ),
+        )
 
         try:
             result = page.evaluate("""
@@ -1152,7 +1159,7 @@ class TestNoInlineOnclickInInnerHtmlStrings:
     # Patterns that are NOT acceptable inside innerHTML strings:
     #   onclick="..."  onchange="..."  onsubmit="..."  etc.
 
-    _INLINE_HANDLER_RE = r'\bon\w+\s*='
+    _INLINE_HANDLER_RE = r"\bon\w+\s*="
 
     def _find_innerhtml_string_violations(self, js_path: str) -> list:
         """Return list of (line_no, line_text) where an innerHTML string contains on* attr."""
@@ -1179,21 +1186,21 @@ class TestNoInlineOnclickInInnerHtmlStrings:
             # Detect start of innerHTML assignment
             if not in_template and re.search(r'\.innerHTML\s*=\s*[`"\']', stripped):
                 in_template = True
-                backtick_depth = stripped.count('`') % 2  # odd = open template literal
+                backtick_depth = stripped.count("`") % 2  # odd = open template literal
 
             if in_template:
                 # Check for inline handlers (excluding data-action and aria-*)
                 if re.search(self._INLINE_HANDLER_RE, stripped):
                     # Exclude lines that are only comments
-                    if not stripped.startswith('//') and not stripped.startswith('*'):
+                    if not stripped.startswith("//") and not stripped.startswith("*"):
                         violations.append((lineno, line.rstrip()))
 
                 # Detect end of template literal
-                if '`' in stripped:
-                    backtick_depth = (backtick_depth + stripped.count('`')) % 2
+                if "`" in stripped:
+                    backtick_depth = (backtick_depth + stripped.count("`")) % 2
                     if backtick_depth == 0:
                         in_template = False
-                elif stripped.endswith(';') and not stripped.startswith('//'):
+                elif stripped.endswith(";") and not stripped.startswith("//"):
                     # Single-line string assignment ended
                     in_template = False
 
@@ -1211,7 +1218,11 @@ class TestNoInlineOnclickInInnerHtmlStrings:
 
         js_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "mcpgateway", "static", "admin.js",
+            "..",
+            "..",
+            "mcpgateway",
+            "static",
+            "admin.js",
         )
         js_path = os.path.normpath(js_path)
 
@@ -1220,8 +1231,7 @@ class TestNoInlineOnclickInInnerHtmlStrings:
         assert not violations, (
             f"Found {len(violations)} inline on* handler(s) inside innerHTML strings in admin.js.\n"
             "Convert them to data-action + addEventListener (see PR #3373).\n"
-            "Violations:\n"
-            + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations[:20])
+            "Violations:\n" + "\n".join(f"  line {ln}: {txt}" for ln, txt in violations[:20])
         )
 
     def test_templates_have_no_inline_onclick_in_dynamic_content(self) -> None:
@@ -1243,7 +1253,10 @@ class TestNoInlineOnclickInInnerHtmlStrings:
 
         templates_dir = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "mcpgateway", "templates",
+            "..",
+            "..",
+            "mcpgateway",
+            "templates",
         )
         templates_dir = os.path.normpath(templates_dir)
 
@@ -1263,13 +1276,12 @@ class TestNoInlineOnclickInInnerHtmlStrings:
                     stripped = line.strip()
                     if re.search(self._INLINE_HANDLER_RE, stripped):
                         # Exclude Jinja2 comments and HTML comments
-                        if not stripped.startswith('{#') and not stripped.startswith('<!--'):
+                        if not stripped.startswith("{#") and not stripped.startswith("<!--"):
                             violations.append((template_name, lineno, line.rstrip()))
 
         assert not violations, (
             f"Found {len(violations)} inline on* handler(s) in innerHTML-injected templates.\n"
             "These will be silently stripped by the innerHTML guard (PR #3129).\n"
             "Convert them to data-action + addEventListener (see PR #3373).\n"
-            "Violations:\n"
-            + "\n".join(f"  {name}:{ln}: {txt}" for name, ln, txt in violations[:20])
+            "Violations:\n" + "\n".join(f"  {name}:{ln}: {txt}" for name, ln, txt in violations[:20])
         )

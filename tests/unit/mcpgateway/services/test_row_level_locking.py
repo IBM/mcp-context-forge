@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
-"""
-Location: ./tests/unit/mcpgateway/services/test_row_level_locking.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_row_level_locking.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

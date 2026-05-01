@@ -23,13 +23,16 @@
         "vitest": "^4.0.18"
     },
     "overrides": {
+        "@tootallnate/once": ">=3.0.1",
         "basic-ftp": ">=5.3.0",
         "flatted": ">=3.4.2",
+        "ip": ">=2.0.1",
         "keyv": "5.1.0",
         "minimatch": ">=10.2.1",
         "picomatch": ">=4.0.4",
         "rollup": ">=4.59.0",
-        "undici": "^7.24.5"
+        "undici": "^7.24.5",
+        "uuid": ">=14.0.0"
     },
     "scripts": {
         "test": "vitest run",

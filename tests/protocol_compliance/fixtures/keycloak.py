@@ -1,4 +1,10 @@
-"""Keycloak fixture — Realm/client matches the bundled ``infra/keycloak/realm-export.json``.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/fixtures/keycloak.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Keycloak fixture — Realm/client matches the bundled ``infra/keycloak/realm-export.json``.
 
 The ``sso`` docker-compose profile brings this up on ``localhost:8180``.
 Start it via ``docker compose --profile sso up keycloak`` before running

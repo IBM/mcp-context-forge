@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for correlation ID middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_correlation_id.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for correlation ID middleware.
+"""
 
 import pytest
 from unittest.mock import Mock, patch

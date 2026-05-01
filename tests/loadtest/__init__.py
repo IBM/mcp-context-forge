@@ -1,2 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Locust load testing package for ContextForge."""
+"""Location: ./tests/loadtest/__init__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Locust load testing package for ContextForge.
+"""

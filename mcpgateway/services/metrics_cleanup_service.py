@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Metrics Cleanup Service for automatic deletion of old metrics.
+"""Location: ./mcpgateway/services/metrics_cleanup_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Metrics Cleanup Service for automatic deletion of old metrics.
 This service provides automatic and manual cleanup of old metrics data to prevent
 unbounded table growth and maintain query performance.
-
 Features:
 - Batched deletion to prevent long locks
 - Configurable retention period
 - Background task for periodic cleanup
 - Manual cleanup trigger via admin API
 - Per-table cleanup with statistics
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

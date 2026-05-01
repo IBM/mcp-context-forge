@@ -1,4 +1,10 @@
-"""MCP lifecycle compliance tests.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP lifecycle compliance tests.
 
 The client fixture has already run the initialize handshake by the time a
 test body executes; these probes confirm the session is live and responsive.

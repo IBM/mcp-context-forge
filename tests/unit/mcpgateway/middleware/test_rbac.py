@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/middleware/test_rbac.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 # Standard
 from contextlib import contextmanager
 import importlib

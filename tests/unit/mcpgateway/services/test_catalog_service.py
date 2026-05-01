@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_catalog_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -91,8 +91,7 @@ async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
             {"id": "1", "name": "oauth-srv", "url": "http://oauth.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "OAuth server"},
         ]
     }
-    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
-         patch.object(service, "_get_registry_cache", return_value=None):
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Disabled OAuth server with no oauth_config - needs configuration
         db.execute.return_value = [("http://oauth.example.com", False, "oauth", None)]
@@ -109,11 +108,19 @@ async def test_get_catalog_servers_requires_oauth_config_configured(service):
     """Test that disabled OAuth server with oauth_config is NOT marked as requires_oauth_config."""
     fake_catalog = {
         "catalog_servers": [
-            {"id": "2", "name": "oauth-configured", "url": "http://oauth-configured.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "Configured OAuth server"},
+            {
+                "id": "2",
+                "name": "oauth-configured",
+                "url": "http://oauth-configured.example.com",
+                "category": "cat",
+                "auth_type": "OAuth2.1",
+                "provider": "prov",
+                "tags": [],
+                "description": "Configured OAuth server",
+            },
         ]
     }
-    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
-         patch.object(service, "_get_registry_cache", return_value=None):
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Disabled OAuth server WITH oauth_config - manually disabled, not needing setup
         db.execute.return_value = [("http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"})]
@@ -130,11 +137,19 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
     """Test that enabled OAuth server is NOT marked as requires_oauth_config."""
     fake_catalog = {
         "catalog_servers": [
-            {"id": "3", "name": "oauth-enabled", "url": "http://oauth-enabled.example.com", "category": "cat", "auth_type": "OAuth2.1", "provider": "prov", "tags": [], "description": "Enabled OAuth server"},
+            {
+                "id": "3",
+                "name": "oauth-enabled",
+                "url": "http://oauth-enabled.example.com",
+                "category": "cat",
+                "auth_type": "OAuth2.1",
+                "provider": "prov",
+                "tags": [],
+                "description": "Enabled OAuth server",
+            },
         ]
     }
-    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), \
-         patch.object(service, "_get_registry_cache", return_value=None):
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Enabled OAuth server - fully configured and active
         db.execute.return_value = [("http://oauth-enabled.example.com", True, "oauth", {"client_id": "abc"})]
