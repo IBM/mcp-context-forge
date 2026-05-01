@@ -8384,11 +8384,13 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## �
 # help: migration-test-sqlite    - Run SQLite container migration tests only
 # help: migration-test-postgres  - Run PostgreSQL compose migration tests only
 # help: migration-test-performance - Run migration performance benchmarking
+# help: migration-test-rollback  - Run only downgrade/reverse migration tests (pytest + roundtrip)
+# help: migration-test-cross-db  - Run cross-database schema consistency test
 # help: migration-setup          - Setup migration test environment
 # help: migration-cleanup        - Clean up migration test containers and volumes
 # help: migration-debug          - Debug migration test failures with diagnostic info
 # help: migration-status         - Show current version configuration and supported versions
-# help: upgrade-validate         - Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+# help: upgrade-validate         - Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 
 # Migration testing configuration
 MIGRATION_TEST_DIR := tests/migration
@@ -8400,7 +8402,7 @@ UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
-        migration-setup migration-cleanup migration-debug migration-status upgrade-validate
+        migration-test-rollback migration-test-cross-db migration-setup migration-cleanup migration-debug migration-status upgrade-validate
 
 migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
@@ -8447,10 +8449,29 @@ migration-test-performance:               ## Run migration performance benchmark
 		-v --tb=short --log-cli-level=INFO"
 	@echo "✅ Performance tests complete!"
 
-.PHONY: migration-setup
-migration-setup:                           ## Setup migration test environment
-	@echo "🔧 Setting up migration test environment..."
+migration-test-rollback:                  ## Run only downgrade/reverse migration tests (pytest + roundtrip)
+	@echo "⏪ Running reverse migration (downgrade) tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	               $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	        -k 'reverse or rollback' \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "🔄 Running upgrade/downgrade roundtrip validation..."
+	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
+	@echo "✅ Rollback tests complete!"
+
+migration-test-cross-db:                  ## Run cross-database schema consistency test
+	@echo "🔀 Running cross-database schema consistency test..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+	        pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "✅ Cross-database schema consistency check complete!"
+
+migration-setup:                          ## Setup migration test environment
+	@echo "🔧 Setting up migration test environment..."
 	@mkdir -p $(MIGRATION_REPORTS_DIR)
 	@mkdir -p $(MIGRATION_TEST_DIR)/logs
 	@echo "📦 Pulling required container images..."
@@ -8514,7 +8535,7 @@ migration-status:                          ## Show current version configuration
 		cd $(MIGRATION_TEST_DIR) && python3 version_status.py"
 
 .PHONY: upgrade-validate
-upgrade-validate:                         ## Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+upgrade-validate:                         ## Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 	@echo "🔄 Running upgrade validation harness..."
 	@echo "  Base image:   $(UPGRADE_BASE_IMAGE)"
 	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"

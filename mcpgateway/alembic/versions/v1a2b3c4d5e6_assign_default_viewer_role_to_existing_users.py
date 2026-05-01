@@ -42,6 +42,12 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# Sentinel value written to user_roles.migration_source for rows inserted by
+# this migration. Used by downgrade() to identify and remove only the rows
+# this migration created, leaving bootstrap and runtime grants untouched.
+MIGRATION_SOURCE = "migration:v1a2b3c4d5e6"
+
+
 # Define new role permissions
 ROLE_PERMISSIONS = {
     "team_admin": [
@@ -160,6 +166,12 @@ def upgrade() -> None:
     if "roles" not in existing_tables or "user_roles" not in existing_tables:
         print("RBAC tables not found. Skipping migration.")
         return
+
+    # Ensure user_roles.migration_source exists so we can tag the rows we insert.
+    user_roles_columns = [col["name"] for col in inspector.get_columns("user_roles")]
+    if "migration_source" not in user_roles_columns:
+        op.add_column("user_roles", sa.Column("migration_source", sa.String(50), nullable=True))
+        print("  ✓ Added user_roles.migration_source column for migration tracking")
 
     # Skip if email_users table doesn't exist
     if "email_users" not in existing_tables:
@@ -342,11 +354,15 @@ def upgrade() -> None:
 
     # Step 5: Assign roles to users
     print("\n=== Step 5: Assigning roles to users ===")
+    # Tag inserted rows with grant_source = MIGRATION_GRANT_SOURCE so
+    # downgrade() can remove only the rows this migration created.
     insert_user_role = text("""
         INSERT INTO user_roles (id, user_email, role_id, scope, scope_id,
-                              granted_by, granted_at, expires_at, is_active)
+                              granted_by, granted_at, expires_at, is_active,
+                              migration_source)
         VALUES (:id, :user_email, :role_id, :scope, :scope_id,
-                :granted_by, :granted_at, :expires_at, :is_active)
+                :granted_by, :granted_at, :expires_at, :is_active,
+                :migration_source)
     """)
 
     granted_by_email = admin_email
@@ -379,6 +395,7 @@ def upgrade() -> None:
                     "granted_at": now,
                     "expires_at": None,
                     "is_active": True,
+                    "migration_source": MIGRATION_SOURCE,
                 },
             )
 
@@ -397,6 +414,7 @@ def upgrade() -> None:
                         "granted_at": now,
                         "expires_at": None,
                         "is_active": True,
+                        "migration_source": MIGRATION_SOURCE,
                     },
                 )
                 print(f"  ✓ Assigned 'team_admin' (team) + '{global_role_name}' (global) to: {user_email}")
@@ -427,8 +445,6 @@ def downgrade() -> None:
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
 
-    admin_email = settings.platform_admin_email
-
     # Detect database dialect
     dialect_name = bind.dialect.name
     print(f"Detected database dialect: {dialect_name}")
@@ -441,32 +457,36 @@ def downgrade() -> None:
     now = datetime.now(timezone.utc)
 
     # Step 1: Remove migration-assigned role assignments
-    # Only delete assignments granted by this migration (granted_by = platform admin email)
-    # for roles that this migration assigns (team_admin, platform_admin, platform_viewer).
-    # Do this FIRST to avoid foreign key constraint issues with platform_viewer removal.
+    # Identify them by migration_source = MIGRATION_SOURCE (set on insert in
+    # upgrade()). This is precise and cannot accidentally remove rows created
+    # by bootstrap_db, manual admin actions, or SSO sync, which use other
+    # grant_source/migration_source values (NULL, 'manual', 'sso', etc.).
+    #
+    # Older databases that ran the previous version of this migration won't
+    # have any tagged rows; in that case nothing is removed and the operator
+    # must clean up manually. The previous behaviour
+    # (DELETE WHERE granted_by = admin_email) over-deleted the bootstrap
+    # admin's platform_admin grant, so we deliberately do not fall back to it.
     print("\n=== Step 1: Removing migration-assigned roles ===")
     try:
-        # Get the role IDs this migration assigns
-        migration_role_ids = []
-        for rname in ("team_admin", "platform_admin", "platform_viewer"):
-            row = bind.execute(text("SELECT id FROM roles WHERE name = :n LIMIT 1"), {"n": rname}).fetchone()
-            if row:
-                migration_role_ids.append(row[0])
-
-        if migration_role_ids:
-            # Delete only assignments that match the migration's granted_by AND role_ids
-            placeholders = ", ".join(f":rid{i}" for i in range(len(migration_role_ids)))
-            params = {f"rid{i}": rid for i, rid in enumerate(migration_role_ids)}
-            params["granted_by"] = admin_email
-            delete_sql = text(f"DELETE FROM user_roles WHERE granted_by = :granted_by AND role_id IN ({placeholders})")  # nosec B608 - placeholders are enumerated param names, not user input
-            result = bind.execute(delete_sql, params)
+        user_roles_columns = [col["name"] for col in inspector.get_columns("user_roles")]
+        if "migration_source" in user_roles_columns:
+            result = bind.execute(
+                text("DELETE FROM user_roles WHERE migration_source = :ms"),
+                {"ms": MIGRATION_SOURCE},
+            )
             rowcount = getattr(result, "rowcount", "unknown")
-            print(f"  ✓ Removed {rowcount} migration-assigned role assignments")
+            print(f"  ✓ Removed {rowcount} migration-assigned role assignments (migration_source={MIGRATION_SOURCE})")
         else:
-            print("  ℹ No migration roles found to clean up")
+            print("  ℹ user_roles.migration_source column not present; cannot identify migration rows safely. Skipping deletion.")
     except Exception as e:
         print(f"  ⚠ Could not remove migration-assigned roles: {e}")
         # Don't return - continue with other steps
+
+    # Note: we intentionally do NOT drop the grant_source column here. It is
+    # owned by migration e1f2a3b4c5d6 (which runs later in the chain on
+    # upgrade and earlier on downgrade). Dropping it here would leave the
+    # database inconsistent if downgrade stops at this revision.
 
     # Step 2: Remove platform_viewer role
     print("\n=== Step 2: Removing platform_viewer role ===")
