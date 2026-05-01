@@ -270,6 +270,34 @@ assert_equals() {
     fi
 }
 
+# Like assert_equals but accepts a comma- or newline-separated set that contains
+# the expected member.  When the migration graph has parallel branches that diverge
+# below the downgrade target, Alembic leaves those branch tips in alembic_version
+# even after a successful downgrade; checking presence (not equality) correctly
+# validates the downgrade without failing on that pre-existing graph structure.
+assert_version_present() {
+    local actual="$1"
+    local expected_member="$2"
+    local description="$3"
+    local normalized
+
+    # Exact match is the ideal case
+    if [[ "${actual}" == "${expected_member}" ]]; then
+        return 0
+    fi
+
+    # Normalise comma/newline separators and look for the expected member
+    normalized="$(printf '%s' "${actual}" | tr ',\n' '\n\n' | grep -F '' )"
+    if printf '%s\n' "${normalized}" | grep -qxF "${expected_member}"; then
+        local oneline
+        oneline="$(printf '%s' "${actual}" | tr '\n' ',')"
+        log "INFO: ${description}: '${expected_member}' is present; extra heads remain from parallel migration branches: ${oneline%,}"
+        return 0
+    fi
+
+    fail "${description}: expected '${expected_member}' to be present in alembic_version, got '${actual}'"
+}
+
 assert_int_ge() {
     local actual="$1"
     local min_value="$2"
@@ -290,8 +318,10 @@ run_sqlite_fresh() {
 
     log "Running SQLite fresh install check"
     db_dir="$(mktemp -d)"
+    chmod 777 "${db_dir}"
     register_path "${db_dir}"
     db_file="${db_dir}/mcp-upgrade-test.db"
+    touch "${db_file}" && chmod 666 "${db_file}"
 
     docker run -d \
         --name "${container}" \
@@ -327,8 +357,10 @@ run_sqlite_upgrade() {
 
     log "Running SQLite upgrade check (${BASE_IMAGE} -> ${TARGET_IMAGE})"
     db_dir="$(mktemp -d)"
+    chmod 777 "${db_dir}"
     register_path "${db_dir}"
     db_file="${db_dir}/mcp-upgrade-test.db"
+    touch "${db_file}" && chmod 666 "${db_file}"
 
     docker run -d \
         --name "${old_container}" \
@@ -502,6 +534,182 @@ run_postgres_upgrade() {
     docker stop "${pg_container}" >/dev/null
 }
 
+run_sqlite_roundtrip() {
+    local expected_head="$1"
+    local port="$2"
+    local old_container="${NAME_PREFIX}-sqlite-rt-old"
+    local new_container="${NAME_PREFIX}-sqlite-rt-new"
+    local db_dir
+    local db_file
+    local base_version
+    local post_upgrade_version
+    local post_downgrade_version
+    local markers
+
+    log "Running SQLite round-trip check (${BASE_IMAGE} -> ${TARGET_IMAGE} -> downgrade)"
+    db_dir="$(mktemp -d)"
+    chmod 777 "${db_dir}"
+    register_path "${db_dir}"
+    db_file="${db_dir}/mcp-upgrade-test.db"
+    touch "${db_file}" && chmod 666 "${db_file}"
+
+    # Phase 1: boot base image – auto-migrates to its head revision
+    docker run -d \
+        --name "${old_container}" \
+        -p "${port}:4444" \
+        -e "DATABASE_URL=sqlite:////app/data/mcp-upgrade-test.db" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "HOST=0.0.0.0" \
+        -e "PORT=4444" \
+        -e "MCPGATEWAY_UI_ENABLED=false" \
+        -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+        -e "LOG_LEVEL=INFO" \
+        -v "${db_dir}:/app/data" \
+        "${BASE_IMAGE}" >/dev/null
+    register_container "${old_container}"
+
+    wait_for_health "http://127.0.0.1:${port}/health" "${old_container}"
+    base_version="$(sqlite_versions "${db_file}")"
+    log "SQLite round-trip: base version = ${base_version}"
+    seed_sqlite_marker "${db_file}"
+    docker stop "${old_container}" >/dev/null
+
+    # Phase 2: boot target image – auto-migrates to new head
+    docker run -d \
+        --name "${new_container}" \
+        -p "${port}:4444" \
+        -e "DATABASE_URL=sqlite:////app/data/mcp-upgrade-test.db" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "HOST=0.0.0.0" \
+        -e "PORT=4444" \
+        -e "MCPGATEWAY_UI_ENABLED=false" \
+        -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+        -e "LOG_LEVEL=INFO" \
+        -v "${db_dir}:/app/data" \
+        "${TARGET_IMAGE}" >/dev/null
+    register_container "${new_container}"
+
+    wait_for_health "http://127.0.0.1:${port}/health" "${new_container}"
+    post_upgrade_version="$(sqlite_versions "${db_file}")"
+    assert_equals "${post_upgrade_version}" "${expected_head}" "SQLite round-trip post-upgrade alembic_version"
+    docker stop "${new_container}" >/dev/null
+
+    # Phase 3: downgrade back to the base revision via alembic CLI
+    docker run --rm \
+        -v "${db_dir}:/app/data" \
+        -e "DATABASE_URL=sqlite:////app/data/mcp-upgrade-test.db" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "LOG_LEVEL=INFO" \
+        "${TARGET_IMAGE}" \
+        /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini downgrade "${base_version}"
+
+    post_downgrade_version="$(sqlite_versions "${db_file}")"
+    assert_version_present "${post_downgrade_version}" "${base_version}" "SQLite round-trip post-downgrade alembic_version"
+    markers="$(sqlite_marker_count "${db_file}")"
+    assert_int_ge "${markers}" 1 "SQLite round-trip marker row count after downgrade"
+
+    log "SQLite round-trip check passed (${base_version} -> ${expected_head} -> ${base_version})"
+}
+
+run_postgres_roundtrip() {
+    local expected_head="$1"
+    local port="$2"
+    local network="${NAME_PREFIX}-pg-rt-net"
+    local pg_container="${NAME_PREFIX}-pg-rt-db"
+    local old_container="${NAME_PREFIX}-pg-rt-old"
+    local new_container="${NAME_PREFIX}-pg-rt-new"
+    local db_url
+    local base_version
+    local post_upgrade_version
+    local post_downgrade_version
+    local markers
+
+    log "Running PostgreSQL round-trip check (${BASE_IMAGE} -> ${TARGET_IMAGE} -> downgrade)"
+
+    docker network create "${network}" >/dev/null
+    register_network "${network}"
+
+    docker run -d \
+        --name "${pg_container}" \
+        --network "${network}" \
+        -e "POSTGRES_USER=postgres" \
+        -e "POSTGRES_PASSWORD=upgrade-test-password" \
+        -e "POSTGRES_DB=mcp" \
+        postgres:18 >/dev/null
+    register_container "${pg_container}"
+
+    wait_for_postgres_ready "${pg_container}"
+
+    db_url="postgresql+psycopg://postgres:upgrade-test-password@${pg_container}:5432/mcp"
+
+    # Phase 1: boot base image – auto-migrates to its head revision
+    docker run -d \
+        --name "${old_container}" \
+        --network "${network}" \
+        -p "${port}:4444" \
+        -e "DATABASE_URL=${db_url}" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "HOST=0.0.0.0" \
+        -e "PORT=4444" \
+        -e "MCPGATEWAY_UI_ENABLED=false" \
+        -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+        -e "LOG_LEVEL=INFO" \
+        "${BASE_IMAGE}" >/dev/null
+    register_container "${old_container}"
+
+    wait_for_health "http://127.0.0.1:${port}/health" "${old_container}"
+    base_version="$(psql_query "${pg_container}" "SELECT version_num FROM alembic_version ORDER BY version_num LIMIT 1")"
+    log "PostgreSQL round-trip: base version = ${base_version}"
+    psql_query "${pg_container}" "CREATE TABLE IF NOT EXISTS upgrade_test_marker (id SERIAL PRIMARY KEY, note TEXT NOT NULL);" >/dev/null
+    psql_query "${pg_container}" "INSERT INTO upgrade_test_marker(note) VALUES ('from-base-image');" >/dev/null
+    docker stop "${old_container}" >/dev/null
+
+    # Phase 2: boot target image – auto-migrates to new head
+    docker run -d \
+        --name "${new_container}" \
+        --network "${network}" \
+        -p "${port}:4444" \
+        -e "DATABASE_URL=${db_url}" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "HOST=0.0.0.0" \
+        -e "PORT=4444" \
+        -e "MCPGATEWAY_UI_ENABLED=false" \
+        -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+        -e "LOG_LEVEL=INFO" \
+        "${TARGET_IMAGE}" >/dev/null
+    register_container "${new_container}"
+
+    wait_for_health "http://127.0.0.1:${port}/health" "${new_container}"
+    post_upgrade_version="$(psql_query "${pg_container}" "SELECT version_num FROM alembic_version ORDER BY version_num")"
+    assert_equals "${post_upgrade_version}" "${expected_head}" "PostgreSQL round-trip post-upgrade alembic_version"
+    docker stop "${new_container}" >/dev/null
+
+    # Phase 3: downgrade back to the base revision via alembic CLI
+    docker run --rm \
+        --network "${network}" \
+        -e "DATABASE_URL=${db_url}" \
+        -e "AUTH_REQUIRED=false" \
+        -e "CACHE_TYPE=memory" \
+        -e "LOG_LEVEL=INFO" \
+        "${TARGET_IMAGE}" \
+        /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini downgrade "${base_version}"
+
+    post_downgrade_version="$(psql_query "${pg_container}" "SELECT version_num FROM alembic_version ORDER BY version_num")"
+    assert_version_present "${post_downgrade_version}" "${base_version}" "PostgreSQL round-trip post-downgrade alembic_version"
+    markers="$(psql_query "${pg_container}" "SELECT count(*) FROM upgrade_test_marker")"
+    assert_int_ge "${markers}" 1 "PostgreSQL round-trip marker row count after downgrade"
+
+    docker stop "${new_container}" >/dev/null
+    docker stop "${pg_container}" >/dev/null
+
+    log "PostgreSQL round-trip check passed (${base_version} -> ${expected_head} -> ${base_version})"
+}
+
 main() {
     local expected_head
 
@@ -519,12 +727,14 @@ main() {
     log "Expected alembic head: ${expected_head}"
 
     # Each test gets its own non-overlapping port range (base + 0..999)
-    run_sqlite_fresh    "${expected_head}" "$(next_port 22000)"
-    run_sqlite_upgrade  "${expected_head}" "$(next_port 23000)"
-    run_postgres_fresh  "${expected_head}" "$(next_port 24000)"
-    run_postgres_upgrade "${expected_head}" "$(next_port 25000)"
+    run_sqlite_fresh       "${expected_head}" "$(next_port 22000)"
+    run_sqlite_upgrade     "${expected_head}" "$(next_port 23000)"
+    run_postgres_fresh     "${expected_head}" "$(next_port 24000)"
+    run_postgres_upgrade   "${expected_head}" "$(next_port 25000)"
+    run_sqlite_roundtrip   "${expected_head}" "$(next_port 26000)"
+    run_postgres_roundtrip "${expected_head}" "$(next_port 27000)"
 
-    log "All upgrade validation checks passed"
+    log "All upgrade and downgrade (round-trip) validation checks passed"
 }
 
 main "$@"

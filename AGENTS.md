@@ -302,6 +302,63 @@ make test
 - **"Multiple heads are present"**: Your `down_revision` points to wrong parent. Fix by updating to actual current head.
 - **"Target database is not up to date"**: Run `alembic upgrade head` first.
 
+### Hermetic Downgrade: Config Snapshot Pattern
+
+Any migration whose `downgrade()` logic depends on runtime configuration (i.e., reads from
+`mcpgateway.config.settings`) **must** snapshot those values into `migration_metadata` during
+`upgrade()` and read them back during `downgrade()`. This makes the migration hermetic —
+its behaviour is determined by database state, not the current environment.
+
+```python
+from mcpgateway.config import settings
+from sqlalchemy import inspect, text
+
+REVISION = "your_revision_id"
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    # ... schema changes ...
+
+    # Snapshot any settings values used in downgrade
+    if "migration_metadata" in inspect(bind).get_table_names():
+        bind.execute(
+            text(
+                "INSERT INTO migration_metadata (revision, key, value, created_at) "
+                "VALUES (:rev, :key, :val, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (revision, key) DO UPDATE SET value = excluded.value"
+            ),
+            {"rev": REVISION, "key": "some_setting", "val": settings.some_setting},
+        )
+
+def downgrade() -> None:
+    bind = op.get_bind()
+
+    # Read from snapshot; fall back to live settings only if table is absent
+    # (pre-existing DB that was upgraded before this pattern was introduced)
+    cfg = {}
+    if "migration_metadata" in inspect(bind).get_table_names():
+        rows = bind.execute(
+            text("SELECT key, value FROM migration_metadata WHERE revision = :rev"),
+            {"rev": REVISION},
+        ).all()
+        cfg = {r[0]: r[1] for r in rows}
+
+    some_setting = cfg.get("some_setting") or settings.some_setting
+
+    # ... use some_setting for downgrade logic ...
+
+    # Clean up snapshot rows
+    if "migration_metadata" in inspect(bind).get_table_names():
+        bind.execute(
+            text("DELETE FROM migration_metadata WHERE revision = :rev"),
+            {"rev": REVISION},
+        )
+```
+
+**Rule:** If your migration imports `settings` and uses it in `downgrade()`, you must follow this
+pattern. Migrations that only use `settings` in `upgrade()` (e.g., for seeding initial data) are
+exempt.
+
 ## Coding Standards
 
 - **Python >= 3.11** with type hints; strict mypy
