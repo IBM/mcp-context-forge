@@ -100,8 +100,7 @@ curl -c cookies.txt -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@example.com",
-    "password": "changeme",
-    "remember_me": true
+    "password": "changeme"
   }' \
   $BASE_URL/auth/browser-login
 
@@ -113,7 +112,7 @@ curl -b cookies.txt $BASE_URL/auth/me
 - **httpOnly**: Not accessible via JavaScript (XSS protection)
 - **SameSite=Lax**: CSRF protection
 - **Secure**: HTTPS only (production)
-- **Max-Age**: 3600s (1 hour) or 2592000s (30 days with `remember_me: true`)
+- **Max-Age**: 3600s (1 hour)
 
 ### Authentication Endpoints
 
@@ -161,8 +160,7 @@ curl -c cookies.txt -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@example.com",
-    "password": "changeme",
-    "remember_me": false
+    "password": "changeme"
   }' \
   $BASE_URL/auth/browser-login | jq '.'
 ```
@@ -170,7 +168,6 @@ curl -c cookies.txt -X POST \
 **Parameters:**
 - `email` (required): User email address
 - `password` (required): User password
-- `remember_me` (optional): Extend cookie to 30 days (default: false, 1 hour)
 
 **Response:**
 ```json

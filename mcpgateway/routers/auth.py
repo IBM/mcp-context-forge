@@ -209,6 +209,10 @@ async def browser_login(login_request: LoginRequest, request: Request, response:
 
     For API clients that need the token in the response, use POST /auth/login instead.
 
+    CSRF Protection: Requires X-Requested-With: XMLHttpRequest header to prevent
+    cross-site login CSRF attacks where an attacker's site could set their session
+    on a victim's browser.
+
     Args:
         login_request: Login credentials (email/username + password)
         request: FastAPI request object
@@ -219,7 +223,7 @@ async def browser_login(login_request: LoginRequest, request: Request, response:
         dict: Success message and user info (no token in body)
 
     Raises:
-        HTTPException: If authentication fails
+        HTTPException: If authentication fails or CSRF validation fails
 
     Examples:
         {
@@ -228,6 +232,26 @@ async def browser_login(login_request: LoginRequest, request: Request, response:
         }
     """
     from mcpgateway.utils.security_cookies import CookieTooLargeError
+
+    # CSRF protection: Validate X-Requested-With header
+    # This prevents cross-site login CSRF where an attacker's page could
+    # silently authenticate the victim with the attacker's credentials
+    x_requested_with = request.headers.get("X-Requested-With", "")
+    if x_requested_with != "XMLHttpRequest":
+        logger.warning(
+            "CSRF validation failed on browser-login: missing or invalid X-Requested-With header",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "x_requested_with": x_requested_with,
+                "security_event": "csrf_validation_failed",
+                "security_severity": "medium",
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF validation failed. X-Requested-With header required for browser login.",
+        )
 
     auth_service = EmailAuthService(db)
     ip_address = get_client_ip(request)

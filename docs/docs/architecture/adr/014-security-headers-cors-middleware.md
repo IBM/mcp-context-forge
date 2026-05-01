@@ -87,12 +87,12 @@ Enhanced CORS setup in `mcpgateway/main.py` with automatic origin configuration:
 Added `mcpgateway/utils/security_cookies.py` with functions for secure authentication:
 
 ```python
-def set_auth_cookie(response: Response, token: str, remember_me: bool = False):
+def set_auth_cookie(response: Response, token: str):
     use_secure = (settings.environment == "production") or settings.secure_cookies
     response.set_cookie(
         key="jwt_token",
         value=token,
-        max_age=30 * 24 * 3600 if remember_me else 3600,
+        max_age=3600,
         httponly=True,      # Prevents JavaScript access
         secure=use_secure,  # HTTPS only in production
         samesite=settings.cookie_samesite,  # CSRF protection

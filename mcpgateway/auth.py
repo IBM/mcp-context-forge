@@ -103,7 +103,7 @@ _SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection fai
 
 async def get_current_user_from_cookie(
     jwt_token: Optional[str] = Cookie(default=None),
-    request: Request = None,  # type: ignore[assignment]
+    request: Optional[Request] = None,
 ) -> EmailUser:
     """Get current authenticated user from httpOnly cookie (browser clients only).
 
