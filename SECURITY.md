@@ -262,7 +262,7 @@ except ValueError as e:
 
 ### Log Injection Protection (CWE-117)
 
-As of version 1.0.0-RC-2, ContextForge implements log injection protection to prevent attackers from forging log entries:
+As of version 1.0.0, ContextForge implements log injection protection to prevent attackers from forging log entries:
 
 **Protection Mechanism:**
 - [`sanitize_log_message()`](mcpgateway/common/validators.py:884) - Sanitizes user-controlled data in logs
@@ -277,7 +277,7 @@ As of version 1.0.0-RC-2, ContextForge implements log injection protection to pr
 
 ### Template Injection Protection (CWE-1336)
 
-As of version 1.0.0-RC-2, ContextForge implements comprehensive Jinja2 template injection protection to prevent code execution attacks through malicious prompt templates:
+As of version 1.0.0, ContextForge implements comprehensive Jinja2 template injection protection to prevent code execution attacks through malicious prompt templates:
 
 **Protection Mechanism:**
 - [`validate_prompt_template()`](mcpgateway/services/content_security.py:411) - Multi-layer template validation

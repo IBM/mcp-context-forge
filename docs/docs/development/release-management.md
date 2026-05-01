@@ -1042,7 +1042,7 @@ To test upgrades from a different release:
 
 ```bash
 make upgrade-validate \
-  UPGRADE_BASE_IMAGE=ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+  UPGRADE_BASE_IMAGE=ghcr.io/ibm/mcp-context-forge:1.0.0 \
   UPGRADE_TARGET_IMAGE=mcpgateway/mcpgateway:latest
 ```
 

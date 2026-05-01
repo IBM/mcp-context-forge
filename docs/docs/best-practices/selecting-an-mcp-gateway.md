@@ -682,7 +682,7 @@ flowchart LR
 | Source Files | 1,946 |
 | [CI Checks](https://github.com/IBM/mcp-context-forge/actions) | 50+ (build, test, security, lint, deploy) |
 | [GitHub Community Health](https://github.com/IBM/mcp-context-forge/community) | 100% |
-| [Releases](https://github.com/IBM/mcp-context-forge/releases) | Monthly (v0.7.0 → v0.8.0 → v0.9.0 → v1.0.0-BETA) |
+| [Releases](https://github.com/IBM/mcp-context-forge/releases) | Monthly (v0.7.0 → v0.8.0 → v0.9.0 → v1.0.0) |
 | [Helm Charts](https://github.com/IBM/mcp-context-forge/tree/main/charts) | Production-ready with HPA, ingress, and RBAC |
 | [Container Images](https://github.com/IBM/mcp-context-forge/pkgs/container/mcp-context-forge) | Multi-arch: amd64, arm64, s390x, ppc64le |
 | MCP Protocol Support | 2024-11-05 through 2025-03-26 |

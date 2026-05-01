@@ -14,7 +14,7 @@ ContextForge is under active development, and while we strive for backward compa
 
 **⚠️ IMPORTANT:** Before upgrading, review the version-specific migration guide for your target version:
 
-- **[Upgrading to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md)** - Comprehensive guide covering 8 breaking changes with step-by-step migration instructions
+- **[Upgrading to 1.0.0](upgrade-to-1.0.0.md)** - Comprehensive guide covering 8 breaking changes with step-by-step migration instructions
 
 Each version-specific guide includes:
 - Detailed breaking change descriptions

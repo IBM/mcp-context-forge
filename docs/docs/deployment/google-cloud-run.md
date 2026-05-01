@@ -16,7 +16,7 @@ Google Cloud Run is an ideal platform for ContextForge due to its:
 You can deploy the public image directly:
 
 ```text
-ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+ghcr.io/ibm/mcp-context-forge:1.0.0
 ```
 
 ---
@@ -336,7 +336,7 @@ mcpgw=> \dt;
 Use ContextForge container to generate a JWT token:
 
 ```bash
-docker run -it --rm ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
+docker run -it --rm ghcr.io/ibm/mcp-context-forge:1.0.0 \
   python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret jwt-secret-key
 ```
 

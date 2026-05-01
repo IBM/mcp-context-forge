@@ -1,6 +1,6 @@
-# Upgrade Guide: 0.9.x → 1.0.0-RC3
+# Upgrade Guide: 0.9.x → 1.0.0
 
-**Target Version:** 1.0.0-RC3 (2026-04-14)
+**Target Version:** 1.0.0 (2026-05-01)
 **Previous Version:** 0.9.x
 **Breaking Changes:** Yes (8 major changes)
 **Estimated Migration Time:** 2-4 hours
@@ -9,7 +9,7 @@
 
 ## Overview
 
-ContextForge 1.0.0-RC3 includes **242 commits** with significant breaking changes across authentication, plugins, database support, and security defaults. This guide provides step-by-step migration instructions.
+ContextForge 1.0.0 includes significant breaking changes across authentication, plugins, database support, and security defaults. This guide provides step-by-step migration instructions.
 
 **⚠️ CRITICAL:** Review all sections before upgrading. Some changes require configuration updates or data migration.
 
@@ -36,7 +36,7 @@ ContextForge 1.0.0-RC3 includes **242 commits** with significant breaking change
 
 Three SSRF defaults inverted to strict security mode:
 
-| Setting | 0.9.x Default | 1.0.0-RC3 Default | Impact |
+| Setting | 0.9.x Default | 1.0.0 Default | Impact |
 |---------|---------------|-------------------|--------|
 | `SSRF_ALLOW_LOCALHOST` | `true` | `false` | Blocks `127.0.0.1`, `localhost`, `::1` |
 | `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | `false` | Blocks RFC1918 ranges (10.x, 172.16.x, 192.168.x) |
@@ -108,7 +108,7 @@ conditions:
 # Matched if: team_id="team-a" OR user_email="admin@example.com"
 ```
 
-**After (1.0.0-RC3):** Conditions within same object use AND, different objects use OR
+**After (1.0.0):** Conditions within same object use AND, different objects use OR
 ```yaml
 conditions:
   - team_id: "team-a"
@@ -148,7 +148,7 @@ plugins:
       - user_email: "admin@example.com"
     # Matched: team-a OR team-b OR admin@example.com
 
-# NEW (1.0.0-RC3) - Hybrid logic
+# NEW (1.0.0) - Hybrid logic
 plugins:
   - name: "TeamFilter"
     conditions:
@@ -164,7 +164,7 @@ conditions:
     user_email: "admin@example.com"
 # Matched: team-a OR admin@example.com
 
-# NEW (1.0.0-RC3)
+# NEW (1.0.0)
 conditions:
   - team_id: "team-a"
     user_email: "admin@example.com"
@@ -232,7 +232,7 @@ curl -X POST http://localhost:4444/mcp/sse \
 
 Two transport endpoints now require explicit enablement:
 
-| Endpoint | 0.9.x Default | 1.0.0-RC3 Default | Feature Flag |
+| Endpoint | 0.9.x Default | 1.0.0 Default | Feature Flag |
 |----------|---------------|-------------------|--------------|
 | WebSocket Relay | Enabled | **Disabled** | `MCPGATEWAY_WS_RELAY_ENABLED` |
 | Reverse Proxy | Enabled | **Disabled** | `MCPGATEWAY_REVERSE_PROXY_ENABLED` |
@@ -285,7 +285,7 @@ curl -X GET "http://localhost:4444/users/me/permissions" \
 
 **Before (0.9.x):** ID tokens accepted without signature verification
 
-**After (1.0.0-RC3):** ID tokens verified using provider's JWKS endpoint
+**After (1.0.0):** ID tokens verified using provider's JWKS endpoint
 
 #### Migration Steps
 
@@ -358,7 +358,7 @@ sntp -sS time.nist.gov    # macOS
 
 **Before (0.9.x):** All teams stored `max_members` value in database
 
-**After (1.0.0-RC3):**
+**After (1.0.0):**
 - New teams: `max_members = NULL` (resolved from `MAX_MEMBERS_PER_TEAM` at runtime)
 - Existing teams: Retain baked-in `max_members` value
 
@@ -523,7 +523,7 @@ helm upgrade mcp-stack charts/mcp-stack -n mcp-production -f values.yaml
 **Step 3:** Upgrade from BETA-2 (if applicable)
 
 ```bash
-# BETA-2 to RC3 requires special handling
+# BETA-2 to 1.0.0 requires special handling
 # See: https://github.com/your-org/mcp-context-forge/issues/3684
 
 # 1. Backup database
@@ -549,7 +549,7 @@ kubectl get pods -n mcp-production
 curl http://localhost:4444/health
 
 # Expected response:
-# {"status": "healthy", "version": "1.0.0-RC3"}
+# {"status": "healthy", "version": "1.0.0"}
 ```
 
 ### 2. Test Authentication
@@ -679,7 +679,7 @@ cp plugins/config.yaml.backup plugins/config.yaml
 When reporting upgrade issues, include:
 
 1. Previous version (e.g., 0.9.5)
-2. Target version (1.0.0-RC3)
+2. Target version (1.0.0)
 3. Deployment method (Docker, Kubernetes, local)
 4. Database backend (PostgreSQL, SQLite)
 5. Relevant logs (sanitized)
@@ -691,7 +691,7 @@ When reporting upgrade issues, include:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0-RC3 | 2026-04-14 | Initial release |
+| 1.0.0 | 2026-05-01 | Initial release |
 
 ---
 

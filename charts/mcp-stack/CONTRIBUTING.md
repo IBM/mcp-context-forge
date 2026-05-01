@@ -262,8 +262,8 @@ When making changes:
 Update both `version` and `appVersion` in `Chart.yaml`:
 
 ```yaml
-version: 0.9.0          # Chart version
-appVersion: "0.9.0"     # Application version
+version: 1.0.0          # Chart version
+appVersion: "1.0.0"     # Application version
 ```
 
 ### Release Checklist

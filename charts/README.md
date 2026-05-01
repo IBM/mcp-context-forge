@@ -249,7 +249,7 @@ It is expected that users will change these values before deployment.
 mcpContextForge:
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: 0.9.0
+    tag: 1.0.0
   ingress:
     enabled: true
     host: gateway.local   # replace with real DNS
@@ -690,7 +690,7 @@ For every setting see the [full annotated `values.yaml`](https://github.com/IBM/
 * 💾 Stateful storage - PV + PVC for Postgres (`/var/lib/postgresql/data`), storage class selectable.
 * 🌐 Networking & access - ClusterIP services, optional NGINX Ingress, and `NOTES.txt` with port-forward plus safe secret-fetch commands (password, bearer token, `JWT_SECRET_KEY`).
 * 📈 Replicas & availability - Gateway (3) and Fast-Time-Server (2) provide basic HA; stateful components run single-instance.
-* 📦 Helm best-practice layout - Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 0.9.0.
+* 📦 Helm best-practice layout - Clear separation of Deployments, Services, ConfigMaps, Secrets, PVC/PV and Ingress; chart version 1.0.0.
 * ⚙️ Horizontal Pod Autoscaler (HPA) support for mcpgateway
 
 ---

@@ -4,13 +4,13 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ---
 
-## ⚠️ New in 1.0.0-RC3
+## ⚠️ New in 1.0.0
 
-**Breaking Changes:** Several security defaults have been strengthened in RC3. Review these changes before upgrading:
+**Breaking Changes:** Several security defaults have been strengthened in 1.0.0. Review these changes before upgrading:
 
 ### Changed Defaults
 
-| Variable | 0.9.x Default | 1.0.0-RC3 Default | Impact |
+| Variable | 0.9.x Default | 1.0.0 Default | Impact |
 |----------|---------------|-------------------|--------|
 | `SSRF_ALLOW_LOCALHOST` | `true` | `false` | Blocks connections to localhost/127.0.0.1 |
 | `SSRF_ALLOW_PRIVATE_NETWORKS` | `true` | `false` | Blocks RFC1918 private networks (10.x, 172.16.x, 192.168.x) |
@@ -50,7 +50,7 @@ This guide provides comprehensive configuration options for ContextForge, includ
 - `LANGFUSE_SECRET_KEY` - Langfuse project secret key
 - `LANGFUSE_OTEL_AUTH` - Base64-encoded OTLP auth override
 
-**See Also:** [Upgrade Guide to 1.0.0-RC3](upgrade-to-1.0.0-rc3.md) for detailed migration instructions.
+**See Also:** [Upgrade Guide to 1.0.0](upgrade-to-1.0.0.md) for detailed migration instructions.
 
 ---
 
@@ -828,7 +828,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-3`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0`               | string                                     |
 | `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag (dev/staging/prod)           | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |

@@ -6,8 +6,8 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 ---
 
-!!! tip "What's new in 1.0.0-RC-3"
-    Multi‑tenancy (email auth, teams, RBAC, resource visibility) was introduced in v0.9.0 and is fully supported in 1.0.0-RC-3.
+!!! tip "What's new in 1.0.0"
+    Multi‑tenancy (email auth, teams, RBAC, resource visibility) was introduced in v0.9.0 and is fully supported in 1.0.0.
 
     - See the [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)
     - Quick enablement (excerpt): `EMAIL_AUTH_ENABLED=true`, `PLATFORM_ADMIN_EMAIL=...`, `AUTO_CREATE_PERSONAL_TEAMS=true`

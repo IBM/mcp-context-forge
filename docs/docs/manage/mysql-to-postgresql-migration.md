@@ -1,14 +1,14 @@
 # MySQL/MariaDB to PostgreSQL Migration Guide
 
-**Applies to:** ContextForge 1.0.0-RC3 and later
-**Reason:** MySQL and MariaDB support removed in RC3
+**Applies to:** ContextForge 1.0.0 and later
+**Reason:** MySQL and MariaDB support removed in 1.0.0
 **Estimated Time:** 2-4 hours (depending on database size)
 
 ---
 
 ## Overview
 
-ContextForge 1.0.0-RC3 removed support for MySQL and MariaDB databases. Only **PostgreSQL** and **SQLite** are now supported. This guide provides step-by-step instructions for migrating your data from MySQL/MariaDB to PostgreSQL.
+ContextForge 1.0.0 removed support for MySQL and MariaDB databases. Only **PostgreSQL** and **SQLite** are now supported. This guide provides step-by-step instructions for migrating your data from MySQL/MariaDB to PostgreSQL.
 
 **⚠️ CRITICAL:** This is a one-way migration. Ensure you have complete backups before proceeding.
 
