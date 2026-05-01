@@ -96,6 +96,7 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
+from mcpgateway.utils.auth_errors import raise_auth_error
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     security,
@@ -112,6 +113,7 @@ __all__ = [
     "normalize_token_teams",
     "resolve_session_teams",
 ]
+logger = logging.getLogger(__name__)
 
 # Module-level logger
 logger = logging.getLogger(__name__)
@@ -2159,3 +2161,42 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
 
     # Fall back to email (legacy format)
     return sub
+
+    
+async def get_current_user_from_cookie(
+    request: Request,
+) -> tuple[EmailUser, Optional[str]]:
+    """FastAPI dependency: validate JWT cookie and return (user, jti) tuple.
+
+    Returns:
+        Tuple of (EmailUser ORM instance, jti claim or None)
+    Raises:
+        HTTPException: 401 with structured ErrorResponse if cookie missing, invalid, revoked, or user inactive
+    """
+    token = request.cookies.get("jwt_token")
+    if not token:
+        raise_auth_error("not_authenticated", "Not authenticated")
+
+    try:
+        payload = await verify_jwt_token_cached(token, request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.debug("JWT cookie validation failed: %s", e)
+        raise_auth_error("invalid_token", "Invalid or expired token")
+
+    email = payload.get("sub")
+    if not email:
+        raise_auth_error("invalid_token", "Invalid token: missing subject")
+
+    jti = payload.get("jti")
+    if jti:
+        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+        if is_revoked:
+            raise_auth_error("token_revoked", "Token has been revoked")
+
+    user = await asyncio.to_thread(_get_user_by_email_sync, email)
+    if user is None or not user.is_active:
+        raise_auth_error("not_authenticated", "Not authenticated")
+
+    return user, jti
