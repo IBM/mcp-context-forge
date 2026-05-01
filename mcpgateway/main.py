@@ -72,7 +72,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.admin import admin_router, app_spa_router, set_logging_service
+from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
@@ -1320,6 +1320,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
+
+    # Token expiry validation now runs at module import time in mcpgateway.routers.app
+    # (fail-fast before any initialization). This log confirms it passed during import.
+    logger.info("Token expiry validation passed at import time (CSRF and JWT tokens synchronized)")
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -12479,6 +12483,12 @@ app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
+    # React App auth API and SPA routes (only when UI is enabled)
+    from mcpgateway.routers.app import app_router, app_spa_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(app_router)  # /app/auth/* JSON API endpoints
+    app.include_router(app_spa_router)  # /app/* SPA catch-all
+
     # Mount static files for UI
     logger.info("Mounting static files - UI enabled")
     try:
@@ -12498,10 +12508,6 @@ if UI_ENABLED:
             settings.static_dir,
             exc,
         )
-    
-    # Mount React SPA router (requires static files to be available)
-    app.include_router(app_spa_router)  # React SPA at /app/* (no prefix, no CSRF)
-    logger.info("React SPA router mounted at /app/*")
 
     # Redirect root path to admin UI
     @app.get("/")

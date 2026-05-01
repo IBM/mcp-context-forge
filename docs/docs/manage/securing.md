@@ -148,6 +148,90 @@ make certs-all                   # Generates both TLS certificates and JWT RSA k
 **Security Requirements:**
 
 - [ ] **Never commit private keys** to version control
+- [ ] **Rotate keys regularly** (recommended: every 90 days for production)
+- [ ] **Use secrets management** (Vault, AWS Secrets Manager, etc.) in production
+- [ ] **Implement rate limiting** at the reverse proxy/load balancer level
+
+### 3. Rate Limiting for Authentication Endpoints
+
+The React app authentication endpoints (`/app/auth/login`, `/app/auth/logout`) implement **per-IP rate limiting** (10 requests/minute per IP address) and **per-user account lockout**. Additional infrastructure-level rate limiting is recommended for defense-in-depth protection.
+
+#### Built-in Protection
+
+The application provides:
+
+- **Per-IP Rate Limiting**: 10 requests/minute per IP address via `@rate_limit(10)` decorator on login endpoint
+- **Per-User Account Lockout**: Tracks failed attempts per email address (see below)
+
+#### Infrastructure Rate Limiting (Recommended)
+
+While the application provides per-IP rate limiting, configuring additional rate limiting at your reverse proxy (nginx, Traefik, Envoy) or load balancer provides defense-in-depth protection:
+
+```nginx
+# nginx example - limit login attempts across all accounts
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;
+
+location /app/auth/login {
+    limit_req zone=login_limit burst=3 nodelay;
+    proxy_pass http://contextforge:4444;
+}
+```
+
+**Recommended thresholds:**
+- **Login endpoint**: 5 requests/minute per IP (burst: 3)
+- **Logout endpoint**: 10 requests/minute per IP (burst: 5)
+- **Token refresh**: 20 requests/minute per IP (burst: 10)
+
+#### Per-User Account Lockout
+
+The application provides built-in per-user lockout via `EmailAuthService`:
+- Tracks failed login attempts per email address
+- Locks account after configurable threshold (default: 5 attempts)
+- Automatic unlock after configurable duration (default: 15 minutes)
+- Prevents credential stuffing against individual accounts
+
+**Configuration:**
+```bash
+# Per-user lockout settings (handled by EmailAuthService)
+MAX_LOGIN_ATTEMPTS=5           # Failed attempts before lockout
+LOCKOUT_DURATION=900           # Lockout duration in seconds (15 minutes)
+```
+
+#### Production Deployment Pattern
+
+```yaml
+# Example: Traefik middleware for rate limiting
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-rate-limit
+spec:
+  rateLimit:
+    average: 5
+    period: 1m
+    burst: 3
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+```
+
+Apply to ingress routes:
+```yaml
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: contextforge-auth
+spec:
+  routes:
+    - match: PathPrefix(`/app/auth/login`)
+      middlewares:
+        - name: auth-rate-limit
+      services:
+        - name: contextforge
+          port: 4444
+```
+
+See [Reverse Proxy Configuration](../using/reverse-proxy.md) for additional examples.
 - [ ] **Store private keys** in secure, encrypted storage
 - [ ] **Use strong file permissions** (600) on private keys
 - [ ] **Implement key rotation** procedures (recommend 90-day rotation)
@@ -296,6 +380,30 @@ Tokens with a `jti` (JWT ID) claim are tracked and can be revoked before expirat
 # Enable token tracking (required for revocation)
 REQUIRE_JTI=true
 ```
+
+##### Logout Token Revocation (Best-Effort Pattern)
+
+The `/app/auth/logout` endpoint uses a **best-effort revocation pattern** that prioritizes user experience and availability:
+
+**Success Case:**
+- Token added to blocklist (Redis/DB)
+- Auth cookies cleared immediately
+- Token rejected on subsequent requests
+
+**Failure Case (Redis/DB unavailable):**
+- Revocation fails but logout succeeds
+- Auth cookies still cleared (immediate client-side protection)
+- Token remains valid until natural expiry (`TOKEN_EXPIRY`, default: 20 minutes)
+- Failure logged with correlation ID for monitoring
+- Metric recorded: `auth.token_revocation_failure`
+
+**Security Considerations:**
+- Short `TOKEN_EXPIRY` (5-20 minutes recommended) limits exposure window
+- Monitor `auth.token_revocation_failure` metric for blocklist health
+- Consider `TOKEN_IDLE_TIMEOUT` for additional protection
+- Tokens without `jti` cannot be revoked (logged as warning)
+
+**Rationale:** Logout must always succeed from the user's perspective. Cookie clearing provides immediate client-side protection, while token TTL bounds the exposure window if server-side revocation fails.
 
 #### Token Validation Settings
 
