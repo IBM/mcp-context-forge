@@ -79,16 +79,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [state.user]);
 
-  /* prettier-ignore */ const login = useCallback(async (email: string, password: string): Promise<void> => { // pragma: allowlist secret
-    const data = await api.post<LoginResponse>(
-      "/auth/login",
-      { email, password },
-      { unauthenticated: true },
-    );
+  const login = useCallback(
+    async (
+      email: string,
+      password: string, // pragma: allowlist secret
+    ): Promise<void> => {
+      const data = await api.post<LoginResponse>(
+        "/auth/login",
+        { email, password },
+        { unauthenticated: true },
+      );
 
-    setToken(data.access_token);
-    setState({ user: data.user, isAuthenticated: true });
-  }, []);
+      setToken(data.access_token);
+      setState({ user: data.user, isAuthenticated: true });
+    },
+    [],
+  );
 
   const logout = useCallback((): void => {
     clearToken();

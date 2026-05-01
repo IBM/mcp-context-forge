@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { Plus } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
@@ -7,33 +7,35 @@ import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
 import { useQuery } from "@/hooks/useQuery";
+import { api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 import { sanitizeError } from "@/utils/errors";
-import type { PaginationMeta, ServersResponse } from "@/types/server";
+import type { MCPServer, ServersResponse } from "@/types/server";
 
 // Pagination constants
-const DEFAULT_PAGE_SIZE = 25;
+const DEFAULT_PAGE_SIZE = 10;
 
 export function Servers() {
   const { navigate } = useRouter();
-  const [currentPage, setCurrentPage] = useState(1);
-  const [perPage] = useState(DEFAULT_PAGE_SIZE);
+  const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [allServers, setAllServers] = useState<MCPServer[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  // Build query path with pagination parameters
+  // Initial load only - use default limit, ignore dropdown changes
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("page", currentPage.toString());
-    params.set("per_page", perPage.toString());
+    params.set("limit", DEFAULT_PAGE_SIZE.toString());
     params.set("include_pagination", "true");
     return `/gateways?${params.toString()}`;
-  }, [currentPage, perPage]);
+  }, []);
 
-  // Use useQuery hook for data fetching
+  // Use useQuery hook for initial data fetching only
   const {
     data: response,
     error: queryError,
@@ -41,16 +43,16 @@ export function Servers() {
     refetch,
   } = useQuery<ServersResponse>(queryPath);
 
-  // Derive servers and pagination from response
-  const servers = response?.gateways ?? [];
-  const pagination: PaginationMeta | null = response
-    ? {
-        page: currentPage,
-        per_page: perPage,
-        total: response.gateways.length,
-        total_pages: 1,
-      }
-    : null;
+  // Update servers on initial load
+  useEffect(() => {
+    if (response) {
+      setAllServers(response.gateways);
+      setNextCursor(response.nextCursor ?? null);
+    }
+  }, [response]);
+
+  // Derive servers from accumulated list
+  const servers = allServers;
 
   // Convert query error to string for display
   const error = queryError ? queryError.message : null;
@@ -93,13 +95,29 @@ export function Servers() {
     }
   };
 
-  const handlePreviousPage = useCallback(() => {
-    setCurrentPage((p) => Math.max(1, p - 1));
-  }, []);
+  const handleLoadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
 
-  const handleNextPage = useCallback(() => {
-    setCurrentPage((p) => Math.min(pagination?.total_pages ?? 1, p + 1));
-  }, [pagination?.total_pages]);
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("cursor", nextCursor);
+      params.set("limit", limit.toString());
+      params.set("include_pagination", "true");
+
+      const result = await api.get<ServersResponse>(`/gateways?${params.toString()}`);
+      setAllServers((prev) => [...prev, ...result.gateways]);
+      setNextCursor(result.nextCursor ?? null);
+    } catch (err) {
+      console.error("Failed to load more servers:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, limit, loadingMore]);
+
+  const handleLimitChange = useCallback((newLimit: number) => {
+    setLimit(newLimit);
+  }, []);
 
   // Initialize state based on URL parameter to avoid flicker
   const [isFormOpen, setIsFormOpen] = useState(() => {
@@ -171,38 +189,43 @@ export function Servers() {
                 onTest={handleTest}
               />
 
-              {pagination && pagination.total_pages > 1 && (
-                <nav
-                  aria-label="Server list pagination"
-                  className="flex items-center justify-between mt-6"
-                >
+              <div className="flex items-center justify-between mt-6">
+                <div className="flex items-center gap-4">
                   <div className="text-sm text-gray-600 dark:text-gray-400">
-                    Showing {(currentPage - 1) * perPage + 1} to{" "}
-                    {Math.min(currentPage * perPage, pagination.total)} of {pagination.total}{" "}
-                    servers
+                    Showing {servers.length} server{servers.length !== 1 ? "s" : ""}
                   </div>
-                  <div className="flex gap-2" role="group" aria-label="Pagination controls">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handlePreviousPage}
-                      disabled={currentPage === 1}
-                      aria-label={`Go to previous page (currently on page ${currentPage})`}
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor="limit-select"
+                      className="text-sm text-gray-600 dark:text-gray-400"
                     >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleNextPage}
-                      disabled={currentPage === pagination.total_pages}
-                      aria-label={`Go to next page (currently on page ${currentPage})`}
+                      Per page:
+                    </label>
+                    <select
+                      id="limit-select"
+                      value={limit}
+                      onChange={(e) => handleLimitChange(Number(e.target.value))}
+                      className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
                     >
-                      Next
-                    </Button>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
-                </nav>
-              )}
+                </div>
+                {nextCursor && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                    aria-label="Load more servers"
+                  >
+                    {loadingMore ? "Loading..." : "Load More"}
+                  </Button>
+                )}
+              </div>
             </>
           ) : (
             <div className="rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">

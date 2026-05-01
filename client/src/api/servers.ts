@@ -29,28 +29,27 @@ function validateServerId(id: string): string {
 
 export const serversApi = {
   /**
-   * List all MCP servers with pagination
+   * List all MCP servers with cursor-based pagination
    */
   list: (params?: {
-    page?: number;
-    per_page?: number;
+    cursor?: string;
+    limit?: number;
     include_inactive?: boolean;
     signal?: AbortSignal;
   }): Promise<ServersResponse> => {
     const searchParams = new URLSearchParams();
 
-    // Validate and clamp page number
-    if (params?.page !== undefined) {
-      const page = Number.isFinite(params.page) ? Math.max(1, Math.floor(params.page)) : 1;
-      searchParams.set("page", page.toString());
+    // Add cursor if provided
+    if (params?.cursor) {
+      searchParams.set("cursor", params.cursor);
     }
 
-    // Validate and clamp per_page (1-100)
-    if (params?.per_page !== undefined) {
-      const perPage = Number.isFinite(params.per_page)
-        ? Math.max(1, Math.min(100, Math.floor(params.per_page)))
+    // Validate and clamp limit (1-100)
+    if (params?.limit !== undefined) {
+      const limit = Number.isFinite(params.limit)
+        ? Math.max(1, Math.min(100, Math.floor(params.limit)))
         : 25;
-      searchParams.set("per_page", perPage.toString());
+      searchParams.set("limit", limit.toString());
     }
 
     if (params?.include_inactive) {
