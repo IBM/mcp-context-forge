@@ -351,10 +351,11 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
     is_admin_ui_request = "/admin" in referer
-    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
+    is_app_ui_request = "/app" in referer  # React SPA requests
+    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_app_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
+    # Cookies should only be used for browser/HTML requests (including admin UI and React SPA fetch calls)
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

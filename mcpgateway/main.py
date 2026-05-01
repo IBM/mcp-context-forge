@@ -72,7 +72,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.admin import admin_router, app_spa_router, set_logging_service
+from mcpgateway.admin import admin_router, set_logging_service
+from mcpgateway.routers.app import app_router, app_spa_router
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
@@ -11731,6 +11732,12 @@ if ADMIN_API_ENABLED:
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
+    # React App API routes (always enabled for cookie-based auth)
+    from mcpgateway.routers.app import app_router, app_spa_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(app_router)  # /app/auth/* JSON API endpoints
+    app.include_router(app_spa_router)  # /app/* SPA catch-all (moved from admin.py)
+
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
 
@@ -12016,10 +12023,6 @@ if UI_ENABLED:
             settings.static_dir,
             exc,
         )
-    
-    # Mount React SPA router (requires static files to be available)
-    app.include_router(app_spa_router)  # React SPA at /app/* (no prefix, no CSRF)
-    logger.info("React SPA router mounted at /app/*")
 
     # Redirect root path to admin UI
     @app.get("/")

@@ -1898,3 +1898,82 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
     if request and global_context:
         request.state.plugin_global_context = global_context
+
+
+async def get_current_user_from_cookie(
+    request: Request,
+) -> dict:
+    """Get current authenticated user from JWT cookie.
+
+    This is a FastAPI dependency that validates the JWT token stored in
+    an httpOnly cookie and returns user information as a dictionary.
+
+    Used by the React client authentication endpoints (/app/auth/*).
+
+    Args:
+        request: FastAPI request object containing cookies
+
+    Returns:
+        dict: User information with keys: id, email, is_admin, created_at, updated_at
+
+    Raises:
+        HTTPException: 401 if cookie missing, invalid, or user not found
+    """
+    logger = logging.getLogger(__name__)
+
+    # Extract JWT from cookie
+    token = request.cookies.get("jwt_token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    # Verify JWT token
+    try:
+        payload = await verify_jwt_token_cached(token)
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing subject",
+            )
+    except Exception as e:
+        logger.debug(f"JWT cookie validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    # Check token revocation
+    jti = payload.get("jti")
+    if jti:
+        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+        if is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+            )
+
+    # Get user from database
+    user = await asyncio.to_thread(_get_user_by_email_sync, email)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Account disabled",
+        )
+
+    # Return user info as dict (not EmailUser object)
+    return {
+        "id": user.id if hasattr(user, "id") else None,
+        "email": user.email,
+        "is_admin": user.is_admin,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+    }
