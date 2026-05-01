@@ -1631,6 +1631,128 @@ done
 echo "Done!"
 ```
 
+## React App Authentication
+
+The React client uses cookie-based authentication with CSRF protection for secure session management.
+
+### Login
+
+```bash
+# Login with email and password
+curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "your-password"
+  }' \
+  $BASE_URL/app/auth/login | jq '.'
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "email": "user@example.com",
+    "is_admin": false,
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+  },
+  "csrf_token": "abc123...xyz"
+}
+```
+
+**Cookies Set:**
+- `jwt_token` - httpOnly JWT token (XSS protection)
+- `csrf_token` - non-httpOnly CSRF token (path=/app, readable by JS for double-submit pattern)
+
+### Get Current User
+
+```bash
+# Get current user from session cookie
+curl -s -H "Cookie: jwt_token=<token>" \
+  $BASE_URL/app/auth/me | jq '.'
+```
+
+**Response:**
+```json
+{
+  "email": "user@example.com",
+  "is_admin": false,
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z"
+}
+```
+
+### Logout
+
+```bash
+# Logout (requires CSRF token from login response)
+curl -s -X POST \
+  -H "Cookie: jwt_token=<token>; csrf_token=<csrf>" \
+  -H "X-CSRF-Token: <csrf-token-from-login>" \
+  $BASE_URL/app/auth/logout | jq '.'
+```
+
+**Response:**
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+### Security Features
+
+**httpOnly Cookies:**
+- JWT token stored in httpOnly cookie (not accessible via JavaScript)
+- Protects against XSS attacks
+
+**CSRF Protection:**
+- Synchronizer token pattern
+- CSRF token in non-httpOnly cookie + X-CSRF-Token header (double-submit pattern; JS reads the cookie value)
+- Required for state-changing operations (logout)
+
+**Cookie Configuration:**
+- `httpOnly=true` - Prevents JavaScript access
+- `secure=true` - HTTPS only (production)
+- `samesite=strict` - CSRF cookie (prevents cross-site requests)
+- `samesite=lax` - JWT cookie (allows navigation)
+- `path=/app` - CSRF cookie scoped to app namespace
+
+### Cross-Tab Session Persistence
+
+Sessions are shared across browser tabs via cookies:
+
+```bash
+# Tab 1: Login — save cookies to jar (-c) so jwt_token is preserved (it's httpOnly)
+LOGIN_RESPONSE=$(curl -s -c /tmp/cookiejar -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "password"}' \
+  $BASE_URL/app/auth/login)
+
+# Extract CSRF token from response body (jwt_token is httpOnly — not in body, only in cookie jar)
+CSRF_TOKEN=$(echo $LOGIN_RESPONSE | jq -r '.csrf_token')
+
+# Tab 2: Use same cookie jar (browser shares cookies automatically across tabs)
+curl -s -b /tmp/cookiejar \
+  $BASE_URL/app/auth/me | jq '.'
+```
+
+### Error Responses
+
+**401 Unauthorized:**
+```json
+{
+  "detail": "Invalid email or password"
+}
+```
+
+**403 Forbidden (CSRF):**
+```json
+{
+  "detail": "CSRF token missing from header"
+}
+```
+
 ## Related Documentation
 
 - [Configuration Guide](configuration.md) - Environment variables and settings
