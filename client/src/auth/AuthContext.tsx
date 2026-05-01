@@ -1,36 +1,35 @@
 import { createContext, useCallback, useContext, useState, useEffect } from "react";
 import type { ReactNode } from "react";
-import { api, setToken, clearToken, ApiError } from "../api/client";
+import { api, setCsrfToken, clearCsrfToken, clearToken, ApiError } from "../api/client";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface User {
+  id: number;
   email: string;
-  full_name: string | null;
   is_admin: boolean;
-  is_active: boolean;
-  auth_provider: string;
-  email_verified: boolean;
-  password_change_required: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
   user: User;
+  csrf_token: string;
+  access_token?: string;
 }
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
 }
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,43 +40,42 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
-    // Restore session: if a token exists in sessionStorage we treat the user
-    // as authenticated until the first API call proves otherwise (401 clears it).
     user: null,
-    isAuthenticated: sessionStorage.getItem("mcpgateway_token") !== null,
+    isAuthenticated: false,
+    isLoading: true,
   });
 
-  // Rehydrate user on mount if token exists
+  // Rehydrate user on mount from cookie session
   useEffect(() => {
-    const token = sessionStorage.getItem("mcpgateway_token");
-    if (token && !state.user) {
-      // Try new endpoint first, fallback to legacy endpoint for backward compatibility
-      const fetchUser = async () => {
-        try {
-          return await api.get<User>("/auth/email/me");
-        } catch (err) {
-          // Fallback to old endpoint if new one doesn't exist
-          if (err instanceof ApiError && err.status === 404) {
-            console.warn("Falling back to legacy auth endpoint");
-            return await api.get<User>("/auth/me");
-          }
-          throw err;
-        }
-      };
+    let mounted = true;
 
-      fetchUser()
-        .then((user) => {
-          setState({ user, isAuthenticated: true });
-        })
-        .catch((err) => {
-          // Token invalid or expired - clear auth state
-          if (err instanceof ApiError && err.status === 401) {
-            clearToken();
-            setState({ user: null, isAuthenticated: false });
-          }
-        });
-    }
-  }, [state.user]);
+    const fetchUser = async () => {
+      try {
+        const user = await api.get<User>("/app/auth/me");
+        if (mounted) {
+          setState({ user, isAuthenticated: true, isLoading: false });
+        }
+      } catch (err) {
+        if (!mounted) return;
+
+        // No valid session - clear any stale state
+        if (err instanceof ApiError && err.status === 401) {
+          clearCsrfToken();
+          clearToken(); // Clear legacy token if present
+          setState({ user: null, isAuthenticated: false, isLoading: false });
+        } else {
+          // Other errors (network, etc.) - assume not authenticated
+          setState({ user: null, isAuthenticated: false, isLoading: false });
+        }
+      }
+    };
+
+    fetchUser();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const login = useCallback(
     async (
@@ -85,25 +83,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string, // pragma: allowlist secret
     ): Promise<void> => {
       const data = await api.post<LoginResponse>(
-        "/auth/login",
+        "/app/auth/login",
         { email, password },
         { unauthenticated: true },
       );
 
-      setToken(data.access_token);
-      setState({ user: data.user, isAuthenticated: true });
+      // Store CSRF token for logout
+      setCsrfToken(data.csrf_token);
+      setState({ user: data.user, isAuthenticated: true, isLoading: false });
     },
     [],
   );
 
-  const logout = useCallback((): void => {
-    clearToken();
-    setState({ user: null, isAuthenticated: false });
-    window.location.href = "/app/login";
+  const logout = useCallback(async (): Promise<void> => {
+    try {
+      // Call logout endpoint with CSRF token
+      await api.post("/app/auth/logout", undefined, { includeCsrf: true });
+    } catch (err) {
+      // Ignore errors - clear local state regardless
+      console.error("Logout request failed:", err);
+    } finally {
+      // Always clear local state
+      clearCsrfToken();
+      clearToken(); // Clear legacy token if present
+      setState({ user: null, isAuthenticated: false, isLoading: false });
+      window.location.href = "/app/login";
+    }
+  }, []);
+
+  const refreshUser = useCallback(async (): Promise<void> => {
+    try {
+      const user = await api.get<User>("/app/auth/me");
+      setState((prev) => ({ ...prev, user, isAuthenticated: true }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearCsrfToken();
+        clearToken();
+        setState({ user: null, isAuthenticated: false, isLoading: false });
+      }
+      throw err;
+    }
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ ...state, login, logout, refreshUser }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

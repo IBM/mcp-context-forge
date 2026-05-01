@@ -1,4 +1,5 @@
 import { AuthProvider } from "./auth/AuthContext";
+import { useAuth } from "./auth/useAuth";
 import { ThemeProvider } from "./hooks/useTheme";
 import { RouterProvider, Route, Redirect, AuthGuard, useRouter } from "./router";
 import { AppShell } from "./components/layout/AppShell";
@@ -49,8 +50,10 @@ function PublicRoutes() {
 // Authenticated shell (sidebar + header via AppShell)
 // ---------------------------------------------------------------------------
 function PrivateRoutes() {
+  const { isAuthenticated, isLoading } = useAuth();
+
   return (
-    <AuthGuard>
+    <AuthGuard isAuthenticated={isAuthenticated} isLoading={isLoading}>
       <AppShell>
         <Route path="/app/" component={Dashboard} />
         <Route path="/app/change-password" component={ChangePassword} />
@@ -97,16 +100,33 @@ export function App() {
 
 function Routes() {
   const { path } = useRouter();
+  const { isLoading, isAuthenticated } = useAuth();
+
+  // Show loading page while checking auth
+  if (isLoading) {
+    return <Loading />;
+  }
 
   // Bare /app (no trailing slash) → redirect to dashboard
   if (path === "/app") {
     return <Redirect to="/app/" />;
   }
 
-  return (
-    <>
-      <PublicRoutes />
-      <PrivateRoutes />
-    </>
-  );
+  // Check if current path is public
+  const isPublicPath = path === "/app/login" ||
+                       path === "/app/forgot-password" ||
+                       path === "/app/loading" ||
+                       path.startsWith("/app/reset-password/");
+
+  // If not authenticated and trying to access protected route, redirect to login
+  if (!isAuthenticated && !isPublicPath) {
+    return <Redirect to="/app/login" />;
+  }
+
+  // Render only public routes if on public path, otherwise only private routes
+  if (isPublicPath) {
+    return <PublicRoutes />;
+  }
+
+  return <PrivateRoutes />;
 }

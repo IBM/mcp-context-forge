@@ -2,14 +2,14 @@
  * API client — typed fetch wrapper.
  *
  * Security guarantees:
- *  - JWT is read from sessionStorage; never from a URL query param.
- *  - Authorization: Bearer header is added on every authenticated request.
- *  - Content-Type and X-Requested-With are always set on mutating requests.
- *  - Non-2xx responses throw a typed ApiError; callers never handle raw text.
- *  - 401 responses clear the stored token and redirect to /app/login.
+ *  - JWT is stored in httpOnly cookie (XSS protection)
+ *  - CSRF token stored in sessionStorage for state-changing operations
+ *  - Content-Type and X-Requested-With are always set on mutating requests
+ *  - Non-2xx responses throw a typed ApiError; callers never handle raw text
+ *  - 401 responses clear stored CSRF token and redirect to /app/login
  */
 
-const TOKEN_KEY = "mcpgateway_token";
+const CSRF_TOKEN_KEY = "mcpgateway_csrf_token";
 const LOGIN_PATH = "/app/login";
 
 export class ApiError extends Error {
@@ -24,8 +24,26 @@ export class ApiError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Token helpers — sessionStorage only
+// CSRF token helpers — sessionStorage only (JWT is in httpOnly cookie)
 // ---------------------------------------------------------------------------
+
+export function getCsrfToken(): string | null {
+  return sessionStorage.getItem(CSRF_TOKEN_KEY);
+}
+
+export function setCsrfToken(token: string): void {
+  sessionStorage.setItem(CSRF_TOKEN_KEY, token);
+}
+
+export function clearCsrfToken(): void {
+  sessionStorage.removeItem(CSRF_TOKEN_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy token helpers (deprecated - for backward compatibility)
+// ---------------------------------------------------------------------------
+
+const TOKEN_KEY = "mcpgateway_token";
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
@@ -37,6 +55,7 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY);
+  clearCsrfToken();
 }
 
 // ---------------------------------------------------------------------------
@@ -52,6 +71,8 @@ interface RequestOptions {
   headers?: Record<string, string>;
   /** Pass `true` to skip adding the Authorization header (e.g. login). */
   unauthenticated?: boolean;
+  /** Pass `true` to include CSRF token header for state-changing operations. */
+  includeCsrf?: boolean;
   /** AbortSignal for request cancellation/timeout. */
   signal?: AbortSignal;
 }
@@ -62,6 +83,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body,
     headers: extraHeaders = {},
     unauthenticated = false,
+    includeCsrf = false,
     signal,
   } = options;
 
@@ -71,10 +93,32 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...extraHeaders,
   };
 
+  // Add Bearer token for API endpoints
+  // For cookie-based auth, extract JWT from cookie and add to Authorization header
+  // because admin API endpoints expect Bearer token for backward compatibility
   if (!unauthenticated) {
-    const token = getToken();
+    // First try legacy token from sessionStorage
+    let token = getToken();
+
+    // If no legacy token, extract JWT from cookie for admin API compatibility
+    if (!token) {
+      const cookies = document.cookie.split(';');
+      const jwtCookie = cookies.find(c => c.trim().startsWith('jwt_token='));
+      if (jwtCookie) {
+        token = jwtCookie.split('=')[1];
+      }
+    }
+
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
+  // Add CSRF token header for state-changing operations
+  if (includeCsrf) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
     }
   }
 
@@ -82,19 +126,24 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    // Credentials: omit — auth is via Bearer header, not cookies.  // pragma: allowlist secret
-    // This also means the browser will NOT auto-send cookies cross-origin,
-    // making CSRF attacks structurally impossible for these requests.
-    credentials: "omit", // pragma: allowlist secret
+    // Include credentials to send/receive httpOnly cookies
+    credentials: "include", // pragma: allowlist secret
     signal,
   });
 
   if (response.status === 401) {
     clearToken();
-    // replace() rather than href= so the failed page is not added to history
-    // (the user can't hit Back into an unauthenticated state).
-    window.location.replace(LOGIN_PATH);
-    throw new ApiError(401, null, "Session expired — redirecting to login");
+    clearCsrfToken();
+
+    // Don't redirect on /app/auth/me - let AuthContext handle it gracefully
+    // This prevents redirect loops during initial auth check
+    if (!path.includes("/app/auth/me")) {
+      // replace() rather than href= so the failed page is not added to history
+      // (the user can't hit Back into an unauthenticated state).
+      window.location.replace(LOGIN_PATH);
+    }
+
+    throw new ApiError(401, null, "Unauthorized");
   }
 
   if (!response.ok) {

@@ -24,7 +24,6 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { getToken } from "../api/client";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -223,25 +222,40 @@ interface AuthGuardProps {
   publicPaths?: readonly string[];
   /** Path prefixes whose subtrees do not require authentication. */
   publicPrefixes?: readonly string[];
+  /** Auth state passed from parent to avoid circular dependency */
+  isAuthenticated?: boolean;
+  isLoading?: boolean;
 }
 
 export function AuthGuard({
   children,
   publicPaths = DEFAULT_PUBLIC_PATHS,
   publicPrefixes = DEFAULT_PUBLIC_PREFIXES,
+  isAuthenticated,
+  isLoading = false,
 }: AuthGuardProps) {
   const { navigate, path } = useRouter();
-  const authenticated = getToken() !== null;
 
   const isPublic =
     publicPaths.includes(path) || publicPrefixes.some((prefix) => path.startsWith(prefix));
 
   useEffect(() => {
-    if (!authenticated && !isPublic) {
+    // Don't redirect while loading auth state
+    if (isLoading) return;
+
+    // Only redirect if we have explicit auth state (not undefined)
+    if (isAuthenticated === false && !isPublic) {
       navigate("/app/login");
     }
-  }, [authenticated, isPublic, navigate]);
+  }, [isAuthenticated, isLoading, isPublic, navigate, path]);
 
-  if (isPublic || !authenticated) return null;
+  // While loading, don't render anything
+  if (isLoading) return null;
+
+  // On protected routes, ONLY render if authenticated
+  // Don't render at all if not authenticated (redirect will happen via useEffect)
+  if (!isAuthenticated) return null;
+
+  // Only render children if authenticated
   return <>{children}</>;
 }
