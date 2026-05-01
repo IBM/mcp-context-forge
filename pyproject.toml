@@ -80,7 +80,7 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "brotli==1.2.0", # Transitive pin (starlette-compress)
     "base58>=2.1.1",
-    "cpex>=0.1.0.dev13",
+    "cpex>=0.1.0rc1",
     "cryptography>=46.0.7",
     "fastapi>=0.135.3",
     "filelock>=3.25.2",
