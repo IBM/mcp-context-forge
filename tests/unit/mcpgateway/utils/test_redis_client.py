@@ -9,6 +9,7 @@ Unit tests for the centralized Redis client factory.
 
 # Standard
 import builtins
+from contextlib import contextmanager
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +39,29 @@ def reset_client_state():
     _reset_client()
     yield
     _reset_client()
+
+
+def _configure_redis_settings(mock_settings, parser: str = "auto"):
+    """Populate settings used by the shared Redis client factory."""
+    mock_settings.cache_type = "redis"
+    mock_settings.redis_url = "redis://localhost:6379"
+    mock_settings.redis_decode_responses = True
+    mock_settings.redis_max_connections = 10
+    mock_settings.redis_pool_timeout = 5.0
+    mock_settings.redis_socket_timeout = 5.0
+    mock_settings.redis_socket_connect_timeout = 5.0
+    mock_settings.redis_retry_on_timeout = True
+    mock_settings.redis_health_check_interval = 30
+    mock_settings.redis_parser = parser
+
+
+@contextmanager
+def _patched_async_redis_factory(mock_redis):
+    """Patch Redis pool/client construction while preserving ping behavior."""
+    mock_pool = MagicMock()
+    with patch("redis.asyncio.BlockingConnectionPool.from_url", return_value=mock_pool) as mock_pool_from_url:
+        with patch("redis.asyncio.Redis", return_value=mock_redis) as mock_redis_cls:
+            yield mock_pool_from_url, mock_redis_cls, mock_pool
 
 
 # ---------------------------------------------------------------------------
@@ -98,31 +122,23 @@ async def test_get_redis_client_creates_client_on_first_call():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+        with _patched_async_redis_factory(mock_redis) as (mock_pool_from_url, mock_redis_cls, mock_pool):
             client = await get_redis_client()
 
             assert client is mock_redis
-            # Verify from_url was called with expected kwargs (parser_class may vary)
-            mock_from_url.assert_called_once()
-            call_kwargs = mock_from_url.call_args[1]
+            mock_pool_from_url.assert_called_once()
+            call_kwargs = mock_pool_from_url.call_args[1]
             assert call_kwargs["decode_responses"] is True
             assert call_kwargs["max_connections"] == 10
+            assert call_kwargs["timeout"] == 5.0
             assert call_kwargs["socket_timeout"] == 5.0
             assert call_kwargs["socket_connect_timeout"] == 5.0
             assert call_kwargs["retry_on_timeout"] is True
             assert call_kwargs["health_check_interval"] == 30
             assert call_kwargs["encoding"] == "utf-8"
-            assert call_kwargs["single_connection_client"] is False
+            mock_redis_cls.assert_called_once_with(connection_pool=mock_pool, single_connection_client=False)
             mock_redis.ping.assert_awaited_once()
 
 
@@ -133,23 +149,14 @@ async def test_get_redis_client_returns_cached_client():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+        with _patched_async_redis_factory(mock_redis) as (mock_pool_from_url, _, _):
             client1 = await get_redis_client()
             client2 = await get_redis_client()
 
             assert client1 is client2
-            # from_url should only be called once
-            mock_from_url.assert_called_once()
+            mock_pool_from_url.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -159,17 +166,9 @@ async def test_get_redis_client_returns_none_on_connection_error():
     mock_redis.ping = AsyncMock(side_effect=ConnectionError("Redis not reachable"))
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             client = await get_redis_client()
 
             assert client is None
@@ -188,21 +187,13 @@ async def test_close_redis_client_closes_active_client():
     mock_redis.aclose = AsyncMock()
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             await get_redis_client()
             await close_redis_client()
 
-            mock_redis.aclose.assert_awaited_once()
+            mock_redis.aclose.assert_awaited_once_with(close_connection_pool=True)
 
             # Verify state was reset
             assert get_redis_client_sync() is None
@@ -223,17 +214,9 @@ async def test_close_redis_client_handles_close_error():
     mock_redis.aclose = AsyncMock(side_effect=Exception("Close failed"))
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             await get_redis_client()
             # Should not raise
             await close_redis_client()
@@ -251,17 +234,9 @@ async def test_is_redis_available_returns_true_when_connected():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             result = await is_redis_available()
 
             assert result is True
@@ -287,17 +262,9 @@ async def test_is_redis_available_returns_false_when_ping_fails():
     mock_redis.ping = AsyncMock(side_effect=[True, ConnectionError("Ping failed")])
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             result = await is_redis_available()
 
             assert result is False
@@ -322,17 +289,9 @@ async def test_get_redis_client_sync_returns_cached_client():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             await get_redis_client()
 
             sync_client = get_redis_client_sync()
@@ -352,17 +311,9 @@ async def test_reset_client_clears_state():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             await get_redis_client()
             assert get_redis_client_sync() is mock_redis
 
@@ -423,17 +374,9 @@ async def test_get_redis_client_with_parser_setting():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "auto"
+        _configure_redis_settings(mock_settings)
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis):
+        with _patched_async_redis_factory(mock_redis):
             client = await get_redis_client()
 
             assert client is mock_redis
@@ -469,22 +412,14 @@ async def test_get_redis_client_sets_parser_class_when_python_parser_selected():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "python"
+        _configure_redis_settings(mock_settings, parser="python")
 
-        with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+        with _patched_async_redis_factory(mock_redis) as (mock_pool_from_url, _, _):
             client = await get_redis_client()
 
             assert client is mock_redis
-            mock_from_url.assert_called_once()
-            call_kwargs = mock_from_url.call_args[1]
+            mock_pool_from_url.assert_called_once()
+            call_kwargs = mock_pool_from_url.call_args[1]
             assert call_kwargs["parser_class"] is not None
 
 
@@ -494,19 +429,11 @@ async def test_get_redis_client_parser_configuration_error_returns_none():
     mock_redis.ping = AsyncMock(return_value=True)
 
     with patch("mcpgateway.config.settings") as mock_settings:
-        mock_settings.cache_type = "redis"
-        mock_settings.redis_url = "redis://localhost:6379"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_max_connections = 10
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-        mock_settings.redis_health_check_interval = 30
-        mock_settings.redis_parser = "hiredis"
+        _configure_redis_settings(mock_settings, parser="hiredis")
 
         with patch("mcpgateway.utils.redis_client._get_async_parser_class", side_effect=ImportError("no hiredis")):
-            with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+            with patch("redis.asyncio.BlockingConnectionPool.from_url") as mock_pool_from_url:
                 client = await get_redis_client()
 
                 assert client is None
-                mock_from_url.assert_not_called()
+                mock_pool_from_url.assert_not_called()

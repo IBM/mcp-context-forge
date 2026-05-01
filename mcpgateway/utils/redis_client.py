@@ -146,18 +146,23 @@ async def get_redis_client() -> Optional[Any]:
             "retry_on_timeout": settings.redis_retry_on_timeout,
             "health_check_interval": settings.redis_health_check_interval,
             "encoding": "utf-8",
-            "single_connection_client": False,
         }
 
         # Only specify parser_class if explicitly set (not auto)
         if parser_class is not None:
             connection_kwargs["parser_class"] = parser_class
 
-        _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
+        connection_pool = aioredis.BlockingConnectionPool.from_url(
+            settings.redis_url,
+            timeout=settings.redis_pool_timeout,
+            **connection_kwargs,
+        )
+        _client = aioredis.Redis(connection_pool=connection_pool, single_connection_client=False)
         await _client.ping()
         logger.info(
             f"Redis client initialized: parser={_parser_info}, "
             f"pool_size={settings.redis_max_connections}, "
+            f"pool_timeout={settings.redis_pool_timeout}s, "
             f"timeout={settings.redis_socket_timeout}s, "
             f"health_check={settings.redis_health_check_interval}s"
         )
@@ -178,7 +183,7 @@ async def close_redis_client() -> None:
 
     if _client:
         try:
-            await _client.aclose()
+            await _client.aclose(close_connection_pool=True)
             logger.info("Redis client closed")
         except Exception as e:
             logger.warning(f"Error closing Redis client: {_sanitize(str(e))}")

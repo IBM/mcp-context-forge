@@ -1998,6 +1998,7 @@ class Settings(BaseSettings):
     # Redis Connection Pool - Performance Optimized
     redis_decode_responses: bool = Field(default=True, description="Return strings instead of bytes")
     redis_max_connections: int = Field(default=50, description="Connection pool size per worker")
+    redis_pool_timeout: float = Field(default=5.0, gt=0.0, description="Seconds to wait for an available Redis connection before failing")
     redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout in seconds")
     redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout in seconds")
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
