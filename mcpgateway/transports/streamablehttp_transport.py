@@ -70,8 +70,10 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
+from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
+from mcpgateway.plugins.framework import get_plugin_manager, HttpHookType
 from mcpgateway.plugins.framework.models import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
@@ -4716,6 +4718,36 @@ class _StreamableHttpAuthHandler:
         self.receive = receive
         self.send = send
 
+    async def _run_http_pre_request_hooks(self, *, path: str, method: str) -> None:
+        """Run HTTP_PRE_REQUEST plugin hooks for mounted MCP routes before auth."""
+        plugin_manager = await get_plugin_manager()
+        if not plugin_manager or not plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST):
+            return
+
+        client_host = None
+        client_port = None
+        client = self.scope.get("client")
+        if isinstance(client, (tuple, list)) and client:
+            client_host = client[0]
+            if len(client) > 1:
+                client_port = client[1]
+
+        merged_headers, global_context, context_table = await run_pre_request_hooks(
+            plugin_manager=plugin_manager,
+            headers=dict(Headers(scope=self.scope)),
+            path=path,
+            method=method,
+            client_host=client_host,
+            client_port=client_port,
+        )
+
+        if global_context:
+            self.scope.setdefault("state", {})["plugin_global_context"] = global_context
+        if context_table:
+            self.scope.setdefault("state", {})["plugin_context_table"] = context_table
+
+        self.scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
+
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
 
@@ -4763,6 +4795,9 @@ class _StreamableHttpAuthHandler:
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
+        method = self.scope.get("method", "")
+        await self._run_http_pre_request_hooks(path=path, method=method)
+
         # Reject undocumented /mcp/* sub-paths that the Starlette mount would
         # otherwise route to the global MCP handler.  Only /mcp, /mcp/,
         # /mcp/sse, and /mcp/message are valid direct-access endpoints;
@@ -4776,10 +4811,8 @@ class _StreamableHttpAuthHandler:
         # re-evaluate on every request instead of inheriting a stale True.
         _oauth_checked_var.set(False)
 
-        headers = Headers(scope=self.scope)
-
         # CORS preflight (OPTIONS + Origin + Access-Control-Request-Method) cannot carry auth headers
-        method = self.scope.get("method", "")
+        headers = Headers(scope=self.scope)
         if method == "OPTIONS":
             origin = headers.get("origin")
             if origin and headers.get("access-control-request-method"):

@@ -1852,6 +1852,58 @@ async def test_auth_all_ok(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_runs_pre_request_hooks_before_auth(monkeypatch):
+    """Mounted /mcp auth must run HTTP_PRE_REQUEST hooks before reading Authorization."""
+
+    class DummyPluginManager:
+        def has_hooks_for(self, hook_type):
+            return hook_type == tr.HttpHookType.HTTP_PRE_REQUEST
+
+    marker_global_context = object()
+    marker_context_table = {"plugin": "context"}
+
+    async def fake_get_plugin_manager():
+        return DummyPluginManager()
+
+    async def fake_run_pre_request_hooks(*, plugin_manager, headers, path, method, client_host=None, client_port=None, global_context=None):
+        assert isinstance(plugin_manager, DummyPluginManager)
+        assert headers["x-plugin-token"] == "good-token"
+        assert path == "/servers/1/mcp"
+        assert method == "POST"
+        assert client_host == "127.0.0.1"
+        assert client_port == 12345
+        assert global_context is None
+        return {**headers, "authorization": "Bearer good-token"}, marker_global_context, marker_context_table
+
+    async def fake_verify(token):
+        assert token == "good-token"
+        return {"ok": True}
+
+    monkeypatch.setattr(tr, "get_plugin_manager", fake_get_plugin_manager)
+    monkeypatch.setattr(tr, "run_pre_request_hooks", fake_run_pre_request_hooks)
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    scope = _make_scope(
+        "/servers/1/mcp",
+        method="POST",
+        headers=[(b"x-plugin-token", b"good-token")],
+        client=("127.0.0.1", 12345),
+    )
+
+    assert await streamable_http_auth(scope, None, send) is True
+    assert sent == []
+    assert dict(scope["headers"])[b"authorization"] == b"Bearer good-token"
+    assert scope["state"]["plugin_global_context"] is marker_global_context
+    assert scope["state"]["plugin_context_table"] == marker_context_table
+
+
+@pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
     """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
