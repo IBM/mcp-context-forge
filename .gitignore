@@ -374,3 +374,9 @@ tests/jmeter/results/*/
 
 # OCP deployment secrets (never commit)
 *-secrets.yaml
+
+# TLS smoke-test certs (local-only — never commit private keys / self-signed certs)
+/tls-certs/
+
+# Wheels built locally for the TLS smoke test (binary blobs, large)
+/tls-test/wheels/

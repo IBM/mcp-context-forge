@@ -1,0 +1,82 @@
+# Compose override for the TLS-Redis smoke-test stack.
+#
+# Usage:
+#   1. Generate self-signed certs (one-time):
+#        ./tls-test/gen-certs.sh
+#
+#   2. Build the derivative gateway image with the wheel from PR #74
+#      and the local CA trusted (one-time, or whenever the wheel
+#      changes):
+#        docker build \
+#          -f tls-test/Containerfile.tls-gateway \
+#          -t mcpgateway-tls-test:local \
+#          --build-context cpex=../cpex-plugins \
+#          .
+#      (See tls-test/README.md for the exact build context details.)
+#
+#   3. Bring up the stack as a compose override:
+#        docker compose -p tls-test \
+#          -f docker-compose.yml \
+#          -f docker-compose-tls-redis.yml \
+#          up -d
+#
+#   4. Tear down:
+#        docker compose -p tls-test \
+#          -f docker-compose.yml \
+#          -f docker-compose-tls-redis.yml \
+#          down -v
+#
+# What this override changes vs. docker-compose.yml:
+#   * `redis` listens on TLS port 6390 only; plain 6379 is closed.
+#     The host-mounted ./tls-certs directory provides the server cert.
+#   * `gateway` uses the derivative image (mcpgateway-tls-test:local)
+#     and points REDIS_URL at rediss://redis:6390/0.
+#
+# All other services (postgres, pgbouncer, fast_time_server, nginx,
+# observability stack) inherit unchanged from docker-compose.yml.
+
+services:
+  redis:
+    image: redis:7
+    # Compose's `command:` is replace, not merge — repeating the perf-tuning
+    # flags from the base file alongside the TLS flags so we don't lose them.
+    command:
+      - "redis-server"
+      - "--port"
+      - "0"                                   # disable the plain TCP port
+      - "--tls-port"
+      - "6390"
+      - "--tls-cert-file"
+      - "/certs/redis.crt"
+      - "--tls-key-file"
+      - "/certs/redis.key"
+      - "--tls-ca-cert-file"
+      - "/certs/ca.crt"
+      - "--tls-auth-clients"
+      - "no"                                  # client-cert auth not needed for the smoke test
+      # Perf-tuning args carried over from the base compose's redis service.
+      - "--maxmemory"
+      - "1gb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--tcp-backlog"
+      - "2048"
+      - "--timeout"
+      - "0"
+      - "--tcp-keepalive"
+      - "300"
+      - "--maxclients"
+      - "10000"
+    volumes:
+      - ./tls-certs:/certs:ro
+    ports:
+      - "6390:6390"                           # expose TLS port for host smoke-tests
+
+  gateway:
+    image: mcpgateway-tls-test:local          # built from tls-test/Containerfile.tls-gateway
+    # NOTE: the base compose's gateway service has a `build:` block pointing at
+    # Containerfile.lite. Compose merges the `build:` key rather than replacing it,
+    # so when bringing this stack up always pass `--no-build` to docker compose
+    # — see tls-test/README.md. The derivative image must already exist.
+    environment:
+      REDIS_URL: rediss://redis:6390/0
