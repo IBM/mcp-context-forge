@@ -71,7 +71,10 @@ import pytest
 # First-Party (test helpers)
 from tests.integration.test_rate_limiter_dynamic_behavior import (
     GATEWAY_URL,
+    _auto_detect_server_and_tool,
     _is_gateway_running,
+    _send_tool_burst,
+    _set_plugin_mode,
 )
 
 
@@ -138,6 +141,40 @@ async def test_wipe_on_disable_converges_via_redis_pubsub_only():
     client = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     try:
+        # ── Pre-condition: flip plugin to enforce ──────────────────────
+        # The gateway's plugins/config.yaml ships with ``mode: disabled``
+        # for the rate limiter, which means the framework loader does not
+        # actually instantiate the plugin under any cached manager.  No
+        # plugin instance ⇒ no shutdown to fire ⇒ no wipe path to run,
+        # regardless of how many subscribers receive the broadcast.
+        # Toggling via the admin API first writes the mode key, publishes
+        # the invalidation frame, and updates every worker's local
+        # override map so the next manager-build instantiates the plugin
+        # in enforce mode.
+        _set_plugin_mode("enforce")
+
+        # ── Warm-up: ensure ≥1 worker has a cached plugin manager ──────
+        # ``factory.invalidate_all()`` iterates only *cached* managers.
+        # Each gunicorn worker has its own factory; without prior traffic
+        # on a worker, that factory's _managers dict is empty, the
+        # broadcast triggers no reload_tenant, no plugin.shutdown fires,
+        # and the wipe never runs.  20 MCP tools/call requests ride
+        # gunicorn's load balancer across many of the 72 workers (3
+        # replicas × 24 workers) so multiple workers cache a manager —
+        # one warm worker firing its plugin's shutdown is enough since
+        # the wipe runs SCAN+DEL against shared Redis, but more warm
+        # workers raises the floor against transient races.
+        #
+        # The warm-up calls are amplified by the STREAMABLEHTTP transport
+        # (~9-16 hook fires per request) and they're a one-off pre-
+        # condition — not part of the convergence measurement.  The
+        # measurement loop below talks only to Redis.
+        server_id, tool_name = _auto_detect_server_and_tool()
+        warmup = _send_tool_burst(server_id, tool_name, 20)
+        assert warmup["errors"] == 0, (
+            f"warm-up burst should succeed: {warmup}"
+        )
+
         # ── Pre-condition ──────────────────────────────────────────────
         # Mode is enforce; a counter key exists (deposited directly via
         # Redis SET — bypasses the gateway entirely).
