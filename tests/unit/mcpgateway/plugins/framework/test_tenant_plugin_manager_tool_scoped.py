@@ -774,3 +774,61 @@ async def test_factory_get_config_from_db_default():
         assert result is None
     finally:
         await factory.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_factory_reload_tenant_invokes_old_manager_shutdown():
+    """``reload_tenant`` must call ``shutdown()`` on the manager it displaces.
+
+    The runtime mode-toggle convergence story relies on this: when an
+    operator flips a plugin's mode, the rebuild path invokes the old
+    manager's ``shutdown()``, which propagates to plugin ``shutdown()``,
+    which is where stateful plugins (rate limiter, in particular) react
+    to the change (wipe-on-disable; see IBM/mcp-context-forge#4576).
+
+    Existing coverage in this file:
+      * ``test_factory_reload_tool_context`` proves a *new* manager
+        instance is built — but would pass even if the old one was
+        silently dropped without ``shutdown``.
+      * ``test_factory_reload_shutdown_exception`` and
+        ``test_factory_build_manager_old_shutdown_fails`` prove the
+        path *tolerates* shutdown errors — but would also pass if
+        ``shutdown`` stopped being called entirely.
+      * ``test_factory_shutdown_propagates_exceptions`` pins shutdown
+        invocation, but on the whole-factory shutdown path
+        (``factory.shutdown()``), not on the toggle path
+        (``factory.reload_tenant()``).
+
+    A regression here would silently break the operator-visible toggle
+    contract for stateful plugins — the plugin's ``shutdown`` hook
+    would never fire on a mode change, so wipe-on-disable, audit
+    logging on disable, etc. would no-op despite every surrounding
+    test passing.
+
+    The spy uses ``AsyncMock(wraps=...)`` rather than
+    ``new_callable=AsyncMock`` so the real shutdown still runs — keeps
+    the assertion strict (the call must happen) without interfering
+    with cleanup.
+    """
+    # Standard
+    from unittest.mock import AsyncMock, patch  # noqa: PLC0415
+
+    factory = ToolScopedPluginManagerFactory(
+        yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml",
+    )
+    try:
+        manager1 = await factory.get_manager(context_id="reload_lifecycle_tool")
+        assert manager1 is not None
+
+        spy_shutdown = AsyncMock(wraps=manager1.shutdown)
+        with patch.object(manager1, "shutdown", spy_shutdown):
+            manager2 = await factory.reload_tenant(context_id="reload_lifecycle_tool")
+
+        spy_shutdown.assert_awaited_once()
+        assert manager2 is not None
+        assert manager2 is not manager1, (
+            "reload_tenant must construct a new manager instance — same-instance "
+            "reuse would mean the rebuild path was skipped entirely"
+        )
+    finally:
+        await factory.shutdown()
