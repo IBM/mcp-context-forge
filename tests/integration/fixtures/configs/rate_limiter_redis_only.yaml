@@ -1,0 +1,39 @@
+# Minimal plugin config used only by the wipe-on-disable convergence
+# integration test (tests/integration/test_plugin_manager_wipe_on_disable.py).
+#
+# Loads ONLY the rate-limiter plugin with backend=redis. The
+# `redis_url` is sourced from the `REDIS_URL` env var via Jinja
+# substitution — the test sets that env var to point at the test
+# Redis fixture before the factory is constructed.
+#
+# `name: "RateLimiterPlugin"` matches the gateway's own plugins/config.yaml
+# convention (and the cpex-plugins-side TestWipeOnDisable default after
+# the cross-repo rename) so the mode key (`plugin:RateLimiterPlugin:mode`)
+# is consistent across both test suites and production.
+
+plugin_dirs: []
+
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: false
+  plugin_health_check_interval: 120
+
+plugins:
+  - name: "RateLimiterPlugin"
+    kind: "cpex_rate_limiter.rate_limiter.RateLimiterPlugin"
+    description: "Rate limiter under test for wipe-on-disable boundary"
+    version: "0.0.6"
+    author: "test"
+    hooks: ["tool_pre_invoke"]
+    tags: ["limits", "test"]
+    mode: "enforce"
+    priority: 20
+    conditions: []
+    config:
+      backend: "redis"
+      redis_url: "{{ env.REDIS_URL }}"
+      redis_key_prefix: "rl"
+      algorithm: "fixed_window"
+      by_user: "30/m"

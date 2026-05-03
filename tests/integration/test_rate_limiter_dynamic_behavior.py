@@ -47,9 +47,13 @@ GATEWAY_EMAIL = os.environ.get("GATEWAY_EMAIL", "admin@example.com")
 GATEWAY_PASSWORD = os.environ.get("GATEWAY_PASSWORD", "changeme")
 
 PLUGIN_NAME = "RateLimiterPlugin"
+MCP_PROTOCOL_VERSION = "2025-11-25"
 
 # Wait after admin changes for propagation (NGINX cache TTL + pub/sub)
 PROPAGATION_WAIT = int(os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS)))
+
+# Wait long enough for Redis rate-limit counters to expire between phases.
+TTL_EXPIRY_WAIT = int(os.environ.get("RATE_LIMITER_TTL_EXPIRY_WAIT", "75"))
 
 # Number of requests to send per burst — must exceed the configured
 # by_user limit (30/m) to observe rate limiting
@@ -80,6 +84,23 @@ def _fresh_headers() -> dict:
     }
 
 
+def _fresh_mcp_headers(
+    token: str | None = None,
+    session_id: str | None = None,
+) -> dict:
+    """Get MCP JSON-RPC headers for the server-scoped transport."""
+    bearer = token or _get_session_token()
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+    }
+    if session_id:
+        headers["mcp-session-id"] = session_id
+    return headers
+
+
 def _is_gateway_running() -> bool:
     """Check if the gateway is reachable."""
     try:
@@ -94,12 +115,17 @@ def _auto_detect_server_and_tool() -> tuple[str, str]:
     headers = _fresh_headers()
     resp = requests.get(f"{GATEWAY_URL}/servers", headers=headers, timeout=10)
     resp.raise_for_status()
+
+    # Prefer an echo-capable server globally because it exercises the tool path
+    # without requiring transport-specific session setup.
     for server in resp.json():
         tools = server.get("associatedTools", [])
-        # Prefer echo tool (echoes back, cheap), fall back to any time tool
         for tool in tools:
             if "echo" in tool.lower():
                 return server["id"], tool
+
+    for server in resp.json():
+        tools = server.get("associatedTools", [])
         for tool in tools:
             if "time" in tool.lower() and "convert" not in tool.lower():
                 return server["id"], tool
@@ -131,7 +157,38 @@ def _get_plugin_state() -> dict:
     return resp.json()
 
 
-def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
+def _initialize_mcp_session(
+    server_id: str,
+    token: str | None = None,
+) -> str | None:
+    """Initialize an MCP session for server-scoped tool calls."""
+    resp = requests.post(
+        f"{GATEWAY_URL}/servers/{server_id}/mcp/",
+        json={
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "rate-limiter-dynamic-test", "version": "1.0.0"},
+            },
+        },
+        headers=_fresh_mcp_headers(token=token),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    assert "result" in data, f"Initialize failed: {data}"
+    return resp.headers.get("mcp-session-id")
+
+
+def _send_tool_burst(
+    server_id: str,
+    tool_name: str,
+    count: int,
+    token: str | None = None,
+) -> dict:
     """Send a burst of tool calls and return counts of allowed vs rate-limited.
 
     Returns:
@@ -140,7 +197,8 @@ def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
     allowed = 0
     rate_limited = 0
     errors = 0
-    headers = _fresh_headers()
+    session_id = _initialize_mcp_session(server_id, token=token)
+    headers = _fresh_mcp_headers(token=token, session_id=session_id)
 
     for i in range(count):
         payload = {
@@ -154,7 +212,7 @@ def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
         }
         try:
             resp = requests.post(
-                f"{GATEWAY_URL}/servers/{server_id}/mcp",
+                f"{GATEWAY_URL}/servers/{server_id}/mcp/",
                 json=payload,
                 headers=headers,
                 timeout=15,
@@ -288,3 +346,40 @@ class TestRateLimiterRedisState:
         state = _get_plugin_state()
         plugins = {p["name"]: p for p in state.get("plugins", [])}
         assert plugins[PLUGIN_NAME]["mode"] == "disabled"
+
+
+@pytest.mark.slow
+class TestRateLimiterToggleAfterTTLExpiry:
+    """Validate re-enforcement after counters expire naturally.
+
+    This is intentionally a time-based experiment, not rapid toggle-cycle
+    coverage. It verifies that enforce mode still blocks after a quiet period
+    long enough for Redis counters to expire.
+    """
+
+    def test_enforce_disable_enforce_cycle_after_ttl_expiry(self, server_and_tool):
+        """Enforce should work again after disabled mode and a full TTL wait."""
+        server_id, tool_name = server_and_tool
+
+        _set_plugin_mode("enforce")
+        time.sleep(PROPAGATION_WAIT)
+        phase_1 = _send_tool_burst(server_id, tool_name, BURST_SIZE)
+        assert phase_1["errors"] == 0, f"Phase 1 should complete without transport errors: {phase_1}"
+        assert phase_1["rate_limited"] > 0, f"Phase 1 should rate-limit some requests: {phase_1}"
+
+        time.sleep(TTL_EXPIRY_WAIT)
+
+        _set_plugin_mode("disabled")
+        time.sleep(PROPAGATION_WAIT)
+        phase_2 = _send_tool_burst(server_id, tool_name, BURST_SIZE)
+        assert phase_2["errors"] == 0, f"Phase 2 should complete without transport errors: {phase_2}"
+        assert phase_2["rate_limited"] == 0, f"Phase 2 should allow all requests while disabled: {phase_2}"
+        assert phase_2["allowed"] == phase_2["total"] - phase_2["errors"], f"Phase 2 expected all non-error requests to be allowed: {phase_2}"
+
+        time.sleep(TTL_EXPIRY_WAIT)
+
+        _set_plugin_mode("enforce")
+        time.sleep(PROPAGATION_WAIT)
+        phase_3 = _send_tool_burst(server_id, tool_name, BURST_SIZE)
+        assert phase_3["errors"] == 0, f"Phase 3 should complete without transport errors: {phase_3}"
+        assert phase_3["rate_limited"] > 0, f"Phase 3 should rate-limit again after TTL expiry: {phase_3}"
