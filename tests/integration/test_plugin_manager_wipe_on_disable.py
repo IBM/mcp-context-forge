@@ -230,3 +230,167 @@ async def test_factory_reload_tenant_wipes_rate_limiter_counters_on_disable(
     finally:
         await redis_client.aclose()
         await factory.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_publish_plugin_mode_change_round_trips_to_wipe(
+    redis_url_for_test, monkeypatch
+):
+    """Real PUBLISH on the framework's invalidation channel must round-trip
+    to wipe the plugin's counters end-to-end.
+
+    Distinct from
+    ``test_factory_reload_tenant_wipes_rate_limiter_counters_on_disable``
+    (B-0): that test sets the mode key in Redis directly and calls
+    ``factory.reload_tenant`` directly.  This test exercises the
+    publish/subscribe round-trip — calls ``publish_plugin_mode_change``
+    (the function the admin handler invokes), captures the resulting
+    message off the real Redis channel, and feeds it through
+    ``_handle_invalidation_message`` (the function the gateway's
+    listener calls).
+
+    What this pins (the boundary B-0 doesn't exercise):
+
+      * The publisher's actual wire format on the channel — channel
+        name, JSON keys, value types — matches what
+        ``_handle_invalidation_message`` accepts and routes to
+        ``invalidate_all_plugin_managers`` -> ``factory.invalidate_all``
+        -> ``reload_tenant`` -> ``manager.shutdown`` -> ``plugin.shutdown``.
+      * A regression where ``publish_plugin_mode_change`` and the
+        handler drift on format (e.g. one renames a JSON key without
+        the other) would still pass every existing mocked-JSON pubsub
+        test, because those tests construct the message bytes
+        themselves.  This test PUBLISHes via the real publisher and
+        receives off the real channel, so any drift breaks the round-trip.
+    """
+    # Skip-guards (same shape as the B-0 test above).
+    try:
+        from cpex_rate_limiter.rate_limiter import RateLimiterPlugin  # noqa: PLC0415
+    except ImportError:
+        pytest.skip("cpex-rate-limiter not installed in test venv")
+
+    if not hasattr(RateLimiterPlugin, "_wipe_my_counters"):
+        pytest.skip(
+            "installed cpex-rate-limiter does not include wipe-on-disable code path "
+            "(see wipe-test/README.md to install the wipe-enabled wheel)"
+        )
+
+    # Imports — local, same pattern as B-0.
+    # Third-Party
+    import redis.asyncio as aioredis  # noqa: PLC0415
+
+    # First-Party
+    import mcpgateway.plugins.framework as framework  # noqa: PLC0415
+    from mcpgateway.plugins.framework import (  # noqa: PLC0415
+        GlobalContext,
+        ToolPreInvokePayload,
+        publish_plugin_mode_change,
+    )
+    from mcpgateway.plugins.framework._redis import (  # noqa: PLC0415
+        set_shared_redis_provider,
+    )
+    from mcpgateway.plugins.framework.manager import TenantPluginManagerFactory  # noqa: PLC0415
+
+    # YAML uses {{ env.REDIS_URL }} — inject the test redis URL via env so the
+    # plugin loader resolves the placeholder at construction time.
+    monkeypatch.setenv("REDIS_URL", redis_url_for_test)
+
+    # Wire the framework's globals to point at our test setup.  Two need to be
+    # set: (1) the framework's shared-redis provider, so
+    # ``publish_plugin_mode_change`` and the invalidation listener get a
+    # client pointed at the test Redis (the framework uses a dependency-
+    # inversion shim — see ``mcpgateway/plugins/framework/_redis.py`` — not
+    # ``mcpgateway.utils.redis_client._client`` directly); (2)
+    # ``framework._plugin_manager_factory`` so the handler dispatches
+    # ``invalidate_all`` against our factory rather than a real production
+    # one.  Both restored in the finally block.
+    test_redis_for_framework = aioredis.from_url(redis_url_for_test, decode_responses=True)
+
+    async def _test_redis_provider():
+        return test_redis_for_framework
+
+    set_shared_redis_provider(_test_redis_provider)
+
+    factory = TenantPluginManagerFactory(yaml_path=_FIXTURE_YAML)
+    original_factory = framework._plugin_manager_factory
+    framework._plugin_manager_factory = factory
+
+    # Test-side redis + pubsub for capturing the published message off the
+    # channel.  Independent client to keep the test's pubsub state separate
+    # from the framework's.
+    redis_client = aioredis.from_url(redis_url_for_test, decode_responses=True)
+    pubsub = redis_client.pubsub()
+
+    try:
+        await redis_client.flushdb()
+
+        # ── Phase 1: enforce — deposit a counter key (same as B-0) ──
+        manager = await factory.get_manager(context_id="b05_ctx")
+        ctx = GlobalContext(request_id="r1", user="alice")
+        payload = ToolPreInvokePayload(name="t", arguments={})
+        for _ in range(2):
+            await manager.invoke_hook("tool_pre_invoke", payload, ctx)
+
+        keys_pre = await redis_client.keys("rl:*")
+        assert any("alice" in k for k in keys_pre), (
+            f"alice's counter key should exist after Phase 1; got {keys_pre}"
+        )
+
+        # ── Phase 2: subscribe + real publish + receive + hand off to handler ──
+        await pubsub.subscribe(framework._REDIS_INVALIDATION_CHANNEL)
+        # redis-py emits a subscribe-confirmation as the first frame; drain it
+        # so it doesn't get mistaken for the data message we're about to send.
+        _ = await pubsub.get_message(timeout=1.0)
+
+        published = await publish_plugin_mode_change("RateLimiter", "disabled")
+        assert published is True, (
+            "publish_plugin_mode_change must return True against the test "
+            "Redis — if False, the framework's redis client wiring "
+            "(rc._client) is wrong and the rest of this test would silently "
+            "skip the publish path"
+        )
+
+        # Loop get_message until we receive the actual data frame.  The
+        # publish/subscribe path is async on the Redis side, so the message
+        # may not arrive on the very first poll; we budget ~2s total.
+        message = None
+        for _ in range(20):
+            frame = await pubsub.get_message(timeout=0.1)
+            if frame is not None and frame.get("type") == "message":
+                message = frame
+                break
+        assert message is not None, (
+            "expected an invalidation message on the channel after "
+            "publish_plugin_mode_change; check that "
+            "framework._REDIS_INVALIDATION_CHANNEL hasn't drifted"
+        )
+
+        # The core round-trip assertion: drive the framework's handler with the
+        # message we *actually received off the wire*.  If the publisher and
+        # handler disagree on format, this is where it shows up.
+        # ``_handle_invalidation_message`` awaits the full cascade
+        # (invalidate_all_plugin_managers -> factory.invalidate_all ->
+        # reload_tenant -> manager.shutdown -> plugin.shutdown -> wipe), so by
+        # the time it returns the wipe has run.
+        await framework._handle_invalidation_message(message)
+
+        # ── Phase 3: counters wiped ──
+        keys_post = await redis_client.keys("rl:*")
+        assert keys_post == [], (
+            "publish_plugin_mode_change -> handler -> reload -> wipe chain "
+            f"must clear alice's counter; got {keys_post}"
+        )
+    finally:
+        try:
+            await pubsub.unsubscribe()
+        except Exception:
+            pass
+        try:
+            await pubsub.aclose()
+        except Exception:
+            pass
+        await redis_client.aclose()
+        await test_redis_for_framework.aclose()
+        await factory.shutdown()
+        framework._plugin_manager_factory = original_factory
+        set_shared_redis_provider(None)
