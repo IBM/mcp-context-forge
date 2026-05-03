@@ -212,7 +212,7 @@ async def test_factory_reload_tenant_wipes_rate_limiter_counters_on_disable(
         )
 
         # ── Phase 2: simulate operator disable + drive the rebuild ──
-        await redis_client.set("plugin:RateLimiter:mode", "disabled")
+        await redis_client.set("plugin:RateLimiterPlugin:mode", "disabled")
 
         manager_new = await factory.reload_tenant(context_id="wipe_boundary_ctx")
         assert manager_new is not None
@@ -342,7 +342,7 @@ async def test_publish_plugin_mode_change_round_trips_to_wipe(
         # so it doesn't get mistaken for the data message we're about to send.
         _ = await pubsub.get_message(timeout=1.0)
 
-        published = await publish_plugin_mode_change("RateLimiter", "disabled")
+        published = await publish_plugin_mode_change("RateLimiterPlugin", "disabled")
         assert published is True, (
             "publish_plugin_mode_change must return True against the test "
             "Redis — if False, the framework's redis client wiring "

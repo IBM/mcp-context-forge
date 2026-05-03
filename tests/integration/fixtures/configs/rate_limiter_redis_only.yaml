@@ -6,9 +6,10 @@
 # substitution — the test sets that env var to point at the test
 # Redis fixture before the factory is constructed.
 #
-# `name: "RateLimiter"` matches the cpex-plugins-side TestWipeOnDisable
-# default so the mode key (`plugin:RateLimiter:mode`) is consistent
-# across both test suites.
+# `name: "RateLimiterPlugin"` matches the gateway's own plugins/config.yaml
+# convention (and the cpex-plugins-side TestWipeOnDisable default after
+# the cross-repo rename) so the mode key (`plugin:RateLimiterPlugin:mode`)
+# is consistent across both test suites and production.
 
 plugin_dirs: []
 
@@ -20,7 +21,7 @@ plugin_settings:
   plugin_health_check_interval: 120
 
 plugins:
-  - name: "RateLimiter"
+  - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.rate_limiter.RateLimiterPlugin"
     description: "Rate limiter under test for wipe-on-disable boundary"
     version: "0.0.6"
