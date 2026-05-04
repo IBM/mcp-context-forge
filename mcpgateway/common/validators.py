@@ -1242,12 +1242,6 @@ class SecurityValidator:
             if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
-        # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
-        # suffices: unquote() never removes non-`%` chars, so any `[` in
-        # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
-        if "[" in decoded_value or "]" in decoded_value:
-            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
-
         # Block protocol-relative URLs
         if value.startswith("//"):
             raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
@@ -1277,6 +1271,11 @@ class SecurityValidator:
             # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
             # authority injection without breaking encoded-space in path/query.
             decoded_netloc = _unquote_if_needed(result.netloc)
+
+            # Check for brackets in decoded netloc (catches URL-encoded IPv6 like %5B::1%5D)
+            if "[" in decoded_netloc or "]" in decoded_netloc:
+                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
             if any(ch.isspace() for ch in decoded_netloc):
                 raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
