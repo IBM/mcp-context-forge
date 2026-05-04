@@ -290,7 +290,6 @@ plugins:
       # externally (separate container or WASM sandbox), extra wiring may be needed.
       redis_url: "{{ env.REDIS_URL }}"
       redis_key_prefix: "rl"
-      redis_fallback: true
       algorithm: "fixed_window"
       by_user: "30/m"
       by_tenant: "3000/m"
