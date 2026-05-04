@@ -4932,7 +4932,7 @@ async def invoke_a2a_agent_by_id(
             raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
 
         # Admin bypass - only when token has NO team restrictions
         if is_admin and token_teams is None:

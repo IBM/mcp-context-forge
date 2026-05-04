@@ -993,6 +993,6 @@ unset JWT_SECRET TOKEN_ADMIN TOKEN_USER AUTH_ADMIN AUTH_USER UAID_AGENT_B TOKEN_
 
 ---
 
-**Last Updated:** 2026-04-21  
-**PR Reference:** #4342  
+**Last Updated:** 2026-04-21
+**PR Reference:** #4342
 **Related Documentation:** `docs/security/uaid-cross-gateway-auth.md`

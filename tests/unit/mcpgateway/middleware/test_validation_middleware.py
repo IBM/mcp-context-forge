@@ -599,7 +599,7 @@ class TestValidationMiddleware:
 
     def test_validate_parameter_valid_uaid(self):
         """Test UAID validation with valid UAID format.
-        
+
         Covers: validation_middleware.py lines 160, 162, 164-165, 169
         """
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -615,13 +615,13 @@ class TestValidationMiddleware:
 
             # Valid UAID with semicolons (which are allowed in UAIDs)
             valid_uaid = "uaid:aid:abc123;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
-            
+
             # Should not raise even though it contains semicolons
             middleware._validate_parameter("agent_id", valid_uaid)
 
     def test_validate_parameter_invalid_uaid_strict_mode(self):
         """Test UAID validation with invalid UAID in strict mode.
-        
+
         Covers: validation_middleware.py lines 160, 162, 164-168
         """
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -637,7 +637,7 @@ class TestValidationMiddleware:
 
             # Invalid UAID format (missing uid parameter)
             invalid_uaid = "uaid:aid:abc123;registry=context-forge"
-            
+
             with pytest.raises(HTTPException) as exc_info:
                 middleware._validate_parameter("agent_id", invalid_uaid)
 
@@ -646,7 +646,7 @@ class TestValidationMiddleware:
 
     def test_validate_parameter_invalid_uaid_development_mode(self):
         """Test UAID validation with invalid UAID in development mode.
-        
+
         Covers: validation_middleware.py lines 160, 162, 164-167
         """
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -662,7 +662,7 @@ class TestValidationMiddleware:
 
             # Invalid UAID format
             invalid_uaid = "uaid:aid:abc123;registry=context-forge"
-            
+
             # Should not raise in development mode, just log warning
             middleware._validate_parameter("agent_id", invalid_uaid)
 
@@ -696,7 +696,7 @@ class TestValidationMiddleware:
 
     def test_validate_parameter_uuid_format(self):
         """Test UUID validation bypasses dangerous pattern check.
-        
+
         Covers: validation_middleware.py lines 176-177
         """
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -712,7 +712,7 @@ class TestValidationMiddleware:
 
             # Valid UUID format with hyphens
             valid_uuid = "550e8400-e29b-41d4-a716-446655440000"
-            
+
             # Should not raise even though it contains hyphens
             middleware._validate_parameter("user_id", valid_uuid)
 
