@@ -286,7 +286,9 @@ plugins:
     conditions: []
     config:
       backend: "redis"
-      redis_url: "redis://redis:6379/0"
+      # Sourced from the gateway's REDIS_URL env. When run
+      # externally (separate container or WASM sandbox), extra wiring may be needed.
+      redis_url: "{{ env.REDIS_URL }}"
       redis_key_prefix: "rl"
       redis_fallback: true
       algorithm: "fixed_window"
