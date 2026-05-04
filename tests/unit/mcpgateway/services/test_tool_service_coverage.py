@@ -5594,6 +5594,132 @@ class TestUpdateToolBranches:
         assert tool.version == 1
 
     @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_fields(self, tool_service):
+        """Test updating REST passthrough fields (base_url, path_template, query_mapping, header_mapping, etc.)."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "rest_tool"
+        tool.custom_name = "rest_tool"
+        tool.integration_type = "REST"
+        tool.version = 1
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.base_url = "https://old.example.com"
+        tool.path_template = "/old/path"
+        tool.query_mapping = {"old": "param"}
+        tool.header_mapping = {"Old-Header": "old_value"}
+        tool.timeout_ms = 10000
+        tool.expose_passthrough = False
+        tool.allowlist = ["old.example.com"]
+        tool.plugin_chain_pre = ["old_pre"]
+        tool.plugin_chain_post = ["old_post"]
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+        tool_update.custom_name = None
+        tool_update.displayName = None
+        tool_update.title = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = "REST"
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None
+        tool_update.auth = None
+        tool_update.tags = None
+        # REST passthrough fields
+        tool_update.base_url = "https://new.example.com"
+        tool_update.path_template = "/new/path"
+        tool_update.query_mapping = {"new": "param"}
+        tool_update.header_mapping = {"New-Header": "new_value"}
+        tool_update.timeout_ms = 20000
+        tool_update.expose_passthrough = True
+        tool_update.allowlist = ["new.example.com"]
+        tool_update.plugin_chain_pre = ["new_pre"]
+        tool_update.plugin_chain_post = ["new_post"]
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.base_url == "https://new.example.com"
+        assert tool.path_template == "/new/path"
+        assert tool.query_mapping == {"new": "param"}
+        assert tool.header_mapping == {"New-Header": "new_value"}
+        assert tool.timeout_ms == 20000
+        assert tool.expose_passthrough is True
+        assert tool.allowlist == ["new.example.com"]
+        assert tool.plugin_chain_pre == ["new_pre"]
+        assert tool.plugin_chain_post == ["new_post"]
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_rest_passthrough_fields_existing_rest_tool(self, tool_service):
+        """Test updating REST passthrough fields when integration_type is not changing but tool is already REST."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t2"
+        tool.name = "existing_rest"
+        tool.custom_name = "existing_rest"
+        tool.integration_type = "REST"
+        tool.version = 5
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.base_url = None
+        tool.query_mapping = None
+        tool.header_mapping = None
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+        tool_update.custom_name = None
+        tool_update.displayName = None
+        tool_update.title = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = None  # Not changing integration_type
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None
+        tool_update.auth = None
+        tool_update.tags = None
+        # REST passthrough fields
+        tool_update.base_url = "https://api.example.com"
+        tool_update.path_template = None
+        tool_update.query_mapping = {"filter": "name"}
+        tool_update.header_mapping = {"X-API-Key": "secret"}
+        tool_update.timeout_ms = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
+
+        db = MagicMock()
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", return_value=tool),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t2"}),
+        ):
+            result = await tool_service.update_tool(db, "t2", tool_update)
+
+        assert result is not None
+        assert tool.base_url == "https://api.example.com"
+        assert tool.query_mapping == {"filter": "name"}
+        assert tool.header_mapping == {"X-API-Key": "secret"}
+        assert tool.version == 6
+
+    @pytest.mark.asyncio
     async def test_team_name_conflict_on_update(self, tool_service):
         """Raises ToolNameConflictError when team tool name conflicts on rename."""
         tool = MagicMock(spec=DbTool)
