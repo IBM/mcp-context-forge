@@ -13,6 +13,10 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-redis
+  {{- if and .Values.redis.tls.enabled .Values.redis.tls.servingCertSecretName }}
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ .Values.redis.tls.servingCertSecretName }}
+  {{- end }}
 spec:
   type: {{ .Values.redis.service.type }}
   ports:

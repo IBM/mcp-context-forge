@@ -1,0 +1,219 @@
+# --- WO-like OCP profile (overlay) ---
+#
+# Layered ON TOP OF profiles/ocp/values-pgo.yaml (do not pass on its own).
+# Adds the divergences we need to emulate the WO production shape:
+#   * Redis listens on TLS (OCP service-CA serving cert)
+#   * Rate-limiter plugin connects via rediss://
+#
+# Postgres / PgBouncer / NGINX / replicas / probes are inherited unchanged
+# from values-pgo.yaml — PGO already matches WO's external-Postgres shape.
+#
+# Usage:
+#   helm install contextforge charts/mcp-stack \
+#     -n <namespace> \
+#     -f charts/mcp-stack/profiles/ocp/values-pgo.yaml \
+#     -f charts/mcp-stack/profiles/ocp/values-pgo-wo-like.yaml \
+#     -f charts/mcp-stack/profiles/ocp/values-pgo-secrets.yaml
+
+redis:
+  tls:
+    enabled: true
+    # OCP's service-CA controller drops a tls.crt + tls.key into this Secret
+    # in response to the Service annotation we add in service-redis.yaml.
+    servingCertSecretName: mcp-redis-serving-cert
+
+# --- Plugins (overlay reprovides the full block) ---
+# pluginConfig.plugins is a YAML literal-block string in values-pgo.yaml.
+# Helm replaces the whole string when overlaid, so the only practical way
+# to switch the rate-limiter's redis_url to rediss:// is to repeat the
+# full block. The ONLY delta from values-pgo.yaml is the RateLimiterPlugin
+# redis_url — search for `rediss://` to find it.
+mcpContextForge:
+  pluginConfig:
+    enabled: true
+    plugins: |
+      plugin_dirs:
+        - "plugins/native"
+        - "plugins/custom"
+        - "/etc/mcpgateway/plugins"
+      plugin_settings:
+        parallel_execution_within_band: true
+        plugin_timeout: 120
+        fail_on_plugin_error: false
+        enable_plugin_api: true
+        plugin_health_check_interval: 120
+        include_user_info: false
+      plugins:
+        - name: "PIIFilterPlugin"
+          kind: "cpex_pii_filter.PIIFilterPlugin"
+          description: "Detects and masks Personally Identifiable Information"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+          tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
+          mode: "permissive"
+          priority: 50
+          conditions:
+            - prompts: []
+              server_ids: []
+              tenant_ids: []
+          config:
+            detect_ssn: true
+            detect_credit_card: true
+            detect_email: true
+            detect_phone: false
+            detect_ip_address: false
+            default_mask_strategy: "partial"
+            redaction_text: "[PII_REDACTED]"
+            block_on_detection: false
+            log_detections: true
+            include_detection_details: true
+            whitelist_patterns:
+              - "test@example.com"
+              - "555-555-5555"
+        - name: "RateLimiterPlugin"
+          kind: "cpex_rate_limiter.RateLimiterPlugin"
+          description: "Per-user/tenant/tool rate limits"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
+          tags: ["limits", "throttle"]
+          mode: "permissive"
+          priority: 20
+          conditions: []
+          config:
+            backend: "redis"
+            # WO-like: TLS to in-cluster Redis (rediss://) — the only
+            # deliberate delta from values-pgo.yaml's plugins block.
+            redis_url: "rediss://:{{ "{{" }} env.REDIS_PASSWORD {{ "}}" }}@{{ .Release.Name }}-mcp-stack-redis:6379/0"
+            redis_key_prefix: "rl"
+            redis_fallback: true
+            by_user: "30/m"
+            by_tenant: "3000/m"
+            by_tool: {}
+        - name: "RetryWithBackoffPlugin"
+          kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
+          description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["tool_post_invoke"]
+          tags: ["retry", "backoff", "resilience"]
+          mode: "permissive"
+          priority: 170
+          conditions: []
+          config:
+            max_retries: 2
+            backoff_base_ms: 200
+            max_backoff_ms: 5000
+            retry_on_status: [429, 500, 502, 503, 504]
+            jitter: true
+            check_text_content: false
+            tool_overrides: {}
+        - name: "OutputLengthGuardPlugin"
+          kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
+          description: "Guards tool outputs by enforcing min/max length; block or truncate"
+          version: "0.1.0"
+          author: "ContextForge"
+          hooks: ["tool_post_invoke"]
+          tags: ["guard", "length", "outputs", "truncate", "block"]
+          mode: "permissive"
+          priority: 160
+          conditions: []
+          config:
+            min_chars: 0
+            max_chars: 15000
+            strategy: "truncate"
+            ellipsis: "…"
+        - name: "SecretsDetection"
+          kind: "cpex_secrets_detection.SecretsDetectionPlugin"
+          description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
+          version: "0.1.0"
+          author: "ContextForge"
+          hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
+          tags: ["security", "secrets", "dlp"]
+          mode: "permissive"
+          priority: 51
+          conditions: []
+          config:
+            enabled:
+              aws_access_key_id: true
+              aws_secret_access_key: true
+              google_api_key: true
+              slack_token: true
+              private_key_block: true
+              jwt_like: true
+              hex_secret_32: true
+              base64_24: false
+            redact: false
+            redaction_text: "***REDACTED***"
+            block_on_detection: true
+            min_findings_to_block: 1
+        - name: "EncodedExfilDetector"
+          kind: "cpex_encoded_exfil_detection.EncodedExfilDetectorPlugin"
+          description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
+          version: "0.1.0"
+          author: "Mihai Criveti"
+          hooks: ["prompt_pre_fetch", "tool_post_invoke"]
+          tags: ["security", "exfiltration", "dlp", "encoding"]
+          mode: "permissive"
+          priority: 52
+          conditions: []
+          config:
+            enabled:
+              base64: true
+              base64url: true
+              hex: true
+              percent_encoding: true
+              escaped_hex: true
+            min_encoded_length: 24
+            min_decoded_length: 12
+            min_entropy: 3.3
+            min_printable_ratio: 0.70
+            min_suspicion_score: 3
+            max_scan_string_length: 200000
+        - name: "UnifiedPDPPlugin"
+          kind: "plugins.unified_pdp.unified_pdp.UnifiedPDPPlugin"
+          description: "Unified Policy Decision Point for access control across multiple policy engines"
+          version: "0.1.0"
+          author: "yiannis2804"
+          hooks: ["tool_pre_invoke", "resource_pre_fetch"]
+          tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
+          mode: "permissive"
+          priority: 10
+          conditions: []
+          config:
+            engines:
+              - name: native
+                enabled: true
+                priority: 1
+                settings:
+                  rules_file: "plugins/unified_pdp/default_rules.json"
+              - name: mac
+                enabled: false
+                priority: 2
+                settings:
+                  relaxed_star: false
+              - name: opa
+                enabled: false
+                priority: 3
+                settings:
+                  opa_url: "http://localhost:8181"
+                  policy_path: "mcpgateway"
+                  timeout_ms: 5000
+                  max_retries: 3
+              - name: cedar
+                enabled: false
+                priority: 4
+                settings:
+                  cedar_url: "http://localhost:8700"
+                  timeout_ms: 5000
+                  max_retries: 3
+            combination_mode: "all_must_allow"
+            default_decision: "deny"
+            cache:
+              enabled: true
+              ttl_seconds: 60
+              max_entries: 10000
+            performance:
+              timeout_ms: 1000
+              parallel_evaluation: true

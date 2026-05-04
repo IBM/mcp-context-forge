@@ -1242,6 +1242,17 @@ redis:
   # For production, prefer TLS (for example rediss:// via redis.external.url
   # or a managed Redis endpoint with TLS enabled).
 
+  # ─── In-cluster TLS ───
+  # When enabled, the in-cluster Redis listens on TLS using a cert+key
+  # mounted from `servingCertSecretName`. On OpenShift, the Service is
+  # annotated with `service.beta.openshift.io/serving-cert-secret-name`
+  # so the cluster's service-CA controller populates that Secret
+  # automatically. On other platforms, populate the Secret yourself
+  # (cert-manager, etc.). Clients connect via `rediss://...`.
+  tls:
+    enabled: false
+    servingCertSecretName: ""
+
   # ─── Resource limits & requests ───
   resources:
     limits:

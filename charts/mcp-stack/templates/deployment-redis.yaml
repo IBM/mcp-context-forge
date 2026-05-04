@@ -45,7 +45,9 @@ spec:
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
 
-          # Start Redis with optional persistence config and optional password auth.
+          # Start Redis with optional persistence config, optional password auth,
+          # and optional TLS (when redis.tls.enabled — disables the plaintext
+          # port and listens on TLS only).
           command:
             - /bin/sh
             - -ec
@@ -54,10 +56,14 @@ spec:
               if [ -n "${REDIS_PASSWORD:-}" ]; then
                 AUTH_ARGS="--requirepass ${REDIS_PASSWORD}"
               fi
+              TLS_ARGS=""
+              {{- if .Values.redis.tls.enabled }}
+              TLS_ARGS="--tls-port {{ .Values.redis.service.port }} --port 0 --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-auth-clients no"
+              {{- end }}
               if [ -f /usr/local/etc/redis/redis.conf ]; then
-                exec redis-server /usr/local/etc/redis/redis.conf $AUTH_ARGS
+                exec redis-server /usr/local/etc/redis/redis.conf $AUTH_ARGS $TLS_ARGS
               fi
-              exec redis-server $AUTH_ARGS
+              exec redis-server $AUTH_ARGS $TLS_ARGS
 
           # Expose Redis TCP port inside the pod
           ports:
@@ -85,13 +91,20 @@ spec:
                   key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
           {{- end }}
 
-          # ─── Volume mounts for persistence ───
-          {{- if .Values.redis.persistence.enabled }}
+          # ─── Volume mounts ───
+          {{- if or .Values.redis.persistence.enabled .Values.redis.tls.enabled }}
           volumeMounts:
+            {{- if .Values.redis.persistence.enabled }}
             - name: redis-data
               mountPath: /data
             - name: redis-config
               mountPath: /usr/local/etc/redis
+            {{- end }}
+            {{- if .Values.redis.tls.enabled }}
+            - name: redis-tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
           {{- end }}
 
           # ─── Resource limits & requests ───
@@ -107,5 +120,10 @@ spec:
         - name: redis-config
           configMap:
             name: {{ include "mcp-stack.fullname" . }}-redis-config
+        {{- end }}
+        {{- if .Values.redis.tls.enabled }}
+        - name: redis-tls
+          secret:
+            secretName: {{ .Values.redis.tls.servingCertSecretName }}
         {{- end }}
 {{- end }}
