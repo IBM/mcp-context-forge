@@ -98,25 +98,35 @@ docker compose -p tls-test ps
 
 Three checks; run all three for full confidence.
 
-### (a) The rate-limiter plugin loaded with the redis backend
+### (a) Gateway started cleanly and reached TLS Redis
 
 ```bash
-docker logs tls-test-gateway-1 2>&1 | grep -iE "RateLimiter|plugin"
+docker logs tls-test-gateway-1 2>&1 | grep -iE "redis_isready|InvalidClientConfig|TLS feature"
 ```
 
-Expect to see something like:
+Expect to see the gateway's own Redis-readiness probe succeed against
+the TLS endpoint:
 
 ```
-INFO  rate limiter initialized: backend=redis
+INFO - Probing Redis at rediss://redis:6390/0 ...
+INFO - Redis ready (attempt N)
 ```
 
-Must **not** see:
+Must **not** see (this is the pre-fix bug signature from #4581):
 
 ```
 ERROR  Rust rate limiter: Redis backend init failed:
        can't connect with TLS, the feature is not enabled
 ERROR  Failed to load plugin RateLimiterPlugin: ... InvalidClientConfig
 ```
+
+Note: `RateLimiterPlugin` ships with `mode: "disabled"` in
+`plugins/config.yaml`, so the plugin itself is not auto-instantiated at
+startup — the dedicated TLS path test happens in step (c). What this
+check confirms is that the gateway's *general* Redis client (used by
+the readiness probe and other gateway internals) speaks TLS cleanly,
+which means the trust store contains the test CA and rustls /
+redis-py both initialise without panicking.
 
 ### (b) The gateway can speak TLS to the Redis server
 
@@ -144,6 +154,15 @@ which goes through the Rust core, the redis crate, and the rustls handshake
 
 ```bash
 docker exec tls-test-gateway-1 /app/.venv/bin/python - <<'EOF'
+import os
+# Strip empty-string env vars before importing the framework — the gateway
+# image sets several EXPERIMENTAL_RUST_* / MCPGATEWAY_* flags to empty
+# strings, which Pydantic's bool parser rejects when settings load. Not a
+# TLS concern; just an environmental quirk of the image.
+for k, v in list(os.environ.items()):
+    if v == "":
+        del os.environ[k]
+
 import asyncio
 from cpex_rate_limiter.rate_limiter import RateLimiterPlugin
 from mcpgateway.plugins.framework import (
