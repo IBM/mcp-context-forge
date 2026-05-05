@@ -876,7 +876,7 @@ class EmailAuthService:
 
         # Fetch session-attached object from DB — mutations (increment_failed_attempts,
         # reset_failed_attempts) must be tracked by self.db; a cached detached object
-        # would silently discard those writes (CWE-307 brute-force bypass).
+        # would silently discard those writes.
         user = self._fetch_user_from_db(email)
 
         # Track authentication attempt
@@ -1181,7 +1181,7 @@ class EmailAuthService:
         """
         normalized_email = email.lower().strip()
         # Fetch session-attached object — mutations must be tracked by self.db;
-        # a cached detached object would silently discard the unlock (CWE-613).
+        # a cached detached object would silently discard the unlock.
         user = self._fetch_user_from_db(normalized_email)
         if not user:
             raise ValueError(f"User {normalized_email} not found")
