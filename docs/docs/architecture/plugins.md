@@ -258,14 +258,7 @@ The `conditions` array contains objects that specify when plugins should execute
 | `user_patterns` | `string[]` | Execute for users matching regex patterns | `["admin_.*", ".*@company.com"]` |
 | `content_types` | `string[]` | Execute for specific content types | `["application/json", "text/plain"]` |
 
-The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution.
-
-!!! warning "Breaking Change in 1.0.0-RC3"
-    Plugin condition evaluation logic changed from pure OR to hybrid AND/OR in version 1.0.0-RC3. If you're upgrading from 0.9.x, review your plugin configurations to ensure they work as expected with the new evaluation model.
-
-    **Migration Guide:** See [Plugin Condition Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md) for detailed migration instructions and validation scripts.
-
-
+The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution. This evaluation model was introduced in version 1.0.0-RC3, replacing the previous pure OR logic. If you're upgrading from 0.9.x, review your plugin configurations to ensure they work as expected with the new model (see [Plugin Condition Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md) for migration instructions).
 
 #### Evaluation Logic
 
