@@ -146,6 +146,38 @@ class TestNormalizeScope:
     def test_empty_string(self):
         assert _normalize_scope("") == set()
 
+    def test_list_input_simple_scopes(self):
+        """Test that _normalize_scope handles list input (OAuth providers like Gamma)."""
+        scopes = _normalize_scope(["read", "write"])
+        assert "read" in scopes
+        assert "write" in scopes
+
+    def test_list_input_uri_prefixed_scopes(self):
+        """Test that _normalize_scope handles list with URI-prefixed scopes."""
+        scopes = _normalize_scope(["api://app-a/Tools.Read", "api://app-a/Tools.Write"])
+        assert "api://app-a/Tools.Read" in scopes
+        assert "Tools.Read" in scopes
+        assert "api://app-a/Tools.Write" in scopes
+        assert "Tools.Write" in scopes
+
+    def test_empty_list(self):
+        """Test that _normalize_scope handles empty list."""
+        assert _normalize_scope([]) == set()
+
+    def test_mixed_list_with_uri_and_simple(self):
+        """Test that _normalize_scope handles mixed list of URI and simple scopes."""
+        scopes = _normalize_scope(["read", "api://app-a/Tools.Write", "admin"])
+        assert "read" in scopes
+        assert "admin" in scopes
+        assert "api://app-a/Tools.Write" in scopes
+        assert "Tools.Write" in scopes
+
+    def test_invalid_input_type(self):
+        """Test that _normalize_scope handles invalid input gracefully."""
+        assert _normalize_scope(None) == set()
+        assert _normalize_scope(123) == set()
+        assert _normalize_scope({}) == set()
+
 
 # ---------- validate_oauth_token_claims ----------
 
