@@ -51,6 +51,13 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+// Mock ResizeObserver for Radix UI components
+global.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 // Start MSW server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 
