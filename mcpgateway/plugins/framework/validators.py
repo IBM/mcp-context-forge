@@ -24,7 +24,6 @@ from urllib.parse import urlparse
 
 # First-Party
 from mcpgateway.common._url_hardening import (
-    _check_netloc,
     _check_structural_forbidden_chars,
     _decode_and_check_encoding,
     _unquote_if_needed,

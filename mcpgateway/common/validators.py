@@ -58,7 +58,7 @@ import re
 import shlex
 import socket
 from typing import Any, Dict, Iterable, List, Optional, Pattern
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 import uuid
 
 # First-Party
@@ -1219,7 +1219,7 @@ class SecurityValidator:
 
             # Validate netloc: decode, check for spaces/credentials.
             # Centralised in shared _url_hardening.py (issue #4434).
-            decoded_netloc = _check_netloc(result, field_name)
+            _check_netloc(result, field_name)
 
             # SSRF hostname check: urlparse does NOT percent-decode `hostname`,
             # so `%31%32%37%2E%30%2E%30%2E%31` (= 127.0.0.1) bypasses without this.
