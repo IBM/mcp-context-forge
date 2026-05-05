@@ -129,7 +129,7 @@ def _verify_and_extract(raw: str) -> Optional[str]:
 
     Accepts both signed (envelope with sig+payload) and unsigned (plain JSON)
     messages for rolling-deploy compatibility. Unsigned messages are accepted
-    with a debug log when HMAC is configured.
+    with a warning when HMAC is configured.
     """
     key = _get_invalidation_hmac_key()
 
@@ -150,7 +150,7 @@ def _verify_and_extract(raw: str) -> Optional[str]:
 
     # Plain unsigned message (no envelope) — accept for backward compatibility
     if key is not None:
-        _logger.debug("Plugin invalidation: received unsigned message (no HMAC envelope)")
+        _logger.warning("Plugin invalidation: received unsigned message while HMAC is configured — expected only during rolling deploy")
     return raw
 
 

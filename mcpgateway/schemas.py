@@ -8230,6 +8230,7 @@ class PluginBindingMode(str, Enum):
     """Plugin execution mode for tool plugin bindings."""
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"  # Deprecated: use SEQUENTIAL + on_error=ignore
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
     SEQUENTIAL = "sequential"

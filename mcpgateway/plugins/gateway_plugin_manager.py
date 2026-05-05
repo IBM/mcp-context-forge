@@ -424,14 +424,14 @@ class TenantPluginManagerFactory:
         prefix = f"{team_id}{sep}"
         async with self._lock:
             context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
-        failures = 0
-        for ctx_id in context_ids:
-            try:
-                await self.reload_tenant(ctx_id)
-            except Exception as exc:
-                failures += 1
-                logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, exc)
-        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), failures)
+        results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+            return_exceptions=True,
+        )
+        for ctx_id, result in zip(context_ids, results):
+            if isinstance(result, BaseException):
+                logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, result)
+        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
     def iter_context_ids(self) -> list[str]:
         """Return a snapshot of the cached context IDs."""

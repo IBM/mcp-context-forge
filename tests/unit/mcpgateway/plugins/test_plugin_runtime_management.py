@@ -1724,3 +1724,91 @@ class TestListenerLoopBranches:
 
         pubsub.subscribe.assert_awaited_once()
         assert len(seen) == 1
+
+
+# ---------------------------------------------------------------------------
+# HMAC signing and verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestHMACSigningVerification:
+    """Tests for _sign_message and _verify_and_extract."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_hmac_key(self, monkeypatch):
+        """Patch _get_invalidation_hmac_key to return a known key by default."""
+        import mcpgateway.plugins as framework
+
+        self._framework = framework
+        self._key = b"test-hmac-secret"
+        monkeypatch.setattr(framework, "_get_invalidation_hmac_key", lambda: self._key)
+
+    def test_sign_and_verify_roundtrip(self):
+        """A signed message can be verified and its payload extracted."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        result = self._framework._verify_and_extract(signed)
+        assert result == payload
+
+    def test_tampered_signature_rejected(self):
+        """A message with a modified signature is rejected."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        envelope = _json_mod.loads(signed)
+        envelope["sig"] = "deadbeef" * 8
+        tampered = _json_mod.dumps(envelope)
+        result = self._framework._verify_and_extract(tampered)
+        assert result is None
+
+    def test_tampered_payload_rejected(self):
+        """A message with a modified payload but original sig is rejected."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        envelope = _json_mod.loads(signed)
+        envelope["payload"] = '{"action":"toggle","enabled":false}'
+        tampered = _json_mod.dumps(envelope)
+        result = self._framework._verify_and_extract(tampered)
+        assert result is None
+
+    def test_missing_payload_key_in_envelope(self):
+        """An envelope with sig but no payload key is treated as unsigned."""
+        msg = _json_mod.dumps({"sig": "abc123", "other": "data"})
+        result = self._framework._verify_and_extract(msg)
+        assert result == msg
+
+    def test_unsigned_message_accepted_when_no_key(self, monkeypatch):
+        """When HMAC is not configured, unsigned messages pass through."""
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        payload = '{"action":"toggle","enabled":true}'
+        result = self._framework._verify_and_extract(payload)
+        assert result == payload
+
+    def test_unsigned_message_accepted_with_warning_when_key_set(self, caplog):
+        """When HMAC key is set and an unsigned message arrives, a warning is logged."""
+        import logging
+
+        payload = '{"action":"toggle","enabled":true}'
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.plugins"):
+            result = self._framework._verify_and_extract(payload)
+        assert result == payload
+        assert "unsigned message" in caplog.text
+
+    def test_invalid_json_returns_none(self):
+        """Non-JSON input is rejected."""
+        result = self._framework._verify_and_extract("not valid json{{{")
+        assert result is None
+
+    def test_sign_without_key_returns_payload_unchanged(self, monkeypatch):
+        """When no HMAC key is configured, _sign_message returns the raw payload."""
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        payload = '{"action":"toggle","enabled":true}'
+        result = self._framework._sign_message(payload)
+        assert result == payload
+
+    def test_signed_envelope_accepted_without_key(self, monkeypatch):
+        """When no key is configured, a signed envelope still extracts the payload."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        result = self._framework._verify_and_extract(signed)
+        assert result == payload

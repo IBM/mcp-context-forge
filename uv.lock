@@ -3117,7 +3117,7 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", specifier = ">=0.1.0" },
+    { name = "cpex", specifier = ">=0.1.0,<0.2" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.6" },
