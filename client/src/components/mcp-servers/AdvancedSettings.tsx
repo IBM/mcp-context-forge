@@ -1,5 +1,6 @@
 import { Info } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -10,8 +11,17 @@ import {
 import { CACertificateUpload } from "@/components/mcp-servers/CACertificateUpload";
 import { NoneAuth } from "@/components/mcp-servers/NoneAuth";
 import { BasicAuth } from "@/components/mcp-servers/BasicAuth";
+import { BearerTokenAuth } from "@/components/mcp-servers/BearerTokenAuth";
+import { CustomHeadersAuth } from "@/components/mcp-servers/CustomHeadersAuth";
+import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
+import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
 
 type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth" | "query";
+
+export interface CustomHeader {
+  key: string;
+  value: string;
+}
 
 interface AdvancedSettingsProps {
   visibility: string;
@@ -22,6 +32,20 @@ interface AdvancedSettingsProps {
   basicAuthPassword: string;
   onBasicAuthUsernameChange: (value: string) => void;
   onBasicAuthPasswordChange: (value: string) => void;
+  bearerToken: string;
+  onBearerTokenChange: (value: string) => void;
+  customHeaders: CustomHeader[];
+  onCustomHeadersChange: (headers: CustomHeader[]) => void;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  oauthTokenUrl: string;
+  onOAuthClientIdChange: (value: string) => void;
+  onOAuthClientSecretChange: (value: string) => void;
+  onOAuthTokenUrlChange: (value: string) => void;
+  queryParamName: string;
+  queryParamApiKey: string;
+  onQueryParamNameChange: (value: string) => void;
+  onQueryParamApiKeyChange: (value: string) => void;
   oneTimeAuth: boolean;
   onOneTimeAuthChange: (checked: boolean) => void;
   passthroughHeaders: string;
@@ -38,6 +62,20 @@ export function AdvancedSettings({
   basicAuthPassword,
   onBasicAuthUsernameChange,
   onBasicAuthPasswordChange,
+  bearerToken,
+  onBearerTokenChange,
+  customHeaders,
+  onCustomHeadersChange,
+  oauthClientId,
+  oauthClientSecret,
+  oauthTokenUrl,
+  onOAuthClientIdChange,
+  onOAuthClientSecretChange,
+  onOAuthTokenUrlChange,
+  queryParamName,
+  queryParamApiKey,
+  onQueryParamNameChange,
+  onQueryParamApiKeyChange,
   oneTimeAuth,
   onOneTimeAuthChange,
   passthroughHeaders,
@@ -55,6 +93,32 @@ export function AdvancedSettings({
             password={basicAuthPassword}
             onUsernameChange={onBasicAuthUsernameChange}
             onPasswordChange={onBasicAuthPasswordChange}
+          />
+        );
+      case "bearer":
+        return <BearerTokenAuth token={bearerToken} onTokenChange={onBearerTokenChange} />;
+      case "custom":
+        return (
+          <CustomHeadersAuth headers={customHeaders} onHeadersChange={onCustomHeadersChange} />
+        );
+      case "oauth":
+        return (
+          <OAuth2Auth
+            clientId={oauthClientId}
+            clientSecret={oauthClientSecret}
+            tokenUrl={oauthTokenUrl}
+            onClientIdChange={onOAuthClientIdChange}
+            onClientSecretChange={onOAuthClientSecretChange}
+            onTokenUrlChange={onOAuthTokenUrlChange}
+          />
+        );
+      case "query":
+        return (
+          <QueryParameterAuth
+            parameterName={queryParamName}
+            apiKey={queryParamApiKey}
+            onParameterNameChange={onQueryParamNameChange}
+            onApiKeyChange={onQueryParamApiKeyChange}
           />
         );
       default:
@@ -136,23 +200,21 @@ export function AdvancedSettings({
 
       {/* One-time authentication */}
       <div className="space-y-2">
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={oneTimeAuth}
-            onChange={(e) => onOneTimeAuthChange(e.target.checked)}
-            className="h-4 w-4 rounded border-neutral-300 dark:border-neutral-700"
-          />
-          <span className="text-sm font-medium text-neutral-950 dark:text-white">
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="one-time-auth"
+            className="text-sm font-medium text-neutral-950 dark:text-white"
+          >
             One-time authentication
-          </span>
+          </label>
           <Info className="h-4 w-4 text-neutral-400 dark:text-neutral-500" />
-        </label>
-        <p className="pl-6 text-sm text-neutral-600 dark:text-neutral-400">
-          {
-            "Use credentials once, don't store them. Health checks will be disabled. For reusable credentials, configure passthrough headers."
-          }
-        </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <Switch id="one-time-auth" checked={oneTimeAuth} onCheckedChange={onOneTimeAuthChange} />
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {"Use credentials once, don't store them. Health checks will be disabled."}
+          </p>
+        </div>
       </div>
 
       {/* Passthrough headers */}
@@ -181,5 +243,3 @@ export function AdvancedSettings({
     </div>
   );
 }
-
-// Made with Bob
