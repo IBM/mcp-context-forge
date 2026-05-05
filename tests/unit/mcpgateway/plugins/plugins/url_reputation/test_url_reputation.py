@@ -170,7 +170,7 @@ async def test_blocked_domain():
 
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://bad.com/path"), None)
     assert not res.continue_processing
-    assert res.violation.reason == "Blocked domain"
+    assert res.violation.reason == "Domain in blocked set"
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_subdomain_of_blocked_domain():
 
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://api.bad.com/v1"), None)
     assert not res.continue_processing
-    assert res.violation.reason == "Blocked domain"
+    assert res.violation.reason == "Domain in blocked set"
 
 
 @pytest.mark.asyncio

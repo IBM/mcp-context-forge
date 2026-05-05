@@ -8257,7 +8257,9 @@ class PluginPolicyItem(BaseModel):
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
     plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
-    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, enforce_ignore_error, permissive, disabled, sequential, concurrent, transform, audit, or fire_and_forget")
+    mode: PluginBindingMode = Field(
+        PluginBindingMode.ENFORCE, description="Execution mode: enforce, enforce_ignore_error, permissive, disabled, sequential, concurrent, transform, audit, or fire_and_forget"
+    )
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ...,
