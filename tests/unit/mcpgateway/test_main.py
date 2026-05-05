@@ -610,8 +610,8 @@ class TestHealthAndInfrastructure:
         response = test_client.get("/", follow_redirects=False)
 
         if response.status_code == 303:
-            # UI was enabled at import time: redirect to /admin/
-            assert response.headers["location"] == f"{settings.app_root_path}/admin/"
+            # UI was enabled at import time: redirect to /v1/admin/
+            assert response.headers["location"] == f"{settings.app_root_path}/v1/admin/"
         else:
             # UI was disabled at import time: API info dict
             assert response.status_code == 200

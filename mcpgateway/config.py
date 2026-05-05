@@ -1253,6 +1253,10 @@ class Settings(BaseSettings):
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
 
+    # Legacy (backward-compat) route shims
+    legacy_api_enabled: bool = Field(default=True, description="Mount backward-compat unversioned routes (deprecated aliases for /v1/*). Set false to drop shim routes entirely.")
+    legacy_api_sunset_date: str = Field(default="Wed, 13 May 2026 00:00:00 GMT", description="RFC 8594 Sunset header value sent on all legacy (unversioned) route responses")
+
     # LLM Settings (Internal API for LLM Chat)
     llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")

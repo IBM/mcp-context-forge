@@ -37,7 +37,7 @@ def test_main_conditionally_registers_cancellation_router() -> None:
     source = (REPO_ROOT / "mcpgateway" / "api" / "v1" / "__init__.py").read_text(encoding="utf-8")
     for pattern in (
         "if settings.mcpgateway_tool_cancellation_enabled:",
-        "v1_router.include_router(cancellation_router)",
+        "target_router.include_router(cancellation_router)",
         "Cancellation router included",
     ):
         assert pattern in source, f"api/v1/__init__.py: missing cancellation router pattern: {pattern}"

@@ -11906,6 +11906,37 @@ v1_router = build_v1_router(
 app.include_router(v1_router)
 
 # ---------------------------------------------------------------------------
+# Backward-compatible legacy routes (deprecated unversioned aliases for /v1/*)
+# ---------------------------------------------------------------------------
+# Each endpoint now served at /v1/<path> is also mounted at /<path> so that
+# existing clients continue to work.  Responses from these routes receive
+# Sunset / Deprecation / Link headers via DeprecationHeadersMiddleware below.
+if settings.legacy_api_enabled:
+    # First-Party
+    from mcpgateway.api.v1 import build_legacy_router  # pylint: disable=import-outside-toplevel  # noqa: E402
+    from mcpgateway.middleware.deprecation import DeprecationHeadersMiddleware  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+    legacy_router = build_legacy_router(
+        settings,
+        protocol_router=protocol_router,
+        tool_router=tool_router,
+        resource_router=resource_router,
+        prompt_router=prompt_router,
+        gateway_router=gateway_router,
+        root_router=root_router,
+        server_router=server_router,
+        metrics_router=metrics_router,
+        tag_router=tag_router,
+        export_import_router=export_import_router,
+        a2a_router=a2a_router,
+    )
+    app.include_router(legacy_router)
+    app.add_middleware(DeprecationHeadersMiddleware, sunset_date=settings.legacy_api_sunset_date)
+    logger.info("Legacy (unversioned) route shims mounted — sunset: %s", settings.legacy_api_sunset_date)
+else:
+    logger.info("Legacy route shims disabled (LEGACY_API_ENABLED=false)")
+
+# ---------------------------------------------------------------------------
 # Unversioned routes — mounted directly on app (no /v1 prefix)
 # ---------------------------------------------------------------------------
 
