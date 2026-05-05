@@ -584,8 +584,8 @@ class EmailAuthService:
             cached = await auth_cache.get_user(normalized)
             if cached is not None:
                 return _user_dict_to_obj(cached)
-        except Exception:
-            pass  # graceful fallback to DB
+        except Exception as e:
+            logger.debug("Cache read failed for user %s, falling back to DB: %s", normalized, e)
 
         try:
             stmt = select(EmailUser).where(EmailUser.email == normalized)
@@ -597,8 +597,8 @@ class EmailAuthService:
                     from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                     await auth_cache.set_user(normalized, _user_obj_to_dict(user))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Cache write failed for user %s: %s", normalized, e)
             return user
         except Exception as e:
             logger.error(f"Error getting user by email {SecurityValidator.sanitize_log_message(email)}: {e}")
