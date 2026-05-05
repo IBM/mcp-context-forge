@@ -69,7 +69,15 @@ from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
-from mcpgateway.utils.oidc_discovery import discover_oidc_metadata as _discover_oidc_metadata
+from mcpgateway.utils.oidc_discovery import (  # noqa: F401 - re-exported for test compatibility
+    DEFAULT_METADATA_TTL as _OAUTH_OIDC_METADATA_TTL_SECONDS,
+    DEFAULT_NEGATIVE_TTL_PERMANENT as _OAUTH_OIDC_METADATA_NEGATIVE_TTL_PERMANENT,
+    DEFAULT_NEGATIVE_TTL_TRANSIENT as _OAUTH_OIDC_METADATA_NEGATIVE_TTL_TRANSIENT,
+    _build_metadata_urls,
+    _jwks_client_cache as _oauth_jwks_client_cache,
+    _oidc_metadata_cache as _oauth_oidc_metadata_cache,
+    discover_oidc_metadata as _discover_oidc_metadata,
+)
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
