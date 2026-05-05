@@ -75,14 +75,19 @@ _DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40
 
 
 def _user_obj_to_dict(user: EmailUser) -> dict:
-    """Serialise an EmailUser ORM object to a plain dict safe for caching."""
+    """Serialise an EmailUser ORM object to a plain dict safe for caching.
+
+    password_hash is intentionally excluded — same reasoning as JWT payloads
+    (per module docstring): storing credential material in Redis risks exposure
+    on a Redis compromise.  Mutation paths (authenticate_user, unlock_user_account)
+    always fetch session-attached objects directly from the DB.
+    """
 
     def _iso(v: Optional[datetime]) -> Optional[str]:
         return v.isoformat() if v is not None else None
 
     return {
         "email": user.email,
-        "password_hash": user.password_hash,
         "full_name": user.full_name,
         "is_admin": user.is_admin,
         "is_active": user.is_active,
@@ -101,7 +106,12 @@ def _user_obj_to_dict(user: EmailUser) -> dict:
 
 
 def _user_dict_to_obj(d: dict) -> EmailUser:
-    """Reconstruct a detached EmailUser from a cached dict."""
+    """Reconstruct a detached EmailUser from a cached dict.
+
+    The returned object is NOT tracked by any SQLAlchemy session.  Use only
+    for read-only lookups.  Mutation paths must use session-attached objects
+    fetched directly from the DB.
+    """
 
     def _dt(v: Optional[str]) -> Optional[datetime]:
         if v is None:
@@ -112,10 +122,10 @@ def _user_dict_to_obj(d: dict) -> EmailUser:
 
     return EmailUser(
         email=d["email"],
-        password_hash=d.get("password_hash", ""),
+        password_hash=d.get("password_hash", ""),  # not cached; empty for read-only paths
         full_name=d.get("full_name"),
         is_admin=d.get("is_admin", False),
-        is_active=d.get("is_active", True),
+        is_active=d.get("is_active", False),  # fail-closed: missing key → inactive
         auth_provider=d.get("auth_provider", "local"),
         password_hash_type=d.get("password_hash_type", "argon2id"),
         password_change_required=d.get("password_change_required", False),
@@ -577,10 +587,10 @@ class EmailAuthService:
             # user.email if user else None  # Returns: 'test@example.com'
         """
         normalized = email.lower().strip()
-        try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
+        try:
             cached = await auth_cache.get_user(normalized)
             if cached is not None:
                 return _user_dict_to_obj(cached)
@@ -593,15 +603,27 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
             if user is not None:
                 try:
-                    # First-Party
-                    from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                     await auth_cache.set_user(normalized, _user_obj_to_dict(user))
                 except Exception as e:
                     logger.debug("Cache write failed for user %s: %s", normalized, e)
             return user
         except Exception as e:
             logger.error(f"Error getting user by email {SecurityValidator.sanitize_log_message(email)}: {e}")
+            return None
+
+    def _fetch_user_from_db(self, email: str) -> Optional[EmailUser]:
+        """Fetch a session-attached EmailUser directly from the DB, bypassing cache.
+
+        Required for mutation paths (authenticate_user, unlock_user_account) where
+        the returned object must be tracked by self.db so that ORM mutations and
+        self.db.commit() are durable.  Never use the cached detached object for writes.
+        """
+        try:
+            stmt = select(EmailUser).where(EmailUser.email == email)
+            result = self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Error fetching user from DB {SecurityValidator.sanitize_log_message(email)}: {e}")
             return None
 
     async def create_user(
@@ -852,8 +874,10 @@ class EmailAuthService:
         email = email.lower().strip()
         start_time = time.monotonic()
 
-        # Get user from database
-        user = await self.get_user_by_email(email)
+        # Fetch session-attached object from DB — mutations (increment_failed_attempts,
+        # reset_failed_attempts) must be tracked by self.db; a cached detached object
+        # would silently discard those writes (CWE-307 brute-force bypass).
+        user = self._fetch_user_from_db(email)
 
         # Track authentication attempt
         auth_success = False
@@ -1156,7 +1180,9 @@ class EmailAuthService:
             ValueError: If the target user cannot be found.
         """
         normalized_email = email.lower().strip()
-        user = await self.get_user_by_email(normalized_email)
+        # Fetch session-attached object — mutations must be tracked by self.db;
+        # a cached detached object would silently discard the unlock (CWE-613).
+        user = self._fetch_user_from_db(normalized_email)
         if not user:
             raise ValueError(f"User {normalized_email} not found")
 
@@ -1164,6 +1190,7 @@ class EmailAuthService:
         user.locked_until = None
         user.updated_at = utc_now()
         self.db.commit()
+        await self._invalidate_user_auth_cache(normalized_email)
         self._log_auth_event(
             event_type="ACCOUNT_UNLOCKED",
             success=True,

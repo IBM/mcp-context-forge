@@ -44,7 +44,6 @@ async def aiter(items):
 
 _USER_DICT = {
     "email": "test@example.com",
-    "password_hash": "$argon2id$...",
     "full_name": "Test User",
     "is_admin": False,
     "is_active": True,

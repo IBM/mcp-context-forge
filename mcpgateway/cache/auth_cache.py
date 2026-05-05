@@ -37,6 +37,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Set
 
+# Third-Party
+import orjson
+
 logger = logging.getLogger(__name__)
 
 # Sentinel value to represent "user is not a member" in Redis cache
@@ -409,7 +412,8 @@ class AuthCache:
             return None
 
         # L1 check
-        entry = self._user_cache.get(email)
+        with self._lock:
+            entry = self._user_cache.get(email)
         if entry and not entry.is_expired():
             self._hit_count += 1
             return entry.value
@@ -421,9 +425,6 @@ class AuthCache:
                 redis_key = self._get_redis_key("user", email)
                 data = await redis.get(redis_key)
                 if data is not None:
-                    # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
-
                     user_dict = orjson.loads(data)
                     self._hit_count += 1
                     self._redis_hit_count += 1
@@ -460,9 +461,6 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
-
                 redis_key = self._get_redis_key("user", email)
                 await redis.setex(redis_key, self._user_ttl, orjson.dumps(user_dict))
             except Exception as e:

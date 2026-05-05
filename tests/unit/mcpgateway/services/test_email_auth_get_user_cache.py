@@ -21,7 +21,6 @@ _NOW = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 _USER_DICT = {
     "email": "test@example.com",
-    "password_hash": "$argon2id$...",
     "full_name": "Test User",
     "is_admin": False,
     "is_active": True,
@@ -215,3 +214,53 @@ async def test_get_user_by_email_set_cache_error_still_returns_user(service, moc
 
     assert result is not None
     assert result.email == "test@example.com"
+
+
+# ---------- Mutation paths bypass cache (CWE-307 / CWE-613 regression) ----------
+
+
+def test_user_obj_to_dict_excludes_password_hash():
+    """password_hash must not be serialised into Redis (CWE-312)."""
+    user = _make_email_user()
+    d = _user_obj_to_dict(user)
+    assert "password_hash" not in d
+
+
+def test_user_dict_to_obj_is_active_fails_closed():
+    """is_active missing from cache dict must default to False, not True (CWE-20)."""
+    d = dict(_USER_DICT)
+    d.pop("is_active", None)
+    obj = _user_dict_to_obj(d)
+    assert obj.is_active is False
+
+
+def test_fetch_user_from_db_queries_db_directly(service, mock_db):
+    """_fetch_user_from_db must hit DB, not cache — ensures ORM tracking for mutations."""
+    db_user = _make_email_user()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = db_user
+
+    result = service._fetch_user_from_db("test@example.com")
+
+    assert result is db_user
+    mock_db.execute.assert_called_once()
+
+
+def test_fetch_user_from_db_returns_none_on_error(service, mock_db):
+    mock_db.execute.side_effect = RuntimeError("DB down")
+
+    result = service._fetch_user_from_db("test@example.com")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_unlock_user_account_invalidates_cache(service, mock_db):
+    """unlock_user_account must invalidate cache after DB commit (CWE-613)."""
+    db_user = _make_email_user()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = db_user
+
+    with patch.object(service, "_invalidate_user_auth_cache", new_callable=AsyncMock) as mock_inv:
+        with patch.object(service, "_log_auth_event"):
+            await service.unlock_user_account("test@example.com", unlocked_by="admin@example.com")
+
+    mock_inv.assert_awaited_once_with("test@example.com")
