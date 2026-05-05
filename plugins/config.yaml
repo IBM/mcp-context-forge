@@ -277,7 +277,7 @@ plugins:
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"
-    version: "0.0.3"
+    version: "0.0.6"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
