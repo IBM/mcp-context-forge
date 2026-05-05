@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { AdvancedSettings } from "@/components/mcp-servers/AdvancedSettings";
+import { AdvancedSettings, type CustomHeader } from "@/components/mcp-servers/AdvancedSettings";
 import { useRouter } from "@/router";
 
 type TransportType = "sse" | "streamable-http";
@@ -28,6 +28,13 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
   const [passthroughHeaders, setPassthroughHeaders] = useState("");
   const [basicAuthUsername, setBasicAuthUsername] = useState("");
   const [basicAuthPassword, setBasicAuthPassword] = useState("");
+  const [bearerToken, setBearerToken] = useState("");
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([{ key: "", value: "" }]);
+  const [oauthClientId, setOAuthClientId] = useState("");
+  const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [oauthTokenUrl, setOAuthTokenUrl] = useState("");
+  const [queryParamName, setQueryParamName] = useState("");
+  const [queryParamApiKey, setQueryParamApiKey] = useState("");
 
   const resetForm = () => {
     setTransport("streamable-http");
@@ -41,6 +48,13 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
     setPassthroughHeaders("");
     setBasicAuthUsername("");
     setBasicAuthPassword("");
+    setBearerToken("");
+    setCustomHeaders([{ key: "", value: "" }]);
+    setOAuthClientId("");
+    setOAuthClientSecret("");
+    setOAuthTokenUrl("");
+    setQueryParamName("");
+    setQueryParamApiKey("");
   };
 
   const handleCancel = () => {
@@ -191,6 +205,20 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   basicAuthPassword={basicAuthPassword}
                   onBasicAuthUsernameChange={setBasicAuthUsername}
                   onBasicAuthPasswordChange={setBasicAuthPassword}
+                  bearerToken={bearerToken}
+                  onBearerTokenChange={setBearerToken}
+                  customHeaders={customHeaders}
+                  onCustomHeadersChange={setCustomHeaders}
+                  oauthClientId={oauthClientId}
+                  oauthClientSecret={oauthClientSecret}
+                  oauthTokenUrl={oauthTokenUrl}
+                  onOAuthClientIdChange={setOAuthClientId}
+                  onOAuthClientSecretChange={setOAuthClientSecret}
+                  onOAuthTokenUrlChange={setOAuthTokenUrl}
+                  queryParamName={queryParamName}
+                  queryParamApiKey={queryParamApiKey}
+                  onQueryParamNameChange={setQueryParamName}
+                  onQueryParamApiKeyChange={setQueryParamApiKey}
                   oneTimeAuth={oneTimeAuth}
                   onOneTimeAuthChange={setOneTimeAuth}
                   passthroughHeaders={passthroughHeaders}
