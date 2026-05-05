@@ -11,20 +11,29 @@ build-backend = "setuptools.build_meta"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex-url-reputation = "2026-04-20T23:59:59Z"
-cpex-rate-limiter = "2026-04-22T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
-cpex-pii-filter = "2026-04-21T23:59:59Z"
-cpex-retry-with-backoff = "2026-04-09T23:59:59Z"
-cpex-secrets-detection = "2026-04-20T23:59:59Z"
-cryptography = "2026-04-11T23:59:59Z"
-langchain-core = "2026-04-22T23:59:59Z"
-uv = "2026-04-11T23:59:59Z"
-authlib = "2026-04-19T23:59:59Z"
-Mako = "2026-04-22T23:59:59Z"
-python-multipart = "2026-04-22T23:59:59Z"
-langsmith = "2026-04-22T23:59:59Z"
-langchain-openai = "2026-04-22T23:59:59Z"
+# Trusted internal cpex packages - always use latest versions
+cpex-url-reputation = false
+cpex-rate-limiter = false
+cpex-encoded-exfil-detection = false
+cpex-pii-filter = false
+cpex-retry-with-backoff = false
+cpex-secrets-detection = false
+
+# Security-sensitive packages - exempt to get latest patches
+authlib = false           # 1.7.0+ required for security fixes (transitive via fastmcp)
+cryptography = false      # Core security library
+
+# Core framework dependencies - exempt to track with version pins
+Mako = false              # Transitive via alembic
+python-multipart = false  # Transitive via mcp, fastapi
+
+# Langchain ecosystem - exempt to track with version pins
+langchain-core = false
+langchain-openai = false
+langsmith = false         # Transitive via langchain-core
+
+# Development tools
+uv = false                # Package manager self-reference
 
 [tool.uv.sources]
 compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
