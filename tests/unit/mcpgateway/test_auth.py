@@ -4469,7 +4469,8 @@ class TestVerifyOauthAccessToken:
 
         stack = ExitStack()
         stack.enter_context(patch("mcpgateway.services.http_client_service.get_http_client", AsyncMock(return_value=mock_http)))
-        stack.enter_context(patch("mcpgateway.utils.verify_credentials._oauth_jwks_client_cache", {self.JWKS_URI: mock_jwks_client}))
+        # Patch the actual cache location in oidc_discovery module
+        stack.enter_context(patch("mcpgateway.utils.oidc_discovery._jwks_client_cache", {self.JWKS_URI: mock_jwks_client}))
         return stack
 
     @pytest.mark.asyncio
