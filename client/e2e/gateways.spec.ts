@@ -40,14 +40,14 @@ test.describe("Gateways page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
     await apiMock.mockMe();
-    
+
     // Set auth token in sessionStorage
     await page.addInitScript(() => {
       sessionStorage.setItem("mcpgateway_token", "mock-token-12345");
     });
   });
 
-  test.skip("shows loading state while fetching servers", async ({ page }) => {
+  test.skip("shows loading state while fetching servers", async () => {
     // Skip: Loading state is too fast to reliably test in E2E
     // This is better tested in unit tests with controlled timing
   });
@@ -76,8 +76,12 @@ test.describe("Gateways page", () => {
     await expect(mainContent.getByText("gRPC", { exact: true })).toBeVisible();
 
     // Check descriptions
-    await expect(page.getByText("Register an endpoint implementing the Model Context Protocol")).toBeVisible();
-    await expect(page.getByText("Add an agent over A2A, OpenAI, or Anthropic protocols")).toBeVisible();
+    await expect(
+      page.getByText("Register an endpoint implementing the Model Context Protocol"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Add an agent over A2A, OpenAI, or Anthropic protocols"),
+    ).toBeVisible();
   });
 
   test("navigates to servers page when MCP server card is clicked", async ({ page }) => {
@@ -161,9 +165,9 @@ test.describe("Gateways page", () => {
     await expect(card.locator('[class*="bg-emerald-500"]')).toBeVisible();
 
     // Check counts (use more specific selectors to avoid duplicates)
-    const toolsCount = card.locator('span').filter({ hasText: /^2$/ }).first();
+    const toolsCount = card.locator("span").filter({ hasText: /^2$/ }).first();
     await expect(toolsCount).toBeVisible(); // 2 tools
-    
+
     // Check visibility badge
     await expect(card.getByText("public")).toBeVisible();
     await expect(card.getByText("enabled")).toBeVisible();
@@ -271,7 +275,7 @@ test.describe("Gateways page", () => {
 
   test("handles disabled server correctly", async ({ page }) => {
     const disabledServer = { ...MOCK_VIRTUAL_SERVER, enabled: false };
-    
+
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -284,10 +288,10 @@ test.describe("Gateways page", () => {
     await page.waitForLoadState("networkidle");
 
     const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
-    
+
     // Should NOT show green enabled indicator
     await expect(card.locator('[class*="bg-emerald-500"]')).not.toBeVisible();
-    
+
     // Should show disabled badge
     await expect(card.getByText("disabled")).toBeVisible();
   });
@@ -319,7 +323,7 @@ test.describe("Gateways page", () => {
     // Check different visibility badges
     const card1 = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
     const card2 = page.locator('[class*="min-h-35"]').filter({ hasText: "Production Server" });
-    
+
     await expect(card1.getByText("public")).toBeVisible();
     await expect(card2.getByText("private")).toBeVisible();
   });
@@ -389,7 +393,7 @@ test.describe("Gateways page", () => {
     await page.waitForLoadState("networkidle");
 
     const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
-    
+
     // All counts should be 0
     const counts = await card.locator('span:has-text("0")').count();
     expect(counts).toBeGreaterThanOrEqual(3); // At least 3 zeros for tools, resources, prompts

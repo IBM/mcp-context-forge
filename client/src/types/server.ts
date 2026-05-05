@@ -51,10 +51,10 @@ export type ServerStatus = "draft" | "active" | "offline" | "warning";
 
 /**
  * Virtual Server types
- * 
+ *
  * Represents virtual servers from the /servers endpoint
  */
-export interface VirtualServer extends Omit<BaseServer, 'team_id' | 'owner_email'> {
+export interface VirtualServer extends Omit<BaseServer, "team_id" | "owner_email"> {
   description: string;
   icon: string;
   createdAt: string;
@@ -64,7 +64,7 @@ export interface VirtualServer extends Omit<BaseServer, 'team_id' | 'owner_email
   associatedResources: string[];
   associatedPrompts: string[];
   associatedA2aAgents: string[];
-  metrics: any | null;
+  metrics: Record<string, unknown> | null;
   tags: string[];
   createdBy: string;
   createdFromIp: string;
@@ -81,7 +81,7 @@ export interface VirtualServer extends Omit<BaseServer, 'team_id' | 'owner_email
   team: string;
   ownerEmail: string;
   oauthEnabled: boolean;
-  oauthConfig: any | null;
+  oauthConfig: Record<string, unknown> | null;
 }
 
 export interface VirtualServersResponse {
