@@ -605,6 +605,11 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                 # rather than treating the proxy payload as an API-token payload with embedded teams.
                 "token_use": "session",  # nosec B105 - Not a password; JWT claim type
             }
+
+            # Set request.state.token_teams so get_token_teams_from_request() can find it.
+            # This matches the pattern in auth.py:1403 where get_current_user() sets it
+            # after resolving teams for session tokens.
+            request.state.token_teams = token_teams
         else:
             # User not in DB - handle based on REQUIRE_USER_IN_DB setting
             platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
@@ -619,6 +624,8 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                     "email": proxy_user,
                     "token_use": "session",  # nosec B105 - Not a password; JWT claim type
                 }
+                # Set request.state.token_teams for bootstrap admin as well
+                request.state.token_teams = None
             else:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
