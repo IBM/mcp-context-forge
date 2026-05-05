@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -6810,6 +6810,7 @@ class ToolPluginBinding(Base):
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
         Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="on_error_valid"),
     )
 
     def __repr__(self) -> str:

@@ -30,7 +30,7 @@ def apply_attribute_mapping(attributes: dict[str, Any], mapping: dict[str, str])
         {'controls.artifact.name': 'weather', 'tool.version': '1.0'}
     """
     if not mapping:
-        return attributes
+        return dict(attributes)
 
     renamed_attributes = {}
     for old_name, value in attributes.items():

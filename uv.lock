@@ -922,7 +922,7 @@ toml = [
 
 [[package]]
 name = "cpex"
-version = "0.1.0rc1"
+version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -937,9 +937,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f0/f1/608f5295bcd77a62ce520c91c76ba9fe07c50378e2600aeb7edbf80298c2/cpex-0.1.0rc1.tar.gz", hash = "sha256:36c8c85395073f5a8e828ab972b7a3eedc9f68066e6665473090947481319915", size = 1211891, upload-time = "2026-05-01T03:04:54.602Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/73/98eb3322c63fe8654e3db87b13557aff75eaeecf35aabb129901e5c7704e/cpex-0.1.0.tar.gz", hash = "sha256:d67fdb2892bb9c683d42c716be46d926fbb01b9f4c3d85d2cdf0869d7a0f2d0e", size = 1211837, upload-time = "2026-05-05T19:17:15.387Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/e5/a9f07008443e42eceedb433dfd683e480f648c2db4072190aa7ac4209c9d/cpex-0.1.0rc1-py3-none-any.whl", hash = "sha256:6aa9395af7792653dfa18815f11f9c34ebc5ac91284a47f40834ba3f507a7f21", size = 241048, upload-time = "2026-05-01T03:04:52.996Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/15/c1a98af9dca602846373a07dd09b3944f6e2fceee132df58772acc057d66/cpex-0.1.0-py3-none-any.whl", hash = "sha256:890db8077e05aedf8236b1ff140f39b677944a751afe57de6538faf884d64d4a", size = 241015, upload-time = "2026-05-05T19:17:13.614Z" },
 ]
 
 [[package]]
@@ -3108,7 +3108,7 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", specifier = ">=0.1.0rc1" },
+    { name = "cpex", specifier = ">=0.1.0" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.2.1" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.6" },

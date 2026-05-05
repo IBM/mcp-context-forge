@@ -18,6 +18,8 @@ pub/sub for plugin enable/disable and per-plugin mode changes.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import random
@@ -99,6 +101,59 @@ _InvalidationMsg = Union[_GlobalToggleMsg, _ModeChangeMsg, _BindingChangeMsg, _T
 _invalidation_adapter: TypeAdapter[_InvalidationMsg] = TypeAdapter(_InvalidationMsg)
 
 
+def _get_invalidation_hmac_key() -> Optional[bytes]:
+    """Return the HMAC signing key for pub/sub messages, or None if unconfigured."""
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+    from pydantic import SecretStr  # pylint: disable=import-outside-toplevel
+
+    secret = settings.jwt_secret_key
+    if not secret:
+        return None
+    raw = secret.get_secret_value() if isinstance(secret, SecretStr) else str(secret)
+    if not raw:
+        return None
+    return raw.encode()
+
+
+def _sign_message(payload: str) -> str:
+    """Wrap a JSON payload with an HMAC signature envelope."""
+    key = _get_invalidation_hmac_key()
+    if key is None:
+        return payload
+    sig = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+    return json.dumps({"payload": payload, "sig": sig})
+
+
+def _verify_and_extract(raw: str) -> Optional[str]:
+    """Verify HMAC and return the inner payload, or None on failure.
+
+    Accepts both signed (envelope with sig+payload) and unsigned (plain JSON)
+    messages for rolling-deploy compatibility. Unsigned messages are accepted
+    with a debug log when HMAC is configured.
+    """
+    key = _get_invalidation_hmac_key()
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        _logger.warning("Plugin invalidation: message is not valid JSON, dropping")
+        return None
+
+    if isinstance(parsed, dict) and "sig" in parsed and "payload" in parsed:
+        if key is None:
+            return parsed["payload"]
+        expected = hmac.new(key, parsed["payload"].encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, parsed["sig"]):
+            _logger.error("Plugin invalidation: HMAC verification FAILED — possible spoofed message, dropping")
+            return None
+        return parsed["payload"]
+
+    # Plain unsigned message (no envelope) — accept for backward compatibility
+    if key is not None:
+        _logger.debug("Plugin invalidation: received unsigned message (no HMAC envelope)")
+    return raw
+
+
 def are_plugins_enabled() -> bool:
     """Return the in-memory plugin-subsystem flag."""
     return _PLUGINS_ENABLED
@@ -131,7 +186,7 @@ async def are_plugins_enabled_shared() -> bool:
     global _shared_enabled_cache
     async with _shared_enabled_cache_lock:
         cache = _shared_enabled_cache
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         if cache is not None and (now - cache[1]) < _SHARED_ENABLED_CACHE_TTL:
             return cache[0]
 
@@ -194,7 +249,9 @@ async def _publish_invalidation(message: dict[str, Any]) -> bool:
         return False
 
     try:
-        await client.publish(_REDIS_INVALIDATION_CHANNEL, json.dumps(message))
+        payload = json.dumps(message)
+        signed = _sign_message(payload)
+        await client.publish(_REDIS_INVALIDATION_CHANNEL, signed)
         return True
     except Exception as exc:
         _logger.warning("Plugin invalidation publish failed for %s (%s)", message.get("type"), exc)
@@ -336,10 +393,7 @@ def list_configured_plugin_names() -> list[str]:
     """Return the plugin names from the loaded YAML config, regardless of runtime state."""
     if _plugin_manager_factory is None:
         return []
-    config = _plugin_manager_factory._base_config  # pylint: disable=protected-access
-    if not config or not config.plugins:
-        return []
-    return [plugin.name for plugin in config.plugins]
+    return _plugin_manager_factory.plugin_names
 
 
 async def get_plugin_mode_override(plugin_name: str) -> Optional[str]:
@@ -379,9 +433,19 @@ async def _handle_invalidation_message(message: dict[str, Any]) -> None:
     if message.get("type") != "message":
         return
 
+    raw_data = message.get("data")
+    if raw_data is None:
+        _logger.warning("Ignoring plugin invalidation message with missing data")
+        return
+
+    raw_str = raw_data.decode() if isinstance(raw_data, bytes) else str(raw_data)
+    verified_payload = _verify_and_extract(raw_str)
+    if verified_payload is None:
+        return
+
     try:
-        data = json.loads(message["data"])
-    except (ValueError, KeyError, TypeError) as exc:
+        data = json.loads(verified_payload)
+    except (ValueError, TypeError) as exc:
         _logger.warning("Ignoring malformed plugin invalidation message (%s)", exc)
         return
 
@@ -396,7 +460,7 @@ async def _handle_invalidation_message(message: dict[str, Any]) -> None:
             global _PLUGINS_ENABLED
             _PLUGINS_ENABLED = enabled
             _invalidate_shared_enabled_cache()
-            _logger.debug("Pub/sub: global toggle set to %s", _PLUGINS_ENABLED)
+            _logger.warning("Pub/sub: global plugin toggle changed to %s", _PLUGINS_ENABLED)
 
         case _ModeChangeMsg(plugin=plugin, mode=mode, ttl_seconds=ttl_seconds):
             _state.set_local_mode_override(plugin, mode, time.monotonic() + ttl_seconds)
@@ -416,6 +480,9 @@ async def _handle_invalidation_message(message: dict[str, Any]) -> None:
                 _logger.debug("Pub/sub: binding change, reloaded context %s", context_id)
             except Exception as exc:
                 _logger.warning("Pub/sub binding_change reload failed for %s (%s)", context_id, exc)
+
+        case _:
+            _logger.debug("Pub/sub: invalidation message dropped (factory not initialized): %r", frame)
 
 
 async def _plugin_invalidation_listener() -> None:

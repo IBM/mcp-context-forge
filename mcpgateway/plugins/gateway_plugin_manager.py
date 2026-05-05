@@ -42,6 +42,7 @@ CONTEXT_ID_SEPARATOR = "::"
 
 _BINDING_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
+    "enforce_ignore_error": (PluginMode.SEQUENTIAL, OnError.IGNORE),
     "permissive": (PluginMode.TRANSFORM, None),
     "disabled": (PluginMode.DISABLED, None),
 }
@@ -125,6 +126,13 @@ class TenantPluginManagerFactory:
         """Set or replace the observability provider."""
         self._observability = value
 
+    @property
+    def plugin_names(self) -> list[str]:
+        """Return the plugin names from the loaded base YAML config."""
+        if not self._base_config or not self._base_config.plugins:
+            return []
+        return [plugin.name for plugin in self._base_config.plugins]
+
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
@@ -192,6 +200,7 @@ class TenantPluginManagerFactory:
                     logger.warning("Failed to shutdown cancelled manager for context_id=%s", context_id)
             raise
         except Exception:
+            logger.error("Manager build failed for context_id=%s", context_id, exc_info=True)
             if manager is not None:
                 try:
                     await manager.shutdown()
@@ -205,6 +214,9 @@ class TenantPluginManagerFactory:
             return self._base_config
 
         override_map = {p.name: p for p in tenant_cfg_override}
+        if not any(p.name in override_map for p in self._base_config.plugins or []):
+            return self._base_config
+
         merged_plugins = []
 
         for plugin in self._base_config.plugins or []:
@@ -394,14 +406,17 @@ class TenantPluginManagerFactory:
         return overrides if overrides else None
 
     async def invalidate_all(self) -> None:
-        """Reload every cached manager, logging failures instead of aborting the sweep."""
+        """Reload every cached manager concurrently, logging failures."""
         async with self._lock:
             context_ids = list(self._managers.keys())
-        for ctx_id in context_ids:
-            try:
-                await self.reload_tenant(ctx_id)
-            except Exception as exc:
-                logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, exc)
+        results = await asyncio.gather(
+            *(self.reload_tenant(ctx_id) for ctx_id in context_ids),
+            return_exceptions=True,
+        )
+        for ctx_id, result in zip(context_ids, results):
+            if isinstance(result, BaseException):
+                logger.warning("invalidate_all: reload failed for context_id=%s (%s)", ctx_id, result)
+        logger.debug("invalidate_all: rebuilt %d managers (%d failures)", len(context_ids), sum(1 for r in results if isinstance(r, BaseException)))
 
     async def invalidate_team(self, team_id: str, separator: Optional[str] = None) -> None:
         """Reload every cached manager whose context_id starts with team_id plus separator."""
@@ -409,18 +424,21 @@ class TenantPluginManagerFactory:
         prefix = f"{team_id}{sep}"
         async with self._lock:
             context_ids = [cid for cid in self._managers if cid.startswith(prefix)]
+        failures = 0
         for ctx_id in context_ids:
             try:
                 await self.reload_tenant(ctx_id)
             except Exception as exc:
+                failures += 1
                 logger.warning("invalidate_team: reload failed for context_id=%s (%s)", ctx_id, exc)
+        logger.debug("invalidate_team: team=%s rebuilt %d managers (%d failures)", team_id, len(context_ids), failures)
 
     def iter_context_ids(self) -> list[str]:
         """Return a snapshot of the cached context IDs."""
         return list(self._managers.keys())
 
 
-# Keep the alias so existing imports don't break during transition.
+# Deprecated: use TenantPluginManagerFactory directly. Remove after v1.1.0.
 GatewayTenantPluginManagerFactory = TenantPluginManagerFactory
 
 

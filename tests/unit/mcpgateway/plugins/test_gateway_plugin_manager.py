@@ -284,9 +284,10 @@ class TestGetConfigFromDb:
         assert overrides[0].on_error is None
 
     @pytest.mark.asyncio
-    async def test_invalid_on_error_ignored(self, db_session):
-        """An invalid on_error value is ignored (not propagated)."""
+    async def test_invalid_on_error_rejected_by_db_constraint(self, db_session):
+        """An invalid on_error value is rejected by the DB CHECK constraint."""
         from mcpgateway.db import ToolPluginBinding, utc_now
+        from sqlalchemy.exc import IntegrityError
         import uuid
 
         row = ToolPluginBinding(
@@ -304,14 +305,9 @@ class TestGetConfigFromDb:
             updated_by="admin@example.com",
         )
         db_session.add(row)
-        db_session.flush()
-
-        factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-g", "t"))
-
-        assert overrides is not None
-        assert len(overrides) == 1
-        assert overrides[0].on_error is None
+        with pytest.raises(IntegrityError):
+            db_session.flush()
+        db_session.rollback()
 
     @pytest.mark.asyncio
     async def test_wildcard_binding_returned(self, db_session):
@@ -937,3 +933,99 @@ class TestApplyAttributeMapping:
         mapping = {"tool.name": "controls.artifact.name"}
         result = apply_attribute_mapping(attrs, mapping)
         assert result == {"controls.artifact.name": "weather", "tool.version": "1.0"}
+
+    def test_empty_mapping_returns_copy(self):
+        attrs = {"tool.name": "weather"}
+        result = apply_attribute_mapping(attrs, {})
+        assert result == attrs
+        assert result is not attrs
+
+
+# ---------------------------------------------------------------------------
+# _CachedManager.is_expired contract
+# ---------------------------------------------------------------------------
+
+
+class TestCachedManagerExpiry:
+    def test_ttl_zero_never_expires(self):
+        entry = _CachedManager(manager=MagicMock(), created_at=0.0)
+        assert entry.is_expired(0) is False
+
+    def test_ttl_positive_expires_after_deadline(self):
+        entry = _CachedManager(manager=MagicMock(), created_at=0.0)
+        with patch("time.monotonic", return_value=31.0):
+            assert entry.is_expired(30) is True
+
+    def test_ttl_positive_not_expired_before_deadline(self):
+        import time as _time
+
+        now = _time.monotonic()
+        entry = _CachedManager(manager=MagicMock(), created_at=now)
+        assert entry.is_expired(9999) is False
+
+
+# ---------------------------------------------------------------------------
+# _BINDING_MODE_TO_PLUGIN_MODE: enforce_ignore_error DB binding path
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceIgnoreErrorDbBinding:
+    @pytest.mark.asyncio
+    async def test_enforce_ignore_error_from_db_binding(self, db_session):
+        """DB bindings with mode='enforce_ignore_error' map to SEQUENTIAL + OnError.IGNORE."""
+        from mcpgateway.db import ToolPluginBinding, utc_now
+        import uuid
+
+        binding = ToolPluginBinding(
+            id=str(uuid.uuid4()),
+            team_id="team-x",
+            tool_name="my_tool",
+            plugin_id="SomePlugin",
+            mode="enforce_ignore_error",
+            priority=10,
+            config={},
+            binding_reference_id=None,
+            on_error=None,
+            created_at=utc_now(),
+            created_by="test@test.com",
+            updated_at=utc_now(),
+            updated_by="test@test.com",
+        )
+        db_session.add(binding)
+        db_session.commit()
+
+        factory = _make_factory(db_session)
+        overrides = await factory.get_config_from_db(make_context_id("team-x", "my_tool"))
+
+        assert overrides is not None
+        assert len(overrides) == 1
+        assert overrides[0].mode == PluginMode.SEQUENTIAL
+        assert overrides[0].on_error == OnError.IGNORE
+
+
+# ---------------------------------------------------------------------------
+# invalidate_team prefix collision safety
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidateTeamPrefixSafety:
+    @pytest.mark.asyncio
+    async def test_team_id_prefix_does_not_collide(self):
+        """team_id 't' must NOT match context_id 't2::tool'."""
+        with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+            factory = TenantPluginManagerFactory(yaml_path="/fake.yaml")
+
+        mock_mgr = MagicMock()
+        factory._managers = {
+            "t::tool_a": _CachedManager(manager=mock_mgr, created_at=0.0),
+            "t2::tool_b": _CachedManager(manager=mock_mgr, created_at=0.0),
+            "t::tool_c": _CachedManager(manager=mock_mgr, created_at=0.0),
+        }
+        factory.reload_tenant = AsyncMock()
+
+        await factory.invalidate_team("t")
+
+        reloaded = [call.args[0] for call in factory.reload_tenant.call_args_list]
+        assert "t::tool_a" in reloaded
+        assert "t::tool_c" in reloaded
+        assert "t2::tool_b" not in reloaded

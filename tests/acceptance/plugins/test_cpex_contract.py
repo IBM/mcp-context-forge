@@ -182,6 +182,48 @@ class TestSerializationContracts:
 # 4. Settings compatibility tests
 # ---------------------------------------------------------------------------
 
+class TestUserContextImportParity:
+    """Verify UserContext imported via gateway re-export is the same class as cpex's."""
+
+    def test_isinstance_check_works_across_import_paths(self):
+        from cpex.framework import UserContext as CpexUserContext
+        from mcpgateway.transports.context import UserContext as GatewayUserContext
+
+        assert CpexUserContext is GatewayUserContext
+
+    def test_user_context_has_required_fields(self):
+        from mcpgateway.transports.context import UserContext
+
+        ctx = UserContext(user_id="test@example.com", teams=["team-a"])
+        assert ctx.user_id == "test@example.com"
+        assert ctx.teams == ["team-a"]
+        assert isinstance(ctx, UserContext)
+
+
+class TestModeSemantics:
+    """Verify that cpex PluginMode enum values match gateway expectations."""
+
+    def test_sequential_mode_exists(self):
+        from cpex.framework.models import PluginMode
+        assert hasattr(PluginMode, "SEQUENTIAL")
+        assert PluginMode.SEQUENTIAL.value == "sequential"
+
+    def test_transform_mode_exists(self):
+        from cpex.framework.models import PluginMode
+        assert hasattr(PluginMode, "TRANSFORM")
+        assert PluginMode.TRANSFORM.value == "transform"
+
+    def test_audit_mode_exists(self):
+        from cpex.framework.models import PluginMode
+        assert hasattr(PluginMode, "AUDIT")
+        assert PluginMode.AUDIT.value == "audit"
+
+    def test_disabled_mode_exists(self):
+        from cpex.framework.models import PluginMode
+        assert hasattr(PluginMode, "DISABLED")
+        assert PluginMode.DISABLED.value == "disabled"
+
+
 class TestSettingsCompatibility:
     """Verify cpex reads PLUGINS_* env vars correctly."""
 

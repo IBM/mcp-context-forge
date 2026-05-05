@@ -19,6 +19,7 @@ All Redis interactions are mocked — no real Redis needed.
 
 # Standard
 import asyncio
+import json as _json_mod
 import time
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,6 +55,14 @@ def _mock_redis(*, client=None, side_effect=None):
     finally:
         set_shared_redis_provider(None)
         _framework._shared_enabled_cache = None
+
+
+def _unwrap_published_message(raw: str) -> dict:
+    """Extract the inner invalidation message from a possibly HMAC-signed envelope."""
+    parsed = _json_mod.loads(raw)
+    if isinstance(parsed, dict) and "sig" in parsed and "payload" in parsed:
+        return _json_mod.loads(parsed["payload"])
+    return parsed
 
 
 def _make_bare_factory(**attrs):
@@ -636,9 +645,7 @@ class TestPubSubPublisher:
             call_args = mock_client.publish.call_args
             assert call_args[0][0] == "plugin:invalidation"
             # Verify message contains toggle info
-            import json
-
-            msg = json.loads(call_args[0][1])
+            msg = _unwrap_published_message(call_args[0][1])
             assert msg["type"] == "global_toggle"
             assert msg["enabled"] is False
 
@@ -720,7 +727,6 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_publish_plugin_mode_change_sends_mode_change_message(self):
         """publish_plugin_mode_change must SET the key AND publish a mode_change frame."""
-        import json
         from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
@@ -739,7 +745,7 @@ class TestPublishHelpers:
         # ttl_seconds so every peer stamps the same absolute deadline.
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "mode_change", "plugin": "RateLimiterPlugin", "mode": "enforce", "ttl_seconds": 86400}
 
     @pytest.mark.asyncio
@@ -802,7 +808,6 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_publish_binding_change_sends_binding_change_message(self):
         """publish_binding_change must emit a binding_change frame with the context id."""
-        import json
         from mcpgateway.plugins import publish_binding_change
 
         client = AsyncMock()
@@ -814,7 +819,7 @@ class TestPublishHelpers:
         assert ok is True
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "binding_change", "context_id": "team_a::my_tool"}
 
 
@@ -926,8 +931,6 @@ class TestTeamBindingChangeRoundTrip:
 
     @pytest.mark.asyncio
     async def test_publish_team_binding_change_emits_correct_frame(self):
-        import json
-
         from mcpgateway.plugins import publish_team_binding_change
 
         client = AsyncMock()
@@ -939,7 +942,7 @@ class TestTeamBindingChangeRoundTrip:
         assert ok is True
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "team_binding_change", "team_id": "team_a"}
 
     @pytest.mark.asyncio
@@ -1530,15 +1533,12 @@ class TestFactoryAccessors:
             reset_plugin_manager_factory()
 
     def test_list_configured_plugin_names_returns_config_names(self):
-        """With a live factory whose ``_base_config`` has plugins, the helper returns their names."""
+        """With a live factory whose ``plugin_names`` property has entries, the helper returns them."""
         import mcpgateway.plugins as framework
         from mcpgateway.plugins import list_configured_plugin_names, reset_plugin_manager_factory
 
         fake_factory = MagicMock()
-        fake_factory._base_config = MagicMock()
-        fake_factory._base_config.plugins = [MagicMock(name="P1"), MagicMock(name="P2")]
-        fake_factory._base_config.plugins[0].name = "PluginOne"
-        fake_factory._base_config.plugins[1].name = "PluginTwo"
+        fake_factory.plugin_names = ["PluginOne", "PluginTwo"]
 
         framework._plugin_manager_factory = fake_factory
         try:
@@ -1554,13 +1554,12 @@ class TestFactoryAccessors:
         assert list_configured_plugin_names() == []
 
     def test_list_configured_plugin_names_empty_when_config_has_no_plugins(self):
-        """Factory present but empty ``plugins`` → empty list (guards the ``not config.plugins`` branch)."""
+        """Factory present but empty ``plugin_names`` → empty list."""
         import mcpgateway.plugins as framework
         from mcpgateway.plugins import list_configured_plugin_names, reset_plugin_manager_factory
 
         fake_factory = MagicMock()
-        fake_factory._base_config = MagicMock()
-        fake_factory._base_config.plugins = []
+        fake_factory.plugin_names = []
 
         framework._plugin_manager_factory = fake_factory
         try:
