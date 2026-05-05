@@ -367,3 +367,108 @@ class TestDangerousPatternDetection:
         from mcpgateway.plugins.framework.validators import _DANGEROUS_JS_PATTERN
 
         assert not _DANGEROUS_JS_PATTERN.search(safe), f"Pattern should not match: {safe!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Shared URL percent-encoding test vectors (Issue #4435)                          #
+# --------------------------------------------------------------------------- #
+from tests.helpers.url_encoding_vectors import (
+    DOUBLE_ENCODED_VECTORS,
+    ENCODED_CRLF_VECTORS,
+    ENCODED_DANGEROUS_PROTOCOL_VECTORS,
+    ENCODED_IPV6_BRACKET_VECTORS,
+    JS_UNICODE_ESCAPE_VECTORS,
+    ENCODED_HTML_TAG_VECTORS,
+    IIS_UNICODE_ESCAPE_VECTORS,
+    UTF8_OVERLONG_VECTORS,
+    ENCODED_WHITESPACE_AUTHORITY_VECTORS,
+    LEGITIMATE_ENCODED_ACCEPTED_VECTORS,
+)
+
+
+class TestSecurityValidatorPercentEncoding:
+    """Regression tests that encoded injection payloads cannot bypass plugin framework's validate_url.
+
+    These tests mirror the gateway's TestValidateUrlPercentEncoding class
+    but use the plugin framework's self-contained SecurityValidator.
+    Both validators share the same hardening logic (added in PR #4335
+    and extracted to shared helpers in _url_hardening.py via #4434).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        """SSRF tests live in TestSecurityValidatorSsrf; here we focus on pattern bypass."""
+        monkeypatch.setenv("PLUGINS_SSRF_PROTECTION_ENABLED", "false")
+        from mcpgateway.plugins.framework.settings import settings
+        settings.cache_clear()
+        yield
+        settings.cache_clear()
+
+    @pytest.mark.parametrize(
+        "url,match",
+        ENCODED_CRLF_VECTORS,
+    )
+    def test_encoded_crlf_blocked(self, url, match):
+        with pytest.raises(ValueError, match=match):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", ENCODED_HTML_TAG_VECTORS)
+    def test_encoded_html_tags_blocked(self, url):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", ENCODED_DANGEROUS_PROTOCOL_VECTORS)
+    def test_encoded_dangerous_protocols_blocked(self, url):
+        with pytest.raises(ValueError, match="unsupported or potentially dangerous protocol"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", ENCODED_IPV6_BRACKET_VECTORS)
+    def test_encoded_ipv6_brackets_blocked(self, url):
+        with pytest.raises(ValueError, match="IPv6"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize(
+        "url,match",
+        ENCODED_WHITESPACE_AUTHORITY_VECTORS,
+    )
+    def test_encoded_whitespace_in_authority_blocked(self, url, match):
+        with pytest.raises(ValueError, match=match):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", DOUBLE_ENCODED_VECTORS)
+    def test_double_encoded_payloads_blocked(self, url):
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", IIS_UNICODE_ESCAPE_VECTORS)
+    def test_iis_unicode_escapes_blocked(self, url):
+        with pytest.raises(ValueError, match="%u-style escapes"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", JS_UNICODE_ESCAPE_VECTORS)
+    def test_js_unicode_escape_blocked(self, url):
+        """JS-style `\\uXXXX` / `\\xXX` escapes must be rejected."""
+        with pytest.raises(ValueError, match="JavaScript-style escape sequences"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", UTF8_OVERLONG_VECTORS)
+    def test_utf8_overlong_or_invalid_rejected(self, url):
+        """Invalid UTF-8 / overlong sequences produce U+FFFD and are rejected."""
+        with pytest.raises(ValueError, match="invalid UTF-8"):
+            SecurityValidator.validate_url(url)
+
+    @pytest.mark.parametrize("url", LEGITIMATE_ENCODED_ACCEPTED_VECTORS)
+    def test_legitimate_encoded_characters_accepted(self, url):
+        """Regression: `%20` and other legitimate encodings in path/query must pass."""
+        assert SecurityValidator.validate_url(url) == url
+
+    def test_encoded_loopback_blocked_with_ssrf(self, monkeypatch):
+        """Encoded `127.0.0.1` in hostname must be caught by SSRF when enabled."""
+        monkeypatch.setenv("PLUGINS_SSRF_PROTECTION_ENABLED", "true")
+        from mcpgateway.plugins.framework.settings import settings
+        settings.cache_clear()
+        try:
+            with pytest.raises(ValueError, match="blocked by SSRF"):
+                SecurityValidator.validate_url("http://%31%32%37%2E%30%2E%30%2E%31/")
+        finally:
+            settings.cache_clear()

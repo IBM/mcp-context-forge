@@ -1205,6 +1205,20 @@ class TestValidateUrlSecurity:
 # --------------------------------------------------------------------------- #
 # Coverage: percent-encoded injection vectors for validate_url (PR #4335)      #
 # --------------------------------------------------------------------------- #
+from tests.helpers.url_encoding_vectors import (
+    DOUBLE_ENCODED_VECTORS,
+    ENCODED_CRLF_VECTORS,
+    ENCODED_DANGEROUS_PROTOCOL_VECTORS,
+    ENCODED_IPV6_BRACKET_VECTORS,
+    JS_UNICODE_ESCAPE_VECTORS,
+    ENCODED_HTML_TAG_VECTORS,
+    IIS_UNICODE_ESCAPE_VECTORS,
+    UTF8_OVERLONG_VECTORS,
+    ENCODED_WHITESPACE_AUTHORITY_VECTORS,
+    LEGITIMATE_ENCODED_ACCEPTED_VECTORS,
+)
+
+
 class TestValidateUrlPercentEncoding:
     """Regression tests that encoded injection payloads cannot bypass validate_url."""
 
@@ -1217,12 +1231,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url,match",
-        [
-            ("https://example.com/%0d%0aHost:evil.com", "control characters"),
-            ("https://example.com/%0D%0AHost:evil.com", "control characters"),
-            ("https://example.com/%0a", "control characters"),
-            ("https://example.com/%0d", "control characters"),
-        ],
+        ENCODED_CRLF_VECTORS,
     )
     def test_encoded_crlf_blocked(self, url, match):
         with pytest.raises(ValueError, match=match):
@@ -1230,11 +1239,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/%3Cscript%3Ealert(1)%3C/script%3E",
-            "https://example.com/%3cscript%3ealert(1)%3c/script%3e",
-            "https://example.com/%3Ciframe%20src=x%3E",
-        ],
+        ENCODED_HTML_TAG_VECTORS,
     )
     def test_encoded_html_tags_blocked(self, url):
         with pytest.raises(ValueError, match="HTML tags"):
@@ -1242,12 +1247,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/?x=javascript%3Aalert(1)",
-            "https://example.com/?x=JAVASCRIPT%3Aalert(1)",
-            "https://example.com/?x=vbscript%3Amsgbox(1)",
-            "https://example.com/?x=data%3Atext/html,<script>",
-        ],
+        ENCODED_DANGEROUS_PROTOCOL_VECTORS,
     )
     def test_encoded_dangerous_protocols_blocked(self, url):
         with pytest.raises(ValueError, match="unsupported or potentially dangerous protocol"):
@@ -1255,30 +1255,23 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://%5B%3A%3A1%5D:8080/",
-            "https://%5B::1%5D:8080/",
-        ],
+        ENCODED_IPV6_BRACKET_VECTORS,
     )
     def test_encoded_ipv6_brackets_blocked(self, url):
         with pytest.raises(ValueError, match="IPv6"):
             SecurityValidator.validate_url(url, "URL")
 
-    def test_encoded_space_in_authority_blocked(self):
-        with pytest.raises(ValueError, match="spaces"):
-            SecurityValidator.validate_url("https://exam%20ple.com/", "URL")
-
-    def test_encoded_tab_in_authority_blocked(self):
-        with pytest.raises(ValueError, match="control characters"):
-            SecurityValidator.validate_url("https://example%09.com/", "URL")
+    @pytest.mark.parametrize(
+        "url,match",
+        ENCODED_WHITESPACE_AUTHORITY_VECTORS,
+    )
+    def test_encoded_whitespace_in_authority_blocked(self, url, match):
+        with pytest.raises(ValueError, match=match):
+            SecurityValidator.validate_url(url, "URL")
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/%253Cscript%253E",
-            "https://example.com/%250d%250aHost:evil.com",
-            "https://example.com/%2520",
-        ],
+        DOUBLE_ENCODED_VECTORS,
     )
     def test_double_encoded_payloads_blocked(self, url):
         with pytest.raises(ValueError, match="double-encoded"):
@@ -1286,10 +1279,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/%u003cscript%u003e",
-            "https://example.com/%U003C",
-        ],
+        IIS_UNICODE_ESCAPE_VECTORS,
     )
     def test_iis_unicode_escapes_blocked(self, url):
         with pytest.raises(ValueError, match="%u-style escapes"):
@@ -1297,11 +1287,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/%5Cu003cscript%5Cu003e",
-            "https://example.com/%5Cx3c",
-            "https://example.com/path\\u003cscript",
-        ],
+        JS_UNICODE_ESCAPE_VECTORS,
     )
     def test_js_unicode_escape_blocked(self, url):
         """JS-style `\\uXXXX` / `\\xXX` escapes must be rejected."""
@@ -1310,11 +1296,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/%C0%BC",
-            "https://example.com/%c0%bcscript",
-            "https://example.com/%ED%A0%80",
-        ],
+        UTF8_OVERLONG_VECTORS,
     )
     def test_utf8_overlong_or_invalid_rejected(self, url):
         """Invalid UTF-8 / overlong sequences produce U+FFFD and are rejected."""
@@ -1323,13 +1305,7 @@ class TestValidateUrlPercentEncoding:
 
     @pytest.mark.parametrize(
         "url",
-        [
-            "https://example.com/hello%20world",
-            "https://example.com/?q=hello%20world",
-            "https://example.com/foo%2Fbar",
-            "https://example.com/caf%C3%A9",
-            "https://example.com/%2B",
-        ],
+        LEGITIMATE_ENCODED_ACCEPTED_VECTORS,
     )
     def test_legitimate_encoded_characters_accepted(self, url):
         """Regression: `%20` and other legitimate encodings in path/query must pass."""
