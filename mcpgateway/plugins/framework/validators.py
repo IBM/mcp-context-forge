@@ -20,7 +20,7 @@ import ipaddress
 import logging
 import re
 from re import Pattern
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 # First-Party
 from mcpgateway.plugins.framework.settings import get_ssrf_settings
@@ -65,6 +65,36 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),  # Link-local / cloud metadata
 ]
+
+# Regex patterns for detecting non-standard escape sequences
+_PERCENT_U_ESCAPE_RE = re.compile(r"%[Uu][0-9a-fA-F]{4}")
+_JS_ESCAPE_RE = re.compile(r"(?:\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2})")
+
+
+def _unquote_if_needed(text: str) -> str:
+    """Decode percent-encoding only when the input actually contains `%`.
+
+    Most incoming URLs and identifiers have no percent-encoding; skipping
+    unquote() in that case avoids a full-string scan + allocation on the hot path.
+
+    NOTE: Mirrored from mcpgateway/common/validators.py pending
+    extraction into a shared stdlib-only module (tracked by issue #4434).
+    """
+    return unquote(text) if "%" in text else text
+
+
+def _decode_strict(value: str, field_name: str) -> str:
+    """Decode once; reject payloads that remain percent-encoded after one pass.
+
+    Blocks the double-encoding bypass class: `%253Cscript%253E` decodes to
+    `%3Cscript%3E` under a single unquote(), which slips past regex blocklists
+    targeting literal `<script>`. A downstream consumer that decodes a second
+    time would then see `<script>`.
+    """
+    decoded = _unquote_if_needed(value)
+    if decoded is not value and unquote(decoded) != decoded:
+        raise ValueError(f"{field_name} contains double-encoded characters which are not allowed")
+    return decoded
 
 
 class SecurityValidator:
@@ -135,23 +165,57 @@ class SecurityValidator:
         if len(value) > _MAX_URL_LENGTH:
             raise ValueError(f"{field_name} exceeds maximum length of {_MAX_URL_LENGTH}")
 
-        if not any(value.lower().startswith(scheme) for scheme in _ALLOWED_URL_SCHEMES):
-            raise ValueError(f"{field_name} must start with one of: {', '.join(_ALLOWED_URL_SCHEMES)}")
+        # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
+        decoded_value = _decode_strict(value, field_name)
 
-        # Block dangerous URL patterns
+        # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
+        # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
+        # to close the double-encoded `%25uXXXX` bypass.
+        if _PERCENT_U_ESCAPE_RE.search(value) or _PERCENT_U_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains non-standard %u-style escapes which are not allowed")
+
+        # Reject JS-style `\uXXXX`/`\xXX` escapes that bypass blocklists in JS contexts.
+        if _JS_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains JavaScript-style escape sequences which are not allowed")
+
+        # `unquote()` emits U+FFFD for invalid UTF-8 / overlong sequences (e.g. `%c0%bc`);
+        # legitimate percent-encoded UTF-8 never decodes to U+FFFD.
+        if "\ufffd" in decoded_value:
+            raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
+
+        # Check allowed schemes (lowercase value once, not per scheme).
+        allowed_schemes = _ALLOWED_URL_SCHEMES
+        value_lower = value.lower()
+        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
+            raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
+
+        # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:
+        # downstream consumers may extract query/fragment and reuse as URLs elsewhere).
+        # Conservative by design; legitimate `mailto:`/`ftp:` in query strings should
+        # be sent as separate structured fields rather than embedded in a URL.
         for pattern in _DANGEROUS_URL_PATTERNS:
-            if pattern.search(value):
+            if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
-        # Block IPv6 URLs
-        if "[" in value or "]" in value:
+        # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
+        # suffices: unquote() never removes non-`%` chars, so any `[` in
+        # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
+        if "[" in decoded_value or "]" in decoded_value:
             raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
-        # Block CRLF injection
-        if "\r" in value or "\n" in value:
-            raise ValueError(f"{field_name} contains line breaks which are not allowed")
+        # Block protocol-relative URLs
+        if value.startswith("//"):
+            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
 
-        # Block spaces in domain (but allow in query string)
+        # Reject C0 control characters (literal or decoded from %00–%1f) and DEL.
+        # Subsumes the prior CRLF-only check: NUL (%00), TAB (%09), VT (%0b),
+        # FF (%0c), and DEL (%7f) are equally illegitimate in URLs.
+        if any(ch != " " and ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
+            raise ValueError(f"{field_name} contains control characters which are not allowed")
+
+        # Literal space check uses `value` (NOT decoded): `%20` is the standard
+        # encoding for space in paths and must remain valid. Authority-level
+        # encoded-space bypass is handled separately after urlparse below.
         if " " in value.split("?", maxsplit=1)[0]:
             raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
 
@@ -160,8 +224,39 @@ class SecurityValidator:
             if not all([result.scheme, result.netloc]):
                 raise ValueError(f"{field_name} is not a valid URL")
 
-            # Block credentials in URL
-            if result.username or result.password:
+            # Additional validation: ensure netloc doesn't contain brackets (double-check)
+            if "[" in result.netloc or "]" in result.netloc:
+                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+            # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
+            # authority injection without breaking encoded-space in path/query.
+            decoded_netloc = _unquote_if_needed(result.netloc)
+            if any(ch.isspace() for ch in decoded_netloc):
+                raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
+            # SSRF hostname check: urlparse does NOT percent-decode `hostname`,
+            # so `%31%32%37%2E%30%2E%30%2E%31` (= 127.0.0.1) bypasses without this.
+            hostname = result.hostname
+            if hostname:
+                decoded_hostname = _unquote_if_needed(hostname)
+                if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
+                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
+
+                # Gate private/reserved IP blocking on plugin-specific settings.
+                if get_ssrf_settings().ssrf_protection_enabled:
+                    try:
+                        addr = ipaddress.ip_address(decoded_hostname)
+                        for network in _BLOCKED_NETWORKS:
+                            if addr in network:
+                                raise ValueError(f"{field_name} contains IP address blocked by SSRF protection ({decoded_hostname})")
+                    except ValueError as ip_err:
+                        if "blocked by SSRF" in str(ip_err):
+                            raise
+                        # Not a valid IP — it's a hostname, which is fine
+
+            # Credentials: `result.username`/`password` catches literal `user:pass@`;
+            # `@` in decoded_netloc catches percent-encoded userinfo (e.g. `user%3Apass@`).
+            if result.username or result.password or "@" in decoded_netloc:
                 raise ValueError(f"{field_name} contains credentials which are not allowed")
 
             # Validate port number
@@ -169,28 +264,10 @@ class SecurityValidator:
                 if result.port < 1 or result.port > 65535:
                     raise ValueError(f"{field_name} contains invalid port number")
 
-            # SSRF protection: block dangerous IP addresses (always block 0.0.0.0)
-            hostname = result.hostname
-            if hostname:
-                if hostname == "0.0.0.0":  # nosec B104
-                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
-
-                # Gate private/reserved IP blocking on plugin-specific settings.
-                if get_ssrf_settings().ssrf_protection_enabled:
-                    try:
-                        addr = ipaddress.ip_address(hostname)
-                        for network in _BLOCKED_NETWORKS:
-                            if addr in network:
-                                raise ValueError(f"{field_name} contains IP address blocked by SSRF protection ({hostname})")
-                    except ValueError as ip_err:
-                        if "blocked by SSRF" in str(ip_err):
-                            raise
-                        # Not a valid IP — it's a hostname, which is fine
-
             # Block HTML tags and script/event-handler patterns in URL
-            if _DANGEROUS_HTML_PATTERN.search(value):
+            if _DANGEROUS_HTML_PATTERN.search(decoded_value):
                 raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
-            if _DANGEROUS_JS_PATTERN.search(value):
+            if _DANGEROUS_JS_PATTERN.search(decoded_value):
                 raise ValueError(f"{field_name} contains script patterns that may cause security issues")
 
         except ValueError:

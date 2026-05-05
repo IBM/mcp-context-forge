@@ -58,11 +58,11 @@ class TestSecurityValidatorUrl:
             SecurityValidator.validate_url("file:///etc/passwd")
 
     def test_url_with_newline(self):
-        with pytest.raises(ValueError, match="contains line breaks"):
+        with pytest.raises(ValueError, match="control characters"):
             SecurityValidator.validate_url("https://example.com\n/malicious")
 
     def test_url_with_carriage_return(self):
-        with pytest.raises(ValueError, match="contains line breaks"):
+        with pytest.raises(ValueError, match="control characters"):
             SecurityValidator.validate_url("https://example.com\r/malicious")
 
     def test_url_missing_netloc(self):
