@@ -3865,22 +3865,27 @@ class ToolService(BaseService):
                     if a2a_agent_type in ["generic", "jsonrpc"] or endpoint_url.endswith("/"):
                         # JSONRPC agents: Convert flat query to nested message structure
                         params = None
+                        # Extract task_id from arguments if provided (enables multi-turn conversations)
+                        task_id = arguments.get("task_id") or arguments.get("taskId") if isinstance(arguments, dict) else None
                         if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
-                            message_id = f"admin-test-{int(time.time())}"
+                            message_id = task_id or f"admin-test-{int(time.time())}"
                             # A2A v0.3.x: message.parts use "kind" (not "type").
                             params = {
                                 "message": {
                                     "kind": "message",
                                     "messageId": message_id,
+                                    "task_id": task_id,
                                     "role": "user",
                                     "parts": [{"kind": "text", "text": arguments["query"]}],
                                 }
                             }
+                            if not task_id:
+                                del params["message"]["task_id"]
                             method = arguments.get("method", "message/send")
                         else:
                             params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
                             method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
-                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": task_id or 1}
                     else:
                         # Custom agents: Pass parameters directly
                         params = arguments if isinstance(arguments, dict) else {}
@@ -4942,18 +4947,23 @@ class ToolService(BaseService):
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
             # JSONRPC agents: Convert flat query to nested message structure
             params = None
+            # Extract task_id from parameters if provided (enables multi-turn conversations)
+            task_id = parameters.get("task_id") or parameters.get("taskId") if isinstance(parameters, dict) else None
             if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
                 # Build the nested message object for JSONRPC protocol
-                message_id = f"admin-test-{int(time.time())}"
+                message_id = task_id or f"admin-test-{int(time.time())}"
                 # A2A v0.3.x: message.parts use "kind" (not "type").
                 params = {
                     "message": {
                         "kind": "message",
                         "messageId": message_id,
+                        "task_id": task_id,
                         "role": "user",
                         "parts": [{"kind": "text", "text": parameters["query"]}],
                     }
                 }
+                if not task_id:
+                    del params["message"]["task_id"]
                 method = parameters.get("method", "message/send")
             else:
                 # Already in correct format or unknown, pass through
@@ -4961,7 +4971,7 @@ class ToolService(BaseService):
                 method = parameters.get("method", "message/send")
 
             try:
-                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": task_id or 1}
                 logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
             except Exception as e:
                 logger.error(f"Error preparing JSONRPC request data: {e}")

@@ -1395,7 +1395,14 @@ class A2AAgentService(BaseService):
             # Format request based on agent type and endpoint
             if agent_type in ["generic", "jsonrpc"] or agent_endpoint_url.endswith("/"):
                 # Use JSONRPC format for agents that expect it
-                request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
+                # Forward task_id from client parameters to enable multi-turn conversations
+                params_payload = parameters.get("params", parameters)
+                task_id = parameters.get("task_id") or parameters.get("taskId")
+                if task_id and isinstance(params_payload, dict):
+                    msg = params_payload.get("message")
+                    if isinstance(msg, dict) and "task_id" not in msg:
+                        msg["task_id"] = task_id
+                request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": params_payload, "id": task_id or 1}
             else:
                 # Use custom A2A format
                 request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent_protocol_version}
