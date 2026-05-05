@@ -298,6 +298,9 @@ class MCPRegistryPage(BasePage):
         with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
             self.category_filter.select_option("")
 
+        # Wait for HTMX swap to complete and DOM to settle
+        self.wait_for_registry_results_ready(timeout=10000)
+
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.
 
@@ -328,7 +331,19 @@ class MCPRegistryPage(BasePage):
         """
         # Wait for grid to be stable before counting
         self.page.wait_for_selector("#server-grid", state="attached", timeout=10000)
-        self.page.wait_for_timeout(300)  # Brief wait for any in-flight HTMX swaps
+
+        # Wait for HTMX requests to complete (no .htmx-request class on body or forms)
+        self.page.wait_for_function(
+            """() => {
+                const hasHtmxRequest = document.body.classList.contains('htmx-request');
+                const forms = document.querySelectorAll('form.htmx-request');
+                return !hasHtmxRequest && forms.length === 0;
+            }""",
+            timeout=10000,
+        )
+
+        # Brief wait for DOM rendering after HTMX swap
+        self.page.wait_for_timeout(300)
         return self.server_cards.count()
 
     def get_total_servers_count(self) -> int:
