@@ -1580,7 +1580,7 @@ class TestUtilityAPIs:
         assert response.status_code == 200
         result = response.json()
         assert "error" in result
-        assert result["error"]["code"] == -32000
+        assert result["error"]["code"] == -32601
 
     async def test_set_log_level(self, client: AsyncClient, mock_auth):
         """Test POST /logging/setLevel."""

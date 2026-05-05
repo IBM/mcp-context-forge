@@ -220,10 +220,6 @@ def test_parse_error_returns_32700(gateway_http_client: httpx.Client) -> None:
     assert err.get("code") == -32700, f"parse-error should carry code=-32700, got {err.get('code')!r} (message: {err.get('message')!r})"
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=("GAP-012: gateway returns -32000 (implementation-defined) instead of the " "spec-mandated -32601 (Method not found) for unknown JSON-RPC methods."),
-)
 def test_method_not_found_returns_32601(gateway_http_client: httpx.Client) -> None:
     """Unknown method → JSON-RPC code -32601 (Method not found)."""
     body = {"jsonrpc": "2.0", "id": 1, "method": "definitely/not/a/real/method", "params": {}}
