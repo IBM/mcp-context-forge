@@ -1631,20 +1631,20 @@ class TestUrlHardeningHelpers:
                 _parse_ip_network_cached("not-a-cidr")
 
     def test_decode_strict_rejects_double_encoded(self):
-        """_decode_strict must raise on double-encoded payloads."""
+        """_decode_and_check_encoding must raise on double-encoded payloads."""
         import pytest as _pytest
 
-        from mcpgateway.common.validators import _decode_strict
+        from mcpgateway.common._url_hardening import _decode_and_check_encoding
 
         with _pytest.raises(ValueError, match="double-encoded"):
-            _decode_strict("%253Cscript%253E", "field")
+            _decode_and_check_encoding("%253Cscript%253E", "field")
 
     def test_decode_strict_passes_through_clean_input(self):
-        """_decode_strict returns same-identity object for no-% input."""
-        from mcpgateway.common.validators import _decode_strict
+        """_decode_and_check_encoding returns same-identity object for no-% input."""
+        from mcpgateway.common._url_hardening import _decode_and_check_encoding
 
         s = "https://example.com/clean"
-        assert _decode_strict(s, "field") is s
+        assert _decode_and_check_encoding(s, "field") is s
 
 
 # --------------------------------------------------------------------------- #

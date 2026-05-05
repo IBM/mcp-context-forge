@@ -20,9 +20,15 @@ import ipaddress
 import logging
 import re
 from re import Pattern
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 
 # First-Party
+from mcpgateway.common._url_hardening import (
+    _check_netloc,
+    _check_structural_forbidden_chars,
+    _decode_and_check_encoding,
+    _unquote_if_needed,
+)
 from mcpgateway.plugins.framework.settings import get_ssrf_settings
 
 logger = logging.getLogger(__name__)
@@ -65,36 +71,6 @@ _BLOCKED_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("169.254.0.0/16"),  # Link-local / cloud metadata
 ]
-
-# Regex patterns for detecting non-standard escape sequences
-_PERCENT_U_ESCAPE_RE = re.compile(r"%[Uu][0-9a-fA-F]{4}")
-_JS_ESCAPE_RE = re.compile(r"(?:\\u[0-9a-fA-F]{4}|\\x[0-9a-fA-F]{2})")
-
-
-def _unquote_if_needed(text: str) -> str:
-    """Decode percent-encoding only when the input actually contains `%`.
-
-    Most incoming URLs and identifiers have no percent-encoding; skipping
-    unquote() in that case avoids a full-string scan + allocation on the hot path.
-
-    NOTE: Mirrored from mcpgateway/common/validators.py pending
-    extraction into a shared stdlib-only module (tracked by issue #4434).
-    """
-    return unquote(text) if "%" in text else text
-
-
-def _decode_strict(value: str, field_name: str) -> str:
-    """Decode once; reject payloads that remain percent-encoded after one pass.
-
-    Blocks the double-encoding bypass class: `%253Cscript%253E` decodes to
-    `%3Cscript%3E` under a single unquote(), which slips past regex blocklists
-    targeting literal `<script>`. A downstream consumer that decodes a second
-    time would then see `<script>`.
-    """
-    decoded = _unquote_if_needed(value)
-    if decoded is not value and unquote(decoded) != decoded:
-        raise ValueError(f"{field_name} contains double-encoded characters which are not allowed")
-    return decoded
 
 
 class SecurityValidator:
@@ -165,23 +141,9 @@ class SecurityValidator:
         if len(value) > _MAX_URL_LENGTH:
             raise ValueError(f"{field_name} exceeds maximum length of {_MAX_URL_LENGTH}")
 
-        # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
-        decoded_value = _decode_strict(value, field_name)
-
-        # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
-        # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
-        # to close the double-encoded `%25uXXXX` bypass.
-        if _PERCENT_U_ESCAPE_RE.search(value) or _PERCENT_U_ESCAPE_RE.search(decoded_value):
-            raise ValueError(f"{field_name} contains non-standard %u-style escapes which are not allowed")
-
-        # Reject JS-style `\uXXXX`/`\xXX` escapes that bypass blocklists in JS contexts.
-        if _JS_ESCAPE_RE.search(decoded_value):
-            raise ValueError(f"{field_name} contains JavaScript-style escape sequences which are not allowed")
-
-        # `unquote()` emits U+FFFD for invalid UTF-8 / overlong sequences (e.g. `%c0%bc`);
-        # legitimate percent-encoded UTF-8 never decodes to U+FFFD.
-        if "\ufffd" in decoded_value:
-            raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
+        # Single-pass decode + double-encoding + IIS/JS-escape + U+FFFD rejection.
+        # Centralised in shared _url_hardening.py (issue #4434).
+        decoded_value = _decode_and_check_encoding(value, field_name)
 
         # Check allowed schemes (lowercase value once, not per scheme).
         allowed_schemes = _ALLOWED_URL_SCHEMES
@@ -197,27 +159,9 @@ class SecurityValidator:
             if pattern.search(decoded_value):
                 raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
 
-        # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
-        # suffices: unquote() never removes non-`%` chars, so any `[` in
-        # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
-        if "[" in decoded_value or "]" in decoded_value:
-            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
-
-        # Block protocol-relative URLs
-        if value.startswith("//"):
-            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
-
-        # Reject C0 control characters (literal or decoded from %00–%1f) and DEL.
-        # Subsumes the prior CRLF-only check: NUL (%00), TAB (%09), VT (%0b),
-        # FF (%0c), and DEL (%7f) are equally illegitimate in URLs.
-        if any(ch != " " and ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
-            raise ValueError(f"{field_name} contains control characters which are not allowed")
-
-        # Literal space check uses `value` (NOT decoded): `%20` is the standard
-        # encoding for space in paths and must remain valid. Authority-level
-        # encoded-space bypass is handled separately after urlparse below.
-        if " " in value.split("?", maxsplit=1)[0]:
-            raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+        # Structural checks: IPv6 brackets, control characters, spaces, protocol-relative URLs.
+        # Centralised in shared _url_hardening.py (issue #4434).
+        _check_structural_forbidden_chars(value, decoded_value, field_name)
 
         try:
             result = urlparse(value)
