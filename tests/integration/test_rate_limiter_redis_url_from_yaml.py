@@ -20,6 +20,7 @@ runners without a Redis service available.
 """
 
 # Standard
+import pathlib
 import socket
 
 # Third-Party
@@ -28,6 +29,11 @@ import redis
 
 # First-Party
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
+
+# Anchor the plugins/config.yaml path to this file's location so the test
+# works regardless of where pytest is invoked from (repo root, tests/, etc.).
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_CONFIG_YAML = str(_REPO_ROOT / "plugins" / "config.yaml")
 
 
 def _redis_reachable(host: str = "127.0.0.1", port: int = 6379, timeout: float = 0.2) -> bool:
@@ -50,7 +56,7 @@ def test_rate_limiter_redis_url_resolves_and_connects(monkeypatch):
     """
     monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 
-    cfg = ConfigLoader.load_config("plugins/config.yaml")
+    cfg = ConfigLoader.load_config(_CONFIG_YAML)
     rl = next(p for p in cfg.plugins if p.name == "RateLimiterPlugin")
     resolved = rl.config.get("redis_url")
 
@@ -66,3 +72,20 @@ def test_rate_limiter_redis_url_resolves_and_connects(monkeypatch):
         assert client.ping() is True
     finally:
         client.close()
+
+
+def test_rate_limiter_redis_url_uses_default_when_env_unset(monkeypatch):
+    """When REDIS_URL is unset, the Jinja ``default(...)`` filter must
+    resolve to the literal fallback baked into ``plugins/config.yaml``.
+
+    Pins the contract that the loader's Jinja env applies the ``default``
+    filter (not just plain env-var substitution) — a regression here would
+    silently leave operators on a broken redis_url whenever the env var
+    isn't injected.  Runs without Redis.
+    """
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+    cfg = ConfigLoader.load_config(_CONFIG_YAML)
+    rl = next(p for p in cfg.plugins if p.name == "RateLimiterPlugin")
+
+    assert rl.config.get("redis_url") == "redis://redis:6379/0"
