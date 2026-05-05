@@ -6,10 +6,10 @@ what managed Redis with in-transit encryption (AWS ElastiCache, Redis Cloud,
 IBM Cloud Databases for Redis) looks like operationally — server-side TLS,
 client-side handshake against a CA in the trust store.
 
-If you just want to verify the TLS support on this branch works, follow the
-steps in order — every command is copy-pasteable, no manual editing needed
-unless flagged. Architecture, known limitations, and the rationale for the
-stack are in the sections after the steps.
+If you just want to verify TLS support works end-to-end on the current
+gateway main, follow the steps in order — every command is copy-pasteable.
+Architecture, known limitations, and the rationale for the stack are in
+the sections after the steps.
 
 ## Prerequisites
 
@@ -17,37 +17,25 @@ stack are in the sections after the steps.
 - `git`, `bash`, an `openssl` CLI on PATH
 - ~6 GB of free disk for images, ~3 GB of free RAM for the running stack
 
-That's it — no Python, Rust, or maturin on the host. The wheel is built
-inside a maturin Docker image.
+That's it — no Python, Rust, or maturin on the host. The TLS-enabled
+cpex-rate-limiter wheel is pulled from PyPI by the base image.
 
-## Step 0 — clone both repos as siblings
-
-The wheel build in step 3 expects `cpex-plugins` to live one level up from
-this repo (`../cpex-plugins`). If you don't already have them laid out that
-way, set up a fresh tree:
+## Step 0 — clone the repo and check out this branch
 
 ```bash
 mkdir -p ~/work && cd ~/work
 git clone https://github.com/IBM/mcp-context-forge.git
-git clone https://github.com/IBM/cpex-plugins.git
-
 cd mcp-context-forge
-git checkout test/tls-redis-smoke-test          # this branch
-
-cd ../cpex-plugins
-git checkout fix/rate-limiter-tls-support-and-wipe-on-disable
-
-cd ../mcp-context-forge                          # work from here for the rest
+git checkout test/tls-redis-smoke-test
 ```
 
-If you already have both repos somewhere else, just make sure (a) this
-repo is on `test/tls-redis-smoke-test`, (b) cpex-plugins is on
-`fix/rate-limiter-tls-support-and-wipe-on-disable`, (c) cpex-plugins is
-exactly one level up (`../cpex-plugins`) — adjust paths in step 3 if not.
+If you already have the repo somewhere else, just make sure it's on
+`test/tls-redis-smoke-test` and rebased onto current `main` (so you
+pick up the `cpex-rate-limiter>=0.0.6` pin).
 
 ## Step 1 — get the base gateway image
 
-The derivative image in step 4 layers on top of `mcpgateway/mcpgateway:latest`.
+The derivative image in step 3 layers on top of `mcpgateway/mcpgateway:latest`.
 Pull it from the registry...
 
 ```bash
@@ -73,27 +61,7 @@ with SAN coverage for `redis`, `redis-tls`, `localhost`, and `127.0.0.1`.
 The `tls-certs/` directory is gitignored — keys are generated locally per
 setup and never committed.
 
-## Step 3 — build the rate-limiter wheel from the PR branch
-
-```bash
-mkdir -p tls-test/wheels
-
-docker run --rm \
-    -v ../cpex-plugins:/io \
-    -v "$PWD/tls-test/wheels":/out \
-    ghcr.io/pyo3/maturin:latest \
-    build --release --manylinux 2_28 \
-        --manifest-path /io/plugins/rust/python-package/rate_limiter/Cargo.toml \
-        --out /out
-```
-
-You should end up with a file matching the pattern
-`tls-test/wheels/cpex_rate_limiter-*-cp311-abi3-manylinux_2_28_*.whl`. If
-the wheel name pattern in `tls-test/Containerfile.tls-gateway` doesn't
-match yours (e.g. cp311 vs. cp312, or `manylinux_2_28` vs. a different
-target), update the COPY line in the Containerfile to match.
-
-## Step 4 — build the derivative gateway image
+## Step 3 — build the derivative gateway image
 
 ```bash
 docker build \
@@ -102,13 +70,12 @@ docker build \
     .
 ```
 
-Build context is the repo root (current dir). The Containerfile is two
-layers on top of the base image: copy `tls-certs/ca.crt` into the OS
-trust store and run `update-ca-trust extract`, then force-install the
-wheel built in step 3 over whatever cpex-rate-limiter version came from
-PyPI in the base image.
+Build context is the repo root. The Containerfile is a single layer on top
+of the base image: copy `tls-certs/ca.crt` into the OS trust store and run
+`update-ca-trust extract`. The TLS-enabled cpex-rate-limiter wheel is
+already installed in the base image via PyPI (`>=0.0.6`).
 
-## Step 5 — bring the stack up
+## Step 4 — bring the stack up
 
 ```bash
 docker compose -p tls-test \
@@ -127,7 +94,7 @@ Wait ~30s for healthchecks, then confirm everything is `healthy`:
 docker compose -p tls-test ps
 ```
 
-## Step 6 — verify TLS support
+## Step 5 — verify TLS support
 
 Three checks; run all three for full confidence.
 
@@ -143,7 +110,7 @@ Expect to see something like:
 INFO  rate limiter initialized: backend=redis
 ```
 
-Must **not** see (this is the wo-tracker #68217 regression signature):
+Must **not** see:
 
 ```
 ERROR  Rust rate limiter: Redis backend init failed:
@@ -213,13 +180,12 @@ docker exec tls-test-redis-1 redis-cli --tls -p 6390 \
 ```
 
 Expect at least one key matching `rl:*alice*`. If you see one, the rustls
-handshake succeeded end-to-end through the plugin's Rust core — the same
-path that fails on builds without PR #74's TLS support.
+handshake succeeded end-to-end through the plugin's Rust core.
 
 (`--insecure` on `redis-cli` skips hostname verification on the CLI side
 only; the cert chain is still verified against the CA.)
 
-## Step 7 — tear down
+## Step 6 — tear down
 
 ```bash
 docker compose -p tls-test \
@@ -243,7 +209,8 @@ curl POST                 │                                │
 /v1/tools/plugin_bindings │  gateway × 3 replicas          │
    ───────────────────►   │  (mcpgateway-tls-test:local)   │
                           │     ─ rate_limiter plugin      │
-                          │       built from PR #74        │
+                          │       (cpex-rate-limiter       │
+                          │        >=0.0.6 from PyPI)      │
                           │     ─ /etc/pki/tls trust store │
                           │       contains test CA         │
                           │                                │
@@ -263,27 +230,23 @@ The override (`docker-compose-tls-redis.yml`) reuses the base
 for a TLS Redis: redis listens on TLS port 6390 with cert bind-mounts,
 gateway image is the derivative, gateway's `REDIS_URL` is `rediss://...`.
 
-## Known limitations / things to flag
+## Known limitations
 
 - The derivative image bakes in the test CA — strictly local-testing
   material, never push it to a shared registry.
 - Self-signed certs expire after 365 days. Rerun `gen-certs.sh` when
-  expiry hits, then rebuild the gateway image (the CA is baked in).
-- The wheel built in step 3 is `cp311-abi3-manylinux_2_28`. If the
-  gateway base image's glibc or Python version drifts from that, the
-  wheel install in step 4 will fail. Adjust the `--manylinux` flag in
-  step 3 and the COPY pattern in `tls-test/Containerfile.tls-gateway`
-  to match.
-- `--insecure` on `redis-cli` in step 6(c) skips *hostname* verification
+  expiry hits, then rebuild the derivative gateway image (the CA is
+  baked in).
+- `--insecure` on `redis-cli` in step 5(c) skips *hostname* verification
   only; cert-chain verification still happens.
 
 ## Why this exists
 
-cpex-rate-limiter PR #74 enables TLS in the redis crate so operators can
+cpex-rate-limiter 0.0.6 enables TLS in the redis crate so operators can
 point the plugin at managed Redis with in-transit encryption. The unit and
 integration test suites can verify URL parsing and reach the network layer,
-but **the only way to prove the rustls handshake itself works end-to-end
-under realistic conditions** is against a real TLS-enabled Redis server.
+but the only way to prove the rustls handshake itself works end-to-end
+under realistic conditions is against a real TLS-enabled Redis server.
 This stack provides one with a self-signed CA, a derivative gateway image
-that trusts that CA, and a plugin built from the PR branch — runnable on
-any laptop with Docker.
+that trusts that CA, and the cpex-rate-limiter wheel from PyPI — runnable
+on any laptop with Docker.

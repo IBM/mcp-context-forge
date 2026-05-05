@@ -1,23 +1,13 @@
 # Derivative gateway image for the TLS-Redis smoke test.
 #
-# Two changes vs. the upstream mcpgateway/mcpgateway:latest base image:
+# Single change vs. the upstream mcpgateway/mcpgateway:latest base image:
+# trust the local self-signed CA at ../tls-certs/ca.crt by adding it to the
+# OS trust store via UBI's update-ca-trust mechanism. The plugin uses
+# rustls-native-certs, which reads the same store, so this enables the TLS
+# handshake against our test redis service.
 #
-#   1. Trusts the local self-signed CA at ../tls-certs/ca.crt by adding
-#      it to the OS trust store (UBI's update-ca-trust mechanism). The
-#      plugin uses rustls-native-certs, which reads the same store, so
-#      this enables TLS handshake against our test redis-tls service.
-#
-#   2. Replaces the cpex-rate-limiter wheel that came from PyPI with a
-#      locally-built one from PR #74's branch — that wheel carries the
-#      TLS support; without it, the runtime panics on rediss:// URLs.
-#
-# Wheel-build flow (decoupled, run BEFORE this image build — see the
-# README for the maturin command and `tls-test/wheels/` layout):
-#
-#   1. Build the wheel from cpex-plugins/...rate_limiter via maturin's
-#      manylinux Docker image, output into mcp-context-forge/tls-test/wheels/
-#   2. docker build -f tls-test/Containerfile.tls-gateway -t mcpgateway-tls-test:local .
-#      (build context = mcp-context-forge repo root)
+# No wheel surgery: cpex-rate-limiter >= 0.0.6 (TLS-enabled, from PyPI) is
+# already installed by the base image's `[plugins]` extra.
 
 ARG BASE_IMAGE=mcpgateway/mcpgateway:latest
 
@@ -30,20 +20,5 @@ USER root
 # (which rustls-native-certs reads) to include any anchors found there.
 COPY tls-certs/ca.crt /etc/pki/ca-trust/source/anchors/cpex-tls-test-ca.crt
 RUN update-ca-trust extract
-
-# Force-reinstall the wheel built from PR #74 over whatever cpex-rate-limiter
-# version came from PyPI. --no-deps keeps the rest of the dependency tree
-# untouched.
-#
-# The base mcpgateway image was assembled with uv and is stripped down at
-# runtime — no `pip` binary, no `pip` module. `python -m ensurepip` bootstraps
-# pip from the stdlib's bundled wheel; we then use that pip just for our
-# install and could optionally remove pip again afterwards (left in for ease
-# of further iteration on the test image).
-COPY tls-test/wheels/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl /tmp/
-RUN /app/.venv/bin/python -m ensurepip --upgrade \
-    && /app/.venv/bin/python -m pip install --force-reinstall --no-deps \
-        /tmp/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl \
-    && rm -f /tmp/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl
 
 USER 1001

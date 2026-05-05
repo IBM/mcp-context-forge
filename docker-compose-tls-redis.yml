@@ -4,15 +4,13 @@
 #   1. Generate self-signed certs (one-time):
 #        ./tls-test/gen-certs.sh
 #
-#   2. Build the derivative gateway image with the wheel from PR #74
-#      and the local CA trusted (one-time, or whenever the wheel
-#      changes):
+#   2. Build the derivative gateway image (trusts the local CA;
+#      cpex-rate-limiter with TLS support comes from PyPI via the base
+#      image's `[plugins]` extra):
 #        docker build \
 #          -f tls-test/Containerfile.tls-gateway \
 #          -t mcpgateway-tls-test:local \
-#          --build-context cpex=../cpex-plugins \
 #          .
-#      (See tls-test/README.md for the exact build context details.)
 #
 #   3. Bring up the stack as a compose override:
 #        docker compose -p tls-test \
