@@ -135,23 +135,24 @@ def test_health_mirrors_runtime_mode_state(gateway_http_client) -> None:
     Multi-pod deployments propagate state via Redis, so a single admin GET
     and a single health GET may land on different pods at different
     propagation points. Poll briefly for convergence before asserting
-    mirror equality — ``effective_mode`` is the leading indicator.
+    mirror equality — all four asserted keys must converge.
     """
     import time as _time
 
     deadline = _time.monotonic() + 3.0
     admin = None
     mcp_rt = None
+    asserted_keys = ("boot_mode", "effective_mode", "override_active", "cluster_propagation")
     while _time.monotonic() < deadline:
         admin = gateway_http_client.get("/admin/runtime/mcp-mode").json()
         health = gateway_http_client.get("/health").json()
         mcp_rt = health.get("mcp_runtime")
         if mcp_rt is None:
             pytest.skip("/health does not expose mcp_runtime block on this deployment")
-        if mcp_rt.get("effective_mode") == admin.get("effective_mode"):
+        if all(mcp_rt.get(key) == admin.get(key) for key in asserted_keys):
             break
         _time.sleep(0.1)
-    for key in ("boot_mode", "effective_mode", "override_active", "cluster_propagation"):
+    for key in asserted_keys:
         assert mcp_rt.get(key) == admin.get(key), f"mcp_runtime.{key}={mcp_rt.get(key)!r} vs admin.{key}={admin.get(key)!r}"
 
 
