@@ -118,8 +118,20 @@ class TestGetUser:
         assert "test@example.com" in cache._user_cache
 
     @pytest.mark.asyncio
+    async def test_redis_miss_increments_redis_miss_count(self, cache, mock_redis):
+        """Line 438: redis.get() returns None → _redis_miss_count increments."""
+        mock_redis.get = AsyncMock(return_value=None)
+
+        with patch.object(cache, "_get_redis_client", return_value=mock_redis):
+            result = await cache.get_user("test@example.com")
+
+        assert result is None
+        assert cache._redis_miss_count == 1
+        assert cache._miss_count == 1
+
+    @pytest.mark.asyncio
     async def test_redis_get_error_logs_warning_and_returns_none(self, cache, mock_redis):
-        """Line 438: except block in get_user when redis.get() raises."""
+        """except block in get_user when redis.get() raises."""
         mock_redis.get = AsyncMock(side_effect=RuntimeError("Redis connection lost"))
 
         with patch.object(cache, "_get_redis_client", return_value=mock_redis):
