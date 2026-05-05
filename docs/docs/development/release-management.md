@@ -215,7 +215,31 @@ make rust-check
 | `cargo clippy -- -D warnings` | Lint for common mistakes and anti-patterns |
 | `cargo test --lib --release` | Run Rust unit tests |
 
-### 3.2 Go dependencies
+### 3.2 Rust supply-chain vetting
+
+After any Rust dependency update, run cargo-vet before release freeze:
+
+```bash
+make rust-vet
+```
+
+This runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+
+If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
+
+| Option | When to use it | What to do |
+|--------|----------------|------------|
+| Use an imported audit | A trusted upstream audit set already covers the crate/version | Review the suggested import, then update `supply-chain/config.toml` and `supply-chain/imports.lock` if the trust relationship is acceptable |
+| Audit the diff | Cargo-vet suggests a small `cargo vet diff <crate> <old> <new>` | Review the exact version diff, then record it with `cargo vet certify <crate> <old> <new>` |
+| Audit the crate fully | The crate is new, or the diff is not a useful review unit | Inspect the exact crate source with `cargo vet inspect <crate> <version>`, then record it with `cargo vet certify <crate> <version>` |
+| Add a temporary exemption | The update is needed now, but a full audit is not practical before release | Add the narrowest `[[exemptions.<crate>]]` entry in `supply-chain/config.toml` with the required criteria, and document why it is acceptable |
+| Skip or revert the update | The audit cost or risk is too high for the release window | Keep the currently vetted version and move the dependency update to a follow-up task |
+
+Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
+
+When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+### 3.3 Go dependencies
 
 Update `go.mod` and `go.sum` for all Go modules:
 
@@ -238,7 +262,7 @@ make linting-go-govulncheck
 | `linting-go-gosec` | Security static analysis across all Go modules |
 | `linting-go-govulncheck` | Known vulnerability scanning in Go dependencies |
 
-### 3.3 JavaScript dependencies (npm)
+### 3.4 JavaScript dependencies (npm)
 
 Update `package.json` and verify the frontend builds and passes linting:
 
@@ -255,7 +279,7 @@ make lint-web
 make test-js-coverage
 ```
 
-### 3.4 Frontend CDN dependencies
+### 3.5 Frontend CDN dependencies
 
 The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
 
@@ -304,7 +328,7 @@ The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror
 !!! warning "Three files must stay in sync"
     A version bump in `cdn_resources.py` without matching changes in `download-cdn-assets.sh` and the HTML templates will cause SRI verification failures or broken airgapped builds. Always update all three together.
 
-### 3.5 Rebuild containers
+### 3.6 Rebuild containers
 
 After updating all dependency ecosystems, rebuild the production container from scratch to verify everything integrates:
 
