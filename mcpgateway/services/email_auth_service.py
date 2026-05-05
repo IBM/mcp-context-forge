@@ -578,6 +578,7 @@ class EmailAuthService:
         """
         normalized = email.lower().strip()
         try:
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
             cached = await auth_cache.get_user(normalized)
@@ -592,6 +593,7 @@ class EmailAuthService:
             user = result.scalar_one_or_none()
             if user is not None:
                 try:
+                    # First-Party
                     from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
                     await auth_cache.set_user(normalized, _user_obj_to_dict(user))
