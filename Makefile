@@ -1274,6 +1274,7 @@ generate-report:                           ## Display most recent load test repo
 # 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
 # =============================================================================
 # help: 📊 REST API POPULATION
+# help: populate-tiny        - Populate via REST API (50 each, ~500 entities, ~30 sec)
 # help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
 # help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
 # help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
@@ -1282,7 +1283,18 @@ generate-report:                           ## Display most recent load test repo
 # help: populate-clean       - Delete all loadtest.example.com entities via API
 # help: populate-report      - Show latest population report
 
-.PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+.PHONY: populate-tiny populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+
+populate-tiny:                             ## Populate via REST API - tiny (50 each)
+	@echo "📊 Populating via REST API (tiny profile)..."
+	@echo "   Target: 50 of each entity type, ~500 entities"
+	@echo "   Time: ~30 seconds"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile tiny"
+	@echo ""
+	@echo "✅ Tiny API population complete!"
+	@echo "📄 Report: reports/tiny_populate_report.json"
 
 populate-small:                            ## Populate via REST API - small (100 users)
 	@echo "📊 Populating via REST API (small profile)..."
