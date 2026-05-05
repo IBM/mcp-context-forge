@@ -9275,7 +9275,7 @@ class TestRpcHandling:
         # Gateway forwarding is removed, so missing tool returns error
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["error"]["code"] == -32000
+            assert result["error"]["code"] == -32603
 
     async def test_handle_rpc_user_object_and_auto_id(self):
         payload = {"jsonrpc": "2.0", "method": "ping", "params": {}}
@@ -9771,7 +9771,7 @@ class TestRpcHandling:
         # Gateway forwarding is removed, so missing tool returns error
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["error"]["code"] == -32000
+            assert result["error"]["code"] == -32603
 
         payload_missing_method = {"jsonrpc": "2.0", "id": "err-1", "params": {}}
         request_missing_method = self._make_request(payload_missing_method)

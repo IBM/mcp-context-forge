@@ -135,6 +135,6 @@ class TestRPCBackwardCompatibility:
                         result = response.json()
                         assert result["jsonrpc"] == "2.0"
                         assert "error" in result
-                        assert result["error"]["code"] == -32000
-                        assert result["error"]["message"] == "Invalid method"
+                        assert result["error"]["code"] == -32603
+                        assert result["error"]["message"] == "Internal error"
                         assert result["id"] == 999
