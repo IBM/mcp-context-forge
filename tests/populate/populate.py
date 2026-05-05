@@ -255,7 +255,7 @@ Examples:
     parser.add_argument(
         "--profile",
         type=str,
-        choices=["small", "medium", "large"],
+        choices=["tiny", "small", "medium", "large"],
         default="small",
         help="Population profile (default: small)",
     )
