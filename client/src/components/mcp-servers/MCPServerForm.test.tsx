@@ -160,6 +160,184 @@ describe("MCPServerForm", () => {
     });
   });
 
+  describe("Authentication Type Selection", () => {
+    beforeEach(async () => {
+      const user = userEvent.setup();
+      render(<MCPServerForm {...defaultProps} />);
+
+      // Open advanced settings
+      const advancedButton = screen.getByRole("button", { name: /Advanced settings/i });
+      await user.click(advancedButton);
+    });
+
+    it("should have None authentication selected by default", () => {
+      const noneRadio = screen.getByRole("radio", { name: /^None$/i });
+      expect(noneRadio).toBeChecked();
+    });
+
+    it("should allow switching to Basic authentication", async () => {
+      const user = userEvent.setup();
+
+      const basicRadio = screen.getByRole("radio", { name: /Basic/i });
+      await user.click(basicRadio);
+
+      expect(basicRadio).toBeChecked();
+
+      // Verify Basic auth fields are displayed
+      expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Password/i)).toBeInTheDocument();
+    });
+
+    it("should allow switching to Bearer Token authentication", async () => {
+      const user = userEvent.setup();
+
+      const bearerRadio = screen.getByRole("radio", { name: /Bearer token/i });
+      await user.click(bearerRadio);
+
+      expect(bearerRadio).toBeChecked();
+
+      // Verify Bearer token field is displayed (use more specific selector)
+      const bearerInput = screen.getByPlaceholderText(/Paste bearer token/i);
+      expect(bearerInput).toBeInTheDocument();
+    });
+
+    it("should allow switching to Custom Headers authentication", async () => {
+      const user = userEvent.setup();
+
+      const customRadio = screen.getByRole("radio", { name: /Custom headers/i });
+      await user.click(customRadio);
+
+      expect(customRadio).toBeChecked();
+
+      // Verify Custom headers section is displayed
+      expect(
+        screen.getByText(/Send one or more custom headers with every request/i),
+      ).toBeInTheDocument();
+    });
+
+    it("should allow switching to OAuth 2.0 authentication", async () => {
+      const user = userEvent.setup();
+
+      const oauthRadio = screen.getByRole("radio", { name: /OAuth 2.0/i });
+      await user.click(oauthRadio);
+
+      expect(oauthRadio).toBeChecked();
+
+      // Verify OAuth fields are displayed
+      expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Client secret/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Token URL/i)).toBeInTheDocument();
+    });
+
+    it("should allow switching to Query Parameter authentication", async () => {
+      const user = userEvent.setup();
+
+      const queryRadio = screen.getByRole("radio", { name: /Query parameter/i });
+      await user.click(queryRadio);
+
+      expect(queryRadio).toBeChecked();
+
+      // Verify Query parameter fields are displayed
+      expect(screen.getByLabelText(/Query parameter name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+
+      // Verify security warning is displayed
+      expect(screen.getByText(/Security Warning:/i)).toBeInTheDocument();
+    });
+
+    it("should switch between authentication types correctly", async () => {
+      const user = userEvent.setup();
+
+      // Start with None
+      const noneRadio = screen.getByRole("radio", { name: /^None$/i });
+      expect(noneRadio).toBeChecked();
+
+      // Switch to Basic
+      const basicRadio = screen.getByRole("radio", { name: /Basic/i });
+      await user.click(basicRadio);
+      expect(basicRadio).toBeChecked();
+      expect(noneRadio).not.toBeChecked();
+
+      // Switch to Bearer
+      const bearerRadio = screen.getByRole("radio", { name: /Bearer token/i });
+      await user.click(bearerRadio);
+      expect(bearerRadio).toBeChecked();
+      expect(basicRadio).not.toBeChecked();
+
+      // Switch to OAuth
+      const oauthRadio = screen.getByRole("radio", { name: /OAuth 2.0/i });
+      await user.click(oauthRadio);
+      expect(oauthRadio).toBeChecked();
+      expect(bearerRadio).not.toBeChecked();
+
+      // Switch to Query Parameter
+      const queryRadio = screen.getByRole("radio", { name: /Query parameter/i });
+      await user.click(queryRadio);
+      expect(queryRadio).toBeChecked();
+      expect(oauthRadio).not.toBeChecked();
+
+      // Switch to Custom Headers
+      const customRadio = screen.getByRole("radio", { name: /Custom headers/i });
+      await user.click(customRadio);
+      expect(customRadio).toBeChecked();
+      expect(queryRadio).not.toBeChecked();
+
+      // Switch back to None
+      await user.click(noneRadio);
+      expect(noneRadio).toBeChecked();
+      expect(customRadio).not.toBeChecked();
+    });
+
+    it("should display appropriate content for each authentication type", async () => {
+      const user = userEvent.setup();
+
+      // Test None - should show info message
+      const noneRadio = screen.getByRole("radio", { name: /^None$/i });
+      await user.click(noneRadio);
+      expect(screen.getByText(/No credentials are required to connect/i)).toBeInTheDocument();
+
+      // Test Basic - should show username and password fields
+      const basicRadio = screen.getByRole("radio", { name: /Basic/i });
+      await user.click(basicRadio);
+      expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Password/i)).toBeInTheDocument();
+
+      // Test Bearer - should show token field
+      const bearerRadio = screen.getByRole("radio", { name: /Bearer token/i });
+      await user.click(bearerRadio);
+      expect(screen.getByPlaceholderText(/Paste bearer token/i)).toBeInTheDocument();
+
+      // Test Custom - should show add header button
+      const customRadio = screen.getByRole("radio", { name: /Custom headers/i });
+      await user.click(customRadio);
+      expect(screen.getByRole("button", { name: /Add header/i })).toBeInTheDocument();
+
+      // Test OAuth - should show OAuth fields
+      const oauthRadio = screen.getByRole("radio", { name: /OAuth 2.0/i });
+      await user.click(oauthRadio);
+      expect(screen.getByLabelText(/Client ID/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Client secret/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Token URL/i)).toBeInTheDocument();
+
+      // Test Query Parameter - should show parameter name and API key fields
+      const queryRadio = screen.getByRole("radio", { name: /Query parameter/i });
+      await user.click(queryRadio);
+      expect(screen.getByLabelText(/Query parameter name/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+    });
+
+    it("should have proper accessibility attributes for authentication type radio group", () => {
+      const radioGroup = screen.getByRole("radiogroup", { name: /Authentication type/i });
+      expect(radioGroup).toBeInTheDocument();
+
+      // Verify all radio buttons are in the group
+      const radios = screen.getAllByRole("radio");
+      const authRadios = radios.filter((radio) => radio.getAttribute("name") === "auth-type");
+
+      expect(authRadios.length).toBe(6); // none, basic, bearer, custom, oauth, query
+    });
+  });
+
   describe("Form Submission", () => {
     it("should call onToggle when form is submitted", async () => {
       const user = userEvent.setup();
