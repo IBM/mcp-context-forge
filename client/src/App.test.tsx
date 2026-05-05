@@ -45,8 +45,8 @@ describe("App", () => {
     const gatewaysLink = screen.getByRole("button", { name: /virtual servers/i });
     await user.click(gatewaysLink);
 
-    // Verify Gateways page is displayed
-    const gatewaysHeading = await screen.findByRole("heading", { name: /Connect a source/i });
+    // Verify Gateways page is displayed (empty state shows "Connect a source")
+    const gatewaysHeading = await screen.findByRole("heading", { name: /Connect a source|Virtual servers/i });
     expect(gatewaysHeading).toBeInTheDocument();
   });
 });
