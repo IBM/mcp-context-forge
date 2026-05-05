@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-04-25T09:47:49.619527Z"
+exclude-newer = "2026-04-25T21:48:13.40607Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -917,16 +917,16 @@ wheels = [
 
 [[package]]
 name = "cpex-rate-limiter"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f9/7f/e03a53e5de0e992b021150a4c9e4c1f17cfc10bd2686035dc503420f5cb7/cpex_rate_limiter-0.0.6.tar.gz", hash = "sha256:23909ec6acc62eb9bf533791b1575b41ba9340053a7306cededa709027c68d60", size = 70953, upload-time = "2026-05-05T08:13:23.178Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/ac/50e9df3ecaad43f36db4927ce5b2d7cc77a49ec61b2fab938634eea1c195/cpex_rate_limiter-0.0.7.tar.gz", hash = "sha256:3ad8b1201b3190b4399e7d0a1e0b1b393dafec0e75e086fc20472a2a1f1fb118", size = 72503, upload-time = "2026-05-05T13:10:44.083Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/71/7e34610cabbb8512fe45fbed6fbb120bd53a7086c03c899ec40cb49094ab/cpex_rate_limiter-0.0.6-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:70d9bba953aedd8e175be4ef4a2082c272eeb24adc987c9090c649699432a38d", size = 1287162, upload-time = "2026-05-05T08:13:13.739Z" },
-    { url = "https://files.pythonhosted.org/packages/11/22/59a5d3feb0e1442b84a6a9a19b5b0da85a79cab3dfba2510a12c2fca36a3/cpex_rate_limiter-0.0.6-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:3b34de06f8a145aa64f16deb430cae284059a8fe39997e2b014e1a1ee0bcb2d9", size = 1361989, upload-time = "2026-05-05T08:13:15.396Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/69/c25f3fb26424b817bea22afd1ae1b930d184e7730d8a3dbff88853dceff7/cpex_rate_limiter-0.0.6-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:804e54bac07e3c1a58602018bf87dbcc5784174b82cae2fd75a00da70aeba55f", size = 1343683, upload-time = "2026-05-05T08:13:17.033Z" },
-    { url = "https://files.pythonhosted.org/packages/03/00/95aba2fa606c40bf5a41eb9fdbd3b6194825a4c76fd5361f06738f7ff4b6/cpex_rate_limiter-0.0.6-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:823d754a6eccc42a7672cf01732cdc4d1ef9aa291157395434667ef6dfb8a0f2", size = 1374717, upload-time = "2026-05-05T08:13:18.697Z" },
-    { url = "https://files.pythonhosted.org/packages/66/7a/3d9437754dbb916ad9dc7b886e762eb17141ca55f6bf1829bd94ce768c21/cpex_rate_limiter-0.0.6-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:288586990fe68b27145a434b80b07fa79ea7d9347e415d5e542413c5ec33453d", size = 1438152, upload-time = "2026-05-05T08:13:20.212Z" },
-    { url = "https://files.pythonhosted.org/packages/18/72/597eae462dd9eafdb72cbc3068546b163696fe505a869d5c34574133f697/cpex_rate_limiter-0.0.6-cp311-abi3-win_amd64.whl", hash = "sha256:258f27c66944066b9afe68075b7deacec5e1cf9cdf8af4fcd878b78dd77a7ff6", size = 1382400, upload-time = "2026-05-05T08:13:21.912Z" },
+    { url = "https://files.pythonhosted.org/packages/91/bb/49d13ce93859bc7c992c732e523d5891ea0d482343e6b83385bde40967ee/cpex_rate_limiter-0.0.7-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:28ae50b622eeade5414b18d225f5c3cc4cdedc294ef234e18537332c43e1ce29", size = 1288372, upload-time = "2026-05-05T13:10:33.961Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/47/6f29e9b2fde22fa04d71970022a36a2a8bdfba2074b6741ee1b4860584a5/cpex_rate_limiter-0.0.7-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:6525cc540c549e71da04c058986894f451d49cc0abb7dfaeff9db3f38e655d94", size = 1363058, upload-time = "2026-05-05T13:10:35.753Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/6b/6243736e4a4df3ec7771a86eee63c99017cb7ed94a96b3831b3104824c67/cpex_rate_limiter-0.0.7-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:087cfc8a72cf6fe8788c30074b8705486babf7b8a9a34276753578b8ca58dcf1", size = 1345446, upload-time = "2026-05-05T13:10:37.212Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/a5/10d6e73dfaf47ad45d6214cdf80f9156db47f8674183b420ba90357c7cf3/cpex_rate_limiter-0.0.7-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:149a4076eef78f70b2063ccb922b26cab670952e9b8582c19da93569c1df10e3", size = 1375678, upload-time = "2026-05-05T13:10:39.018Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/29/8aee7442c26138ab2121050459cd7aea1041b36ea06441f8c9377f998647/cpex_rate_limiter-0.0.7-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:751cd81410ea240f5d18fe1a8f801f3676cc0bdac88610398496ca5b65eecc5c", size = 1439831, upload-time = "2026-05-05T13:10:41.12Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/bf/8e7d2f9262c3fe9c61c649bc6d8376824d40c590add38996847024a2cebb/cpex_rate_limiter-0.0.7-cp311-abi3-win_amd64.whl", hash = "sha256:bc4a15bbac77b4aa15e348c9bb07d95f545df5e0eecdddfec0d6d5e26a13b660", size = 1381992, upload-time = "2026-05-05T13:10:42.447Z" },
 ]
 
 [[package]]
@@ -3020,7 +3020,7 @@ requires-dist = [
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.2.1" },
-    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.6" },
+    { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.7,<0.1.0" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.1.0" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
     { name = "cpex-url-reputation", marker = "extra == 'plugins'", specifier = ">=0.2.0" },
