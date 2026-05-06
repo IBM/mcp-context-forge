@@ -10,8 +10,7 @@ This module implements essential security headers to prevent common attacks incl
 XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
 
 The Content-Security-Policy (CSP) uses a nonce-based approach to allow legitimate
-inline scripts while blocking malicious ones. Each request generates a unique
-cryptographic nonce that must be included in inline script tags.
+inline scripts while blocking malicious ones.
 """
 
 # Standard

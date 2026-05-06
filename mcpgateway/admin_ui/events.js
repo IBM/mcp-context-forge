@@ -594,8 +594,8 @@ import {
     // Initialize search when switching tabs
     document.addEventListener("click", function (event) {
       if (
-        event.target.matches('[onclick*="Admin.showTab"]') ||
-        event.target.closest('[onclick*="Admin.showTab"]')
+        event.target.matches('.sidebar-link') ||
+        event.target.closest('.sidebar-link')
       ) {
         console.log("🔄 Tab switch detected, resetting search state");
         resetSearchInputsState();

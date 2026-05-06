@@ -1533,6 +1533,9 @@ async def version_endpoint(
         # Return partial HTML fragment for HTMX embedding
         templates = getattr(request.app.state, "templates", None)
         if templates is None:
+            # First-Party
+            from mcpgateway.main import get_csp_nonce_from_request
+
             jinja_env = Environment(
                 loader=FileSystemLoader(str(settings.templates_dir)),
                 autoescape=True,
@@ -1540,10 +1543,7 @@ async def version_endpoint(
             )
 
             # Register csp_nonce global for CSP nonce support in templates
-            def get_csp_nonce(req: Request | None) -> str:
-                return getattr(req.state, "csp_nonce", "") if req else ""
-
-            jinja_env.globals["csp_nonce"] = get_csp_nonce
+            jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
             templates = Jinja2Templates(env=jinja_env)
         return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")

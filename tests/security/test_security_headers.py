@@ -94,6 +94,52 @@ class TestSecurityHeaders:
         # Verify CSP ends with semicolon
         assert csp.endswith(";")
 
+    def test_csp_nonce_header_consistency(self, client: TestClient):
+        """Test that CSP nonce in header is unique per request.
+
+        This verifies that each request generates a unique nonce value in the
+        Content-Security-Policy header, which is critical for preventing XSS attacks.
+        The nonce must be cryptographically random and different for each request.
+        """
+        # Standard
+        import re
+
+        # Make two requests to the same endpoint
+        response1 = client.get("/health")
+        response2 = client.get("/health")
+
+        assert response1.status_code == 200
+        assert response2.status_code == 200
+
+        # Extract nonces from CSP headers
+        csp1 = response1.headers.get("Content-Security-Policy", "")
+        csp2 = response2.headers.get("Content-Security-Policy", "")
+
+        assert csp1, "CSP header must be present in first response"
+        assert csp2, "CSP header must be present in second response"
+
+        # Extract nonce values using regex
+        nonce_match1 = re.search(r"'nonce-([^']+)'", csp1)
+        nonce_match2 = re.search(r"'nonce-([^']+)'", csp2)
+
+        assert nonce_match1, "CSP header must contain nonce directive in first response"
+        assert nonce_match2, "CSP header must contain nonce directive in second response"
+
+        nonce1 = nonce_match1.group(1)
+        nonce2 = nonce_match2.group(1)
+
+        # Verify nonces are not empty and have reasonable length (should be 22 chars for base64url(16 bytes))
+        assert len(nonce1) > 0, "Nonce must not be empty"
+        assert len(nonce1) >= 20, "Nonce should be at least 20 characters (128 bits of entropy)"
+        assert len(nonce2) > 0, "Nonce must not be empty"
+        assert len(nonce2) >= 20, "Nonce should be at least 20 characters (128 bits of entropy)"
+
+        # Critical invariant: nonces must be different between requests
+        assert nonce1 != nonce2, (
+            f"CSP nonces must be unique per request. "
+            f"Got same nonce '{nonce1}' for both requests, indicating a security vulnerability."
+        )
+
 
 class TestCORSConfiguration:
     """Test CORS configuration and behavior."""
