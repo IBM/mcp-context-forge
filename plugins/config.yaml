@@ -286,7 +286,9 @@ plugins:
     conditions: []
     config:
       backend: "redis"
-      redis_url: "redis://redis:6379/0"
+      # Sourced from the gateway's REDIS_URL env; when the plugin runs in a
+      # separate container, ensure that host is reachable from within it.
+      redis_url: '{{ env.REDIS_URL | default("redis://redis:6379/0") }}'
       redis_key_prefix: "rl"
       redis_fallback: true
       algorithm: "fixed_window"
