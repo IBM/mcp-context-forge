@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import get_settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
@@ -473,10 +472,8 @@ async def update_token(
         db.close()
         return result
     except ValueError as e:
-        logger.error(f"Token update validation error: {e}")
-        settings = get_settings()
-        detail = str(e) if settings.debug else "Invalid request. Please check your input and try again."
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
 
 
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -907,7 +904,5 @@ async def list_team_tokens(
         db.close()
         return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
     except ValueError as e:
-        logger.error(f"List team tokens validation error: {e}")
-        settings = get_settings()
-        detail = str(e) if settings.debug else "Invalid request. Please check your input and try again."
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
