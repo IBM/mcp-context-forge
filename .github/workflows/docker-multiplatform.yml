@@ -156,8 +156,8 @@ jobs:
 
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=publish-build-${{ matrix.suffix }}
-          cache-to: type=gha,mode=${{ matrix.cache_mode }},scope=publish-build-${{ matrix.suffix }}
+          cache-from: type=gha,scope=containerfile-lite-${{ matrix.suffix }}
+          cache-to: type=gha,mode=${{ matrix.cache_mode }},scope=containerfile-lite-${{ matrix.suffix }}
           provenance: false
 
       - name: Export digest
