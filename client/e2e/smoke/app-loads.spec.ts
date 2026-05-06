@@ -3,16 +3,18 @@ import { APP } from "../utils/paths";
 
 test.describe("App loading (smoke)", () => {
   test("loads /app without JavaScript errors", async ({ page, apiMock }) => {
-    // Unauthenticated entry point: auth guard will redirect to /app/login,
-    // which fetches nothing, but mock /auth/me defensively in case a token
-    // sneaks in from a previous worker.
+    // Unauthenticated entry point: auth guard checks /app/auth/me and then
+    // redirects to /app/login when no cookie session exists.
     await apiMock.mockMe({ status: 401 });
 
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
 
     page.on("console", (msg) => {
-      if (msg.type() === "error") consoleErrors.push(msg.text());
+      const text = msg.text();
+      if (msg.type() === "error" && !text.includes("401 (Unauthorized)")) {
+        consoleErrors.push(text);
+      }
     });
     page.on("pageerror", (err) => {
       pageErrors.push(`${err.name}: ${err.message}`);

@@ -2,7 +2,7 @@ import { http, HttpResponse } from "msw";
 
 export const handlers = [
   // Mock login endpoint
-  http.post("/auth/login", async ({ request }) => {
+  http.post("/app/auth/login", async ({ request }) => {
     const body = await request.json();
     const { email, password } = body as { email: string; password: string };
 
@@ -12,9 +12,6 @@ export const handlers = [
       password === "password123" // pragma: allowlist secret
     ) {
       return HttpResponse.json({
-        access_token: "mock-token-12345",
-        token_type: "bearer",
-        expires_in: 3600,
         user: {
           email: "test@example.com",
           full_name: "Test User",
@@ -24,6 +21,7 @@ export const handlers = [
           email_verified: true,
           password_change_required: false,
         },
+        csrf_token: "mock-csrf-token",
       });
     }
 
@@ -31,16 +29,8 @@ export const handlers = [
   }),
 
   // Mock auth check endpoint
-  http.get("/auth/me", () => {
-    return HttpResponse.json({
-      email: "test@example.com",
-      full_name: "Test User",
-      is_admin: true,
-      is_active: true,
-      auth_provider: "local",
-      email_verified: true,
-      password_change_required: false,
-    });
+  http.get("/app/auth/me", () => {
+    return HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }),
 
   // Mock gateways endpoint with cursor pagination
