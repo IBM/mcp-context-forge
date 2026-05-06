@@ -849,7 +849,7 @@ class TestAuthHooksOptimization:
 
         # Mock plugin result that continues to standard auth
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         mock_plugin_result = PluginResult(
             modified_payload=None,
@@ -2023,7 +2023,7 @@ class TestPluginAuthHook:
     async def test_plugin_auth_success(self):
         """Plugin successfully authenticates user (lines 614-646)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(
@@ -2074,7 +2074,7 @@ class TestPluginAuthHook:
     async def test_plugin_violation_error(self):
         """Plugin denies auth with PluginViolationError (lines 649-656)."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from cpex.framework.errors import PluginViolationError
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="denied_token")
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
@@ -2129,7 +2129,7 @@ class TestPluginAuthHook:
     async def test_plugin_auth_no_credentials_no_request(self):
         """Plugin hook with no credentials and no request (lines 562, 573)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(return_value=True)
@@ -2149,7 +2149,7 @@ class TestPluginAuthHook:
     async def test_plugin_auth_fallback_request_id(self):
         """Request_id fallback to request.state.request_id (lines 577-580)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
         request = SimpleNamespace(
@@ -2192,7 +2192,7 @@ class TestPluginAuthHook:
     async def test_plugin_auth_uuid_fallback_request_id(self):
         """Request_id fallback to uuid when neither correlation_id nor state (lines 581-583)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
         # Request without request_id in state
@@ -2817,7 +2817,7 @@ class TestInjectUserInfoInState:
         """Existing global_context has user dict already (line 1070-1072)."""
         # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
-        from mcpgateway.plugins.framework import GlobalContext
+        from cpex.framework import GlobalContext
 
         gc = GlobalContext(request_id="req-1", server_id=None, tenant_id=None)
         gc.user = {"existing_key": "value"}
@@ -2868,7 +2868,7 @@ class TestPluginAuthHookEdgeCases:
     async def test_plugin_auth_no_metadata_no_context(self):
         """Plugin returns user with no metadata and no context_table (branches 631-641)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(
@@ -2913,7 +2913,7 @@ class TestPluginAuthHookEdgeCases:
     async def test_plugin_auth_metadata_without_auth_method(self):
         """Plugin returns metadata but without auth_method key (branch 633->637)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(
@@ -3369,7 +3369,7 @@ class TestSessionTokenBranches:
     async def test_plugin_auth_success_without_request(self):
         """Plugin auth branch where request is None (branch 795->798)."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
 
@@ -3410,7 +3410,7 @@ class TestSessionTokenBranches:
     async def test_plugin_auth_ignores_plugin_admin_claim_and_uses_db_user(self):
         """Plugin-provided is_admin must not override database admin status."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
@@ -3453,7 +3453,7 @@ class TestSessionTokenBranches:
     async def test_plugin_auth_missing_user_rejected_when_require_user_in_db_enabled(self, monkeypatch):
         """Missing DB users are rejected when REQUIRE_USER_IN_DB is enabled."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
@@ -3488,7 +3488,7 @@ class TestSessionTokenBranches:
     async def test_plugin_auth_existing_db_inactive_user_rejected(self):
         """Inactive DB users must be rejected even when plugin auth succeeds."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
@@ -3533,7 +3533,7 @@ class TestSessionTokenBranches:
     async def test_plugin_auth_missing_user_defaults_to_non_admin_when_allowed(self, monkeypatch):
         """Missing DB users can authenticate as non-admin when DB-only mode is disabled."""
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult
+        from cpex.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
@@ -3868,7 +3868,7 @@ class TestTenantIdPropagation:
         """
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1")
         request = self._make_request(team_id="team-acme", existing_global_context=global_context)
@@ -3888,7 +3888,7 @@ class TestTenantIdPropagation:
         """
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1")
         request = self._make_request(team_id=None, existing_global_context=global_context)
@@ -3906,7 +3906,7 @@ class TestTenantIdPropagation:
         """
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id="existing-tenant")
         request = self._make_request(team_id="different-team", existing_global_context=global_context)
@@ -3927,7 +3927,7 @@ class TestTenantIdPropagation:
         per-tenant limits on this request path.
         """
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
+        from cpex.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
         request = SimpleNamespace(
@@ -3965,7 +3965,7 @@ class TestTenantIdPropagation:
         skips by_tenant enforcement rather than inventing a phantom tenant.
         """
         # First-Party
-        from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
+        from cpex.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
         request = SimpleNamespace(
@@ -4004,7 +4004,7 @@ class TestTenantIdPropagation:
         """
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         # Simulate middleware pre-creating context with tenant_id=None
         global_context = GlobalContext(request_id="r1", tenant_id=None)
@@ -4020,7 +4020,7 @@ class TestTenantIdPropagation:
         """_propagate_tenant_id must not overwrite an already-set tenant_id."""
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id="plugin-set-tenant")
         request = self._make_request(team_id="different-team", existing_global_context=global_context)
@@ -4046,7 +4046,7 @@ class TestTenantIdPropagation:
         """
         # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
-        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+        from cpex.framework import GlobalContext  # noqa: PLC0415
 
         global_context = GlobalContext(request_id="r1", tenant_id=None)
         # State has plugin_global_context but NO team_id attribute

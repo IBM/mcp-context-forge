@@ -10,7 +10,7 @@ registration, priority sorting, hook filtering, etc.
 """
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     PromptPosthookPayload,

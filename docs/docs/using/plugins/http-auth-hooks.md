@@ -201,7 +201,7 @@ class HttpAuthResolveUserPayload(PluginPayload):
 
 **Example**:
 ```python
-from mcpgateway.plugins.framework import PluginViolation, PluginViolationError
+from cpex.framework import PluginViolation, PluginViolationError
 
 async def http_auth_resolve_user(
     self,
@@ -325,7 +325,7 @@ This example shows both layers working together.
 ### Plugin Implementation
 
 ```python
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
     HttpPreRequestPayload,
@@ -461,7 +461,7 @@ return PluginResult(
 **Raise**: `PluginViolationError` with custom error message
 
 ```python
-from mcpgateway.plugins.framework import PluginViolation, PluginViolationError
+from cpex.framework import PluginViolation, PluginViolationError
 
 # Example: Revoked API key
 raise PluginViolationError(
@@ -744,7 +744,7 @@ Example test for custom auth plugin:
 
 ```python
 import pytest
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
     PluginConfig,

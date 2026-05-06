@@ -12,7 +12,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -38,7 +38,7 @@ class TestResourceFilterPlugin:
             version="1.0.0",
             hooks=[ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH],
             tags=["test", "filter"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             config={
                 "max_content_size": 1024,
                 "allowed_protocols": ["http", "https", "test"],
@@ -175,8 +175,8 @@ class TestResourceFilterPlugin:
     @pytest.mark.asyncio
     async def test_permissive_mode(self, plugin_config, context):
         """Test plugin behavior in permissive mode."""
-        plugin_config.mode = PluginMode.PERMISSIVE
-        plugin = ResourceFilterPlugin(plugin_config)
+        permissive_config = plugin_config.model_copy(update={"mode": PluginMode.TRANSFORM})
+        plugin = ResourceFilterPlugin(permissive_config)
 
         # Blocked protocol should log but not block
         payload = ResourcePreFetchPayload(uri="file:///etc/passwd", metadata={})

@@ -99,6 +99,7 @@ class ToolPluginBindingService:
             mode=binding.mode,
             priority=binding.priority,
             config=binding.config,
+            on_error=binding.on_error,
             binding_reference_id=binding.binding_reference_id,
             created_at=binding.created_at,
             created_by=binding.created_by,
@@ -186,6 +187,7 @@ class ToolPluginBindingService:
                         existing.mode = policy.mode.value
                         existing.priority = policy.priority
                         existing.config = policy.config
+                        existing.on_error = policy.on_error
                         existing.binding_reference_id = policy.binding_reference_id
                         existing.updated_at = now
                         existing.updated_by = caller_email
@@ -206,6 +208,7 @@ class ToolPluginBindingService:
                             mode=policy.mode.value,
                             priority=policy.priority,
                             config=policy.config,
+                            on_error=policy.on_error,
                             binding_reference_id=policy.binding_reference_id,
                             created_at=now,
                             created_by=caller_email,

@@ -136,7 +136,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 ###########################
 # Frontend builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1776906674 AS frontend-builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1777957922 AS frontend-builder
 WORKDIR /opt/app-root/src
 
 # Copy package.json and package-lock.json

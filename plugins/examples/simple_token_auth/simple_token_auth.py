@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResultPayload,
     HttpAuthResolveUserPayload,
@@ -121,7 +121,7 @@ class SimpleTokenAuthPlugin(Plugin):
 
         logger.info(f"[SimpleTokenAuth] Transformed {token_header} to Authorization: Bearer {token[:20]}...")
 
-        from mcpgateway.plugins.framework import HttpHeaderPayload
+        from cpex.framework import HttpHeaderPayload
 
         return PluginResult(
             modified_payload=HttpHeaderPayload(root=headers),
@@ -253,7 +253,7 @@ class SimpleTokenAuthPlugin(Plugin):
         Returns:
             PluginResult with modified response headers
         """
-        from mcpgateway.plugins.framework import HttpHeaderPayload
+        from cpex.framework import HttpHeaderPayload
 
         response_headers = dict(payload.response_headers.root) if payload.response_headers else {}
 

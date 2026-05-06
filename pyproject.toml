@@ -11,12 +11,13 @@ build-backend = "setuptools.build_meta"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex-url-reputation = "2026-04-20T23:59:59Z"
+cpex = "2026-05-07T23:59:59Z"
+cpex-url-reputation = "2026-05-07T23:59:59Z"
 cpex-rate-limiter = "2026-05-31T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-04-09T23:59:59Z"
-cpex-pii-filter = "2026-04-21T23:59:59Z"
-cpex-retry-with-backoff = "2026-04-09T23:59:59Z"
-cpex-secrets-detection = "2026-04-20T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-05-07T23:59:59Z"
+cpex-pii-filter = "2026-05-07T23:59:59Z"
+cpex-retry-with-backoff = "2026-05-07T23:59:59Z"
+cpex-secrets-detection = "2026-05-07T23:59:59Z"
 cryptography = "2026-04-11T23:59:59Z"
 langchain-core = "2026-04-22T23:59:59Z"
 uv = "2026-04-11T23:59:59Z"
@@ -72,7 +73,8 @@ dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
-    "brotli>=1.2.0", # Transitive pin (starlette-compress)
+    "brotli>=1.2.0",
+    "cpex>=0.1.0,<0.2",
     "cryptography>=46.0.7",
     "fastapi>=0.136.0",
     "filelock>=3.28.0",
@@ -276,12 +278,12 @@ templating = [
 # External plugin packages (optional)
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
-    "cpex-encoded-exfil-detection>=0.2.0",
-    "cpex-pii-filter>=0.2.1",
+    "cpex-encoded-exfil-detection>=0.3.0",
+    "cpex-pii-filter>=0.3.0",
     "cpex-rate-limiter>=0.0.6",
-    "cpex-retry-with-backoff>=0.1.0",
-    "cpex-secrets-detection>=0.2.0",
-    "cpex-url-reputation>=0.2.0",
+    "cpex-retry-with-backoff>=0.3.0",
+    "cpex-secrets-detection>=0.3.0",
+    "cpex-url-reputation>=0.3.0",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -330,7 +332,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 # --------------------------------------------------------------------
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
-mcpplugins = "mcpgateway.plugins.tools.cli:main"
+mcpplugins = "cpex.tools.cli:main"
 cforge = "mcpgateway.tools.cli:main"
 
 # --------------------------------------------------------------------
@@ -514,7 +516,7 @@ from-first                 = true         # place all "from ... import ..." befo
 ###############################################################################
 known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
-known-third-party          = ["alembic"] # treat "alembic" as THIRDPARTY
+known-third-party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
 # src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
@@ -570,7 +572,7 @@ import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
 ###############################################################################
 known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
 known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
-known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
+known_third_party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
 # src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
 
 ###############################################################################
@@ -793,8 +795,6 @@ omit = [
     "mcpgateway/tools/builder/*",
     "*/tests/*",
     "*/test_*.py",
-    # Generated protobuf files - auto-generated, not hand-written code
-    "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
 ]
 
 [tool.coverage.report]
@@ -939,7 +939,7 @@ ignore-nested-functions = false
 ignore-nested-classes = true
 ignore-setters = false
 fail-under = 100
-exclude = ["setup.py", "docs", "build", "tests", "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py"]
+exclude = ["setup.py", "docs", "build", "tests"]
 ignore-regex = ["^get_", "^post_"]
 verbose = 0
 quiet = false

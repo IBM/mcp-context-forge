@@ -80,7 +80,7 @@ plugins:
   - name: "MyGrpcPlugin"
     kind: "external"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     grpc:
       target: "localhost:50051"
@@ -89,7 +89,7 @@ plugins:
   - name: "MyLocalGrpcPlugin"
     kind: "external"
     hooks: ["tool_pre_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     grpc:
       uds: /var/run/grpc-plugin.sock
@@ -107,7 +107,7 @@ plugins:
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     config:
       detect_ssn: true
@@ -167,7 +167,7 @@ plugins:
   - name: "HighPerformanceFilter"
     kind: "external"
     hooks: ["tool_pre_invoke", "prompt_pre_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 10
     grpc:
       target: "plugin-server:50051"
@@ -181,7 +181,7 @@ plugins:
   - name: "LegacyPlugin"
     kind: "external"
     hooks: ["tool_post_invoke"]
-    mode: "permissive"
+    mode: "transform"
     priority: 100
     mcp:
       proto: STREAMABLEHTTP
@@ -223,7 +223,7 @@ plugins:
   - name: "LocalGrpcPlugin"
     kind: "external"
     hooks: ["tool_pre_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     grpc:
       uds: /var/run/grpc-plugin.sock
@@ -415,7 +415,7 @@ plugins:
   - name: "SecurityFilterPlugin"
     kind: "plugins.security.filter.SecurityFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 10
     config:
       block_dangerous_ops: true
@@ -442,7 +442,7 @@ plugins:
   - name: "SecurityFilterPlugin"
     kind: "external"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 10
     grpc:
       target: "localhost:50051"

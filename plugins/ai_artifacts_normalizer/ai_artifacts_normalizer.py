@@ -17,8 +17,8 @@ import re
 # Third-Party
 from pydantic import BaseModel
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -137,7 +137,7 @@ class AIArtifactsNormalizerPlugin(Plugin):
             else:
                 new_args[k] = v
         if changed:
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=new_args))
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args))
         return PromptPrehookResult(continue_processing=True)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:

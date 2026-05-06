@@ -2923,8 +2923,8 @@ class LazySettingsWrapper:
         Returns:
             The plugin framework settings wrapper.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
+        # Third-Party
+        from cpex.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
 
         return _plugin_settings
 

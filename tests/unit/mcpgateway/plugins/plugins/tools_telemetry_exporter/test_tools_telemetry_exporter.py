@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.tools_telemetry_exporter.telemetry_exporter import ToolsTelemetryExporterPlugin
 
 

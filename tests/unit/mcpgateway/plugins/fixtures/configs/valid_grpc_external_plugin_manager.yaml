@@ -4,7 +4,7 @@ plugins:
   - name: "ReplaceBadWordsPlugin"
     kind: "external"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
     grpc:
       target: "127.0.0.1:50151"

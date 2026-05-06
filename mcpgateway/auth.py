@@ -71,6 +71,7 @@ from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -80,7 +81,8 @@ from starlette.requests import Request
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError, UserContext
+from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
@@ -1840,7 +1842,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     """Inject user identity into the plugin_global_context.
 
     Always populates both the legacy ``global_context.user`` dict (for backward
-    compatibility) and the new structured ``global_context.user_context``
+    compatibility) and the structured ``global_context.user_context``
     (:class:`UserContext`).
 
     Args:

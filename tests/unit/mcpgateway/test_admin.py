@@ -377,7 +377,7 @@ def allow_permission(monkeypatch):
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
 
@@ -12219,7 +12219,7 @@ async def test_admin_search_roots_denies_without_system_config_permission(monkey
     deny_service.check_permission = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: deny_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: deny_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
 
     with pytest.raises(HTTPException) as exc_info:
         await admin_search_roots(q="tmp", limit=10, user={"email": "dev@example.com", "db": mock_db})
@@ -12261,7 +12261,7 @@ async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_
     perm_service.check_permission = AsyncMock(side_effect=_check_permission)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
 
     result = await admin_unified_search(
         q="tmp",
@@ -22024,7 +22024,7 @@ class TestPublicVisibilityGuard:
         mock_perm_service.check_permission = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
         monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
         return mock_perm_service
 
     @pytest.mark.asyncio

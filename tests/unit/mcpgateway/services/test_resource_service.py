@@ -5947,9 +5947,7 @@ class TestReadResourceCoverageEdges:
         """Cover plugin user_id extraction from dict (2120) and plugin_global_context update branch (2129-2134)."""
         # Standard
         from types import SimpleNamespace
-
-        # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
+        from cpex.framework import ResourceHookType
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()
@@ -5990,9 +5988,7 @@ class TestReadResourceCoverageEdges:
         """Cover user email fallback via getattr(user, 'email', None) (2125)."""
         # Standard
         from types import SimpleNamespace
-
-        # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
+        from cpex.framework import ResourceHookType
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()
@@ -6034,9 +6030,7 @@ class TestReadResourceCoverageEdges:
         """Cover falsy user_id and server_id update arcs (2131->2133, 2133->2140)."""
         # Standard
         from types import SimpleNamespace
-
-        # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
+        from cpex.framework import ResourceHookType
         from mcpgateway.services.resource_service import ResourceService
 
         svc = ResourceService()

@@ -9,7 +9,7 @@ Tests for SchemaGuardPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

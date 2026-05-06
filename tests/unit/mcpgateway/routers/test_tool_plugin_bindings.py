@@ -124,6 +124,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -143,6 +144,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -154,6 +156,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_y"],
                         plugin_id="RateLimiterPlugin",
                         mode=PluginBindingMode.PERMISSIVE,
+
                         priority=30,
                         config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
                     )
@@ -198,6 +201,7 @@ class TestToolPluginBindingsRouter:
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
+
         assert binding.priority == 50
         assert binding.created_by == "admin@example.com"
 
@@ -217,6 +221,7 @@ class TestToolPluginBindingsRouter:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=99,
                             config={**_OLG, "max_chars": 500, "strategy": "block"},
                         )
@@ -363,6 +368,7 @@ class TestToolPluginBindingsRouter:
         assert team_a.tool_name == "tool_x"
         assert team_a.plugin_id == "OutputLengthGuardPlugin"
         assert team_a.mode == "enforce"
+
         assert team_a.priority == 50
         assert team_a.config == _OLG
         assert team_a.created_by == "admin@example.com"
@@ -371,6 +377,7 @@ class TestToolPluginBindingsRouter:
         assert team_b.tool_name == "tool_y"
         assert team_b.plugin_id == "RateLimiterPlugin"
         assert team_b.mode == "permissive"
+
         assert team_b.priority == 30
         assert team_b.config == {**_RL, "by_user": "60/m", "by_tenant": "600/m"}
         assert team_b.created_by == "admin@example.com"
@@ -400,6 +407,7 @@ class TestToolPluginBindingsRouter:
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
+
         assert binding.priority == 50
         assert binding.config == _OLG
         assert binding.created_by == "admin@example.com"

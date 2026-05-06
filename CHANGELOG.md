@@ -2,6 +2,56 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+#### **🧩 Plugin Framework Extracted to CPEX** ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754), [#3753](https://github.com/IBM/mcp-context-forge/issues/3753))
+
+**Action Required**: The internal plugin framework (`mcpgateway/plugins/framework/`, `mcpgateway/plugins/tools/`, `plugin_templates/`) has been replaced by the external [CPEX](https://github.com/contextforge-org/contextforge-plugins-framework) package (`cpex>=0.1.0`).
+
+**What breaks**:
+
+- All `from mcpgateway.plugins.framework import ...` imports → `from cpex.framework import ...`
+- All `from mcpgateway.plugins.tools import ...` imports → `from cpex.tools import ...`
+- `PromptPosthookPayload.name` → `.prompt_id`
+- `ToolPreInvokePayload.arguments` → `.args`
+- Plugin mode vocabulary expanded: `enforce` → `sequential`, `permissive` → `transform`, `enforce_ignore_error` → `sequential` + `on_error: ignore`
+
+**What still works (backward compatible)**:
+
+- Legacy mode names (`enforce`, `enforce_ignore_error`, `permissive`, `disabled`) in `plugins/config.yaml` and Redis overrides — translated automatically at runtime.
+- The API accepts both legacy and native mode values for `PluginModeUpdateRequest` and `PluginPolicyItem.mode`.
+
+**Migration**:
+
+1. Update all plugin imports from `mcpgateway.plugins.framework` → `cpex.framework`.
+2. Rename `payload.name` → `payload.prompt_id` in prompt posthook handlers, `payload.arguments` → `payload.args` in tool pre-invoke handlers.
+4. (Optional) Update config mode values: `enforce` → `sequential`, `permissive` → `transform`.
+5. (Optional) Replace `enforce_ignore_error` with `mode: sequential` + `on_error: ignore`.
+6. Run `pytest tests/acceptance/plugins/test_cpex_contract.py` to verify.
+
+**Full migration guide**: [`docs/docs/using/plugins/migration-to-cpex.md`](docs/docs/using/plugins/migration-to-cpex.md)
+
+**Rollback**: Not possible without reverting the PR — the internal framework is deleted. Pin to the pre-CPEX release if rollback is needed.
+
+### Added
+
+- CPEX external plugin framework dependency (`cpex>=0.1.0rc1`) replacing the in-tree implementation ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- New plugin execution modes: `concurrent`, `audit`, `fire_and_forget` ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- `on_error` field for tool plugin bindings: `fail`, `ignore`, `disable` ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- Acceptance tests for CPEX API contract (`tests/acceptance/plugins/test_cpex_contract.py`) ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- Admin UI compatibility layer: unified mode labels, dynamic filter dropdown, deduplicated badges ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- Playwright E2E tests for plugins page ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+
+### Removed
+
+- `mcpgateway/plugins/framework/` — entire internal plugin framework (moved to `cpex` package) ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- `mcpgateway/plugins/tools/` — CLI tools (moved to `cpex` package) ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+- `plugin_templates/` — bootstrap templates (now provided by `mcpplugins bootstrap` CLI from `cpex`) ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754))
+
+---
+
 ## [1.0.0] - 2026-04-30 - General Availability - Technical Debt, Security Hardening, Catalog Improvements, A2A Improvements, MCP Standard Review and Sync
 
 ### Overview

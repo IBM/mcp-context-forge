@@ -232,37 +232,20 @@ docker run --name my-plugin \
 
 ## Plugin Templates
 
-The gateway ships with ready‑to‑use plugin templates under `plugin_templates/` that the bootstrap tool uses. You can also copy them manually if you prefer.
-
-Location and contents:
-
-- `plugin_templates/native`
-
-  - `plugin.py.jinja`: Plugin class skeleton extending `Plugin`
-  - `plugin-manifest.yaml.jinja`: Manifest metadata (description, author, version, available_hooks)
-  - `config.yaml.jinja`: Example entry to add in `plugins/config.yaml`
-  - `__init__.py.jinja`, `README.md.jinja`
-
-- `plugin_templates/external`
-
-  - `{{ plugin_name }}/plugin.py.jinja`: External plugin implementation skeleton
-  - `resources/plugins/config.yaml.jinja`: Plugin loader config for server
-  - `resources/runtime/config.yaml.jinja`: External server runtime config
-  - `pyproject.toml.jinja`, `MANIFEST.in.jinja`, `.ruff.toml`, `.dockerignore`, `Containerfile`
-  - `Makefile.jinja`, `run-server.sh`: Build and serve helpers
-  - `tests/`: Example tests and pytest config
-
-Placeholders in filenames and files (e.g., `{{ plugin_name.lower()... }}`) are filled by the bootstrap tool. If copying manually, replace them with your plugin's name and details.
-
-Using the templates via the CLI (recommended):
+Plugin templates are bundled inside the [CPEX (ContextForge Plugin Extensions)](https://github.com/contextforge-org/contextforge-plugins-framework) package and are used automatically by the bootstrap command. Use the CLI to scaffold a new plugin project:
 
 ```bash
-# Creates a new plugin from templates, asks interactive prompts
+# Creates a new plugin from built-in CPEX templates, asks interactive prompts
 mcpplugins bootstrap --destination your/plugin/dir
 
 # Pass --type to select template directly
 mcpplugins bootstrap --destination your/plugin/dir --type native   # or external
 ```
+
+The built-in templates provide:
+
+- **Native template**: Plugin class skeleton extending `Plugin`, manifest metadata, example config entry, and README.
+- **External template**: Full project with plugin implementation skeleton, runtime config, `pyproject.toml`, `Containerfile`, `Makefile`, `run-server.sh`, and example tests.
 
 After bootstrapping, follow the steps above to install deps, run tests, build, and serve.
 
@@ -280,7 +263,7 @@ plugins:
     author: "Frederico Araujo"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers

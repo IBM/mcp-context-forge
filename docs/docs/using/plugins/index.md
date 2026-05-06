@@ -1,5 +1,8 @@
 # Plugin Framework
 
+!!! info "CPEX Package"
+    The plugin framework is provided by the [CPEX (ContextForge Plugin Extensions)](https://github.com/contextforge-org/contextforge-plugins-framework) package. All framework imports use the `cpex` namespace (e.g., `from cpex.framework import Plugin`).
+
 !!! success "Production Ready"
     The plugin framework is **production ready** with comprehensive hook coverage, robust error handling, and battle-tested implementations. Supports both native and external service plugins.
 
@@ -103,7 +106,7 @@ Decide between a native (in‑process) or external (MCP) plugin:
 **Quick native skeleton:**
 
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PromptPrehookPayload, PromptPrehookResult
+from cpex.framework import Plugin, PluginConfig, PluginContext, PromptPrehookPayload, PromptPrehookResult
 
 class MyPlugin(Plugin):
     def __init__(self, config: PluginConfig):
@@ -133,7 +136,7 @@ plugins:
   - name: "MyPlugin"
     kind: "plugins.my_plugin.plugin.MyPlugin"
     hooks: ["prompt_pre_fetch"]
-    mode: "permissive"
+    mode: "transform"
     priority: 120
 ```
 
@@ -192,7 +195,7 @@ plugins:
       - "security"
       - "pii"
       - "compliance"
-    mode: "enforce"                           # enforce|enforce_ignore_error|permissive|disabled
+    mode: "sequential"                        # sequential|transform|disabled
     priority: 50                              # Execution priority (lower = higher)
     conditions:                               # Conditional execution
 
@@ -232,7 +235,7 @@ plugins:
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
-    mode: "permissive"
+    mode: "transform"
     priority: 50
     config:
       detect_ssn: true
@@ -243,7 +246,7 @@ plugins:
   - name: "ReplaceBadWordsPlugin"
     kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 150
     config:
       words:
@@ -254,7 +257,7 @@ plugins:
   - name: "DenyListPlugin"
     kind: "plugins.deny_filter.deny.DenyListPlugin"
     hooks: ["prompt_pre_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
     config:
       words: ["innovative", "groundbreaking", "revolutionary"]
@@ -262,7 +265,7 @@ plugins:
   - name: "ResourceFilterExample"
     kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 75
     config:
       max_content_size: 1048576
@@ -301,7 +304,7 @@ are defined as follows:
 | `version` | `string` |  | `null` | Plugin version for tracking and compatibility | `"1.0.0"`, `"2.3.1-beta"` |
 | `hooks` | `string[]` |  | `[]` | List of hook points where plugin executes | `["prompt_pre_fetch", "tool_pre_invoke"]` |
 | `tags` | `string[]` |  | `[]` | Searchable tags for plugin categorization | `["security", "pii", "compliance"]` |
-| `mode` | `string` |  | `"enforce"` | Plugin execution mode controlling behavior on violations | `"enforce"`, `"enforce_ignore_error"`, `"permissive"`, `"disabled"` |
+| `mode` | `string` |  | `"sequential"` | Plugin execution mode controlling behavior on violations | `"sequential"`, `"transform"`, `"disabled"` |
 | `priority` | `integer` |  | `null` | Execution priority (lower number = higher priority) | `10`, `50`, `100` |
 | `conditions` | `object[]` |  | `[]` | Conditional execution rules for targeting specific contexts | See [Condition Fields](#condition-fields) below |
 | `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "default_mask_strategy": "partial"}` |
@@ -380,9 +383,8 @@ Each plugin can operate in one of four modes:
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
-| `"enforce"` | Block requests when plugin detects violations or errors | Production security plugins, critical compliance checks |
-| `"enforce_ignore_error"` | Block on violations but continue on plugin errors | Security plugins that should block violations but not break on technical errors |
-| `"permissive"` | Log violations and errors but allow requests to continue | Development environments, monitoring-only plugins |
+| `"sequential"` | Block requests when plugin detects violations or errors (use `on_error: ignore` to block violations but allow errors to pass) | Production security plugins, critical compliance checks |
+| `"transform"` | Log violations and errors but allow requests to continue | Development environments, monitoring-only plugins |
 | `"disabled"` | Plugin is loaded but never executed | Temporary plugin deactivation, maintenance mode |
 
 #### Priority and Execution Order
@@ -625,7 +627,7 @@ class AgentPostInvokePayload(BaseModel):
 **Example Plugin:**
 
 ```python
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     AgentPreInvokePayload,
@@ -679,7 +681,7 @@ The `Plugin` class is an **abstract base class (ABC)** that provides the foundat
 
 ```python
 from abc import ABC
-from mcpgateway.plugins.framework import Plugin, PluginConfig
+from cpex.framework import Plugin, PluginConfig
 
 class MyPlugin(Plugin):
     """Your plugin must inherit from Plugin."""
@@ -700,7 +702,7 @@ class MyPlugin(Plugin):
 The simplest approach - just name your method to match the hook type:
 
 ```python
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     ToolPreInvokePayload,
@@ -719,7 +721,7 @@ class ContentFilterPlugin(Plugin):
 
         # Block dangerous operations
         if payload.name == "file_delete" and "system" in str(payload.args):
-            from mcpgateway.plugins.framework import PluginViolation
+            from cpex.framework import PluginViolation
             return ToolPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
@@ -750,9 +752,9 @@ class ContentFilterPlugin(Plugin):
 Use the `@hook` decorator to register a hook with a custom method name:
 
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginContext
-from mcpgateway.plugins.framework.decorator import hook
-from mcpgateway.plugins.framework import (
+from cpex.framework import Plugin, PluginContext
+from cpex.framework.decorator import hook
+from cpex.framework import (
     ToolHookType,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
@@ -791,13 +793,13 @@ class AuditPlugin(Plugin):
 Register completely new hook types with custom payload and result types:
 
 ```python
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     PluginPayload,
     PluginResult
 )
-from mcpgateway.plugins.framework.decorator import hook
+from cpex.framework.decorator import hook
 
 # Define custom payload type
 class EmailPayload(PluginPayload):
@@ -968,7 +970,7 @@ Tool hooks have access to tool and gateway metadata through the global context m
 It can be accessed inside of the tool hooks through:
 
 ```python
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 
 tool_meta = context.global_context.metadata[TOOL_METADATA]
 assert tool_meta.original_name == "test_tool"
@@ -1030,7 +1032,7 @@ class LLMGuardPlugin(Plugin):
 
             except Exception as e:
                 # Handle errors based on plugin settings
-                if self.config.mode == PluginMode.ENFORCE:
+                if self.config.mode == PluginMode.SEQUENTIAL:
                     return PromptPrehookResult(
                         continue_processing=False,
                         violation=PluginViolation(
@@ -1076,7 +1078,7 @@ default_config:
 
 ```python
 # plugins/my_plugin/plugin.py
-from mcpgateway.plugins.framework import Plugin
+from cpex.framework import Plugin
 
 class MyPlugin(Plugin):
     # Implementation here
@@ -1101,7 +1103,7 @@ plugins:
 # tests/test_my_plugin.py
 import pytest
 from plugins.my_plugin.plugin import MyPlugin
-from mcpgateway.plugins.framework import PluginConfig
+from cpex.framework import PluginConfig
 
 @pytest.mark.asyncio
 async def test_my_plugin():
@@ -1128,9 +1130,9 @@ Errors inside a plugin should be raised as exceptions.  The plugin manager will 
 1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of ContextForge regardless of the plugin mode.
 2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
 
-  * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
-  * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
-  * if `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.
+  * if `mode` is `sequential`, both violations and errors are bubbled up as exceptions and the execution is blocked.
+  * if `mode` is `sequential` with `on_error: ignore`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
+  * if `mode` is `transform`, execution is allowed to proceed whether there are errors or violations. Both are logged.
 
 
 ### 2. Performance Considerations
@@ -1258,7 +1260,7 @@ plugins:
   - name: "PIIFilter"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 10
     config:
       detect_ssn: true
@@ -1271,7 +1273,7 @@ plugins:
   - name: "LlamaGuardSafety"
     kind: "external"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 20
     mcp:
       proto: STREAMABLEHTTP
@@ -1284,7 +1286,7 @@ plugins:
   - name: "OpenAIMod"
     kind: "external"
     hooks: ["prompt_post_fetch", "tool_post_invoke"]
-    mode: "permissive"  # Log violations but don't block
+    mode: "transform"  # Log violations but don't block
     priority: 30
     mcp:
       proto: STREAMABLEHTTP
@@ -1294,7 +1296,7 @@ plugins:
   - name: "AuditLogger"
     kind: "plugins.audit.audit_logger.AuditLoggerPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
-    mode: "permissive"
+    mode: "transform"
     priority: 100
     config:
       log_level: "INFO"
@@ -1310,7 +1312,7 @@ plugins:
   - name: "EnterpriseSecurityFilter"
     kind: "plugins.security.enterprise_filter.EnterpriseFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     conditions:
 
@@ -1325,7 +1327,7 @@ plugins:
   - name: "BasicContentFilter"
     kind: "plugins.content.basic_filter.BasicFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
-    mode: "permissive"
+    mode: "transform"
     priority: 75
     conditions:
 
@@ -1345,7 +1347,7 @@ plugins:
   - name: "DevPIIFilter"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
-    mode: "permissive"  # Don't block in dev
+    mode: "transform"  # Don't block in dev
     priority: 50
     config:
       detect_ssn: true
@@ -1363,7 +1365,7 @@ plugins:
   - name: "ProdPIIFilter"
     kind: "cpex_pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"  # Block in production
+    mode: "sequential"  # Block in production
     priority: 10
     config:
       detect_ssn: true

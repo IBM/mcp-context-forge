@@ -7555,7 +7555,17 @@ class PluginModeUpdateRequest(BaseModel):
 
     # Mirrors PluginMode.value; importing the enum here would create a cycle
     # (schemas -> plugins.framework -> services -> schemas), so use a Literal.
-    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled")
+    mode: Literal[
+        "enforce",
+        "enforce_ignore_error",
+        "permissive",
+        "disabled",
+        "sequential",
+        "concurrent",
+        "transform",
+        "audit",
+        "fire_and_forget",
+    ] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled, or cpex native modes")
 
 
 class PluginModeUpdateResponse(BaseModel):
@@ -8220,8 +8230,14 @@ class PluginBindingMode(str, Enum):
     """Plugin execution mode for tool plugin bindings."""
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"  # Deprecated: use SEQUENTIAL + on_error=ignore
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
+    SEQUENTIAL = "sequential"
+    CONCURRENT = "concurrent"
+    TRANSFORM = "transform"
+    AUDIT = "audit"
+    FIRE_AND_FORGET = "fire_and_forget"
 
 
 # --- Policy item (one plugin, one or more tools) ---
@@ -8242,12 +8258,15 @@ class PluginPolicyItem(BaseModel):
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
     plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
-    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
+    mode: PluginBindingMode = Field(
+        PluginBindingMode.ENFORCE, description="Execution mode: enforce, enforce_ignore_error, permissive, disabled, sequential, concurrent, transform, audit, or fire_and_forget"
+    )
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ...,
         description="Plugin-specific configuration. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
+    on_error: Optional[Literal["fail", "ignore", "disable"]] = Field(None, description="Error handling: fail (block on error), ignore (swallow errors), disable (disable plugin on error)")
     binding_reference_id: Optional[str] = Field(
         None,
         max_length=255,
@@ -8325,6 +8344,7 @@ class ToolPluginBindingResponse(BaseModelWithConfigDict):
     mode: str = Field(..., description="Execution mode")
     priority: int = Field(..., description="Execution priority")
     config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
     binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID for correlating with an upstream system")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="Email of creator")

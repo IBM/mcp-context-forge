@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from mcpgateway.db import Base
 from mcpgateway.main import app
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
-from mcpgateway.plugins.framework import PluginManager
+from cpex.framework import PluginManager
 
 
 class TestCrossHookContextSharing:
@@ -211,7 +211,7 @@ class TestCrossHookContextSharing:
         This test verifies that each plugin gets its own isolated context
         and cannot access other plugins' context data.
         """
-        from mcpgateway.plugins.framework import (
+        from cpex.framework import (
             GlobalContext,
             HttpPreRequestPayload,
             HttpHeaderPayload,

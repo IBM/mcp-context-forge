@@ -96,6 +96,7 @@ def _make_binding(
     mode="enforce",
     priority=50,
     config=None,
+    on_error=None,
     binding_reference_id=None,
     created_by="admin@example.com",
     updated_by="admin@example.com",
@@ -109,6 +110,7 @@ def _make_binding(
     b.mode = mode
     b.priority = priority
     b.config = config if config is not None else dict(_OLG)
+    b.on_error = on_error
     b.binding_reference_id = binding_reference_id
     b.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     b.created_by = created_by
@@ -157,6 +159,7 @@ def simple_request():
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -212,6 +215,7 @@ class TestUpsertBindings:
         assert r.tool_name == "tool_x"
         assert r.plugin_id == "OutputLengthGuardPlugin"
         assert r.mode == "enforce"
+
         assert r.priority == 50
         assert r.config == dict(_OLG)
         assert r.created_by == "admin@example.com"
@@ -235,6 +239,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=10,
                             config=cfg_v1,
                         )
@@ -253,6 +258,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=50,
                             config=cfg_v2,
                         )
@@ -297,6 +303,7 @@ class TestUpsertBindings:
                             tool_names=["tool_a", "tool_b"],
                             plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=20,
                             config=cfg,
                         )
@@ -316,6 +323,7 @@ class TestUpsertBindings:
         assert tool_a.team_id == "team-a"
         assert tool_a.plugin_id == "RateLimiterPlugin"
         assert tool_a.mode == "permissive"
+
         assert tool_a.priority == 20
         assert tool_a.config == cfg
 
@@ -323,6 +331,7 @@ class TestUpsertBindings:
         assert tool_b.team_id == "team-a"
         assert tool_b.plugin_id == "RateLimiterPlugin"
         assert tool_b.mode == "permissive"
+
         assert tool_b.priority == 20
         assert tool_b.config == cfg
 
@@ -694,6 +703,7 @@ class TestGetBindingsForTool:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=50,
                             config=dict(_OLG),
                         )
@@ -712,6 +722,7 @@ class TestGetBindingsForTool:
                             tool_names=["*"],
                             plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=10,
                             config={**_RL, "by_user": "100/m", "by_tenant": "1000/m"},
                         )
@@ -750,6 +761,7 @@ class TestGetBindingsForTool:
                             tool_names=["*"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=1,
                             config={**_OLG, "max_chars": 100},
                         )
@@ -768,6 +780,7 @@ class TestGetBindingsForTool:
                             tool_names=["tool_z"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=99,
                             config={**_OLG, "max_chars": 9999},
                         )

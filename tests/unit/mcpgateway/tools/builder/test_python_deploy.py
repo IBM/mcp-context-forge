@@ -9,7 +9,6 @@ Unit tests for plain Python MCP Stack deployment.
 
 # Standard
 from pathlib import Path
-import re
 import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch, call

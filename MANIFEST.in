@@ -33,7 +33,6 @@ include *.js
 recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
-recursive-include plugin_templates *
 recursive-include mcpgateway/toolops *.md
 recursive-include mcpgateway *.proto
 

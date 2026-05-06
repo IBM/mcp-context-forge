@@ -71,6 +71,7 @@ allowlist = [
   { name = "astroid", license = "LGPL", reason = "pylint dependency, dev-only" },
   { name = "pylint-celery", license = "GPL", reason = "pylint plugin, dev-only" },
   { name = "pylint-django", license = "GPL", reason = "pylint plugin, dev-only" },
+  { name = "pylint", license = "GPL-2.0-or-later", reason = "linter, dev-only" },
   { name = "pylint-plugin-utils", license = "GPL", reason = "pylint plugin, dev-only" },
   # chardet: LGPL licensed, pulled in by older dependencies; dev-only transitive dep.
   { name = "chardet", license = "LGPL", reason = "legacy encoding detector, dev-only transitive dep" },

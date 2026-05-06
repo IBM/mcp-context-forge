@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from mcpgateway.db import ObservabilitySpan, SessionLocal
-from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPreInvokePayload
+from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPreInvokePayload
 from mcpgateway.services.observability_service import ObservabilityService
 from plugins.span_attribute_customizer.span_attribute_customizer import SpanAttributeCustomizerPlugin
 

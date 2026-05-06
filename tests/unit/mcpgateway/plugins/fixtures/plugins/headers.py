@@ -10,8 +10,8 @@ Headers plugin.
 
 import logging
 
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.plugins.framework import (
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from cpex.framework import (
     PluginContext,
     Plugin,
     HttpHeaderPayload,

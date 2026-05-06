@@ -20,16 +20,16 @@ import orjson
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.db import get_db
-from mcpgateway.plugins.framework import (
-    get_attr,
+from cpex.framework import (
     HttpHeaderPayload,
     Plugin,
     PluginConfig,
     PluginContext,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
+    get_attr,
 )
+from mcpgateway.db import get_db
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.logging_service import LoggingService
 

@@ -69,6 +69,87 @@ make jmeter-report                # Generate HTML report from JTL file
 make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
 ```
 
+## Playwright (Browser E2E) Tests
+
+UI tests live in `tests/playwright/` and use the Page Object pattern (`tests/playwright/pages/`).
+
+### Setup
+
+```bash
+make playwright-install             # Install Chromium browser
+# or
+make playwright-install-all         # Install all browsers (chromium, firefox, webkit)
+```
+
+### Running Tests
+
+Playwright tests require a running server. Start one in a separate terminal first:
+
+```bash
+uv run mcpgateway --host 0.0.0.0 --port 8080
+```
+
+Then run:
+
+```bash
+# Headless (CI-friendly)
+make test-ui-headless
+
+# With visible browser
+make test-ui
+
+# Specific test file
+pytest tests/playwright/test_plugins_page.py -v
+
+# Debug with Playwright Inspector
+make test-ui-debug
+
+# Smoke subset only
+make test-ui-smoke
+```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TEST_BASE_URL` | `http://localhost:8080` | Server URL for tests |
+| `PLATFORM_ADMIN_EMAIL` | `admin@example.com` | Login email |
+| `PLATFORM_ADMIN_PASSWORD` | `changeme` | Login password |
+| `PLUGINS_ENABLED` | `false` | Must be `true` for plugin page tests |
+
+### Page Object Pattern
+
+Each admin tab has a page object in `tests/playwright/pages/`:
+- `admin_page.py` — main admin shell and tab navigation
+- `plugins_page.py` — plugins tab (mode filter, badges, detail modal)
+- `tools_page.py`, `servers_page.py`, etc.
+
+All extend `BasePage` which provides `SidebarComponent` for tab navigation. Use `click_tab_by_id("tab-<name>", "<name>-panel")` to navigate.
+
+Fixtures in `conftest.py` handle login automatically (JWT cookie injection by default).
+
+### Writing New Playwright Tests
+
+1. Create a page object in `tests/playwright/pages/` extending `BasePage`
+2. Add a fixture in `tests/playwright/conftest.py`
+3. Create test file in `tests/playwright/test_<feature>.py`
+4. Use `pytest.skip()` when prerequisites aren't met (e.g., plugins not enabled)
+
+## JavaScript Unit Tests
+
+Admin UI JS logic is tested with Vitest (jsdom). Tests live in `tests/unit/js/`.
+
+```bash
+npx vitest run                              # All JS tests
+npx vitest run tests/unit/js/plugins.test.js  # Specific file
+```
+
+These test JS functions in isolation (filter logic, modal rendering, DOM manipulation) without a browser. Changes to `mcpgateway/admin_ui/*.js` should have corresponding Vitest tests, and the bundle must be rebuilt after:
+
+```bash
+make build-ui
+```
+
 ## Test Markers
 
 Use markers to categorize tests:

@@ -12,8 +12,8 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework import (
+from cpex.framework import GlobalContext, PluginManager, PluginViolationError
+from cpex.framework import (
     AgentHookType,
     AgentPreInvokePayload,
     AgentPostInvokePayload,

@@ -14,9 +14,9 @@ from collections import defaultdict
 import logging
 from typing import Any, Dict, List, Optional
 
-# First-Party
-from mcpgateway.plugins.framework import PluginManager
-from mcpgateway.plugins.framework.models import PluginMode
+# Third-Party
+from cpex.framework import PluginManager
+from cpex.framework.models import PluginMode
 
 logger = logging.getLogger(__name__)
 

@@ -33,7 +33,7 @@ import logging
 from typing import Any, List, Optional
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -99,8 +99,8 @@ def _handle_text(text: str, cfg: OutputLengthGuardConfig, policy: LengthGuardPol
                     description=f"Estimated token count {token_count} exceeds max_tokens {cfg.max_tokens}",
                     code="OUTPUT_TOKEN_VIOLATION",
                     details={"token_count": token_count, "max_tokens": cfg.max_tokens, "chars_per_token": cfg.chars_per_token, "strategy": cfg.strategy},
-                    http_status_code=422,
                     mcp_error_code=-32000,
+                    http_status_code=422,
                 )
             elif above_max:
                 violation = PluginViolation(
@@ -108,8 +108,8 @@ def _handle_text(text: str, cfg: OutputLengthGuardConfig, policy: LengthGuardPol
                     description=f"Result length {length} exceeds max_chars {cfg.max_chars}",
                     code="OUTPUT_LENGTH_VIOLATION",
                     details={"length": length, "max_chars": cfg.max_chars, "strategy": cfg.strategy},
-                    http_status_code=422,
                     mcp_error_code=-32000,
+                    http_status_code=422,
                 )
             else:
                 violation = PluginViolation(
@@ -117,8 +117,8 @@ def _handle_text(text: str, cfg: OutputLengthGuardConfig, policy: LengthGuardPol
                     description=f"Result length {length} (tokens {token_count}) below minimum",
                     code="OUTPUT_LENGTH_VIOLATION",
                     details={"length": length, "min_chars": cfg.min_chars, "token_count": token_count, "min_tokens": cfg.min_tokens, "strategy": cfg.strategy},
-                    http_status_code=422,
                     mcp_error_code=-32000,
+                    http_status_code=422,
                 )
             return text, meta, violation
 

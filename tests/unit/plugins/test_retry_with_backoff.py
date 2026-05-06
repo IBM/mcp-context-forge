@@ -33,7 +33,7 @@ from cpex_retry_with_backoff.retry_with_backoff import (
     _compute_delay_ms,
     _is_failure,
 )
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginConfig,
     PluginContext,
     ResourcePostFetchPayload,
@@ -507,8 +507,8 @@ class TestExecutionPathSelection:
 
     @pytest.mark.asyncio
     async def test_local_state_path_handles_absent_native_manager(self):
-        """Without a native manager the local state path must still retry correctly."""
-        plugin = make_plugin()
+        """The local state path (check_text_content=True) must retry correctly without a native manager."""
+        plugin = make_plugin({"check_text_content": True})
         ctx = make_context()
 
         with patch.object(plugin, "_rust", None):

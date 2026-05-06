@@ -11,7 +11,7 @@ plugins:
       - test
       - agent
       - context
-    mode: enforce
+    mode: sequential
     priority: 50
 
 # Plugin directories to scan

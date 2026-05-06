@@ -13,7 +13,7 @@ already-extracted tool payload. Without these tests the rate limiter's
 ``by_tenant`` dimension is silently a no-op on the fallback path.
 """
 
-from mcpgateway.plugins.framework import GlobalContext
+from cpex.framework import GlobalContext
 from mcpgateway.services.tool_service import ToolService
 
 

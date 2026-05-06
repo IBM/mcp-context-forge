@@ -34,7 +34,7 @@ from plugins.circuit_breaker.circuit_breaker import (
     _cfg_for,
     _is_error,
 )
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginConfig,
     PluginContext,
     ToolPreInvokePayload,

@@ -11,7 +11,7 @@ Smoke tests for Vault Plugin - verifies plugin interface integrity.
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginConfig,
     PluginMode,
     ToolHookType,
@@ -35,7 +35,7 @@ class TestVaultPluginSmoke:
             version="1.0",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
             tags=["test", "vault"],
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
             priority=10,
             config={},
         )
