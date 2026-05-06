@@ -10483,10 +10483,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except Exception:
-                # Log error and return invalid method
+            except ToolNotFoundError:
+                # Method name not registered as a tool → spec-mandated -32601
                 logger.error("Method not found: %s", method)
-                raise JSONRPCError(-32000, "Invalid method", params)
+                raise JSONRPCError(-32601, f"Method not found: {method}", {})
+            except Exception as exc:
+                # Truly unexpected error during handling → -32603
+                logger.error("Unexpected error invoking method %s: %s", method, exc)
+                raise JSONRPCError(-32603, "Internal error", {})
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
