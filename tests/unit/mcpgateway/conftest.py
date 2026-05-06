@@ -25,6 +25,7 @@ import pytest
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
 from cpex.framework.settings import settings
+from mcpgateway import config
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
 _ORIG_REQUIRE_ADMIN_PERMISSION = _rbac_mod.require_admin_permission
