@@ -237,3 +237,88 @@ def test_format_database_error_no_orig():
     result = ErrorFormatter.format_database_error(dummy)
     assert result["message"].startswith("Unable to complete")
     assert result["success"] is False
+
+
+def test_should_expose_error_details_expose_flag_true(monkeypatch):
+    """Test that EXPOSE_ERROR_DETAILS=true enables verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = True
+    mock_settings.debug = False
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is True
+
+
+def test_should_expose_error_details_debug_and_dev_mode(monkeypatch):
+    """Test that DEBUG=true AND DEV_MODE=true enables verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = True
+    mock_settings.dev_mode = True
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is True
+
+
+def test_should_expose_error_details_debug_only_false(monkeypatch):
+    """Test that DEBUG=true alone does NOT enable verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = True
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is False
+
+
+def test_should_expose_error_details_all_false(monkeypatch):
+    """Test that all flags false returns False."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = False
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is False
+
+
+def test_safe_error_detail_verbose_mode(monkeypatch):
+    """Test safe_error_detail returns exception text in verbose mode."""
+    from mcpgateway.utils.error_formatter import safe_error_detail
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+
+    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
+    assert result == "Detailed error message"
+
+
+def test_safe_error_detail_production_mode(monkeypatch):
+    """Test safe_error_detail returns fallback in production mode."""
+    from mcpgateway.utils.error_formatter import safe_error_detail
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
+
+    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
+    assert result == "Generic fallback"
+
+
+def test_public_validation_error_is_value_error():
+    """Test that PublicValidationError is a subclass of ValueError."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    err = PublicValidationError("Token expiration cannot exceed 365 days")
+    assert isinstance(err, ValueError)
+    assert str(err) == "Token expiration cannot exceed 365 days"

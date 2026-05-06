@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import DatabaseError, IntegrityError
 
 # First-Party
+from mcpgateway.config import get_settings
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -336,3 +337,64 @@ class ErrorFormatter:
 
         # Generic database error
         return {"message": "Unable to complete the operation. Please try again.", "success": False}
+
+
+def should_expose_error_details() -> bool:
+    """Determine if verbose error details should be exposed in HTTP responses.
+
+    Verbose detail is exposed only when EXPOSE_ERROR_DETAILS=true OR
+    (DEBUG=true AND DEV_MODE=true). Bare DEBUG=true no longer unlocks
+    verbose responses.
+
+    Returns:
+        bool: True if error details should be exposed, False otherwise
+
+    Note:
+        See tests/unit/mcpgateway/utils/test_error_formatter.py for comprehensive
+        test coverage of all flag combinations.
+    """
+    settings = get_settings()
+    # Check if EXPOSE_ERROR_DETAILS is set (if it exists)
+    expose_flag = getattr(settings, "expose_error_details", False)
+    if expose_flag:
+        return True
+    # Otherwise require both DEBUG and DEV_MODE
+    return settings.debug and settings.dev_mode
+
+
+def safe_error_detail(exception: Exception, fallback: str = "Invalid request. Please check your input and try again.") -> str:
+    """Return exception detail only if verbose mode is enabled, otherwise return fallback.
+
+    This is the single point of policy for "is it OK to expose this exception text?".
+    Used at HTTPException raise sites across routers and main.py.
+
+    Args:
+        exception: The exception whose detail may be exposed
+        fallback: The generic message to return in production mode
+
+    Returns:
+        str: Exception detail if verbose mode is enabled, otherwise fallback message
+
+    Note:
+        See tests/unit/mcpgateway/utils/test_error_formatter.py for test coverage
+        of verbose and production modes.
+    """
+    if should_expose_error_details():
+        return str(exception)
+    return fallback
+
+
+class PublicValidationError(ValueError):
+    """Marker class for ValueError whose str() is intentionally safe to expose.
+
+    Opt-in sub-class of ValueError whose message is user-actionable and safe
+    to expose in production. Routers catch it before the generic ValueError
+    branch and pass str(e) through unsanitised.
+
+    Examples:
+        >>> err = PublicValidationError("Token expiration cannot exceed 365 days")
+        >>> str(err)
+        'Token expiration cannot exceed 365 days'
+        >>> isinstance(err, ValueError)
+        True
+    """

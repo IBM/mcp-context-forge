@@ -299,6 +299,50 @@ class TestCreateToken:
         """IntegrityError handler must call db.rollback() before raising."""
         request = TokenCreateRequest(name="Dup Token")
 
+
+@pytest.mark.asyncio
+async def test_create_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed even in production mode."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenCreateRequest(
+        name="Invalid Token",
+        description="Test",
+        expires_in_days=400,  # Exceeds limit
+    )
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Token expiration cannot exceed 365 days"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_token(request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        # PublicValidationError message should be exposed
+        assert "Token expiration cannot exceed 365 days" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_team_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in create_team_token."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenCreateRequest(
+        name="Team Token",
+        description="Test",
+    )
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Team does not exist or user lacks access"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_team_token("team-123", request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Team does not exist or user lacks access" in exc_info.value.detail
+
         orig = MagicMock()
         orig.__str__ = lambda self: "uq_email_api_tokens_user_name_team"
         err = IntegrityError("INSERT", {}, orig)
