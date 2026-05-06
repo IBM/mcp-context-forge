@@ -238,11 +238,13 @@ def app():
     # Also patch security_logger and auth_middleware's SessionLocal
     # First-Party
     import mcpgateway.middleware.auth_middleware as auth_middleware_mod
+    import mcpgateway.auth as auth_mod
     import mcpgateway.services.security_logger as sec_logger_mod
     import mcpgateway.services.structured_logger as struct_logger_mod
     import mcpgateway.services.audit_trail_service as audit_trail_mod
     import mcpgateway.services.log_aggregator as log_aggregator_mod
 
+    mp.setattr(auth_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(auth_middleware_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(sec_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
@@ -314,11 +316,13 @@ def app_with_temp_db():
     # Also patch security_logger and auth_middleware's SessionLocal
     # First-Party
     import mcpgateway.middleware.auth_middleware as auth_middleware_mod
+    import mcpgateway.auth as auth_mod
     import mcpgateway.services.security_logger as sec_logger_mod
     import mcpgateway.services.structured_logger as struct_logger_mod
     import mcpgateway.services.audit_trail_service as audit_trail_mod
     import mcpgateway.services.log_aggregator as log_aggregator_mod
 
+    mp.setattr(auth_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(auth_middleware_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(sec_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)

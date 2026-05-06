@@ -36,7 +36,7 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 logger = logging.getLogger(__name__)
 
 # Module-level constants
-APP_COOKIE_PATH = "/app"
+APP_COOKIE_PATH = "/"
 
 
 def _validate_token_expiry_sync() -> None:
