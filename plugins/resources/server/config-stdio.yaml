@@ -12,4 +12,4 @@ mcp_servers:
     location: "."
     tools:
       enabled: true
-      module: "plugins.framework.mcp.server"
+      module: "cpex.framework.external.mcp.server.runtime"
