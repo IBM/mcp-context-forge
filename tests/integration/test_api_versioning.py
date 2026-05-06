@@ -147,16 +147,17 @@ class TestLegacyAPIEnabledFlag:
     """Verify LEGACY_API_ENABLED flag controls legacy route availability."""
 
     def test_legacy_routes_disabled_returns_404(self, client: TestClient):
-        """When LEGACY_API_ENABLED=false, legacy routes should return 404."""
-        with patch.object(settings, "legacy_api_enabled", False):
-            # Need to reload the app to pick up the setting change
-            # In real deployment, this would be set before app startup
-            response = client.get("/tools")
-            # With legacy disabled, route should not exist
-            # Note: This test may need adjustment based on actual implementation
-            # The middleware only adds headers, so we need to verify the route isn't mounted
-            # This is more of a deployment test than runtime test
-            pass  # Placeholder - actual implementation depends on how flag is checked
+        """When LEGACY_API_ENABLED=false, legacy routes should return 404.
+
+        Note: This test requires app restart with LEGACY_API_ENABLED=false.
+        The flag is checked at startup when mounting routes, not at runtime.
+        Use deployment validation script (scripts/validate_legacy_disabled.py) instead.
+        """
+        pytest.skip(
+            "Requires app restart with LEGACY_API_ENABLED=false. "
+            "This is a deployment configuration test, not a runtime test. "
+            "Use scripts/validate_legacy_disabled.py for deployment validation."
+        )
 
     def test_v1_routes_always_available(self, client: TestClient):
         """V1 routes should work regardless of LEGACY_API_ENABLED setting."""
@@ -275,3 +276,34 @@ class TestOpenAPISchema:
         for legacy_path in legacy_paths:
             # Exact legacy path should not exist
             assert legacy_path not in paths
+
+
+
+class TestAdminStaticAssets:
+    """Verify admin static assets are accessible without authentication."""
+
+    def test_v1_admin_static_accessible_without_auth(self, client: TestClient):
+        """Verify /v1/admin/static/* is accessible without authentication.
+
+        This test ensures the AdminAuthMiddleware fix (Finding #1) works correctly.
+        Static assets must be accessible for the login page to render properly.
+        """
+        # Test CSS file access (common static asset)
+        response = client.get("/v1/admin/static/css/app.css")
+        # Should be OK (200) or Not Modified (304), not 401/403
+        assert response.status_code in [200, 304, 404], (
+            f"Static asset returned {response.status_code}. "
+            f"Expected 200/304 (if exists) or 404 (if missing), not auth error."
+        )
+
+        # If we got 401 or 403, the exemption is not working
+        assert response.status_code not in [401, 403], (
+            "Static assets should not require authentication. "
+            "Check AdminAuthMiddleware.EXEMPT_PATHS includes /v1/admin/static"
+        )
+
+    def test_legacy_admin_static_accessible_without_auth(self, client: TestClient):
+        """Verify /admin/static/* (legacy path) is also accessible."""
+        response = client.get("/admin/static/css/app.css")
+        assert response.status_code in [200, 304, 404]
+        assert response.status_code not in [401, 403]

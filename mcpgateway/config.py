@@ -1255,7 +1255,11 @@ class Settings(BaseSettings):
 
     # Legacy (backward-compat) route shims
     legacy_api_enabled: bool = Field(default=True, description="Mount backward-compat unversioned routes (deprecated aliases for /v1/*). Set false to drop shim routes entirely.")
-    legacy_api_sunset_date: str = Field(default="Wed, 13 May 2026 00:00:00 GMT", description="RFC 8594 Sunset header value sent on all legacy (unversioned) route responses")
+    legacy_api_sunset_date: str = Field(
+        default="Wed, 04 Aug 2026 00:00:00 GMT",
+        description="RFC 8594 Sunset header value sent on all legacy (unversioned) route responses. "
+        "Default is 90 days from v1.0.0 release (2026-05-06). Recommended: 90+ days for production migrations.",
+    )
 
     # LLM Settings (Internal API for LLM Chat)
     llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")

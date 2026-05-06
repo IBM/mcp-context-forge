@@ -384,7 +384,9 @@ def build_legacy_router(
     Returns:
         APIRouter: Fully assembled legacy router with no prefix (routes at root level).
     """
-    legacy_router = APIRouter()  # no prefix — routes live at /tools, /servers, etc.
+    # Exclude legacy routes from OpenAPI spec to avoid duplication.
+    # The canonical /v1 routes are the source of truth for API documentation.
+    legacy_router = APIRouter(include_in_schema=False)
     _assemble_routers(
         legacy_router,
         settings,

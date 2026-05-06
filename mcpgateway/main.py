@@ -2587,8 +2587,27 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         "/v1/admin/logout",
         "/v1/admin/forgot-password",
         "/v1/admin/reset-password",
-        "/admin/static",
+        "/admin/static",  # Legacy path
+        "/v1/admin/static",  # Versioned path
     ]
+
+    @staticmethod
+    def _strip_v1(path: str) -> str:
+        """Strip /v1 prefix from path for normalization.
+
+        Args:
+            path: Path to normalize.
+
+        Returns:
+            Path with /v1 prefix removed if present.
+
+        Examples:
+            >>> AdminAuthMiddleware._strip_v1("/v1/admin/login")
+            '/admin/login'
+            >>> AdminAuthMiddleware._strip_v1("/admin/login")
+            '/admin/login'
+        """
+        return path[3:] if path.startswith("/v1") else path
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -2661,13 +2680,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         # Normalize to unversioned path for exempt/permission checks so that
         # both direct (/v1/admin/login) and proxy-prefixed (/qa/gateway/admin/login)
         # paths are handled uniformly.
-        def _strip_v1(p: str) -> str:
-            return p[3:] if p.startswith("/v1") else p
-
-        check_path = _strip_v1(scope_path)
+        check_path = self._strip_v1(scope_path)
 
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(check_path.startswith(_strip_v1(p)) for p in self.EXEMPT_PATHS)
+        is_exempt = any(check_path.startswith(self._strip_v1(p)) for p in self.EXEMPT_PATHS)
         if is_exempt:
             return await call_next(request)
 

@@ -12,6 +12,18 @@ Injects ``Sunset``, ``Deprecation``, ``Link``, and
 This middleware is a pure-ASGI implementation (not ``BaseHTTPMiddleware``)
 to avoid the response-buffering issues that affect SSE / streaming routes.
 
+**IMPORTANT: _LEGACY_PREFIXES Synchronization**
+
+The ``_LEGACY_PREFIXES`` set below MUST be kept in sync with the routers
+assembled by ``_assemble_routers()`` in ``mcpgateway/api/v1/__init__.py``.
+
+When adding a new router to ``_assemble_routers()``, you MUST also add its
+prefix to ``_LEGACY_PREFIXES`` to ensure deprecation headers are applied
+to the legacy (unversioned) routes.
+
+A unit test (``tests/unit/mcpgateway/test_api_versioning_parity.py``) validates
+this synchronization and will fail if prefixes diverge.
+
 Intentionally skipped paths (permanently unversioned):
 - /v1/** (already versioned — never double-stamp)
 - /health, /ready, /health/security
@@ -27,6 +39,8 @@ Intentionally skipped paths (permanently unversioned):
 from __future__ import annotations
 
 # Standard
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Callable
 
 # First-Party
@@ -41,6 +55,7 @@ logger = _logging_service.get_logger(__name__)
 # ---------------------------------------------------------------------------
 _LEGACY_PREFIXES: frozenset[str] = frozenset(
     [
+        # Core routers (always mounted)
         "/protocol",
         "/tools",
         "/resources",
@@ -52,18 +67,19 @@ _LEGACY_PREFIXES: frozenset[str] = frozenset(
         "/tags",
         "/export",
         "/import",
-        "/admin",
-        "/a2a",
-        "/observability",
-        "/reverse-proxy",
-        "/cancellation",
-        "/toolops",
-        "/auth",
-        "/teams",
-        "/tokens",
-        "/rbac",
-        "/llmchat",
-        "/llm",
+        # Feature-flagged routers (conditionally mounted)
+        "/a2a",  # MCPGATEWAY_A2A_ENABLED
+        "/observability",  # OBSERVABILITY_ENABLED
+        "/reverse-proxy",  # MCPGATEWAY_REVERSE_PROXY_ENABLED
+        "/cancellation",  # MCPGATEWAY_TOOL_CANCELLATION_ENABLED
+        "/toolops",  # TOOLOPS_ENABLED
+        "/auth",  # AUTH_REQUIRED
+        "/teams",  # AUTH_REQUIRED
+        "/tokens",  # AUTH_REQUIRED
+        "/rbac",  # AUTH_REQUIRED
+        "/admin",  # MCPGATEWAY_ADMIN_API_ENABLED
+        "/llmchat",  # MCPGATEWAY_LLM_CHAT_ENABLED
+        "/llm",  # MCPGATEWAY_LLM_CHAT_ENABLED
     ]
 )
 
@@ -75,6 +91,7 @@ def _is_legacy_path(path: str) -> bool:
     - Paths already under /v1 — never stamp the canonical routes.
     - Paths containing /.well-known — permanently unversioned per RFC 9116.
     - Any path NOT in the explicit legacy prefix set.
+    - Invalid paths (empty, non-absolute, containing null bytes or control chars).
 
     Args:
         path: The HTTP request path (may include query string — caller should
@@ -100,11 +117,29 @@ def _is_legacy_path(path: str) -> bool:
         False
         >>> _is_legacy_path("/mcp")
         False
+        >>> _is_legacy_path("")
+        False
+        >>> _is_legacy_path("tools")
+        False
     """
+    # Validate path structure
+    if not path or not isinstance(path, str):
+        return False
+    if not path.startswith("/"):
+        return False
+    if "\x00" in path or any(ord(c) < 32 and c not in ("\t", "\n", "\r") for c in path):
+        logger.warning("Invalid path with control characters rejected: %r", path[:100])
+        return False
+
+    # Exclude versioned routes
     if path.startswith("/v1"):
         return False
+
+    # Exclude permanently unversioned routes
     if "/.well-known" in path:
         return False
+
+    # Check against legacy prefix set
     return any(path == prefix or path.startswith(prefix + "/") for prefix in _LEGACY_PREFIXES)
 
 
@@ -151,6 +186,34 @@ class DeprecationHeadersMiddleware:
         """
         self.app = app
         self._sunset_date = sunset_date
+
+        # Parse sunset date and check if enforcement is approaching or overdue
+        try:
+            sunset_dt = parsedate_to_datetime(sunset_date)
+            now = datetime.now(sunset_dt.tzinfo)
+            days_until_sunset = (sunset_dt - now).days
+
+            if days_until_sunset < 0:
+                logger.warning(
+                    "LEGACY API SUNSET DATE HAS PASSED! Legacy routes are %d days overdue for removal. Set LEGACY_API_ENABLED=false to disable legacy routes. Sunset date: %s",
+                    abs(days_until_sunset),
+                    sunset_date,
+                )
+            elif days_until_sunset <= 30:
+                logger.warning(
+                    "Legacy API sunset approaching: %d days remaining until %s. Prepare to migrate clients to /v1 routes. Set LEGACY_API_ENABLED=false to disable legacy routes now.",
+                    days_until_sunset,
+                    sunset_date,
+                )
+            else:
+                logger.info(
+                    "Legacy API deprecation active. Sunset date: %s (%d days remaining)",
+                    sunset_date,
+                    days_until_sunset,
+                )
+        except (ValueError, TypeError) as e:
+            logger.error("Failed to parse sunset date '%s': %s", sunset_date, e)
+
         logger.debug("DeprecationHeadersMiddleware initialised (sunset=%s)", sunset_date)
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
