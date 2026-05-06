@@ -1094,3 +1094,191 @@ class TestGrpcService:
         # Verify service was discovered
         assert "testpkg.TestService" in discovered
         assert discovered["testpkg.TestService"]["methods"][0]["name"] == "DoStuff"
+
+
+class TestSecurityHardening:
+    """Tests for the gRPC reflection security hardening helpers."""
+
+    def test_validate_grpc_target_rejects_unix_scheme(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_grpc_target
+
+        for bad in ("unix:/var/run/grpc.sock", "unix-abstract:foo", "vsock:1:50051", "fd:7"):
+            with pytest.raises(GrpcServiceError, match="not permitted"):
+                _validate_grpc_target(bad)
+
+    def test_validate_grpc_target_strips_dns_prefix(self, monkeypatch):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_grpc_target
+
+        # Plug an allow-everything settings object so we exercise only the prefix-strip path.
+        monkeypatch.setattr(
+            "mcpgateway.services.grpc_service.settings",
+            MagicMock(ssrf_blocked_hosts=[], ssrf_blocked_networks=[], ssrf_allow_localhost=True, ssrf_allow_private_networks=True, ssrf_allowed_networks=[]),
+        )
+        # Should not raise: dns:/// stripped, hostname check passes
+        _validate_grpc_target("dns:///example.com:50051")
+        _validate_grpc_target("ipv4:127.0.0.1:50051")
+
+    def test_validate_grpc_target_handles_bracketed_ipv6(self, monkeypatch):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_grpc_target
+
+        monkeypatch.setattr(
+            "mcpgateway.services.grpc_service.settings",
+            MagicMock(ssrf_blocked_hosts=[], ssrf_blocked_networks=[], ssrf_allow_localhost=True, ssrf_allow_private_networks=True, ssrf_allowed_networks=[]),
+        )
+        _validate_grpc_target("[::1]:50051")  # loopback IPv6, allowed
+        with pytest.raises(GrpcServiceError, match="Malformed bracketed"):
+            _validate_grpc_target("[::1:50051")  # missing closing bracket
+
+    def test_enforce_descriptor_limits_count(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_COUNT, _enforce_descriptor_limits
+
+        # Generate (limit + 1) unique 4-byte blobs by encoding the index.
+        too_many = {i.to_bytes(4, "big") for i in range(_GRPC_MAX_DESCRIPTOR_COUNT + 1)}
+        with pytest.raises(GrpcServiceError, match="exceeds limit"):
+            _enforce_descriptor_limits(too_many)
+
+    def test_enforce_descriptor_limits_per_blob(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_BYTES, _enforce_descriptor_limits
+
+        oversized = {b"\x00" * (_GRPC_MAX_DESCRIPTOR_BYTES + 1)}
+        with pytest.raises(GrpcServiceError, match="per-descriptor limit"):
+            _enforce_descriptor_limits(oversized)
+
+    def test_enforce_descriptor_limits_total_size(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_BYTES, _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES, _enforce_descriptor_limits
+
+        # Each blob is under the per-blob cap but the aggregate exceeds the total cap.
+        per_blob = _GRPC_MAX_DESCRIPTOR_BYTES
+        # Pick distinct prefixes so the set keeps each entry.
+        bytes_set = {bytes([i]) + b"\x00" * (per_blob - 1) for i in range(_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES // per_blob + 1)}
+        with pytest.raises(GrpcServiceError, match="aggregate limit"):
+            _enforce_descriptor_limits(bytes_set)
+
+    def test_enforce_descriptor_limits_within_bounds(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _enforce_descriptor_limits
+
+        _enforce_descriptor_limits({b"\x01\x02\x03", b"\x04\x05\x06"})
+
+    def test_validate_reflected_tool_name_rejects_empty(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_reflected_tool_name
+
+        with pytest.raises(GrpcServiceError, match="empty"):
+            _validate_reflected_tool_name("")
+        with pytest.raises(GrpcServiceError, match="empty"):
+            _validate_reflected_tool_name("   ")
+
+    def test_validate_reflected_tool_name_rejects_too_long(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _GRPC_TOOL_NAME_MAX_LENGTH, _validate_reflected_tool_name
+
+        with pytest.raises(GrpcServiceError, match="exceeds limit"):
+            _validate_reflected_tool_name("a" * (_GRPC_TOOL_NAME_MAX_LENGTH + 1))
+
+    def test_validate_reflected_tool_name_rejects_injection(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_reflected_tool_name
+
+        for bad in ("tool<script>", 'tool"bad', "tool;rm -rf /"):
+            with pytest.raises(GrpcServiceError, match="rejected"):
+                _validate_reflected_tool_name(bad)
+
+    def test_validate_reflected_tool_name_accepts_valid(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_reflected_tool_name
+
+        for ok in ("Greeter.SayHello", "myservice.DoIt", "testpkg.TestService.DoStuff"):
+            _validate_reflected_tool_name(ok)
+
+
+class TestVisibilityPropagation:
+    """Verify Layer 1 token-scoping invariants on _sync_tools_from_reflection."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_target_validation(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    def test_sync_propagates_visibility_change_to_existing_tool(self):
+        # First-Party
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.services.grpc_service import GrpcService
+
+        # Existing tool was created when service.visibility was 'public'; now service is 'team'.
+        existing = MagicMock(spec=DbTool)
+        existing.id = "tool-1"
+        existing.original_name = "svc.M"
+        existing.original_description = "gRPC method svc.M"
+        existing.description = "gRPC method svc.M"
+        existing.input_schema = {
+            "type": "object",
+            "properties": {},
+            "x-grpc-input-type": ".A",
+            "x-grpc-output-type": ".B",
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+        }
+        existing.url = "localhost:50051"
+        existing.visibility = "public"
+        existing.team_id = None
+        existing.owner_email = "old@example.com"
+
+        service = MagicMock()
+        service.id = "svc-1"
+        service.name = "svc-name"
+        service.target = "localhost:50051"
+        service.visibility = "team"
+        service.team_id = "team-x"
+        service.owner_email = "new@example.com"
+        service.discovered_services = {
+            "svc": {
+                "name": "svc",
+                "methods": [{"name": "M", "input_type": ".A", "output_type": ".B", "client_streaming": False, "server_streaming": False}],
+            }
+        }
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+
+        GrpcService()._sync_tools_from_reflection(db, service)
+
+        assert existing.visibility == "team"
+        assert existing.team_id == "team-x"
+        assert existing.owner_email == "new@example.com"
+
+    def test_sync_isolates_per_tool_failures(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import GrpcService
+
+        service = MagicMock()
+        service.id = "svc-1"
+        service.name = "svc"
+        service.target = "localhost:50051"
+        service.visibility = "public"
+        service.team_id = None
+        service.owner_email = "a@b.c"
+        # Second method has a name that will fail _validate_reflected_tool_name (control character).
+        service.discovered_services = {
+            "svc": {
+                "name": "svc",
+                "methods": [
+                    {"name": "Good", "input_type": ".A", "output_type": ".B", "client_streaming": False, "server_streaming": False},
+                    {"name": "Bad\x01", "input_type": ".A", "output_type": ".B", "client_streaming": False, "server_streaming": False},
+                ],
+            }
+        }
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+
+        # Should NOT raise — the bad method is skipped, the good one is created.
+        GrpcService()._sync_tools_from_reflection(db, service)
+
+        # Exactly one DbTool was added (the good one).
+        assert db.add.call_count == 1
