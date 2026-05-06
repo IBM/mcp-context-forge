@@ -38,6 +38,7 @@ from sqlalchemy import and_, delete, desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import server_tool_association
@@ -55,6 +56,61 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+_GRPC_DISALLOWED_SCHEMES = ("unix:", "unix-abstract:", "vsock:", "fd:")
+
+# DoS guards for descriptors returned by ``grpc.reflection`` — intentionally hardcoded
+# (not exposed via settings) so a config change cannot silently weaken these limits.
+_GRPC_MAX_DESCRIPTOR_BYTES = 1 * 1024 * 1024
+_GRPC_MAX_DESCRIPTOR_COUNT = 1024
+_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES = 8 * 1024 * 1024
+_GRPC_TOOL_NAME_MAX_LENGTH = 256
+
+
+def _enforce_descriptor_limits(file_descriptor_bytes_set: set) -> None:
+    """Enforce per-service descriptor count/size limits before storage.
+
+    Args:
+        file_descriptor_bytes_set: Set of raw FileDescriptorProto bytes collected during reflection.
+
+    Raises:
+        GrpcServiceError: If any limit is exceeded.
+    """
+    if len(file_descriptor_bytes_set) > _GRPC_MAX_DESCRIPTOR_COUNT:
+        raise GrpcServiceError(f"Reflected descriptor count {len(file_descriptor_bytes_set)} exceeds limit {_GRPC_MAX_DESCRIPTOR_COUNT}")
+    total = 0
+    for blob in file_descriptor_bytes_set:
+        if len(blob) > _GRPC_MAX_DESCRIPTOR_BYTES:
+            raise GrpcServiceError(f"Reflected descriptor size {len(blob)} bytes exceeds per-descriptor limit {_GRPC_MAX_DESCRIPTOR_BYTES}")
+        total += len(blob)
+    if total > _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES:
+        raise GrpcServiceError(f"Reflected descriptor total size {total} bytes exceeds aggregate limit {_GRPC_MAX_TOTAL_DESCRIPTOR_BYTES}")
+
+
+def _validate_reflected_tool_name(tool_name: str) -> None:
+    """Validate a tool name discovered via gRPC reflection.
+
+    Reuses the same SecurityValidator rules applied to user-registered tools so reflected
+    tool names cannot bypass length, character, or content-injection checks.
+
+    Args:
+        tool_name: ``service.method`` style identifier discovered via reflection.
+
+    Raises:
+        GrpcServiceError: If the name is empty, too long, or fails security validation.
+    """
+    # First-Party
+    from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
+
+    if not tool_name or not tool_name.strip():
+        raise GrpcServiceError("Reflected tool name is empty")
+    if len(tool_name) > _GRPC_TOOL_NAME_MAX_LENGTH:
+        raise GrpcServiceError(f"Reflected tool name length {len(tool_name)} exceeds limit {_GRPC_TOOL_NAME_MAX_LENGTH}")
+    try:
+        SecurityValidator.validate_tool_name(tool_name)
+    except ValueError as exc:
+        raise GrpcServiceError(f"Reflected tool name '{tool_name}' rejected: {exc}") from exc
+
+
 def _validate_grpc_target(target: str) -> None:
     """Validate a gRPC target address against SSRF-unsafe destinations.
 
@@ -65,16 +121,41 @@ def _validate_grpc_target(target: str) -> None:
     ``SecurityValidator.validate_url``.
 
     Args:
-        target: gRPC target string (host:port or host).
+        target: gRPC target string. Accepts ``host:port``, bracketed
+            ``[ipv6]:port``, and gRPC name-resolver forms ``dns:///host:port``,
+            ``ipv4:host:port``, ``ipv6:host:port``. Local-only schemes
+            (``unix:``, ``unix-abstract:``, ``vsock:``, ``fd:``) are always
+            rejected because they bypass the network-level SSRF model.
 
     Raises:
-        GrpcServiceError: If the target resolves to a blocked address.
+        GrpcServiceError: If the target uses a forbidden scheme or resolves to a blocked address.
     """
+    if not target:
+        raise GrpcServiceError("Empty gRPC target address")
+
+    # Local-only schemes bypass the IP-based SSRF model entirely; reject outright.
+    lowered = target.lower()
+    for scheme in _GRPC_DISALLOWED_SCHEMES:
+        if lowered.startswith(scheme):
+            raise GrpcServiceError(f"gRPC target scheme '{scheme.rstrip(':')}' is not permitted")
+
+    # Strip recognised gRPC name-resolver scheme prefixes so the host check below sees a bare host:port.
+    for scheme_prefix in ("dns:///", "dns://", "dns:", "ipv4:", "ipv6:"):
+        if lowered.startswith(scheme_prefix):
+            target = target[len(scheme_prefix) :]
+            break
+
     # First-Party
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-    # Extract host (strip port)
-    host = target.rsplit(":", 1)[0].strip("[]")
+    # Extract host (strip port). Bracketed IPv6 literals: ``[::1]:50051``.
+    if target.startswith("["):
+        end = target.find("]")
+        if end < 0:
+            raise GrpcServiceError(f"Malformed bracketed gRPC target: {target!r}")
+        host = target[1:end]
+    else:
+        host = target.rsplit(":", 1)[0].strip("[]")
     if not host:
         raise GrpcServiceError("Empty gRPC target address")
 
@@ -716,6 +797,8 @@ class GrpcService:
                     }
                     service_count += 1
 
+            _enforce_descriptor_limits(file_descriptor_bytes_set)
+
             # Store base64-encoded file descriptor protos so invoke_method can
             # populate the descriptor pool without a reflection round-trip.
             discovered_services["_file_descriptors"] = [base64.b64encode(b).decode("ascii") for b in file_descriptor_bytes_set]
@@ -778,65 +861,88 @@ class GrpcService:
                 db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
             logger.info("Removed %d stale tools for gRPC service %s", len(stale_tool_ids), service.name)
 
-        # Create or update tools for each discovered method
         tools_created = 0
         tools_updated = 0
+        tools_failed = 0
         for svc_name, svc_desc in discovered.items():
             if svc_name.startswith("_"):
                 continue
             for method in svc_desc.get("methods", []):
                 tool_name = f"{svc_name}.{method['name']}"
-                description = f"gRPC method {tool_name}"
-                input_schema = {
-                    "type": "object",
-                    "properties": {},
-                    "x-grpc-input-type": method.get("input_type", ""),
-                    "x-grpc-output-type": method.get("output_type", ""),
-                    "x-grpc-client-streaming": method.get("client_streaming", False),
-                    "x-grpc-server-streaming": method.get("server_streaming", False),
-                }
+                # Per-tool try/except: a single bad method must not poison the whole sync.
+                try:
+                    _validate_reflected_tool_name(tool_name)
+                    description = f"gRPC method {tool_name}"
+                    input_schema = {
+                        "type": "object",
+                        "properties": {},
+                        "x-grpc-input-type": method.get("input_type", ""),
+                        "x-grpc-output-type": method.get("output_type", ""),
+                        "x-grpc-client-streaming": method.get("client_streaming", False),
+                        "x-grpc-server-streaming": method.get("server_streaming", False),
+                    }
 
-                existing_tool = existing_tools_map.get(tool_name)
-                if existing_tool:
-                    # Update if description or schema changed
-                    changed = False
-                    if existing_tool.original_description != description:
-                        if existing_tool.description == existing_tool.original_description:
-                            existing_tool.description = description
-                        existing_tool.original_description = description
-                        changed = True
-                    if existing_tool.input_schema != input_schema:
-                        existing_tool.input_schema = input_schema
-                        changed = True
-                    if existing_tool.url != service.target:
-                        existing_tool.url = service.target
-                        changed = True
-                    if changed:
-                        tools_updated += 1
-                else:
-                    db_tool = DbTool(
-                        original_name=tool_name,
-                        custom_name=tool_name,
-                        custom_name_slug=slugify(tool_name),
-                        display_name=generate_display_name(tool_name),
-                        url=service.target,
-                        original_description=description,
-                        description=description,
-                        integration_type="gRPC",
-                        input_schema=input_schema,
-                        created_by="system",
-                        created_via="grpc-reflection",
-                        federation_source=service.name,
-                        version=1,
-                        team_id=service.team_id,
-                        owner_email=service.owner_email,
-                        visibility=service.visibility,
-                        grpc_service_id=service.id,
-                    )
-                    db.add(db_tool)
-                    tools_created += 1
+                    existing_tool = existing_tools_map.get(tool_name)
+                    if existing_tool:
+                        changed = False
+                        if existing_tool.original_description != description:
+                            if existing_tool.description == existing_tool.original_description:
+                                existing_tool.description = description
+                            existing_tool.original_description = description
+                            changed = True
+                        if existing_tool.input_schema != input_schema:
+                            existing_tool.input_schema = input_schema
+                            changed = True
+                        if existing_tool.url != service.target:
+                            existing_tool.url = service.target
+                            changed = True
+                        # Layer 1 invariant: parent visibility/team/owner must propagate to derived tools
+                        # so token-scoping changes on the gRPC service take effect immediately.
+                        if existing_tool.visibility != service.visibility:
+                            existing_tool.visibility = service.visibility
+                            changed = True
+                        if existing_tool.team_id != service.team_id:
+                            existing_tool.team_id = service.team_id
+                            changed = True
+                        if existing_tool.owner_email != service.owner_email:
+                            existing_tool.owner_email = service.owner_email
+                            changed = True
+                        if changed:
+                            tools_updated += 1
+                    else:
+                        db_tool = DbTool(
+                            original_name=tool_name,
+                            custom_name=tool_name,
+                            custom_name_slug=slugify(tool_name),
+                            display_name=generate_display_name(tool_name),
+                            url=service.target,
+                            original_description=description,
+                            description=description,
+                            integration_type="gRPC",
+                            input_schema=input_schema,
+                            created_by="system",
+                            created_via="grpc-reflection",
+                            federation_source=service.name,
+                            version=1,
+                            team_id=service.team_id,
+                            owner_email=service.owner_email,
+                            visibility=service.visibility,
+                            grpc_service_id=service.id,
+                        )
+                        db.add(db_tool)
+                        tools_created += 1
+                except Exception as tool_err:  # pylint: disable=broad-except
+                    tools_failed += 1
+                    logger.warning("Skipping tool %s for gRPC service %s: %s", tool_name, service.name, tool_err, exc_info=True)
+                    continue
 
-        logger.info("Synced tools for gRPC service %s: %d created, %d updated", service.name, tools_created, tools_updated)
+        logger.info(
+            "Synced tools for gRPC service %s: %d created, %d updated, %d failed",
+            service.name,
+            tools_created,
+            tools_updated,
+            tools_failed,
+        )
 
     async def invoke_method(
         self,
@@ -844,6 +950,7 @@ class GrpcService:
         service_id: str,
         method_name: str,
         request_data: Dict[str, Any],
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Invoke a gRPC method on a registered service.
 
@@ -852,6 +959,7 @@ class GrpcService:
             service_id: Service ID
             method_name: Full method name (service.Method)
             request_data: JSON request data
+            timeout: Per-call deadline in seconds. Falls back to ``settings.tool_timeout`` when ``None``.
 
         Returns:
             JSON response data
@@ -859,6 +967,7 @@ class GrpcService:
         Raises:
             GrpcServiceNotFoundError: If service not found
             GrpcServiceError: If invocation fails
+            asyncio.TimeoutError: If the call exceeds ``timeout``
         """
         service = db.execute(select(DbGrpcService).where(DbGrpcService.id == service_id)).scalar_one_or_none()
 
@@ -903,25 +1012,31 @@ class GrpcService:
             metadata=service.grpc_metadata or {},
         )
 
+        effective_timeout = timeout if timeout is not None else float(settings.tool_timeout)
+
         try:
-            # Start connection (reflection only if no stored descriptors)
-            await endpoint.start()
+            await asyncio.wait_for(endpoint.start(), timeout=effective_timeout)
 
             if has_stored_descriptors:
-                # Populate descriptor pool from stored file descriptor bytes
-                raw_descriptors = [base64.b64decode(b) for b in stored_descriptors]
+                raw_descriptors = [base64.b64decode(b, validate=True) for b in stored_descriptors]
                 endpoint.load_file_descriptors(raw_descriptors)
-                # Set service info from stored discovery data
-                endpoint._services = {k: v for k, v in discovered.items() if k != "_file_descriptors"}  # pylint: disable=protected-access
+                # Strip metadata pseudo-keys (e.g. ``_file_descriptors``); they are not real services.
+                endpoint._services = {k: v for k, v in discovered.items() if not k.startswith("_")}  # pylint: disable=protected-access
 
-            # Invoke method
-            response = await endpoint.invoke(service_name, method, request_data)
+            response = await asyncio.wait_for(endpoint.invoke(service_name, method, request_data), timeout=effective_timeout)
 
             return response
 
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning("gRPC call %s on %s timed out after %ss", method_name, service.name, effective_timeout)
+            raise
+        except (GrpcServiceNotFoundError, GrpcServiceError):
+            raise
         except Exception as e:
-            logger.error(f"Failed to invoke {method_name} on {service.name}: {e}")
-            raise GrpcServiceError(f"Method invocation failed: {e}")
+            logger.error("Failed to invoke %s on %s: %s", method_name, service.name, e, exc_info=True)
+            raise GrpcServiceError(f"Method invocation failed: {e}") from e
 
         finally:
             await endpoint.close()

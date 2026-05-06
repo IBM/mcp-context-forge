@@ -5827,12 +5827,22 @@ class ToolService(BaseService):
 
                         grpc_manager = GrpcServiceManager()
                         with fresh_db_session() as grpc_db:
-                            response = await grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {})
+                            response = await asyncio.wait_for(
+                                grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {}, timeout=effective_timeout),
+                                timeout=effective_timeout,
+                            )
                         serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
                         tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
                         success = True
+                    except asyncio.CancelledError:
+                        raise
+                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
+                        if plugin_manager:
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
                     except Exception as grpc_err:
-                        logger.error(f"gRPC tool invocation failed for {tool_name_original}: {grpc_err}")
+                        logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
                         tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
