@@ -32,6 +32,8 @@ interface ActionCard {
   description: string;
   buttonText: string;
   onAction: () => void;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 function formatServerTimestamp(value?: string) {
@@ -75,8 +77,18 @@ function ConnectSourceCard({ onAction }: { onAction: () => void }) {
 }
 
 function VirtualServerCard({ server }: { server: VirtualServer }) {
+  const toolCount = server.associatedToolIds?.length ?? 0;
+  const resourceCount = server.associatedResources?.length ?? 0;
+  const promptCount = server.associatedPrompts?.length ?? 0;
+  const tags = server.tags ?? [];
+
   return (
-    <Card size="sm" className="min-h-35 justify-between">
+    <Card
+      size="sm"
+      className="min-h-35 justify-between"
+      data-testid="virtual-server-card"
+      data-server-name={server.name}
+    >
       <CardHeader className="gap-3">
         <div className="flex items-center gap-3">
           <span className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-primary text-primary-foreground">
@@ -84,10 +96,21 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
           </span>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <CardTitle className="truncate">{server.name}</CardTitle>
-            {server.enabled && <span className="size-1.5 rounded-full bg-emerald-500" />}
+            {server.enabled && (
+              <span
+                className="size-1.5 rounded-full bg-emerald-500"
+                data-testid="enabled-indicator"
+                aria-label="Enabled"
+              />
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <Button variant="ghost" size="icon-xs" aria-label={`Open ${server.name}`}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`Open ${server.name} (coming soon)`}
+              disabled
+            >
               <Upload className="size-4" />
             </Button>
             <DropdownMenu>
@@ -97,10 +120,12 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem>View details</DropdownMenuItem>
-                <DropdownMenuItem>Test connection</DropdownMenuItem>
-                <DropdownMenuItem>Edit server</DropdownMenuItem>
-                <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                <DropdownMenuItem disabled>View details</DropdownMenuItem>
+                <DropdownMenuItem disabled>Test connection</DropdownMenuItem>
+                <DropdownMenuItem disabled>Edit server</DropdownMenuItem>
+                <DropdownMenuItem disabled className="text-destructive">
+                  Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -108,24 +133,24 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center gap-3 text-[13px] font-medium text-secondary-foreground">
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-2" data-testid="tool-count">
             <Wrench className="size-4 text-muted-foreground" />
-            {server.associatedToolIds.length}
+            {toolCount}
           </span>
           <span className="text-border">•</span>
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-2" data-testid="resource-count">
             <Box className="size-4 text-muted-foreground" />
-            {server.associatedResources.length}
+            {resourceCount}
           </span>
           <span className="text-border">•</span>
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-2" data-testid="prompt-count">
             <PromptIcon className="size-4 text-muted-foreground" />
-            {server.associatedPrompts.length}
+            {promptCount}
           </span>
         </div>
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            {server.tags.map((tag) => (
+            {tags.map((tag) => (
               <Badge
                 key={tag}
                 variant="outline"
@@ -135,7 +160,10 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
               </Badge>
             ))}
           </div>
-          <span className="shrink-0 truncate text-[13px] text-muted-foreground">
+          <span
+            className="shrink-0 truncate text-[13px] text-muted-foreground"
+            data-testid="last-updated"
+          >
             {formatServerTimestamp(server.updatedAt || server.createdAt)}
           </span>
         </div>
@@ -145,7 +173,9 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
 }
 
 function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) {
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const firstEnabledIndex = actionCards.findIndex((card) => !card.disabled);
+  const initialSelectedIndex = firstEnabledIndex === -1 ? 0 : firstEnabledIndex;
+  const [selectedIndex, setSelectedIndex] = useState(initialSelectedIndex);
 
   return (
     <div className="flex min-h-[calc(100vh-12rem)] items-center justify-center">
@@ -160,14 +190,22 @@ function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {actionCards.map((card, index) => {
             const IconComponent = card.icon;
-            const isSelected = index === selectedIndex;
+            const isDisabled = Boolean(card.disabled);
+            const isSelected = index === selectedIndex && !isDisabled;
+            const cardClasses = isDisabled
+              ? "group/action-card flex cursor-not-allowed flex-col opacity-60"
+              : `group/action-card flex cursor-pointer flex-col transition-all hover:border-[#FF832B] hover:shadow-md hover:ring-[#FF832B] ${
+                  isSelected ? "border-[#FF832B] shadow-md ring-1 ring-[#FF832B]" : ""
+                }`;
             return (
               <Card
                 key={card.title}
-                className={`group/action-card flex cursor-pointer flex-col transition-all hover:border-[#FF832B] hover:shadow-md hover:ring-[#FF832B] ${
-                  isSelected ? "border-[#FF832B] shadow-md ring-1 ring-[#FF832B]" : ""
-                }`}
-                onClick={() => setSelectedIndex(index)}
+                aria-disabled={isDisabled || undefined}
+                data-testid={`action-card-${card.title}`}
+                className={cardClasses}
+                onClick={() => {
+                  if (!isDisabled) setSelectedIndex(index);
+                }}
               >
                 <CardHeader>
                   <CardTitle
@@ -190,16 +228,23 @@ function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) {
                     }`}
                   >
                     {card.description}
+                    {isDisabled && card.disabledReason && (
+                      <span className="mt-1 block text-xs italic">{card.disabledReason}</span>
+                    )}
                   </CardDescription>
                 </CardContent>
                 <CardFooter className="mt-auto">
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={isDisabled}
                     onClick={(event) => {
                       event.stopPropagation();
-                      card.onAction();
+                      if (!isDisabled) card.onAction();
                     }}
+                    aria-label={
+                      isDisabled ? `${card.buttonText} ${card.title} (coming soon)` : undefined
+                    }
                     className="w-full bg-neutral-900 text-white hover:bg-neutral-800 hover:text-white dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 dark:hover:text-neutral-900"
                   >
                     {card.buttonText}
@@ -240,18 +285,18 @@ export function Gateways() {
         title: "REST API",
         description: "Wrap a HTTP endpoint as a MCP tool",
         buttonText: "+ Connect",
-        onAction: () => {
-          console.log("REST API gateway creation not yet implemented");
-        },
+        disabled: true,
+        disabledReason: "Coming soon",
+        onAction: () => undefined,
       },
       {
         icon: Blocks,
         title: "gRPC",
         description: "Translate a gRPC endpoint as a MCP tool.",
         buttonText: "+ Connect",
-        onAction: () => {
-          console.log("gRPC gateway creation not yet implemented");
-        },
+        disabled: true,
+        disabledReason: "Coming soon",
+        onAction: () => undefined,
       },
     ],
     [navigate],

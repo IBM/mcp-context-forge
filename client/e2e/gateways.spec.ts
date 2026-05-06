@@ -157,26 +157,24 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Check server name
     await expect(page.getByText("testVS")).toBeVisible();
 
-    // Check enabled indicator (green dot)
-    const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
-    await expect(card.locator('[class*="bg-emerald-500"]')).toBeVisible();
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
+    await expect(card.getByTestId("enabled-indicator")).toBeVisible();
 
-    // Check counts (use more specific selectors to avoid duplicates)
-    const toolsCount = card.locator("span").filter({ hasText: /^2$/ }).first();
-    await expect(toolsCount).toBeVisible(); // 2 tools
+    await expect(card.getByTestId("tool-count")).toHaveText("2");
+    await expect(card.getByTestId("resource-count")).toHaveText("1");
+    await expect(card.getByTestId("prompt-count")).toHaveText("1");
 
-    // Check visibility badge
     await expect(card.getByText("public")).toBeVisible();
     await expect(card.getByText("enabled")).toBeVisible();
 
-    // Check timestamp is present (format may vary)
-    await expect(card.locator('span[class*="text-muted-foreground"]')).toBeVisible();
+    await expect(card.getByTestId("last-updated")).toBeVisible();
   });
 
-  test("opens server actions dropdown menu", async ({ page }) => {
+  test("opens server actions dropdown menu and shows disabled placeholder items", async ({
+    page,
+  }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -188,13 +186,28 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Click the actions button (ellipsis icon)
     await page.getByRole("button", { name: "Actions for testVS" }).click();
 
-    // Check dropdown menu items
-    await expect(page.getByText("View details")).toBeVisible();
-    await expect(page.getByText("Test connection")).toBeVisible();
-    await expect(page.getByText("Edit server")).toBeVisible();
+    for (const label of ["View details", "Test connection", "Edit server", "Delete"]) {
+      const item = page.getByRole("menuitem", { name: label });
+      await expect(item).toBeVisible();
+      await expect(item).toHaveAttribute("data-disabled", "");
+    }
+  });
+
+  test("disables the Upload action button on virtual server cards", async ({ page }) => {
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByRole("button", { name: /Open testVS \(coming soon\)/ })).toBeDisabled();
   });
 
   test("opens virtual server actions dropdown in header", async ({ page }) => {
@@ -255,24 +268,6 @@ test.describe("Gateways page", () => {
     await expect(page.getByText("Error loading virtual servers")).toBeVisible();
   });
 
-  test("shows partial error when servers load but with error", async ({ page }) => {
-    // Mock API that returns servers successfully on first call
-    await page.route("**/servers?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
-      });
-    });
-
-    await page.goto(APP.GATEWAYS);
-    await page.waitForLoadState("networkidle");
-
-    // Should show servers list from successful response
-    await expect(page.getByText("testVS")).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Virtual servers" })).toBeVisible();
-  });
-
   test("handles disabled server correctly", async ({ page }) => {
     const disabledServer = { ...MOCK_VIRTUAL_SERVER, enabled: false, tags: ["public", "disabled"] };
 
@@ -287,12 +282,10 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
 
-    // Should NOT show green enabled indicator
-    await expect(card.locator('[class*="bg-emerald-500"]')).not.toBeVisible();
+    await expect(card.getByTestId("enabled-indicator")).toHaveCount(0);
 
-    // Should show disabled badge
     await expect(card.getByText("disabled")).toBeVisible();
   });
 
@@ -317,13 +310,11 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Check both servers are visible
     await expect(page.getByText("testVS")).toBeVisible();
     await expect(page.getByText("Production Server")).toBeVisible();
 
-    // Check different visibility badges
-    const card1 = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
-    const card2 = page.locator('[class*="min-h-35"]').filter({ hasText: "Production Server" });
+    const card1 = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
+    const card2 = page.getByTestId("virtual-server-card").filter({ hasText: "Production Server" });
 
     await expect(card1.getByText("public")).toBeVisible();
     await expect(card2.getByText("private")).toBeVisible();
@@ -369,9 +360,9 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Should show timestamp (format may vary, just check it's present)
-    const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
-    await expect(card.locator('span[class*="text-muted-foreground"]')).toBeVisible();
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
+    await expect(card.getByTestId("last-updated")).toBeVisible();
+    await expect(card.getByTestId("last-updated")).not.toHaveText("");
   });
 
   test("handles empty associated arrays correctly", async ({ page }) => {
@@ -393,10 +384,34 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    const card = page.locator('[class*="min-h-35"]').filter({ hasText: "testVS" });
+    const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
 
-    // All counts should be 0
-    const counts = await card.locator('span:has-text("0")').count();
-    expect(counts).toBeGreaterThanOrEqual(3); // At least 3 zeros for tools, resources, prompts
+    await expect(card.getByTestId("tool-count")).toHaveText("0");
+    await expect(card.getByTestId("resource-count")).toHaveText("0");
+    await expect(card.getByTestId("prompt-count")).toHaveText("0");
+  });
+
+  test("disables not-yet-implemented source types in the empty-state selector", async ({
+    page,
+  }) => {
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [] }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    const restCard = page.getByTestId("action-card-REST API");
+    const grpcCard = page.getByTestId("action-card-gRPC");
+
+    await expect(restCard).toHaveAttribute("aria-disabled", "true");
+    await expect(grpcCard).toHaveAttribute("aria-disabled", "true");
+
+    await expect(restCard.getByRole("button", { name: /\+ Connect/ })).toBeDisabled();
+    await expect(grpcCard.getByRole("button", { name: /\+ Connect/ })).toBeDisabled();
   });
 });

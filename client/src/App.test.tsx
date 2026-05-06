@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { renderWithProviders } from "./test/test-utils";
+
+vi.mock("@/hooks/useQuery", () => ({
+  useQuery: vi.fn(() => ({
+    data: { servers: [] },
+    error: null,
+    isLoading: false,
+    execute: vi.fn(),
+    refetch: vi.fn(),
+  })),
+}));
 
 describe("App", () => {
   it("renders the loading page without authentication", async () => {
