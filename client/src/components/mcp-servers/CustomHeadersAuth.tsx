@@ -2,7 +2,8 @@ import { Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-interface CustomHeader {
+export interface CustomHeader {
+  id: string;
   key: string;
   value: string;
 }
@@ -14,7 +15,7 @@ interface CustomHeadersAuthProps {
 
 export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAuthProps) {
   const addHeader = () => {
-    onHeadersChange([...headers, { key: "", value: "" }]);
+    onHeadersChange([...headers, { id: crypto.randomUUID(), key: "", value: "" }]);
   };
 
   const removeHeader = (index: number) => {
@@ -35,7 +36,7 @@ export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAut
 
       <div className="space-y-3">
         {headers.map((header, index) => (
-          <div key={index} className="flex items-end gap-3">
+          <div key={header.id} className="flex items-end gap-3">
             <div className="flex-1 space-y-1">
               <label
                 htmlFor={`header-key-${index}`}

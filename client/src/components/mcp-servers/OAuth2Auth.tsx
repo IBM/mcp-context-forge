@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,39 +10,39 @@ import {
 } from "@/components/ui/select";
 
 interface OAuth2AuthProps {
-  grantType?: string;
-  issuerUrl?: string;
-  redirectUri?: string;
+  grantType: string;
+  issuerUrl: string;
+  redirectUri: string;
   clientId: string;
   clientSecret: string;
   tokenUrl: string;
-  authorizationUrl?: string;
-  scopes?: string;
-  storeTokens?: boolean;
-  autoRefresh?: boolean;
-  onGrantTypeChange?: (value: string) => void;
-  onIssuerUrlChange?: (value: string) => void;
-  onRedirectUriChange?: (value: string) => void;
+  authorizationUrl: string;
+  scopes: string;
+  storeTokens: boolean;
+  autoRefresh: boolean;
+  onGrantTypeChange: (value: string) => void;
+  onIssuerUrlChange: (value: string) => void;
+  onRedirectUriChange: (value: string) => void;
   onClientIdChange: (value: string) => void;
   onClientSecretChange: (value: string) => void;
   onTokenUrlChange: (value: string) => void;
-  onAuthorizationUrlChange?: (value: string) => void;
-  onScopesChange?: (value: string) => void;
-  onStoreTokensChange?: (checked: boolean) => void;
-  onAutoRefreshChange?: (checked: boolean) => void;
+  onAuthorizationUrlChange: (value: string) => void;
+  onScopesChange: (value: string) => void;
+  onStoreTokensChange: (checked: boolean) => void;
+  onAutoRefreshChange: (checked: boolean) => void;
 }
 
 export function OAuth2Auth({
-  grantType = "client_credentials",
-  issuerUrl = "",
-  redirectUri = "",
+  grantType,
+  issuerUrl,
+  redirectUri,
   clientId,
   clientSecret,
   tokenUrl,
-  authorizationUrl = "",
-  scopes = "",
-  storeTokens = false,
-  autoRefresh = false,
+  authorizationUrl,
+  scopes,
+  storeTokens,
+  autoRefresh,
   onGrantTypeChange,
   onIssuerUrlChange,
   onRedirectUriChange,
@@ -55,25 +54,6 @@ export function OAuth2Auth({
   onStoreTokensChange,
   onAutoRefreshChange,
 }: OAuth2AuthProps) {
-  // Internal state for optional fields when parent doesn't control them
-  const [localGrantType, setLocalGrantType] = useState(grantType);
-  const [localIssuerUrl, setLocalIssuerUrl] = useState(issuerUrl);
-  const [localRedirectUri, setLocalRedirectUri] = useState(redirectUri);
-  const [localAuthorizationUrl, setLocalAuthorizationUrl] = useState(authorizationUrl);
-  const [localScopes, setLocalScopes] = useState(scopes);
-  const [localStoreTokens, setLocalStoreTokens] = useState(storeTokens);
-  const [localAutoRefresh, setLocalAutoRefresh] = useState(autoRefresh);
-
-  // Use parent-controlled values if handlers are provided, otherwise use local state
-  const currentGrantType = onGrantTypeChange ? grantType : localGrantType;
-  const currentIssuerUrl = onIssuerUrlChange ? issuerUrl : localIssuerUrl;
-  const currentRedirectUri = onRedirectUriChange ? redirectUri : localRedirectUri;
-  const currentAuthorizationUrl = onAuthorizationUrlChange
-    ? authorizationUrl
-    : localAuthorizationUrl;
-  const currentScopes = onScopesChange ? scopes : localScopes;
-  const currentStoreTokens = onStoreTokensChange ? storeTokens : localStoreTokens;
-  const currentAutoRefresh = onAutoRefreshChange ? autoRefresh : localAutoRefresh;
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -84,16 +64,7 @@ export function OAuth2Auth({
           Grant type<span className="text-red-500">*</span>
           <span className="sr-only">(required)</span>
         </label>
-        <Select
-          value={currentGrantType}
-          onValueChange={(value) => {
-            if (onGrantTypeChange) {
-              onGrantTypeChange(value);
-            } else {
-              setLocalGrantType(value);
-            }
-          }}
-        >
+        <Select value={grantType} onValueChange={onGrantTypeChange}>
           <SelectTrigger
             id="oauth-grant-type"
             className="h-10 w-full border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-950"
@@ -121,15 +92,8 @@ export function OAuth2Auth({
         <Input
           id="oauth-issuer-url"
           type="text"
-          value={currentIssuerUrl}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (onIssuerUrlChange) {
-              onIssuerUrlChange(value);
-            } else {
-              setLocalIssuerUrl(value);
-            }
-          }}
+          value={issuerUrl}
+          onChange={(e) => onIssuerUrlChange(e.target.value)}
           placeholder="e.g. https://auth.example.com"
           className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
@@ -151,15 +115,8 @@ export function OAuth2Auth({
         <Input
           id="oauth-redirect-uri"
           type="text"
-          value={currentRedirectUri}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (onRedirectUriChange) {
-              onRedirectUriChange(value);
-            } else {
-              setLocalRedirectUri(value);
-            }
-          }}
+          value={redirectUri}
+          onChange={(e) => onRedirectUriChange(e.target.value)}
           placeholder="e.g. https://gateway.example.com/oauth/callback"
           className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
@@ -240,15 +197,8 @@ export function OAuth2Auth({
         <Input
           id="oauth-authorization-url"
           type="text"
-          value={currentAuthorizationUrl}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (onAuthorizationUrlChange) {
-              onAuthorizationUrlChange(value);
-            } else {
-              setLocalAuthorizationUrl(value);
-            }
-          }}
+          value={authorizationUrl}
+          onChange={(e) => onAuthorizationUrlChange(e.target.value)}
           placeholder="e.g. https://oauth.example.com/authorize"
           className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
         />
@@ -269,15 +219,8 @@ export function OAuth2Auth({
         </p>
         <Textarea
           id="oauth-scopes"
-          value={currentScopes}
-          onChange={(e) => {
-            const value = e.target.value;
-            if (onScopesChange) {
-              onScopesChange(value);
-            } else {
-              setLocalScopes(value);
-            }
-          }}
+          value={scopes}
+          onChange={(e) => onScopesChange(e.target.value)}
           placeholder="e.g. repo read:user..."
           className="min-h-20 focus-visible:ring-1 focus-visible:ring-offset-0"
         />
@@ -291,15 +234,8 @@ export function OAuth2Auth({
           <div className="flex items-center gap-2">
             <Checkbox
               id="store-tokens"
-              checked={currentStoreTokens}
-              onCheckedChange={(checked) => {
-                const value = checked === true;
-                if (onStoreTokensChange) {
-                  onStoreTokensChange(value);
-                } else {
-                  setLocalStoreTokens(value);
-                }
-              }}
+              checked={storeTokens}
+              onCheckedChange={(checked) => onStoreTokensChange(checked === true)}
             />
             <label
               htmlFor="store-tokens"
@@ -311,15 +247,8 @@ export function OAuth2Auth({
           <div className="flex items-center gap-2">
             <Checkbox
               id="auto-refresh"
-              checked={currentAutoRefresh}
-              onCheckedChange={(checked) => {
-                const value = checked === true;
-                if (onAutoRefreshChange) {
-                  onAutoRefreshChange(value);
-                } else {
-                  setLocalAutoRefresh(value);
-                }
-              }}
+              checked={autoRefresh}
+              onCheckedChange={(checked) => onAutoRefreshChange(checked === true)}
             />
             <label
               htmlFor="auto-refresh"
