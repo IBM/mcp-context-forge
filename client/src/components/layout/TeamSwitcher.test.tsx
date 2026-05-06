@@ -2,16 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, waitFor, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@/i18n";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { TeamSwitcher } from "./TeamSwitcher";
 
-// Custom render function that includes SidebarProvider
 function renderTeamSwitcher() {
   return render(
     <I18nProvider>
-      <SidebarProvider>
-        <TeamSwitcher />
-      </SidebarProvider>
+      <TeamSwitcher />
     </I18nProvider>,
   );
 }

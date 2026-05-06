@@ -24,6 +24,7 @@
   "common.description": "Description",
   "common.createdAt": "Created At",
   "common.updatedAt": "Updated At",
+  "common.theme": "Theme",
   "common.theme.light": "Light mode",
   "common.theme.dark": "Dark mode",
   "common.theme.system": "System theme",
