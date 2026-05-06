@@ -29,10 +29,17 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
   const [basicAuthUsername, setBasicAuthUsername] = useState("");
   const [basicAuthPassword, setBasicAuthPassword] = useState("");
   const [bearerToken, setBearerToken] = useState("");
-  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([{ key: "", value: "" }]);
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
   const [oauthClientId, setOAuthClientId] = useState("");
   const [oauthClientSecret, setOAuthClientSecret] = useState("");
   const [oauthTokenUrl, setOAuthTokenUrl] = useState("");
+  const [oauthGrantType, setOAuthGrantType] = useState("client_credentials");
+  const [oauthIssuerUrl, setOAuthIssuerUrl] = useState("");
+  const [oauthRedirectUri, setOAuthRedirectUri] = useState("");
+  const [oauthAuthorizationUrl, setOAuthAuthorizationUrl] = useState("");
+  const [oauthScopes, setOAuthScopes] = useState("");
+  const [oauthStoreTokens, setOAuthStoreTokens] = useState(true);
+  const [oauthAutoRefresh, setOAuthAutoRefresh] = useState(true);
   const [queryParamName, setQueryParamName] = useState("");
   const [queryParamApiKey, setQueryParamApiKey] = useState("");
 
@@ -49,10 +56,17 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
     setBasicAuthUsername("");
     setBasicAuthPassword("");
     setBearerToken("");
-    setCustomHeaders([{ key: "", value: "" }]);
+    setCustomHeaders([]);
     setOAuthClientId("");
     setOAuthClientSecret("");
     setOAuthTokenUrl("");
+    setOAuthGrantType("client_credentials");
+    setOAuthIssuerUrl("");
+    setOAuthRedirectUri("");
+    setOAuthAuthorizationUrl("");
+    setOAuthScopes("");
+    setOAuthStoreTokens(true);
+    setOAuthAutoRefresh(true);
     setQueryParamName("");
     setQueryParamApiKey("");
   };
@@ -212,9 +226,23 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   oauthClientId={oauthClientId}
                   oauthClientSecret={oauthClientSecret}
                   oauthTokenUrl={oauthTokenUrl}
+                  oauthGrantType={oauthGrantType}
+                  oauthIssuerUrl={oauthIssuerUrl}
+                  oauthRedirectUri={oauthRedirectUri}
+                  oauthAuthorizationUrl={oauthAuthorizationUrl}
+                  oauthScopes={oauthScopes}
+                  oauthStoreTokens={oauthStoreTokens}
+                  oauthAutoRefresh={oauthAutoRefresh}
                   onOAuthClientIdChange={setOAuthClientId}
                   onOAuthClientSecretChange={setOAuthClientSecret}
                   onOAuthTokenUrlChange={setOAuthTokenUrl}
+                  onOAuthGrantTypeChange={setOAuthGrantType}
+                  onOAuthIssuerUrlChange={setOAuthIssuerUrl}
+                  onOAuthRedirectUriChange={setOAuthRedirectUri}
+                  onOAuthAuthorizationUrlChange={setOAuthAuthorizationUrl}
+                  onOAuthScopesChange={setOAuthScopes}
+                  onOAuthStoreTokensChange={setOAuthStoreTokens}
+                  onOAuthAutoRefreshChange={setOAuthAutoRefresh}
                   queryParamName={queryParamName}
                   queryParamApiKey={queryParamApiKey}
                   onQueryParamNameChange={setQueryParamName}
