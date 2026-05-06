@@ -17,6 +17,7 @@ import functools
 from functools import wraps
 import logging
 from typing import Any, Callable, Generator, List, Optional
+from urllib.parse import urlparse
 import uuid
 import warnings
 
@@ -368,7 +369,8 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             pass  # Invalid referer URL, treat as not same-origin
 
     sec_fetch_mode = request.headers.get("sec-fetch-mode", "")
-    sec_fetch_site = request.headers.get("sec-fetch-site", "")    
+    sec_fetch_site = request.headers.get("sec-fetch-site", "")
+    is_admin_ui_request = "/admin" in referer
     # SPA shell/document navigations — path == "/app" covers navigations without text/html Accept.
     is_spa_document_request = request.url.path == "/app"
     # First-party React fetches to /app/auth/* — Sec-Fetch-* are forbidden request headers
@@ -376,11 +378,10 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     # them a reliable browser signal. Origin is intentionally excluded: it can be set by any
     # HTTP client (curl, scripts) and does not prove browser origin.
     is_first_party_app_fetch = request.url.path.startswith("/app/auth/") and (sec_fetch_site in {"same-origin", "same-site"} or sec_fetch_mode in {"cors", "same-origin"})
-
-    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_spa_document_request or is_first_party_app_fetch or is_same_origin_referer
+    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_spa_document_request or is_first_party_app_fetch
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests (including admin UI, React SPA fetch and OAuth callback fetch calls)
+    # Cookies should only be used for browser/HTML requests (including admin UI and React SPA fetch calls)
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -389,6 +390,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         )
 
     if not token:
+        if is_first_party_app_fetch:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
+
         # For browser requests (HTML Accept header or HTMX), redirect to login
         if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})

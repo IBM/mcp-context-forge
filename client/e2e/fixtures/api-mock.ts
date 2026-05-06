@@ -27,15 +27,10 @@ export const DEFAULT_TEST_USER: MockUser = {
   password_change_required: false,
 };
 
-export const MOCK_TOKEN = "mock-token-12345";
+export const MOCK_CSRF_TOKEN = "mock-csrf-token";
 
 export interface ApiMock {
-  mockLogin(options?: {
-    user?: MockUser;
-    status?: number;
-    token?: string;
-    detail?: string;
-  }): Promise<void>;
+  mockLogin(options?: { user?: MockUser; status?: number; detail?: string }): Promise<void>;
   mockMe(options?: { user?: MockUser; status?: number }): Promise<void>;
   mockUnauthorized(urlPattern: string | RegExp): Promise<void>;
 }
@@ -45,19 +40,16 @@ export function createApiMock(page: Page): ApiMock {
     async mockLogin({
       user = DEFAULT_TEST_USER,
       status = 200,
-      token = MOCK_TOKEN,
       detail = "Invalid credentials",
     } = {}) {
-      await page.route("**/auth/login", async (route) => {
+      await page.route("**/app/auth/login", async (route) => {
         if (status === 200) {
           await route.fulfill({
             status,
             contentType: "application/json",
             body: JSON.stringify({
-              access_token: token,
-              token_type: "bearer",
-              expires_in: 3600,
               user,
+              csrf_token: MOCK_CSRF_TOKEN,
             }),
           });
           return;
@@ -71,7 +63,7 @@ export function createApiMock(page: Page): ApiMock {
     },
 
     async mockMe({ user = DEFAULT_TEST_USER, status = 200 } = {}) {
-      await page.route("**/auth/me", async (route) => {
+      await page.route("**/app/auth/me", async (route) => {
         if (status === 200) {
           await route.fulfill({
             status,
