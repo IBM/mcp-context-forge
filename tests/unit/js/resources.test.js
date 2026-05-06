@@ -35,6 +35,7 @@ vi.mock("../../../mcpgateway/admin_ui/servers.js", () => ({
 }));
 vi.mock("../../../mcpgateway/admin_ui/teams.js", () => ({
   applyVisibilityRestrictions: vi.fn(),
+  isTeamScopedView: vi.fn(() => false),
 }));
 vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   decodeHtml: vi.fn((s) => s || ""),

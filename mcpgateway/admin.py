@@ -806,6 +806,25 @@ def _validated_team_id_param(team_id: Optional[str] = Query(None, description="F
         raise HTTPException(status_code=400, detail="Invalid team ID") from exc
 
 
+def _form_team_id(form: Any) -> Optional[str]:
+    """Extract and normalize team_id from form data, converting whitespace-only values to None.
+
+    Normalizes at the point of extraction so that both the public-visibility guard
+    and ``TeamManagementService.verify_team_for_user`` receive the same value, making
+    ``?team_id=%20`` behave identically to an absent ``team_id`` end-to-end.
+
+    Args:
+        form: The multipart form data object from the request.
+
+    Returns:
+        The stripped team_id string, or None if absent or whitespace-only.
+    """
+    raw = form.get("team_id")
+    if not raw:
+        return None
+    return str(raw).strip() or None
+
+
 def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
     """Build an admin redirect URL preserving query parameters.
 
@@ -1694,7 +1713,7 @@ def _check_public_visibility_allowed(visibility: str, team_id: Optional[str] = N
     Raises:
         HTTPException: 422 when flag is false, team_id is set, and visibility is 'public'.
     """
-    if not settings.allow_public_visibility and visibility == "public" and team_id:
+    if not settings.allow_public_visibility and visibility == "public" and team_id and team_id.strip():
         raise HTTPException(
             status_code=422,
             detail="Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).",
@@ -2873,13 +2892,14 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     """
     form = await request.form()
     # is_inactive_checked = form.get("is_inactive_checked", "false")
+    team_id = _form_team_id(form)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
@@ -2934,10 +2954,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
     try:
         user_email = get_user_email(user)
-        # Determine personal team for default assignment
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
-
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -3019,6 +3035,7 @@ async def admin_edit_server(
         'admin_edit_server'
     """
     form = await request.form()
+    team_id = _form_team_id(form)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -3026,10 +3043,8 @@ async def admin_edit_server(
     try:
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+        _check_public_visibility_allowed(visibility, team_id=team_id)
         user_email = get_user_email(user)
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
 
         # Preserve existing server's team_id when no explicit team_id is provided.
         # Without this guard, verify_team_for_user() falls back to the user's
@@ -11496,10 +11511,11 @@ async def admin_add_tool(
     LOGGER.debug(f"User {get_user_email(user)} is adding a new tool")
     form = await request.form()
     LOGGER.debug(f"Received form data: {dict(form)}")
+    team_id = _form_team_id(form)
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
     if request_type is None:
         if integration_type == "REST":
@@ -11510,8 +11526,6 @@ async def admin_add_tool(
             request_type = "GET"
 
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
     # Parse tags from comma-separated string
@@ -11664,6 +11678,7 @@ async def admin_edit_tool(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing tool ID {tool_id}")
     form = await request.form()
+    team_id = _form_team_id(form)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -11672,11 +11687,9 @@ async def admin_edit_tool(
     auth_obj = _build_auth_obj_from_form(form)
 
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
     LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -12055,8 +12068,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
     form = await request.form()
+    team_id = _form_team_id(form)
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
@@ -12220,7 +12234,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)
-    team_id = form.get("team_id", None)
 
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -12318,13 +12331,14 @@ async def admin_edit_gateway(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing gateway ID {gateway_id}")
     form = await request.form()
+    team_id = _form_team_id(form)
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+        _check_public_visibility_allowed(visibility, team_id=team_id)
 
         # Parse auth_headers JSON if present
         auth_headers_json = form.get("auth_headers") or ""
@@ -12411,10 +12425,6 @@ async def admin_edit_gateway(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
-        # Determine personal team for default assignment
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
-
         # Preserve existing gateway's team_id when no explicit team_id is provided.
         # Without this guard, verify_team_for_user() falls back to the user's
         # personal team, silently reassigning the gateway on every edit.
@@ -12664,15 +12674,14 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new resource")
     form = await request.form()
+    team_id = _form_team_id(form)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     visibility = str(form.get("visibility", "public"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -12798,12 +12807,11 @@ async def admin_edit_resource(
     LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
     LOGGER.info(f"Form data received for resource edit: {form}")
+    team_id = _form_team_id(form)
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
     user_email = get_user_email(user)
-    team_id_raw = form.get("team_id", None)
-    team_id = str(team_id_raw) if team_id_raw is not None else None
 
     # Preserve existing resource's team_id when no explicit team_id is provided.
     # Without this guard, verify_team_for_user() falls back to the user's
@@ -13067,11 +13075,10 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new prompt")
     form = await request.form()
+    team_id = _form_team_id(form)
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -13190,13 +13197,11 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    team_id = _form_team_id(form)
 
     visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+    _check_public_visibility_allowed(visibility, team_id=team_id)
     user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id_raw = form.get("team_id", None)
-    team_id = str(team_id_raw) if team_id_raw is not None else None
 
     # Preserve existing prompt's team_id when no explicit team_id is provided.
     # Without this guard, verify_team_for_user() falls back to the user's
@@ -15431,14 +15436,13 @@ async def admin_add_a2a_agent(
         )
 
     form = await request.form()
+    team_id = _form_team_id(form)
     try:
         LOGGER.info(f"A2A agent creation form data: {dict(form)}")
 
-        _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=str(form.get("team_id", "")) or None)
+        _check_public_visibility_allowed(str(form.get("visibility", "private")), team_id=team_id)
 
         user_email = get_user_email(user)
-        # Determine personal team for default assignment
-        team_id = form.get("team_id", None)
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -15670,6 +15674,7 @@ async def admin_edit_a2a_agent(
 
     try:
         form = await request.form()
+        team_id = _form_team_id(form)
 
         # Normalize tags
         tags_raw = str(form.get("tags", ""))
@@ -15677,7 +15682,7 @@ async def admin_edit_a2a_agent(
 
         # Visibility
         visibility = str(form.get("visibility", "private"))
-        _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+        _check_public_visibility_allowed(visibility, team_id=team_id)
 
         # Agent Type
         agent_type = str(form.get("agent_type", "generic"))
@@ -15785,8 +15790,6 @@ async def admin_edit_a2a_agent(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
 
         # Preserve existing agent's team_id when no explicit team_id is provided.
         # Without this guard, verify_team_for_user() falls back to the user's

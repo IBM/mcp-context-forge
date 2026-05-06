@@ -27,8 +27,8 @@ import socket
 import pytest
 import redis
 
-# First-Party
-from mcpgateway.plugins.framework.loader.config import ConfigLoader
+# Third-Party
+from cpex.framework import ConfigLoader
 
 # Anchor the plugins/config.yaml path to this file's location so the test
 # works regardless of where pytest is invoked from (repo root, tests/, etc.).
@@ -60,12 +60,8 @@ def test_rate_limiter_redis_url_resolves_and_connects(monkeypatch):
     rl = next(p for p in cfg.plugins if p.name == "RateLimiterPlugin")
     resolved = rl.config.get("redis_url")
 
-    assert resolved, (
-        "redis_url must resolve to a non-empty string after Jinja substitution"
-    )
-    assert "{{" not in resolved, (
-        f"Jinja placeholder leaked through unrendered: {resolved!r}"
-    )
+    assert resolved, "redis_url must resolve to a non-empty string after Jinja substitution"
+    assert "{{" not in resolved, f"Jinja placeholder leaked through unrendered: {resolved!r}"
 
     client = redis.from_url(resolved, socket_connect_timeout=2, socket_timeout=2)
     try:
