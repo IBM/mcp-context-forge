@@ -147,10 +147,12 @@ async def create_token(
 
     service = TokenCatalogService(db)
 
-    # Get caller permissions for scope containment (if custom scope requested)
-    caller_permissions = None
-    if request.scope and request.scope.permissions:
-        caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
+    # CRITICAL: Always fetch caller_permissions for admin bypass check.
+    # The service needs this to determine if the caller is an un-narrowed admin
+    # who can bypass team membership requirements, regardless of whether a custom
+    # scope is provided.
+    caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
+    is_admin = current_user.get("is_admin", False)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -173,6 +175,9 @@ async def create_token(
             tags=request.tags,
             team_id=effective_team_id,
             caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
             is_active=request.is_active,
         )
 
@@ -679,28 +684,35 @@ async def create_team_token(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenCreateResponse:
-    """Create a new API token for a team (only team owners can do this).
+    """Create a new API token for a team.
+
+    Team members and un-narrowed platform admins (is_admin=True with wildcard
+    permissions) can create tokens. Narrowed admins and regular non-members
+    still require active team membership.
 
     Args:
         team_id: Team ID to create token for
         request: Token creation request with name, description, scoping, etc.
-        current_user: Authenticated user (must be team owner)
+        current_user: Authenticated user (must be active team member, or un-narrowed platform admin)
         db: Database session
 
     Returns:
         TokenCreateResponse: Created token details with raw token
 
     Raises:
-        HTTPException: If user is not team owner or validation fails
+        HTTPException: If user is not a team member (and admin bypass does not apply) or validation fails
     """
     _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
-    # Use team_id from path for permission context
-    caller_permissions = None
-    if request.scope and request.scope.permissions:
-        caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    # CRITICAL: Always fetch caller_permissions for admin bypass check.
+    # The service needs this to determine if the caller is an un-narrowed admin
+    # who can bypass team membership requirements, regardless of whether a custom
+    # scope is provided.
+    caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    is_admin = current_user.get("is_admin", False)
+    caller_token_teams = current_user.get("token_teams")
 
     # Convert request to TokenScope if provided
     scope = None
@@ -721,8 +733,11 @@ async def create_team_token(
             scope=scope,
             expires_in_days=request.expires_in_days,
             tags=request.tags,
-            team_id=team_id,  # This will validate team ownership
+            team_id=team_id,
             caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
             is_active=request.is_active,
         )
 
@@ -781,33 +796,46 @@ async def list_team_tokens(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenListResponse:
-    """List API tokens for a team (requires active team membership).
+    """List API tokens for a team.
+
+    Team members and un-narrowed platform admins (is_admin=True with wildcard
+    permissions) can list tokens. Narrowed admins and regular non-members
+    still require active team membership.
 
     Args:
         team_id: Team ID to list tokens for
         include_inactive: Include inactive/expired tokens
         limit: Maximum number of tokens to return (default 50)
         offset: Number of tokens to skip for pagination
-        current_user: Authenticated user (must be an active member of the team)
+        current_user: Authenticated user (must be active team member, or un-narrowed platform admin)
         db: Database session
 
     Returns:
         TokenListResponse: List of team's API tokens
 
     Raises:
-        HTTPException: If user is not an active member of the team
+        HTTPException: If user is not a team member (and admin bypass does not apply)
     """
     _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
+    # Fetch caller permissions and admin status for potential admin bypass
+    caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    is_admin = current_user.get("is_admin", False)
+    caller_token_teams = current_user.get("token_teams")
+
     try:
         tokens = await service.list_team_tokens(
             team_id=team_id,
-            user_email=current_user["email"],  # This will validate team ownership
+            user_email=current_user["email"],
             include_inactive=include_inactive,
             limit=limit,
             offset=offset,
+            caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
         )
 
         total_count = await service.count_team_tokens(
