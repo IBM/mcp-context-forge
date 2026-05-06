@@ -69,7 +69,7 @@ describe("Gateways", () => {
       associatedPrompts: [],
       associatedA2aAgents: [],
       metrics: null,
-      tags: [],
+      tags: ["team", "enabled"],
       createdBy: "admin@example.com",
       createdFromIp: "127.0.0.1",
       createdVia: "ui",

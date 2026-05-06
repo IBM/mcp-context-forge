@@ -16,7 +16,7 @@ const MOCK_VIRTUAL_SERVER: VirtualServer = {
   associatedPrompts: ["prompt1"],
   associatedA2aAgents: [],
   metrics: null,
-  tags: ["test"],
+  tags: ["public", "enabled"],
   createdBy: "admin@example.com",
   createdFromIp: "127.0.0.1",
   createdVia: "ui",
@@ -274,7 +274,7 @@ test.describe("Gateways page", () => {
   });
 
   test("handles disabled server correctly", async ({ page }) => {
-    const disabledServer = { ...MOCK_VIRTUAL_SERVER, enabled: false };
+    const disabledServer = { ...MOCK_VIRTUAL_SERVER, enabled: false, tags: ["public", "disabled"] };
 
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
@@ -303,6 +303,7 @@ test.describe("Gateways page", () => {
       name: "Production Server",
       visibility: "private" as const,
       enabled: false,
+      tags: ["private", "disabled"],
     };
 
     await page.route("**/servers?*", async (route) => {

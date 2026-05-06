@@ -13,7 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Blocks, Bot, Box, Code, EllipsisVertical, ExternalLink, Plus, Wrench } from "lucide-react";
+import { Blocks, Bot, Box, Code, EllipsisVertical, Plus, Upload, Wrench } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,14 +37,11 @@ function formatServerTimestamp(value?: string) {
   if (!value) return "Not synced yet";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toISOString().replace(".000Z", "");
+  return parsed.toLocaleString();
 }
 
 function getServerTags(server: VirtualServer) {
-  return [
-    server.visibility,
-    server.enabled ? "enabled" : "disabled",
-  ];
+  return server.tags;
 }
 
 function ConnectSourceCard({ onAction }: { onAction: () => void }) {
@@ -94,7 +91,7 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Button variant="ghost" size="icon-xs" aria-label={`Open ${server.name}`}>
-              <ExternalLink className="size-4" />
+              <Upload className="size-4" />
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
