@@ -82,17 +82,17 @@ class TestLegacyRoutesWithDeprecation:
     def test_legacy_routes_have_deprecation_headers(self, client: TestClient, path: str, expected_successor: str):
         """Legacy routes should include all deprecation headers."""
         response = client.get(path)
-        
+
         # Verify deprecation headers present
         assert "sunset" in response.headers
         assert response.headers["sunset"] == settings.legacy_api_sunset_date
-        
+
         assert "deprecation" in response.headers
         assert response.headers["deprecation"] == "true"
-        
+
         assert "link" in response.headers
         assert f"<{expected_successor}>; rel=\"successor-version\"" in response.headers["link"]
-        
+
         assert "x-deprecated-endpoint" in response.headers
         assert expected_successor in response.headers["x-deprecated-endpoint"]
         assert settings.legacy_api_sunset_date in response.headers["x-deprecated-endpoint"]
@@ -181,13 +181,13 @@ class TestContentParity:
         """V1 and legacy routes should return identical response bodies."""
         legacy_response = client.get(legacy_path)
         v1_response = client.get(v1_path)
-        
+
         # Status codes should match
         assert legacy_response.status_code == v1_response.status_code
-        
+
         # Response bodies should match
         assert legacy_response.content == v1_response.content
-        
+
         # Content-Type should match
         assert legacy_response.headers.get("content-type") == v1_response.headers.get("content-type")
 
@@ -196,10 +196,10 @@ class TestContentParity:
         # Test with a route that requires auth
         legacy_response = client.get("/tools/nonexistent-tool-id")
         v1_response = client.get("/v1/tools/nonexistent-tool-id")
-        
+
         # Both should return same error status
         assert legacy_response.status_code == v1_response.status_code
-        
+
         # Error message structure should match (excluding deprecation headers)
         if legacy_response.status_code >= 400:
             legacy_json = legacy_response.json()
@@ -257,7 +257,7 @@ class TestOpenAPISchema:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         schema = response.json()
-        
+
         # Check that v1 routes are present
         paths = schema.get("paths", {})
         assert any(path.startswith("/v1/") for path in paths.keys())
@@ -267,7 +267,7 @@ class TestOpenAPISchema:
         response = client.get("/openapi.json")
         assert response.status_code == 200
         schema = response.json()
-        
+
         paths = schema.get("paths", {})
         # Legacy routes like /tools (without /v1) should not be in schema
         # (They may appear as /v1/tools)
