@@ -22269,6 +22269,62 @@ class TestPublicVisibilityGuard:
 
 
 # ---------------------------------------------------------------------------
+# _form_team_id — end-to-end whitespace normalization (#4235)
+# ---------------------------------------------------------------------------
+
+
+class TestFormTeamId:
+    """Unit tests for the _form_team_id normalisation helper."""
+
+    def _make_form(self, team_id_value):
+        """Return a dict-like object whose .get() mirrors multipart form behaviour."""
+        if team_id_value is None:
+            return {}
+        return {"team_id": team_id_value}
+
+    def test_absent_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({}) is None
+
+    def test_none_value_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        # Some form parsers may return None explicitly
+        assert _form_team_id({"team_id": None}) is None
+
+    def test_empty_string_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": ""}) is None
+
+    def test_spaces_only_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": "   "}) is None
+
+    def test_tab_only_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": "\t"}) is None
+
+    def test_newline_only_returns_none(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": "\n"}) is None
+
+    def test_real_team_id_returned_stripped(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": "  team-abc  "}) == "team-abc"
+
+    def test_real_team_id_no_surrounding_spaces(self):
+        from mcpgateway.admin import _form_team_id
+
+        assert _form_team_id({"team_id": "team-abc"}) == "team-abc"
+
+
+# ---------------------------------------------------------------------------
 # include_public parameter — team isolation with public overlay (#3411)
 # ---------------------------------------------------------------------------
 
