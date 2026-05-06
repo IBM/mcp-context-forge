@@ -8,7 +8,7 @@ Passthrough plugin.
 """
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginContext,
     Plugin,
     PromptPosthookPayload,

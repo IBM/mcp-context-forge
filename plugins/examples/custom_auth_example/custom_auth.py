@@ -31,8 +31,8 @@ from typing import Dict
 # Third-Party
 from pydantic import BaseModel
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
     HttpPostRequestPayload,

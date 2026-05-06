@@ -7,7 +7,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers
@@ -27,7 +27,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -47,7 +47,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
     tags: ["resource", "filter", "security", "example"]
-    mode: "enforce"  # Block resources that violate rules
+    mode: "sequential"  # Block resources that violate rules
     priority: 200
     conditions: []  # Apply to all resources
     config:

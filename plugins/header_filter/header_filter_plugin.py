@@ -16,7 +16,7 @@ Hook: tool_pre_invoke, agent_pre_invoke
 from pydantic import BaseModel, Field
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     AgentPreInvokePayload,
     AgentPreInvokeResult,
     HttpHeaderPayload,

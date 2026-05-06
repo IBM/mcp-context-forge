@@ -111,7 +111,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from mcpgateway.plugins.framework import PluginError, PromptHookType, ResourceHookType
+from cpex.framework import PluginError, PromptHookType, ResourceHookType
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -204,7 +204,7 @@ def _import_fresh_main_module(
         def has_hooks_for(self, server_id):
             return False
 
-    monkeypatch.setattr("mcpgateway.plugins.framework.TenantPluginManager", _DummyPluginManager)
+    monkeypatch.setattr("cpex.framework.TenantPluginManager", _DummyPluginManager)
 
     # Force selected module imports to fail to cover defensive ImportError paths.
     if force_import_error:
@@ -858,7 +858,7 @@ class TestInternalTrustedMcpTransportBridge:
         """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.plugins.framework import HttpHookType
+        from cpex.framework import HttpHookType
 
         async def _fake_streamable_http_auth(_scope, _receive, _send):
             user_context_var.set({"email": "hook-user@example.com", "teams": [], "is_authenticated": True})
@@ -4489,7 +4489,7 @@ class TestGetPromptEndpointCoverage:
 
         # PluginViolationError -> 422 with plugin message.
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from cpex.framework.errors import PluginViolationError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PluginViolationError("blocked", violation=SimpleNamespace(code="c"))))
         response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
@@ -4984,7 +4984,7 @@ class TestLifespanAdvanced:
         """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.plugins.framework import _state as plugin_state
+        from mcpgateway.plugins import _state as plugin_state
 
         await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
         monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock(side_effect=RuntimeError("bad YAML")))
@@ -9535,7 +9535,7 @@ class TestRpcHandling:
             assert result["result"]["ok"] is True
 
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.models import PluginErrorModel
 
         with (
             patch(
@@ -12605,11 +12605,11 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
         # First-Party
-        import mcpgateway.plugins.framework as plugin_framework
+        import mcpgateway.plugins as plugin_module
 
         # Reset plugin state before test
-        plugin_framework.enable_plugins(False)
-        plugin_framework.reset_plugin_manager_factory()
+        plugin_module.enable_plugins(False)
+        plugin_module.reset_plugin_manager_factory()
 
         _import_fresh_main_module(
             monkeypatch,
@@ -12619,25 +12619,12 @@ class TestRemainingCoverageGaps:
             },
         )
         # settings.enabled is False → get_plugin_manager() short-circuits to None
-        result = await plugin_framework.get_plugin_manager()
+        result = await plugin_module.get_plugin_manager()
         assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
-        import mcpgateway.plugins.framework as plugin_framework
-        import mcpgateway.plugins.framework.settings as plugin_settings_mod
-
-        monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_enabled_settings",
-            lambda **_kwargs: SimpleNamespace(enabled=True),
-        )
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_startup_settings",
-            lambda **_kwargs: SimpleNamespace(config_file="plugins/config.yaml", plugin_timeout=30),
-        )
+        import mcpgateway.plugins as plugin_module
 
         class _DummyFactory:
             def __init__(self, *_a, **_k):
@@ -12646,19 +12633,19 @@ class TestRemainingCoverageGaps:
             async def get_manager(self, server_id=None):
                 return SimpleNamespace(plugin_count=0)
 
-        monkeypatch.setattr(plugin_framework, "TenantPluginManagerFactory", _DummyFactory)
-        plugin_framework.reset_plugin_manager_factory()
-        plugin_framework.enable_plugins(True)
+        monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
+        plugin_module.reset_plugin_manager_factory()
+        plugin_module.enable_plugins(True)
 
         # Create the factory instance
-        plugin_framework._plugin_manager_factory = _DummyFactory()
+        plugin_module._plugin_manager_factory = _DummyFactory()
 
         _import_fresh_main_module(monkeypatch)
         # settings.enabled is True → get_plugin_manager() returns a manager
-        result = await plugin_framework.get_plugin_manager()
+        result = await plugin_module.get_plugin_manager()
         assert result is not None
         # Clean up the global factory to avoid polluting subsequent tests
-        plugin_framework.reset_plugin_manager_factory()
+        plugin_module.reset_plugin_manager_factory()
 
 
 class TestHardeningHelperCoverage:

@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.common.models import Tool
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -43,7 +43,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.constants import TOOL_METADATA
+from cpex.framework.constants import TOOL_METADATA
 
 # ALTK imports - optional dependency
 try:

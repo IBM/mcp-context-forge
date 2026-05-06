@@ -319,8 +319,8 @@ plugins:
     author: "Osher Elhadad"
     hooks: ["tool_pre_invoke"]
     tags: ["validation", "sparc", "altk", "static", "schema", "type-checking"]
-    mode: "disabled" # Enable with "enforce" or "permissive"
-    priority: 65 # Run early, after argument normalizer (40) but before schema guard (110)
+    mode: "disabled"  # Enable with "sequential" or "transform"
+    priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
     conditions: []
     config:
       # Block tool execution when validation fails
@@ -507,7 +507,7 @@ plugins:
         - "\\bsubprocess\\.(Popen|call|run)\\s*\\("
         - "\\brm\\s+-rf\\b"
 
-  # Output Length Guard - enforce bounds or truncate tool outputs
+  # Output Length Guard - sequential bounds or truncate tool outputs
   - name: "OutputLengthGuardPlugin"
     kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
     description: "Guards tool outputs by enforcing min/max character/token length; block or truncate strategies"
@@ -593,7 +593,7 @@ plugins:
   #   author: "Mihai Criveti"
   #   hooks: ["resource_pre_fetch", "resource_post_fetch"]
   #   tags: ["security", "malware", "clamav"]
-  #   mode: "enforce"
+  #   mode: "sequential"
   #   priority: 62
   #   mcp:
   #     proto: STDIO
@@ -601,7 +601,7 @@ plugins:
 
   # - name: "OPAPluginFilter"
   #   kind: "external"
-  #   mode: "permissive"  # Don't fail if the server is unavailable
+  #   mode: "transform"  # Don't fail if the server is unavailable
   #   priority: 10 # adjust the priority
   #   mcp:
   #     proto: STREAMABLEHTTP
@@ -630,15 +630,16 @@ plugins:
       cooldown_seconds: 15 # Quick 15s recovery for faster testing
       tool_overrides: {}
 
-  # Watchdog - enforce per-tool execution SLOs
+  # Watchdog - sequential per-tool execution SLOs
   - name: "Watchdog"
     kind: "plugins.watchdog.watchdog.WatchdogPlugin"
-    description: "Enforce max runtime per tool; warn or block"
+    description: "Enforce max runtime per tool (sequential mode); warn or block"
     version: "0.1.0"
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["latency", "slo"]
-    #mode: "enforce_ignore_error"
+    #mode: "sequential"
+    on_error: "ignore"
     mode: "disabled"
     priority: 85
     conditions: []
@@ -706,7 +707,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["localization", "timezone"]
-    #mode: "permissive"
+    #mode: "transform"
     mode: "disabled"
     priority: 175
     conditions: []
@@ -724,7 +725,7 @@ plugins:
   #   author: "ContextForge"
   #   hooks: ["prompt_pre_fetch", "resource_post_fetch", "tool_post_invoke"]
   #   tags: ["normalize", "unicode", "safety"]
-  #   mode: "permissive"
+  #   mode: "transform"
   #   priority: 138
   #   conditions: []
   #   config:
@@ -743,7 +744,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["security", "sql", "validation"]
-    # mode: "enforce"
+    # mode: "sequential"
     mode: "disabled"
     priority: 45
     conditions: []
@@ -797,7 +798,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
-    # mode: "enforce"
+    # mode: "sequential"
     mode: "disabled"
     priority: 52
     conditions: []
@@ -835,7 +836,7 @@ plugins:
     author: "ContextForge"
     hooks: ["resource_pre_fetch"]
     tags: ["headers", "network", "enhancement"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 58
     conditions: []
@@ -852,7 +853,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["compliance", "notice", "prompt"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 90
     conditions: []
@@ -869,7 +870,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["performance", "cache", "similarity"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 128
     conditions: []
@@ -888,7 +889,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["format", "enhancement", "postprocess"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 180
     conditions: []
@@ -919,7 +920,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["compliance", "license", "format"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 185
     conditions: []
@@ -948,7 +949,7 @@ plugins:
     author: "ContextForge"
     hooks: ["resource_post_fetch", "tool_post_invoke"]
     tags: ["citation", "links", "validation"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 122
     conditions: []
@@ -994,7 +995,7 @@ plugins:
         "resource_post_fetch",
       ]
     tags: ["notification", "webhook", "monitoring", "observability"]
-    # mode: "permissive"
+    # mode: "transform"
     mode: "disabled"
     priority: 900 # Run after other plugins to capture their violations
     conditions: []
@@ -1041,7 +1042,7 @@ plugins:
     author: "Manav Gupta"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
-    # mode: "permissive"  # Use permissive mode for testing
+    # mode: "transform"  # Use transform mode for testing
     mode: "disabled"
     priority: 30 # Run early in the pipeline
     conditions: []
@@ -1173,8 +1174,8 @@ plugins:
     author: "yiannis2804"
     hooks: ["tool_pre_invoke", "resource_pre_fetch"]
     tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
-    mode: "disabled" # set to "enforce" to activate
-    priority: 10 # Run early — access control before other plugins
+    mode: "disabled"  # set to "sequential" to activate
+    priority: 10  # Run early — access control before other plugins
     conditions: []
     config:
       engines:
@@ -1221,8 +1222,8 @@ plugins:
     author: "yiannis2804"
     hooks: ["http_auth_resolve_user"]
     tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
-    mode: "disabled" # set to "permissive" to activate
-    priority: 10 # Run early — before other auth plugins
+    mode: "disabled"  # set to "transform" to activate
+    priority: 10  # Run early — before other auth plugins
     conditions: []
     config:
       context_key: jwt_claims

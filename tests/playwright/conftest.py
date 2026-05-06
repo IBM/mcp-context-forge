@@ -31,6 +31,7 @@ from .pages.gateways_page import GatewaysPage
 from .pages.login_page import LoginPage
 from .pages.mcp_registry_page import MCPRegistryPage
 from .pages.metrics_page import MetricsPage
+from .pages.plugins_page import PluginsPage
 from .pages.prompts_page import PromptsPage
 from .pages.resources_page import ResourcesPage
 from .pages.servers_page import ServersPage
@@ -411,6 +412,13 @@ def resources_page(page: Page, base_url: str) -> ResourcesPage:
     """Provide a logged-in ResourcesPage instance for resource tests."""
     _ensure_admin_logged_in(page, base_url)
     return ResourcesPage(page)
+
+
+@pytest.fixture
+def plugins_page(page: Page, base_url: str) -> PluginsPage:
+    """Provide a logged-in PluginsPage instance for plugin tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return PluginsPage(page)
 
 
 @pytest.fixture

@@ -1,5 +1,7 @@
 # ContextForge Plugin Framework
 
+> **Note:** The plugin framework is now provided by the [`cpex`](https://github.com/contextforge-org/contextforge-plugins-framework) package (ContextForge Plugin Extensions). All framework imports use the `cpex` namespace (e.g., `from cpex.framework import Plugin`).
+
 ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
 
 ## Quick Start
@@ -80,7 +82,7 @@ plugins:
     author: "Your Name"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["security", "pii", "compliance"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 50     # Lower number = higher priority (runs first)
     conditions:
       - prompts: []     # Empty = apply to all prompts
@@ -101,8 +103,8 @@ plugin_settings:
 
 ### Plugin Modes
 
-- **`enforce`**: Blocks violations and prevents request processing
-- **`permissive`**: Logs violations but allows request to continue
+- **`sequential`**: Blocks violations and prevents request processing (use `on_error: ignore` to block violations but allow errors to pass)
+- **`transform`**: Logs violations but allows request to continue
 - **`disabled`**: Plugin is not executed (useful for temporary disabling)
 
 ### Plugin Priority
@@ -180,7 +182,7 @@ The `Plugin` class is an abstract base class (ABC) that provides the foundation 
 
 ```python
 from abc import ABC
-from mcpgateway.plugins.framework import Plugin
+from cpex.framework import Plugin
 
 class MyPlugin(Plugin):
     """Your plugin must inherit from Plugin."""
@@ -196,7 +198,7 @@ The plugin framework supports three flexible patterns for registering hook metho
 The simplest approach - just name your method to match the hook type:
 
 ```python
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     ToolPreInvokePayload,
@@ -235,9 +237,9 @@ class MyPlugin(Plugin):
 Use the `@hook` decorator to register a hook with a custom method name:
 
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginContext
-from mcpgateway.plugins.framework.decorator import hook
-from mcpgateway.plugins.framework import (
+from cpex.framework import Plugin, PluginContext
+from cpex.framework.decorator import hook
+from cpex.framework import (
     ToolHookType,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
@@ -265,8 +267,8 @@ class MyPlugin(Plugin):
 Register completely new hook types with custom payload and result types:
 
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginContext, PluginPayload, PluginResult
-from mcpgateway.plugins.framework.decorator import hook
+from cpex.framework import Plugin, PluginContext, PluginPayload, PluginResult
+from cpex.framework.decorator import hook
 
 # Define custom payload type
 class EmailPayload(PluginPayload):
@@ -356,7 +358,7 @@ Here's a complete plugin showing all patterns:
 
 ```python
 # plugins/my_plugin/my_plugin.py
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     PluginPayload,
@@ -367,7 +369,7 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
     ToolHookType,
 )
-from mcpgateway.plugins.framework.decorator import hook
+from cpex.framework.decorator import hook
 
 class MyPlugin(Plugin):
     """Example plugin demonstrating all three patterns."""
@@ -458,7 +460,7 @@ plugins:
     version: "1.0.0"
     author: "Your Name"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
     config:
       threshold: 0.8
@@ -482,7 +484,7 @@ return ToolPreInvokeResult(
 )
 
 # Block execution with a violation
-from mcpgateway.plugins.framework import PluginViolation
+from cpex.framework import PluginViolation
 
 return ToolPreInvokeResult(
     continue_processing=False,
@@ -500,9 +502,9 @@ Errors inside a plugin should be raised as exceptions. The plugin manager will c
 
 1. If `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true`, the exception is bubbled up as a PluginError and the error is passed to the client of ContextForge regardless of the plugin mode.
 2. If `plugin_settings.fail_on_plugin_error` is set to false, the error is handled based off of the plugin mode in the plugin's config as follows:
-   * If `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
-   * If `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
-   * If `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.
+   * If `mode` is `sequential`, both violations and errors are bubbled up as exceptions and the execution is blocked.
+   * If `mode` is `sequential` with `on_error: ignore`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
+   * If `mode` is `transform`, execution is allowed to proceed whether there are errors or violations. Both are logged.
 
 ### Accessing Plugin Context
 
@@ -593,7 +595,7 @@ class MyPlugin(Plugin):
 
 ```python
 import pytest
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginConfig,
     PluginContext,
     GlobalContext,
@@ -663,7 +665,7 @@ LOG_LEVEL=DEBUG make dev # port 8000
 To verify your hooks are properly registered:
 
 ```python
-from mcpgateway.plugins.framework import PluginManager
+from cpex.framework import PluginManager
 
 manager = PluginManager("path/to/config.yaml")
 await manager.initialize()

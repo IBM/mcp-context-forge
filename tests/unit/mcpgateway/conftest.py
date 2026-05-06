@@ -23,7 +23,7 @@ import pytest
 # Save original RBAC decorator functions at conftest import time.
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
-from mcpgateway.plugins.framework.settings import settings
+from cpex.framework.settings import settings
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
 _ORIG_REQUIRE_ADMIN_PERMISSION = _rbac_mod.require_admin_permission
@@ -92,7 +92,7 @@ def _reset_plugin_framework_redis_provider():
     that state out of the hot path; plugin-suite tests (which have their
     own conftest) re-install a real dynamic provider after this runs.
     """
-    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
 
     set_shared_redis_provider(None)
     yield

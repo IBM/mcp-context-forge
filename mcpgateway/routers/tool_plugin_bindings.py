@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.plugins.framework import get_plugin_manager_factory, publish_binding_change, publish_team_binding_change, reload_plugin_context
+from mcpgateway.plugins import get_plugin_manager_factory, publish_binding_change, publish_team_binding_change, reload_plugin_context
 from mcpgateway.plugins.gateway_plugin_manager import CONTEXT_ID_SEPARATOR, make_context_id
 from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
 from mcpgateway.services.logging_service import LoggingService

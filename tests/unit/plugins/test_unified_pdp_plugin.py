@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from plugins.unified_pdp.unified_pdp import UnifiedPDPPlugin
 from plugins.unified_pdp.pdp_models import AccessDecision, Decision, EngineDecision, EngineType
-from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
-from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload
+from cpex.framework.hooks.tools import ToolPreInvokePayload
+from cpex.framework.hooks.resources import ResourcePreFetchPayload
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal fakes for the framework types

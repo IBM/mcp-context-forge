@@ -33,7 +33,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from mcpgateway.auth import get_current_user
 from mcpgateway.db import EmailUser
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.plugins.framework import PluginResult
+from cpex.framework import PluginResult
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_auth_method_propagation_from_plugin():
     )
 
     # Patch both the framework module and auth module since auth imports from framework
-    with patch("mcpgateway.plugins.framework.get_plugin_manager") as mock_get_pm_framework:
+    with patch("mcpgateway.plugins.get_plugin_manager") as mock_get_pm_framework:
         with patch("mcpgateway.auth.get_plugin_manager") as mock_get_pm_auth:
             mock_db_user = EmailUser(
                 email="test@example.com",

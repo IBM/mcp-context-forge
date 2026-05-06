@@ -33,9 +33,21 @@ from starlette.websockets import WebSocketDisconnect
 from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING
-from mcpgateway.schemas import A2AAgentAggregateMetrics, GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
+from mcpgateway.schemas import (
+    A2AAgentAggregateMetrics,
+    GatewayRead,
+    PromptMetrics,
+    PromptRead,
+    ResourceMetrics,
+    ResourceRead,
+    ServerMetrics,
+    ServerRead,
+    ToolMetrics,
+    ToolRead,
+)
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -3846,8 +3858,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid input",
@@ -3879,8 +3891,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
@@ -3908,8 +3920,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Violation occurred",
@@ -3930,7 +3942,8 @@ class TestPluginExceptionHandlers:
     def test_plugin_violation_exception_handler_without_violation_object(self):
         """Test plugin_violation_exception_handler when violation object is None."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from mcpgateway.main import plugin_violation_exception_handler
+        from cpex.framework.errors import PluginViolationError
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)
 
@@ -3941,14 +3954,15 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
-            http_status_code=429,  # NEW FIELD
+            details={},
+            http_status_code=429,
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
@@ -3966,15 +3980,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
             description="Too many requests",
             code="RATE_LIMIT",
+            details={},
             http_status_code=429,
-            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},  # NEW FIELD
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},
         )
         exc = PluginViolationError(message="Rate limited", violation=violation)
 
@@ -3994,8 +4009,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # Assumes PLUGIN_VIOLATION_CODE_MAPPING has {"RATE_LIMIT": 429}
         violation = PluginViolation(
@@ -4019,8 +4034,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid input",
@@ -4043,15 +4058,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Error",
             description="Something failed",
             code="ERROR",
+            details={},
             http_status_code=400,
-            # No http_headers
+            # http_headers left unset
         )
         exc = PluginViolationError(message="Failed", violation=violation)
 
@@ -4069,15 +4085,16 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # PLUGIN_VIOLATION_CODE_MAPPING has "RATE_LIMIT": 429
         violation = PluginViolation(
             reason="Rate limit",
             description="Service unavailable",
             code="RATE_LIMIT",
-            http_status_code=503,  # Explicit status should win
+            details={},
+            http_status_code=503,  # Explicit status should win over RATE_LIMIT mapping
         )
         exc = PluginViolationError(message="Limited", violation=violation)
 
@@ -4094,13 +4111,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit",
             description="Too many requests",
             code="RATE_LIMIT",
+            details={},
             http_status_code=429,
             http_headers={
                 "X-RateLimit-Limit": "60",
@@ -4128,8 +4146,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Unknown error",
@@ -4153,13 +4171,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid status",
             description="Status code below valid range",
             code="RATE_LIMIT",  # Has mapping to 429
+            details={},
             http_status_code=99,  # Invalid: below 100
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
@@ -4178,10 +4197,10 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
-        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", http_status_code=512)  # Has mapping to 429  # Invalid: above 511
+        violation = PluginViolation(reason="Invalid status", description="Status code above valid range", code="RATE_LIMIT", details={}, http_status_code=512)  # RATE_LIMIT maps to 429; 512 is invalid (above 511)
         exc = PluginViolationError(message="Invalid status", violation=violation)
 
         result = asyncio.run(plugin_violation_exception_handler(None, exc))
@@ -4198,13 +4217,14 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Invalid status",
             description="Status code invalid, no mapping",
             code="UNKNOWN_CODE",  # Not in mapping
+            details={},
             http_status_code=1000,  # Invalid: way above 511
         )
         exc = PluginViolationError(message="Invalid status", violation=violation)
@@ -4223,14 +4243,15 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_violation_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # Test lower boundary (400)
         violation_400 = PluginViolation(
             reason="Continue",
             description="Valid status 400",
             code="INFO",
+            details={},
             http_status_code=400,  # Valid: exactly 400
         )
         exc_400 = PluginViolationError(message="Status 400", violation=violation_400)
@@ -4242,6 +4263,7 @@ class TestPluginExceptionHandlers:
             reason="Network error",
             description="Valid status 511",
             code="ERROR",
+            details={},
             http_status_code=511,  # Valid: exactly 511
         )
         exc_511 = PluginViolationError(message="Status 511", violation=violation_511)
@@ -4255,8 +4277,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Plugin execution failed",
@@ -4285,8 +4307,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Custom error occurred",
@@ -4312,8 +4334,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(message="Minimal error", plugin_name="minimal_plugin")
         exc = PluginError(error=error)
@@ -4333,8 +4355,8 @@ class TestPluginExceptionHandlers:
 
         # First-Party
         from mcpgateway.main import plugin_exception_handler
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Error without code",

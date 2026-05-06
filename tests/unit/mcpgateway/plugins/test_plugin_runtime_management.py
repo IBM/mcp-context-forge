@@ -19,24 +19,63 @@ All Redis interactions are mocked — no real Redis needed.
 
 # Standard
 import asyncio
+import json as _json_mod
 import time
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
+# First-Party
+from mcpgateway.plugins._redis import set_shared_redis_provider
+
+
+@contextmanager
+def _mock_redis(*, client=None, side_effect=None):
+    """Set the shared Redis provider to return *client* (or raise *side_effect*).
+
+    Replaces the old ``patch("mcpgateway.utils.redis_client.get_redis_client", ...)`` target
+    now that the plugin layer uses ``mcpgateway.plugins._redis`` for dependency inversion.
+    Also invalidates the short-lived ``are_plugins_enabled_shared`` cache.
+    """
+    import mcpgateway.plugins as _framework
+
+    _framework._shared_enabled_cache = None
+
+    if side_effect is not None:
+        set_shared_redis_provider(AsyncMock(side_effect=side_effect))
+    elif client is not None:
+        set_shared_redis_provider(AsyncMock(return_value=client))
+    else:
+        set_shared_redis_provider(None)
+
+    try:
+        yield
+    finally:
+        set_shared_redis_provider(None)
+        _framework._shared_enabled_cache = None
+
+
+def _unwrap_published_message(raw: str) -> dict:
+    """Extract the inner invalidation message from a possibly HMAC-signed envelope."""
+    parsed = _json_mod.loads(raw)
+    if isinstance(parsed, dict) and "sig" in parsed and "payload" in parsed:
+        return _json_mod.loads(parsed["payload"])
+    return parsed
+
 
 def _make_bare_factory(**attrs):
-    """Return a bare ``TenantPluginManagerFactory`` that skips heavy ``__init__``.
+    """Return a bare ``GatewayTenantPluginManagerFactory`` that skips heavy ``__init__``.
 
     Tests use this to exercise individual methods without loading YAML,
     creating plugin instances, or touching the DB. Pass keyword overrides to
     pre-set attributes (``_managers``, ``_cache_ttl``, etc.); sensible defaults
     are applied for the ones tests usually don't care about.
     """
-    from mcpgateway.plugins.framework.manager import TenantPluginManagerFactory
+    from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
-    factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
+    factory = GatewayTenantPluginManagerFactory.__new__(GatewayTenantPluginManagerFactory)
     factory._managers = attrs.get("_managers", {})
     factory._inflight = attrs.get("_inflight", {})
     factory._lock = attrs.get("_lock", asyncio.Lock())
@@ -45,6 +84,7 @@ def _make_bare_factory(**attrs):
     factory._timeout = attrs.get("_timeout", 30)
     factory._observability = attrs.get("_observability", None)
     factory._hook_policies = attrs.get("_hook_policies", None)
+    factory._db_factory = attrs.get("_db_factory", MagicMock())
     return factory
 
 
@@ -59,72 +99,72 @@ class TestArePluginsEnabledShared:
     @pytest.mark.asyncio
     async def test_reads_true_from_redis(self):
         """When Redis has 'true', returns True."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value="true")
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await are_plugins_enabled_shared()
             assert result is True
 
     @pytest.mark.asyncio
     async def test_reads_false_from_redis(self):
         """When Redis has 'false', returns False."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value="false")
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await are_plugins_enabled_shared()
             assert result is False
 
     @pytest.mark.asyncio
     async def test_reads_bytes_from_redis(self):
         """When Redis returns bytes (decode_responses=False), handles correctly."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=b"true")
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await are_plugins_enabled_shared()
             assert result is True
 
     @pytest.mark.asyncio
     async def test_falls_back_to_in_memory_when_redis_unavailable(self):
         """When Redis client is None, falls back to in-memory _PLUGINS_ENABLED."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins
 
         enable_plugins(True)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+        with _mock_redis():
             result = await are_plugins_enabled_shared()
             assert result is True
 
     @pytest.mark.asyncio
     async def test_falls_back_to_in_memory_when_redis_key_missing(self):
         """When Redis key doesn't exist, falls back to in-memory flag."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins
 
         enable_plugins(False)
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await are_plugins_enabled_shared()
             assert result is False
 
     @pytest.mark.asyncio
     async def test_falls_back_on_redis_exception(self):
         """When Redis raises an exception, falls back to in-memory flag."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins
 
         enable_plugins(True)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=Exception("connection refused")):
+        with _mock_redis(side_effect=Exception("connection refused")):
             result = await are_plugins_enabled_shared()
             assert result is True
 
@@ -135,47 +175,47 @@ class TestEnablePluginsShared:
     @pytest.mark.asyncio
     async def test_writes_true_to_redis(self):
         """enable_plugins_shared(True) writes 'true' to Redis."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         mock_client = AsyncMock()
         mock_client.set = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             await enable_plugins_shared(True)
             mock_client.set.assert_called_once_with("plugin:global:enabled", "true")
 
     @pytest.mark.asyncio
     async def test_writes_false_to_redis(self):
         """enable_plugins_shared(False) writes 'false' to Redis."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         mock_client = AsyncMock()
         mock_client.set = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             await enable_plugins_shared(False)
             mock_client.set.assert_called_once_with("plugin:global:enabled", "false")
 
     @pytest.mark.asyncio
     async def test_updates_in_memory_flag(self):
         """enable_plugins_shared also updates the in-memory _PLUGINS_ENABLED flag."""
-        from mcpgateway.plugins.framework import are_plugins_enabled, enable_plugins, enable_plugins_shared
+        from mcpgateway.plugins import are_plugins_enabled, enable_plugins, enable_plugins_shared
 
         enable_plugins(True)
         assert are_plugins_enabled() is True
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+        with _mock_redis():
             await enable_plugins_shared(False)
             assert are_plugins_enabled() is False
 
     @pytest.mark.asyncio
     async def test_survives_redis_failure(self):
         """When Redis write fails, in-memory flag is still updated."""
-        from mcpgateway.plugins.framework import are_plugins_enabled, enable_plugins, enable_plugins_shared
+        from mcpgateway.plugins import are_plugins_enabled, enable_plugins, enable_plugins_shared
 
         enable_plugins(True)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=Exception("connection refused")):
+        with _mock_redis(side_effect=Exception("connection refused")):
             await enable_plugins_shared(False)
             # In-memory flag should still be updated
             assert are_plugins_enabled() is False
@@ -192,12 +232,12 @@ class TestGetPluginModeOverride:
     @pytest.mark.asyncio
     async def test_reads_mode_from_redis(self):
         """Returns the mode string stored in Redis."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value="enforce")
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await get_plugin_mode_override("RateLimiterPlugin")
             assert result == "enforce"
             mock_client.get.assert_called_once_with("plugin:RateLimiterPlugin:mode")
@@ -205,30 +245,30 @@ class TestGetPluginModeOverride:
     @pytest.mark.asyncio
     async def test_returns_none_when_no_override(self):
         """Returns None when no Redis key exists (use YAML default)."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await get_plugin_mode_override("RateLimiterPlugin")
             assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_when_redis_unavailable(self):
         """Returns None when Redis client is None."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+        with _mock_redis():
             result = await get_plugin_mode_override("RateLimiterPlugin")
             assert result is None
 
     @pytest.mark.asyncio
     async def test_raises_runtime_error_on_redis_exception(self):
         """Redis transport errors surface as RuntimeError so callers can distinguish them from 'no override'."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=Exception("timeout")):
+        with _mock_redis(side_effect=Exception("timeout")):
             with pytest.raises(RuntimeError, match="Redis client unavailable"):
                 await get_plugin_mode_override("RateLimiterPlugin")
 
@@ -244,7 +284,7 @@ class TestTTLCacheExpiry:
     @pytest.mark.asyncio
     async def test_cache_returns_manager_within_ttl(self):
         """Cached manager is returned when within TTL."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         cached = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
         factory = _make_bare_factory(_managers={"test::tool": cached})
@@ -255,7 +295,7 @@ class TestTTLCacheExpiry:
     @pytest.mark.asyncio
     async def test_cache_evicts_after_ttl(self):
         """Cached manager is reported as expired once the TTL window has passed."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         expired = _CachedManager(manager=MagicMock(), created_at=time.monotonic() - 60)
         factory = _make_bare_factory(_managers={"test::tool": expired}, _cache_ttl=5)
@@ -267,13 +307,13 @@ class TestTTLCacheExpiry:
 
     def test_cache_ttl_default(self):
         """Default TTL is 30 seconds."""
-        from mcpgateway.plugins.framework.manager import TenantPluginManagerFactory
+        from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
-        assert TenantPluginManagerFactory.DEFAULT_CACHE_TTL == 30
+        assert GatewayTenantPluginManagerFactory.DEFAULT_CACHE_TTL == 30
 
     def test_cache_ttl_zero_disables(self):
         """TTL of 0 short-circuits the expiry check so entries never auto-evict."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         entry = _CachedManager(manager=MagicMock(), created_at=time.monotonic() - 10_000)
         assert entry.is_expired(0) is False
@@ -318,7 +358,7 @@ class TestApplyRedisModeOverrides:
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[None, None])
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await factory._apply_redis_mode_overrides(config)
 
         assert result is config
@@ -332,7 +372,7 @@ class TestApplyRedisModeOverrides:
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[b"disabled", None])
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await factory._apply_redis_mode_overrides(config)
 
         # A had its mode swapped; B was preserved as-is.
@@ -343,7 +383,7 @@ class TestApplyRedisModeOverrides:
     @pytest.mark.asyncio
     async def test_corrupt_redis_falls_through_to_local_override(self):
         """A corrupt Redis value must not shadow a valid local override — both candidates are tried in priority order."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A"])
@@ -353,14 +393,14 @@ class TestApplyRedisModeOverrides:
 
         framework._state.set_local_mode_override("A", "permissive", None)
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
 
         # Previously the corrupt Redis value was logged then the loop fell
         # through to YAML; now it falls through to the local override.
-        assert result.plugins[0].mode.value == "permissive"
+        assert result.plugins[0].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_invalid_mode_value_skipped_not_batch_aborted(self, caplog):
@@ -373,20 +413,20 @@ class TestApplyRedisModeOverrides:
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[b"not_a_mode", b"enforce"])
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
 
         # A was left alone (invalid); B was swapped — batch is NOT aborted.
         new_plugins = result.plugins
         assert new_plugins[0] is config.plugins[0]
-        assert new_plugins[1].mode.value == "enforce"
+        assert new_plugins[1].mode.value == "sequential"
         assert any("invalid Redis mode override" in rec.message.lower() or "invalid redis mode override" in rec.message.lower() for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_local_override_applied_when_redis_has_nothing(self):
         """Redis-less deployments: the in-process override map drives the rebuild."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A", "B"])
@@ -397,7 +437,7 @@ class TestApplyRedisModeOverrides:
         # Durable local-only entry — no expiry (Redis SET was not possible).
         framework._state.set_local_mode_override("A", "disabled", None)
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
@@ -408,7 +448,7 @@ class TestApplyRedisModeOverrides:
     @pytest.mark.asyncio
     async def test_redis_value_beats_local_override(self):
         """When both Redis and the local map hold a value, Redis wins — cluster coordination beats local drift."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A"])
@@ -418,34 +458,34 @@ class TestApplyRedisModeOverrides:
 
         framework._state.set_local_mode_override("A", "disabled", None)
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "enforce"
+        assert result.plugins[0].mode.value == "sequential"
 
     @pytest.mark.asyncio
     async def test_local_override_applied_when_redis_client_none(self):
         """No Redis provider at all: the in-process map is the sole source."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A"])
 
         framework._state.set_local_mode_override("A", "permissive", None)
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+            with _mock_redis():
                 result = await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "permissive"
+        assert result.plugins[0].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_expired_redis_synced_local_override_is_pruned(self):
         """Regression pin for the "stuck past 24 h" bug: a Redis-synced entry whose TTL has elapsed must not apply."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A", "B"])
@@ -459,7 +499,7 @@ class TestApplyRedisModeOverrides:
         # Sibling durable entry that must NOT be pruned.
         framework._state.set_local_mode_override("B", "permissive", None)
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
@@ -467,7 +507,7 @@ class TestApplyRedisModeOverrides:
         # A expired → no override applied (YAML/config default preserved).
         assert result.plugins[0] is config.plugins[0]
         # B is durable → still applied.
-        assert result.plugins[1].mode.value == "permissive"
+        assert result.plugins[1].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_mget_failure_warns_and_returns_input(self, caplog):
@@ -480,8 +520,8 @@ class TestApplyRedisModeOverrides:
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(side_effect=Exception("EPIPE"))
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
+            with _mock_redis(client=mock_client):
                 result = await factory._apply_redis_mode_overrides(config)
 
         assert result is config
@@ -492,7 +532,7 @@ class SimpleNamespacePlugin:
     """Tiny stand-in plugin with a mode-carrying enum attribute."""
 
     def __init__(self, name, mode):
-        from mcpgateway.plugins.framework.models import PluginMode
+        from cpex.framework import PluginMode
 
         self.name = name
         self.mode = mode if isinstance(mode, PluginMode) else PluginMode(mode)
@@ -523,6 +563,7 @@ class TestDBErrorFallback:
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
         factory = GatewayTenantPluginManagerFactory.__new__(GatewayTenantPluginManagerFactory)
+        factory._db_factory = MagicMock()
 
         result = await factory.get_config_from_db("invalid_context_id")
         assert result is None
@@ -552,8 +593,8 @@ class TestInvalidateAllPluginManagers:
     @pytest.mark.asyncio
     async def test_delegates_to_factory_invalidate_all(self):
         """Module helper routes through ``factory.invalidate_all()`` rather than reaching into private state."""
-        from mcpgateway.plugins.framework import invalidate_all_plugin_managers
-        from mcpgateway.plugins import framework
+        from mcpgateway.plugins import invalidate_all_plugin_managers
+        import mcpgateway.plugins as framework
 
         mock_factory = AsyncMock()
         mock_factory.invalidate_all = AsyncMock()
@@ -569,7 +610,7 @@ class TestInvalidateAllPluginManagers:
     @pytest.mark.asyncio
     async def test_noop_when_factory_is_none(self):
         """No error when factory is not initialized."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         original_factory = framework._plugin_manager_factory
         framework._plugin_manager_factory = None
@@ -591,35 +632,33 @@ class TestPubSubPublisher:
     @pytest.mark.asyncio
     async def test_global_toggle_publishes_message(self):
         """enable_plugins_shared publishes an invalidation message."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         mock_client = AsyncMock()
         mock_client.set = AsyncMock()
         mock_client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             await enable_plugins_shared(False)
             mock_client.publish.assert_called_once()
             # Verify channel name
             call_args = mock_client.publish.call_args
             assert call_args[0][0] == "plugin:invalidation"
             # Verify message contains toggle info
-            import json
-
-            msg = json.loads(call_args[0][1])
+            msg = _unwrap_published_message(call_args[0][1])
             assert msg["type"] == "global_toggle"
             assert msg["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_global_toggle_publish_failure_doesnt_crash(self):
         """If publish fails, the toggle still succeeds."""
-        from mcpgateway.plugins.framework import enable_plugins_shared, are_plugins_enabled
+        from mcpgateway.plugins import enable_plugins_shared, are_plugins_enabled
 
         mock_client = AsyncMock()
         mock_client.set = AsyncMock()
         mock_client.publish = AsyncMock(side_effect=Exception("publish failed"))
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             await enable_plugins_shared(True)
             # Should not crash — in-memory flag updated
             assert are_plugins_enabled() is True
@@ -631,21 +670,21 @@ class TestPubSubSubscriber:
     @pytest.mark.asyncio
     async def test_subscriber_updates_flag_on_global_toggle(self):
         """Subscriber updates in-memory flag when receiving global_toggle message."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, enable_plugins
+        from mcpgateway.plugins import _handle_invalidation_message, enable_plugins
         import json
 
         enable_plugins(True)
         message = {"type": "message", "data": json.dumps({"type": "global_toggle", "enabled": False})}
         await _handle_invalidation_message(message)
 
-        from mcpgateway.plugins.framework import are_plugins_enabled
+        from mcpgateway.plugins import are_plugins_enabled
 
         assert are_plugins_enabled() is False
 
     @pytest.mark.asyncio
     async def test_subscriber_evicts_managers_on_mode_change(self):
         """Subscriber triggers factory-wide invalidation when a mode_change frame arrives."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
         import json
 
         mock_factory = AsyncMock()
@@ -663,7 +702,7 @@ class TestPubSubSubscriber:
     @pytest.mark.asyncio
     async def test_subscriber_ignores_non_message_types(self):
         """Subscriber ignores subscribe/unsubscribe messages."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, enable_plugins, are_plugins_enabled
+        from mcpgateway.plugins import _handle_invalidation_message, enable_plugins, are_plugins_enabled
 
         enable_plugins(True)
         # "subscribe" type messages should be ignored
@@ -674,7 +713,7 @@ class TestPubSubSubscriber:
     @pytest.mark.asyncio
     async def test_subscriber_handles_malformed_message(self):
         """Subscriber doesn't crash on malformed JSON."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, enable_plugins, are_plugins_enabled
+        from mcpgateway.plugins import _handle_invalidation_message, enable_plugins, are_plugins_enabled
 
         enable_plugins(True)
         message = {"type": "message", "data": "not valid json {{{"}
@@ -688,14 +727,13 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_publish_plugin_mode_change_sends_mode_change_message(self):
         """publish_plugin_mode_change must SET the key AND publish a mode_change frame."""
-        import json
-        from mcpgateway.plugins.framework import publish_plugin_mode_change
+        from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
         client.set = AsyncMock()
         client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_plugin_mode_change("RateLimiterPlugin", "enforce")
 
         assert ok is True
@@ -707,19 +745,19 @@ class TestPublishHelpers:
         # ttl_seconds so every peer stamps the same absolute deadline.
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "mode_change", "plugin": "RateLimiterPlugin", "mode": "enforce", "ttl_seconds": 86400}
 
     @pytest.mark.asyncio
     async def test_publish_plugin_mode_change_returns_false_on_set_failure(self):
         """A SET transport failure must surface as False so the caller signals the outage."""
-        from mcpgateway.plugins.framework import publish_plugin_mode_change
+        from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
         client.set = AsyncMock(side_effect=Exception("ECONNREFUSED"))
         client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_plugin_mode_change("RateLimiterPlugin", "enforce")
 
         assert ok is False
@@ -728,15 +766,15 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_local_entry_expiry_aligns_with_redis_ttl_on_success(self):
         """Redis-synced local entries must carry a ~24 h monotonic expiry — otherwise they'd outlive the Redis key."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import publish_plugin_mode_change
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
         client.set = AsyncMock()
         client.publish = AsyncMock()
 
         before = time.monotonic()
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_plugin_mode_change("RateLimiterPlugin", "enforce")
         after = time.monotonic()
 
@@ -751,14 +789,14 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_local_entry_has_no_expiry_when_redis_set_fails(self):
         """Local-only entries (Redis SET failed) must be durable — the operator never got confirmation the timer started."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import publish_plugin_mode_change
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
         client.set = AsyncMock(side_effect=Exception("ECONNREFUSED"))
         client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_plugin_mode_change("RateLimiterPlugin", "enforce")
 
         assert ok is False
@@ -770,19 +808,18 @@ class TestPublishHelpers:
     @pytest.mark.asyncio
     async def test_publish_binding_change_sends_binding_change_message(self):
         """publish_binding_change must emit a binding_change frame with the context id."""
-        import json
-        from mcpgateway.plugins.framework import publish_binding_change
+        from mcpgateway.plugins import publish_binding_change
 
         client = AsyncMock()
         client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_binding_change("team_a::my_tool")
 
         assert ok is True
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "binding_change", "context_id": "team_a::my_tool"}
 
 
@@ -792,8 +829,8 @@ class TestPublishToListenerRoundTrip:
     @pytest.mark.asyncio
     async def test_mode_change_publish_triggers_factory_invalidate(self):
         """Publishing a mode_change must cause the listener handler to trigger cluster-wide invalidation."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message, publish_plugin_mode_change
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message, publish_plugin_mode_change
 
         # Simulate the local factory on the *listener* side. Module helper routes
         # through ``factory.invalidate_all()``, so we just assert that was awaited.
@@ -815,7 +852,7 @@ class TestPublishToListenerRoundTrip:
         original_factory = framework._plugin_manager_factory
         framework._plugin_manager_factory = mock_factory
         try:
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+            with _mock_redis(client=client):
                 await publish_plugin_mode_change("RateLimiterPlugin", "enforce")
 
             assert published["channel"] == "plugin:invalidation"
@@ -831,18 +868,18 @@ class TestPublishToListenerRoundTrip:
     async def test_global_toggle_pubsub_invalidates_local_cache(self):
         """A global_toggle broadcast must drop the short-lived local cache, not just update the flag."""
         import json
-        from mcpgateway.plugins.framework import _handle_invalidation_message, are_plugins_enabled_shared, enable_plugins
+        from mcpgateway.plugins import _handle_invalidation_message, are_plugins_enabled_shared, enable_plugins
 
         enable_plugins(True)
         # Prime the local cache with True.
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+        with _mock_redis():
             assert await are_plugins_enabled_shared() is True
 
         # Broadcast flips the toggle OFF.
         await _handle_invalidation_message({"type": "message", "data": json.dumps({"type": "global_toggle", "enabled": False})})
 
         # Next read must NOT serve the cached True — it must reflect the new state.
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
+        with _mock_redis():
             assert await are_plugins_enabled_shared() is False
 
 
@@ -851,7 +888,7 @@ class TestFactoryInvalidateTeam:
 
     @pytest.mark.asyncio
     async def test_invalidates_only_matching_team(self):
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory(
             _managers={
@@ -872,7 +909,7 @@ class TestFactoryInvalidateTeam:
     @pytest.mark.asyncio
     async def test_uses_class_separator_when_not_specified(self):
         """Default separator is ``CONTEXT_ID_SEPARATOR`` — saves the listener from knowing it on the wire."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory(
             _managers={
@@ -894,20 +931,18 @@ class TestTeamBindingChangeRoundTrip:
 
     @pytest.mark.asyncio
     async def test_publish_team_binding_change_emits_correct_frame(self):
-        import json
-
-        from mcpgateway.plugins.framework import publish_team_binding_change
+        from mcpgateway.plugins import publish_team_binding_change
 
         client = AsyncMock()
         client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with _mock_redis(client=client):
             ok = await publish_team_binding_change("team_a")
 
         assert ok is True
         pub_call = client.publish.call_args
         assert pub_call.args[0] == "plugin:invalidation"
-        msg = json.loads(pub_call.args[1])
+        msg = _unwrap_published_message(pub_call.args[1])
         assert msg == {"type": "team_binding_change", "team_id": "team_a"}
 
     @pytest.mark.asyncio
@@ -915,9 +950,9 @@ class TestTeamBindingChangeRoundTrip:
         """A team_binding_change frame on a remote worker must reload every ``team_a::*`` cache entry."""
         import json
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory(
             _managers={
@@ -946,7 +981,7 @@ class TestSubscriberHandlesBindingChange:
     @pytest.mark.asyncio
     async def test_subscriber_handles_binding_change(self):
         """Subscriber evicts specific context on binding_change message."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
         import json
 
         mock_factory = AsyncMock()
@@ -970,8 +1005,8 @@ class TestListenerLocalMirror:
         """The handler stamps ``(mode, monotonic + ttl_seconds)`` using the publisher's TTL, not a local constant."""
         import json
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message
 
         # No factory needed for this assertion; invalidate_all is a no-op.
         framework._state.clear_local_mode_overrides()
@@ -991,8 +1026,8 @@ class TestListenerLocalMirror:
         """Older publishers that omit ``ttl_seconds`` fall back to the 24 h default."""
         import json
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message
 
         framework._state.clear_local_mode_overrides()
         before = time.monotonic()
@@ -1005,7 +1040,7 @@ class TestListenerLocalMirror:
 
     def test_backing_dict_identity_is_stable(self):
         """Regression pin: writers and readers must share one dict object — introducing a copy would split the listener from the manager."""
-        from mcpgateway.plugins.framework import _state
+        from mcpgateway.plugins import _state
 
         first = _state.get_local_mode_overrides_live()
         _state.set_local_mode_override("Identity", "enforce", None)
@@ -1020,15 +1055,15 @@ class TestListenerStartup:
         """Single-node deployments without a Redis provider must not create the listener task."""
         import logging as _logging
 
-        from mcpgateway.plugins.framework import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
-        from mcpgateway.plugins.framework._redis import set_shared_redis_provider
+        from mcpgateway.plugins import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
+        from mcpgateway.plugins._redis import set_shared_redis_provider
 
         set_shared_redis_provider(None)
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         framework._pubsub_task = None
 
-        with caplog.at_level(_logging.INFO, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.INFO, logger="mcpgateway.plugins"):
             await start_plugin_invalidation_listener()
 
         assert framework._pubsub_task is None
@@ -1038,8 +1073,8 @@ class TestListenerStartup:
     @pytest.mark.asyncio
     async def test_concurrent_starts_only_create_one_task(self, monkeypatch):
         """Two racing callers must not both reach ``asyncio.create_task`` (TOCTOU guard)."""
-        from mcpgateway.plugins.framework import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
-        from mcpgateway.plugins import framework
+        from mcpgateway.plugins import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
+        import mcpgateway.plugins as framework
 
         framework._pubsub_task = None
 
@@ -1065,13 +1100,13 @@ class TestListenerStartup:
         """If the Redis probe raises, the listener must not start and the failure must log at WARNING."""
         import logging as _logging
 
-        from mcpgateway.plugins.framework import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
-        from mcpgateway.plugins import framework
+        from mcpgateway.plugins import start_plugin_invalidation_listener, stop_plugin_invalidation_listener
+        import mcpgateway.plugins as framework
 
         framework._pubsub_task = None
         monkeypatch.setattr(framework, "_redis", AsyncMock(side_effect=RuntimeError("probe blew up")))
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins"):
             await start_plugin_invalidation_listener()
 
         assert framework._pubsub_task is None
@@ -1086,14 +1121,14 @@ class TestPublishPartialWriteSignaling:
     async def test_enable_plugins_shared_errors_on_publish_failure(self, caplog):
         import logging as _logging
 
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         client = AsyncMock()
         client.set = AsyncMock()
         client.publish = AsyncMock(side_effect=Exception("broker down"))
 
-        with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins.framework"):
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins"):
+            with _mock_redis(client=client):
                 await enable_plugins_shared(True)
 
         assert any("broadcast failed" in rec.message and rec.levelno == _logging.ERROR for rec in caplog.records)
@@ -1102,14 +1137,14 @@ class TestPublishPartialWriteSignaling:
     async def test_publish_plugin_mode_change_errors_on_publish_failure(self, caplog):
         import logging as _logging
 
-        from mcpgateway.plugins.framework import publish_plugin_mode_change
+        from mcpgateway.plugins import publish_plugin_mode_change
 
         client = AsyncMock()
         client.set = AsyncMock()
         client.publish = AsyncMock(side_effect=Exception("broker down"))
 
-        with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins.framework"):
-            with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=client):
+        with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins"):
+            with _mock_redis(client=client):
                 await publish_plugin_mode_change("Foo", "enforce")
 
         assert any("broadcast failed" in rec.message and rec.levelno == _logging.ERROR for rec in caplog.records)
@@ -1129,7 +1164,7 @@ class TestFactoryInitFailureSurface:
     """
 
     def test_malformed_yaml_raises(self, tmp_path):
-        from mcpgateway.plugins.framework import init_plugin_manager_factory
+        from mcpgateway.plugins import init_plugin_manager_factory
 
         bad = tmp_path / "bad.yaml"
         bad.write_text("plugins: [this is not a valid plugin list:::")
@@ -1144,11 +1179,11 @@ class TestFactoryInitFailureSurface:
             )
 
     def test_invalid_config_shape_raises(self, tmp_path):
-        from mcpgateway.plugins.framework import init_plugin_manager_factory
+        from mcpgateway.plugins import init_plugin_manager_factory
 
         bad = tmp_path / "bad.yaml"
-        # plugin_settings.plugin_timeout must be an int per the Config schema.
-        bad.write_text("plugin_settings:\n  plugin_timeout: not-a-number\nplugins: []\n")
+        # A plugin entry without 'name' (required field) must fail validation.
+        bad.write_text("plugins:\n  - kind: some.Plugin\n    hooks: [tool_pre_invoke]\n")
 
         with pytest.raises(Exception):
             init_plugin_manager_factory(
@@ -1167,8 +1202,8 @@ class TestFactoryInitDegradedSignal:
     async def test_get_plugin_manager_emits_error_once_on_degraded_node(self, caplog):
         import logging as _logging
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import (
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import (
             _reset_factory_init_degraded_for_tests,
             enable_plugins,
             get_plugin_manager,
@@ -1180,8 +1215,8 @@ class TestFactoryInitDegradedSignal:
         enable_plugins(True)  # Seed in-memory flag so are_plugins_enabled_shared() returns True.
         mark_factory_init_degraded()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
-            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins.framework"):
+        with _mock_redis():
+            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins"):
                 assert await get_plugin_manager() is None
                 assert await get_plugin_manager() is None
 
@@ -1194,16 +1229,16 @@ class TestFactoryInitDegradedSignal:
         """A healthy node never emits the degraded-boot ERROR."""
         import logging as _logging
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import enable_plugins, get_plugin_manager
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import enable_plugins, get_plugin_manager
 
         mock_factory = AsyncMock()
         mock_factory.get_manager = AsyncMock(return_value=MagicMock())
         framework._plugin_manager_factory = mock_factory
         enable_plugins(True)
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
-            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins.framework"):
+        with _mock_redis():
+            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins"):
                 await get_plugin_manager()
 
         assert not any("factory init failed" in rec.message for rec in caplog.records)
@@ -1214,8 +1249,8 @@ class TestFactoryInitDegradedSignal:
         """Degraded node with the shared toggle off must stay quiet — the opt-out is doing its job."""
         import logging as _logging
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import (
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import (
             enable_plugins,
             get_plugin_manager,
             mark_factory_init_degraded,
@@ -1225,8 +1260,8 @@ class TestFactoryInitDegradedSignal:
         enable_plugins(False)  # toggle off
         mark_factory_init_degraded()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=None):
-            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins.framework"):
+        with _mock_redis():
+            with caplog.at_level(_logging.ERROR, logger="mcpgateway.plugins"):
                 await get_plugin_manager()
 
         assert not any("factory init failed" in rec.message for rec in caplog.records)
@@ -1240,7 +1275,7 @@ class TestListenerBackoff:
         """Exponential backoff plus ERROR log after 5 failures keeps ops visibility when Redis is flaky."""
         import logging as _logging
 
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         # Force every subscribe attempt to raise, so the backoff loop cycles.
         async def _always_raises():
@@ -1258,7 +1293,7 @@ class TestListenerBackoff:
 
         monkeypatch.setattr(framework.asyncio, "sleep", _fake_sleep)
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins"):
             try:
                 await framework._plugin_invalidation_listener()
             except asyncio.CancelledError:
@@ -1281,7 +1316,7 @@ class TestFactoryGetManagerBranches:
     @pytest.mark.asyncio
     async def test_cache_ttl_expiry_evicts_and_rebuilds(self):
         """An expired cache entry must be popped and re-built, not served stale."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory(_cache_ttl=0.001)
         stale = MagicMock(name="stale_manager")
@@ -1314,8 +1349,8 @@ class TestFactoryGetManagerBranches:
         config = MagicMock()
         config.plugins = [plugin]
 
-        with patch("mcpgateway.plugins.framework._redis.get_shared_redis_client", side_effect=RuntimeError("no client")):
-            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
+        with _mock_redis(side_effect=RuntimeError("no client")):
+            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
                 result = await factory._apply_redis_mode_overrides(config)
 
         # Config is returned unchanged (no model_copy invoked).
@@ -1328,12 +1363,12 @@ class TestFactoryGetManagerBranches:
         import logging as _logging
 
         from pydantic import ValidationError as _PydValidationError
-        from mcpgateway.plugins.framework import PluginMode
+        from cpex.framework import PluginMode
 
         factory = _make_bare_factory()
         plugin = MagicMock()
         plugin.name = "A"
-        plugin.mode = PluginMode.ENFORCE
+        plugin.mode = PluginMode.SEQUENTIAL
 
         def _raise_validation(*_a, **_k):
             raise _PydValidationError.from_exception_data("bad", [])
@@ -1345,8 +1380,8 @@ class TestFactoryGetManagerBranches:
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[b"permissive"])
 
-        with patch("mcpgateway.plugins.framework._redis.get_shared_redis_client", return_value=mock_client):
-            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
+        with _mock_redis(client=mock_client):
+            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
                 result = await factory._apply_redis_mode_overrides(config)
 
         # Config is returned unchanged because the one override failed validation.
@@ -1362,13 +1397,13 @@ class TestInvalidateHelpers:
         """One reload failure must not abort the sweep — it logs and moves on."""
         import logging as _logging
 
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory()
         factory._managers["ctx-a"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
             await factory.invalidate_all()
 
         assert any("invalidate_all: reload failed" in rec.message for rec in caplog.records)
@@ -1378,21 +1413,21 @@ class TestInvalidateHelpers:
         """Same guarantee on the team-scoped sweep."""
         import logging as _logging
 
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory()
         factory.CONTEXT_ID_SEPARATOR = "::"
         factory._managers["team-a::tool-1"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
         factory.reload_tenant = AsyncMock(side_effect=RuntimeError("reload blew up"))
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework.manager"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
             await factory.invalidate_team("team-a")
 
         assert any("invalidate_team: reload failed" in rec.message for rec in caplog.records)
 
     def test_iter_context_ids_returns_snapshot_list(self):
         """``iter_context_ids`` copies the cache keys so callers iterating without the lock are safe."""
-        from mcpgateway.plugins.framework.manager import _CachedManager
+        from mcpgateway.plugins.gateway_plugin_manager import _CachedManager
 
         factory = _make_bare_factory()
         factory._managers["ctx-a"] = _CachedManager(manager=MagicMock(), created_at=time.monotonic())
@@ -1410,26 +1445,26 @@ class TestRedisExceptionBranches:
     @pytest.mark.asyncio
     async def test_read_shared_enabled_falls_back_on_client_get_exception(self):
         """When ``client.get`` raises, ``_read_shared_enabled`` falls back to the in-memory flag."""
-        from mcpgateway.plugins.framework import _read_shared_enabled, enable_plugins
+        from mcpgateway.plugins import _read_shared_enabled, enable_plugins
 
         enable_plugins(True)
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=RuntimeError("broken pipe"))
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             result = await _read_shared_enabled()
             assert result is True
 
     @pytest.mark.asyncio
     async def test_enable_plugins_shared_returns_false_on_set_exception(self):
         """A Redis SET that raises is downgraded to a local-only toggle change."""
-        from mcpgateway.plugins.framework import enable_plugins_shared, are_plugins_enabled
+        from mcpgateway.plugins import enable_plugins_shared, are_plugins_enabled
 
         mock_client = AsyncMock()
         mock_client.set = AsyncMock(side_effect=RuntimeError("ECONNRESET"))
         mock_client.publish = AsyncMock()
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             ok = await enable_plugins_shared(True)
 
         assert ok is False
@@ -1439,7 +1474,7 @@ class TestRedisExceptionBranches:
     @pytest.mark.asyncio
     async def test_publish_invalidation_returns_false_on_client_error(self, monkeypatch):
         """When the Redis client factory itself raises, publish bails at False."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         async def _always_raises():
             raise RuntimeError("no redis")
@@ -1452,7 +1487,7 @@ class TestRedisExceptionBranches:
     @pytest.mark.asyncio
     async def test_publish_plugin_mode_change_redis_client_exception(self, monkeypatch):
         """``_redis()`` failure still stamps the local override so the worker honours the change."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         async def _always_raises():
             raise RuntimeError("no redis")
@@ -1472,12 +1507,12 @@ class TestRedisExceptionBranches:
     @pytest.mark.asyncio
     async def test_get_plugin_mode_override_raises_on_client_get_exception(self):
         """``client.get`` blowing up surfaces as ``RuntimeError`` so callers see "Redis unreachable"."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=RuntimeError("boom"))
 
-        with patch("mcpgateway.utils.redis_client.get_redis_client", return_value=mock_client):
+        with _mock_redis(client=mock_client):
             with pytest.raises(RuntimeError, match="Redis GET failed"):
                 await get_plugin_mode_override("Foo")
 
@@ -1487,8 +1522,8 @@ class TestFactoryAccessors:
 
     def test_get_plugin_manager_factory_returns_live_factory(self):
         """When a factory is set, the accessor returns it rather than ``None``."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import get_plugin_manager_factory, reset_plugin_manager_factory
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import get_plugin_manager_factory, reset_plugin_manager_factory
 
         sentinel = MagicMock(name="sentinel-factory")
         framework._plugin_manager_factory = sentinel
@@ -1498,15 +1533,12 @@ class TestFactoryAccessors:
             reset_plugin_manager_factory()
 
     def test_list_configured_plugin_names_returns_config_names(self):
-        """With a live factory whose ``_base_config`` has plugins, the helper returns their names."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import list_configured_plugin_names, reset_plugin_manager_factory
+        """With a live factory whose ``plugin_names`` property has entries, the helper returns them."""
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import list_configured_plugin_names, reset_plugin_manager_factory
 
         fake_factory = MagicMock()
-        fake_factory._base_config = MagicMock()
-        fake_factory._base_config.plugins = [MagicMock(name="P1"), MagicMock(name="P2")]
-        fake_factory._base_config.plugins[0].name = "PluginOne"
-        fake_factory._base_config.plugins[1].name = "PluginTwo"
+        fake_factory.plugin_names = ["PluginOne", "PluginTwo"]
 
         framework._plugin_manager_factory = fake_factory
         try:
@@ -1516,19 +1548,18 @@ class TestFactoryAccessors:
 
     def test_list_configured_plugin_names_empty_without_factory(self):
         """No factory yet → empty list (covers the early-return branch)."""
-        from mcpgateway.plugins.framework import list_configured_plugin_names, reset_plugin_manager_factory
+        from mcpgateway.plugins import list_configured_plugin_names, reset_plugin_manager_factory
 
         reset_plugin_manager_factory()
         assert list_configured_plugin_names() == []
 
     def test_list_configured_plugin_names_empty_when_config_has_no_plugins(self):
-        """Factory present but empty ``plugins`` → empty list (guards the ``not config.plugins`` branch)."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import list_configured_plugin_names, reset_plugin_manager_factory
+        """Factory present but empty ``plugin_names`` → empty list."""
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import list_configured_plugin_names, reset_plugin_manager_factory
 
         fake_factory = MagicMock()
-        fake_factory._base_config = MagicMock()
-        fake_factory._base_config.plugins = []
+        fake_factory.plugin_names = []
 
         framework._plugin_manager_factory = fake_factory
         try:
@@ -1538,23 +1569,22 @@ class TestFactoryAccessors:
 
 
 class TestInitPluginManagerFactory:
-    """Cover the ``db_factory``-branch in ``init_plugin_manager_factory``."""
+    """Cover ``init_plugin_manager_factory`` — db_factory is forwarded to the unified factory."""
 
-    def test_uses_gateway_factory_when_db_factory_provided(self, monkeypatch):
-        """Passing a ``db_factory`` must route through ``GatewayTenantPluginManagerFactory``."""
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import init_plugin_manager_factory, reset_plugin_manager_factory
+    def test_db_factory_forwarded_to_factory(self, monkeypatch):
+        """Passing a ``db_factory`` must forward it to ``TenantPluginManagerFactory``."""
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import init_plugin_manager_factory, reset_plugin_manager_factory
 
         captured_kwargs: dict = {}
 
-        class _FakeGatewayFactory:
+        class _FakeFactory:
             def __init__(self, **kwargs):
                 captured_kwargs.update(kwargs)
 
-        # Patch the lazy import site so the constructor call is our spy.
         monkeypatch.setattr(
-            "mcpgateway.plugins.gateway_plugin_manager.GatewayTenantPluginManagerFactory",
-            _FakeGatewayFactory,
+            "mcpgateway.plugins.gateway_plugin_manager.TenantPluginManagerFactory",
+            _FakeFactory,
         )
 
         def _fake_session_local():
@@ -1569,7 +1599,7 @@ class TestInitPluginManagerFactory:
                 observability=None,
                 db_factory=_fake_session_local,
             )
-            assert isinstance(framework._plugin_manager_factory, _FakeGatewayFactory)
+            assert isinstance(framework._plugin_manager_factory, _FakeFactory)
             assert captured_kwargs["yaml_path"] == "does/not/matter.yaml"
             assert captured_kwargs["db_factory"] is _fake_session_local
         finally:
@@ -1585,9 +1615,9 @@ class TestListenerMessageValidation:
         import logging as _logging
         import json as _json
 
-        from mcpgateway.plugins.framework import _handle_invalidation_message
+        from mcpgateway.plugins import _handle_invalidation_message
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins"):
             await _handle_invalidation_message({"type": "message", "data": _json.dumps({"type": "bogus_event", "payload": 1})})
 
         assert any("unrecognised plugin invalidation frame" in rec.message for rec in caplog.records)
@@ -1598,14 +1628,14 @@ class TestListenerMessageValidation:
         import logging as _logging
         import json as _json
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message
 
         fake_factory = MagicMock()
         fake_factory.invalidate_team = AsyncMock(side_effect=RuntimeError("cache busted"))
         monkeypatch.setattr(framework, "_plugin_manager_factory", fake_factory)
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins"):
             await _handle_invalidation_message({"type": "message", "data": _json.dumps({"type": "team_binding_change", "team_id": "team-a"})})
 
         assert any("team_binding_change failed" in rec.message for rec in caplog.records)
@@ -1616,14 +1646,14 @@ class TestListenerMessageValidation:
         import logging as _logging
         import json as _json
 
-        from mcpgateway.plugins import framework
-        from mcpgateway.plugins.framework import _handle_invalidation_message
+        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import _handle_invalidation_message
 
         fake_factory = MagicMock()
         fake_factory.reload_tenant = AsyncMock(side_effect=RuntimeError("cache busted"))
         monkeypatch.setattr(framework, "_plugin_manager_factory", fake_factory)
 
-        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.framework"):
+        with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins"):
             await _handle_invalidation_message({"type": "message", "data": _json.dumps({"type": "binding_change", "context_id": "ctx-a"})})
 
         assert any("binding_change reload failed" in rec.message for rec in caplog.records)
@@ -1640,7 +1670,7 @@ class TestListenerLoopBranches:
         the loop cleanly, so the coroutine returns rather than propagating —
         we verify the polling sleep was hit at least once.
         """
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         monkeypatch.setattr(framework, "_redis", AsyncMock(return_value=None))
 
@@ -1663,7 +1693,7 @@ class TestListenerLoopBranches:
     @pytest.mark.asyncio
     async def test_listener_subscribes_and_dispatches_one_message_then_cancels(self, monkeypatch):
         """The happy subscribe → listen → dispatch → cancel path runs to completion."""
-        from mcpgateway.plugins import framework
+        import mcpgateway.plugins as framework
 
         seen: list[dict] = []
 
@@ -1694,3 +1724,91 @@ class TestListenerLoopBranches:
 
         pubsub.subscribe.assert_awaited_once()
         assert len(seen) == 1
+
+
+# ---------------------------------------------------------------------------
+# HMAC signing and verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestHMACSigningVerification:
+    """Tests for _sign_message and _verify_and_extract."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_hmac_key(self, monkeypatch):
+        """Patch _get_invalidation_hmac_key to return a known key by default."""
+        import mcpgateway.plugins as framework
+
+        self._framework = framework
+        self._key = b"test-hmac-secret"
+        monkeypatch.setattr(framework, "_get_invalidation_hmac_key", lambda: self._key)
+
+    def test_sign_and_verify_roundtrip(self):
+        """A signed message can be verified and its payload extracted."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        result = self._framework._verify_and_extract(signed)
+        assert result == payload
+
+    def test_tampered_signature_rejected(self):
+        """A message with a modified signature is rejected."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        envelope = _json_mod.loads(signed)
+        envelope["sig"] = "deadbeef" * 8
+        tampered = _json_mod.dumps(envelope)
+        result = self._framework._verify_and_extract(tampered)
+        assert result is None
+
+    def test_tampered_payload_rejected(self):
+        """A message with a modified payload but original sig is rejected."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        envelope = _json_mod.loads(signed)
+        envelope["payload"] = '{"action":"toggle","enabled":false}'
+        tampered = _json_mod.dumps(envelope)
+        result = self._framework._verify_and_extract(tampered)
+        assert result is None
+
+    def test_missing_payload_key_in_envelope(self):
+        """An envelope with sig but no payload key is treated as unsigned."""
+        msg = _json_mod.dumps({"sig": "abc123", "other": "data"})
+        result = self._framework._verify_and_extract(msg)
+        assert result == msg
+
+    def test_unsigned_message_accepted_when_no_key(self, monkeypatch):
+        """When HMAC is not configured, unsigned messages pass through."""
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        payload = '{"action":"toggle","enabled":true}'
+        result = self._framework._verify_and_extract(payload)
+        assert result == payload
+
+    def test_unsigned_message_accepted_with_warning_when_key_set(self, caplog):
+        """When HMAC key is set and an unsigned message arrives, a warning is logged."""
+        import logging
+
+        payload = '{"action":"toggle","enabled":true}'
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.plugins"):
+            result = self._framework._verify_and_extract(payload)
+        assert result == payload
+        assert "unsigned message" in caplog.text
+
+    def test_invalid_json_returns_none(self):
+        """Non-JSON input is rejected."""
+        result = self._framework._verify_and_extract("not valid json{{{")
+        assert result is None
+
+    def test_sign_without_key_returns_payload_unchanged(self, monkeypatch):
+        """When no HMAC key is configured, _sign_message returns the raw payload."""
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        payload = '{"action":"toggle","enabled":true}'
+        result = self._framework._sign_message(payload)
+        assert result == payload
+
+    def test_signed_envelope_accepted_without_key(self, monkeypatch):
+        """When no key is configured, a signed envelope still extracts the payload."""
+        payload = '{"action":"toggle","enabled":true}'
+        signed = self._framework._sign_message(payload)
+        monkeypatch.setattr(self._framework, "_get_invalidation_hmac_key", lambda: None)
+        result = self._framework._verify_and_extract(signed)
+        assert result == payload

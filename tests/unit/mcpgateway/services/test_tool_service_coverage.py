@@ -6169,7 +6169,7 @@ class TestInvokeToolRestTimeout:
     async def test_rest_timeout_triggers_cb_and_post_hook_and_metrics_counter_failure(self, tool_service):
         """REST tool timeout should trigger cb timeout state and post-invoke hook; metrics counter failures are swallowed."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
@@ -6220,7 +6220,7 @@ class TestInvokeToolRestTimeout:
     async def test_rest_timeout_with_plugin_manager_no_context_and_no_post_hook(self, tool_service):
         """Covers branches where plugin manager is present but no context_table and no TOOL_POST_INVOKE hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
@@ -6329,7 +6329,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
     async def test_rest_pre_invoke_modified_payload_with_headers_none(self, tool_service):
         """Pre-invoke hook that modifies args but provides headers=None should not overwrite headers."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", jsonpath_filter="")
         db = MagicMock()
@@ -7301,7 +7301,7 @@ class TestInvokeToolPluginContext:
     async def test_global_context_updated_with_server_id_and_email(self, tool_service):
         """Plugin global context is updated with gateway_id and user email."""
         # First-Party
-        from mcpgateway.plugins.framework.models import GlobalContext
+        from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-42")
         db = MagicMock()
@@ -7350,7 +7350,7 @@ class TestInvokeToolPluginContext:
     async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
         """Covers the false branches for global_context.server_id/user propagation."""
         # First-Party
-        from mcpgateway.plugins.framework.models import GlobalContext
+        from cpex.framework.models import GlobalContext
 
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id=None, jsonpath_filter="")
         db = MagicMock()
@@ -7989,7 +7989,7 @@ class TestInvokeToolA2A:
     async def test_a2a_pre_invoke_modifies_payload_headers_and_custom_format_without_trailing_slash(self, tool_service):
         """A2A custom agents without trailing slash use custom format; pre-invoke can rewrite headers/args."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8463,7 +8463,7 @@ class TestInvokeToolA2A:
     async def test_a2a_timeout_triggers_cb_context_and_post_hook(self, tool_service):
         """A2A timeout should mark cb_timeout_failure on contexts and invoke TOOL_POST_INVOKE hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(
             integration_type="A2A",
@@ -8648,8 +8648,8 @@ class TestInvokeToolMcpSse:
         plugin-injected value.
         """
         # First-Party
-        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
-        from mcpgateway.plugins.framework.models import PluginResult
+        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from cpex.framework import PluginResult
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -8680,7 +8680,7 @@ class TestInvokeToolMcpSse:
                 return False
 
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_PRE_INVOKE)
@@ -9304,7 +9304,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
     async def test_mcp_sse_timeout_triggers_post_hook_and_cb_context(self, tool_service):
         """Timeout during MCP SSE invocation should mark cb_timeout_failure and invoke TOOL_POST_INVOKE."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9432,7 +9432,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_pool_not_initialized_falls_back_and_plugin_pre_invoke_no_metadata_no_modified_payload(self, tool_service):
         """Covers pool-not-initialized fallback + MCP pre-invoke branches for missing metadata/modified_payload."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9501,8 +9501,8 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_uses_registry_and_modified_payload_with_headers_none(self, tool_service):
         """Covers registry StreamableHTTP path + modified_payload headers=None branch (#4205)."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.transports.streamablehttp_transport import request_headers_var
+        from cpex.framework import ToolHookType
+        from mcpgateway.transports.context import request_headers_var
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
@@ -9563,7 +9563,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
     async def test_streamablehttp_timeout_triggers_post_hook_without_context(self, tool_service):
         """Covers StreamableHTTP timeout handler plugin branches when context_table is falsy."""
         # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
+        from cpex.framework import ToolHookType
 
         tp = _make_tool_payload(integration_type="MCP", request_type="StreamableHTTP", gateway_id="gw-uuid-1", jsonpath_filter="")
         gp = _make_gateway_payload(auth_type="oauth", oauth_config={"grant_type": "client_credentials"})

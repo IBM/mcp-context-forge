@@ -11,7 +11,7 @@ carrying user identity, as well as filtering of sensitive attributes before
 propagation.
 
 Examples:
-    >>> from mcpgateway.plugins.framework.models import UserContext
+    >>> from mcpgateway.transports.context import UserContext
     >>> uc = UserContext(user_id="alice@co.com", email="alice@co.com", is_admin=False, groups=["eng"], auth_method="bearer")
     >>> filtered = filter_sensitive_attributes(uc, ["password_hash"])
     >>> "password_hash" not in filtered.attributes
@@ -26,7 +26,7 @@ from typing import Any, Dict, Optional
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.plugins.framework.models import UserContext
+from mcpgateway.transports.context import UserContext
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def build_identity_headers(
         Dict of HTTP headers to merge into the outbound request.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import UserContext
+        >>> from mcpgateway.transports.context import UserContext
         >>> uc = UserContext(user_id="bob@co.com", email="bob@co.com", is_admin=True, teams=["t1","t2"], auth_method="bearer")
         >>> h = build_identity_headers(uc)
         >>> isinstance(h, dict)
@@ -138,7 +138,7 @@ def build_identity_meta(
         Updated _meta dict with user identity under the ``user`` key.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import UserContext
+        >>> from mcpgateway.transports.context import UserContext
         >>> uc = UserContext(user_id="alice@co.com", groups=["eng"])
         >>> meta = build_identity_meta(uc, {"existing_key": "val"})
         >>> meta["existing_key"]
@@ -189,7 +189,7 @@ def filter_sensitive_attributes(
         A new UserContext with sensitive keys removed from ``attributes``.
 
     Examples:
-        >>> from mcpgateway.plugins.framework.models import UserContext
+        >>> from mcpgateway.transports.context import UserContext
         >>> uc = UserContext(user_id="x", attributes={"password_hash": "secret", "dept": "eng"})
         >>> filtered = filter_sensitive_attributes(uc, ["password_hash"])
         >>> "password_hash" in filtered.attributes

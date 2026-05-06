@@ -14,7 +14,7 @@ from llmguardplugin.llmguard import LLMGuardBase
 from llmguardplugin.schema import LLMGuardConfig
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

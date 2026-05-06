@@ -46,6 +46,7 @@ import uuid
 import warnings
 
 # Third-Party
+from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
@@ -106,20 +107,15 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
-from mcpgateway.plugins.framework import (
+from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
-    HttpHookType,
     init_plugin_manager_factory,
-    PluginError,
-    PluginViolationError,
-    PromptHookType,
-    ResourceHookType,
     shutdown_plugin_manager_factory,
     start_plugin_invalidation_listener,
     stop_plugin_invalidation_listener,
 )
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -1296,7 +1292,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # modules can reach Redis without importing mcpgateway.utils directly
     # (isolation enforced by scripts/pre-commit/check_framework_imports.py).
     # First-Party
-    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
 
     set_shared_redis_provider(get_redis_client)
 
@@ -1426,7 +1422,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 init_exc,
             )
             # First-Party
-            from mcpgateway.plugins.framework import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
 
             mark_factory_init_degraded()
 
@@ -1456,7 +1452,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Wire observability adapter to plugin manager if observability is enabled
         if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
             # First-Party
-            from mcpgateway.plugins.framework import set_global_observability  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins import set_global_observability  # pylint: disable=import-outside-toplevel
             from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter  # pylint: disable=import-outside-toplevel
 
             set_global_observability(ObservabilityServiceAdapter(service=_service))
@@ -2193,8 +2189,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
                      otherwise defaults to 200 for JSON-RPC compliance.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
-        >>> from mcpgateway.plugins.framework.models import PluginViolation
+        >>> from cpex.framework import PluginViolationError
+        >>> from cpex.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
@@ -2276,8 +2272,8 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginError
-        >>> from mcpgateway.plugins.framework.models import PluginErrorModel
+        >>> from cpex.framework import PluginError
+        >>> from cpex.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json

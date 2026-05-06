@@ -74,10 +74,7 @@ def _snapshot_config(bind, rev: str, values: dict) -> None:
     """
     inspector = sa.inspect(bind)
     if "migration_metadata" not in inspector.get_table_names():
-        logger.warning(
-            "migration_metadata table not found; skipping config snapshot. "
-            "Downgrade will use live settings (non-hermetic)."
-        )
+        logger.warning("migration_metadata table not found; skipping config snapshot. " "Downgrade will use live settings (non-hermetic).")
         return
     for key, value in values.items():
         bind.execute(
@@ -207,12 +204,16 @@ def upgrade() -> None:
     new_team_member_role = settings.default_team_member_role
 
     # Snapshot config values so downgrade() can be hermetic.
-    _snapshot_config(bind, revision, {
-        "default_admin_role": new_admin_role,
-        "default_user_role": new_user_role,
-        "default_team_owner_role": new_team_owner_role,
-        "default_team_member_role": new_team_member_role,
-    })
+    _snapshot_config(
+        bind,
+        revision,
+        {
+            "default_admin_role": new_admin_role,
+            "default_user_role": new_user_role,
+            "default_team_owner_role": new_team_owner_role,
+            "default_team_member_role": new_team_member_role,
+        },
+    )
 
     total = 0
 
@@ -359,10 +360,7 @@ def downgrade() -> None:
         new_team_member_role = snapshot.get("default_team_member_role", settings.default_team_member_role)
         print(f"  ✓ Loaded config snapshot from migration_metadata (revision={revision})")
     else:
-        logger.warning(
-            "No config snapshot found in migration_metadata. "
-            "Falling back to live settings — downgrade correctness depends on env vars matching upgrade time."
-        )
+        logger.warning("No config snapshot found in migration_metadata. " "Falling back to live settings — downgrade correctness depends on env vars matching upgrade time.")
         new_admin_role = settings.default_admin_role
         new_user_role = settings.default_user_role
         new_team_owner_role = settings.default_team_owner_role

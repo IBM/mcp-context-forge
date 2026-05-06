@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/test_identity_propagation.py
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
-
-Tests for identity propagation utilities.
+"""Tests for identity propagation utilities.
 
 Tests cover:
 - UserContext model creation and serialization
@@ -31,7 +26,8 @@ from pydantic import SecretStr
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.models import GlobalContext, PluginContext, UserContext
+from cpex.framework import GlobalContext, PluginContext
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.identity_propagation import (
     _resolve_config,
     _sign_claims,
@@ -282,7 +278,7 @@ class TestFilterSensitiveAttributes:
 # GlobalContext.user_context tests
 # ---------------------------------------------------------------------------
 class TestGlobalContextUserContext:
-    """Tests for GlobalContext.user_context field."""
+    """Tests for GlobalContext.user_context (typed UserContext field on the global context)."""
 
     def test_default_none(self):
         ctx = GlobalContext(request_id="req-1")
@@ -307,63 +303,89 @@ class TestGlobalContextUserContext:
 # ---------------------------------------------------------------------------
 # PluginContext convenience helpers tests
 # ---------------------------------------------------------------------------
+def _get_user_context(ctx: PluginContext):
+    """Extract UserContext from plugin context, mirroring the production accessor pattern."""
+    return ctx.global_context.user_context
+
+
+def _get_user_email(ctx: PluginContext):
+    """Extract user email from plugin context, mirroring the production accessor pattern."""
+    uc = ctx.global_context.user_context
+    if uc is not None:
+        return uc.email
+    user = ctx.global_context.user
+    if isinstance(user, str):
+        return user
+    if isinstance(user, dict):
+        return user.get("email")
+    return None
+
+
+def _get_user_groups(ctx: PluginContext):
+    """Extract user groups from plugin context, mirroring the production accessor pattern."""
+    uc = ctx.global_context.user_context
+    if uc is not None:
+        return uc.groups
+    return []
+
+
 class TestPluginContextHelpers:
-    """Tests for PluginContext convenience properties."""
+    """Tests for PluginContext user identity extraction via GlobalContext.state."""
 
     def test_user_context_property(self):
         uc = UserContext(user_id="alice@co.com", groups=["eng"])
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_context is uc
+        assert _get_user_context(ctx) is uc
 
     def test_user_context_none(self):
         gctx = GlobalContext(request_id="req-1")
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_context is None
+        assert _get_user_context(ctx) is None
 
     def test_user_email_from_user_context(self):
         uc = UserContext(user_id="alice@co.com", email="alice@co.com")
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_email == "alice@co.com"
+        assert _get_user_email(ctx) == "alice@co.com"
 
     def test_user_email_from_legacy_string(self):
         gctx = GlobalContext(request_id="req-1", user="bob@co.com")
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_email == "bob@co.com"
+        assert _get_user_email(ctx) == "bob@co.com"
 
     def test_user_email_from_legacy_dict(self):
         gctx = GlobalContext(request_id="req-1", user={"email": "charlie@co.com"})
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_email == "charlie@co.com"
+        assert _get_user_email(ctx) == "charlie@co.com"
 
     def test_user_email_none(self):
         gctx = GlobalContext(request_id="req-1")
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_email is None
+        assert _get_user_email(ctx) is None
 
     def test_user_groups_from_context(self):
         uc = UserContext(user_id="alice@co.com", groups=["eng", "dev"])
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_groups == ["eng", "dev"]
+        assert _get_user_groups(ctx) == ["eng", "dev"]
 
     def test_user_groups_empty_default(self):
         gctx = GlobalContext(request_id="req-1")
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_groups == []
+        assert _get_user_groups(ctx) == []
 
     def test_user_email_none_when_uc_email_is_none(self):
         uc = UserContext(user_id="alice@co.com")  # email is None
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_email is None
+        assert _get_user_email(ctx) is None
 
     def test_user_groups_empty_list_from_uc(self):
         uc = UserContext(user_id="alice@co.com", groups=[])
         gctx = GlobalContext(request_id="req-1", user_context=uc)
         ctx = PluginContext(global_context=gctx)
-        assert ctx.user_groups == []
+        assert _get_user_groups(ctx) == []
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +487,7 @@ class TestSignClaims:
 
     @patch("mcpgateway.utils.identity_propagation.settings")
     def test_uses_identity_claims_secret(self, mock_settings):
-        mock_settings.identity_claims_secret = "my-secret"  # pragma: allowlist secret
+        mock_settings.identity_claims_secret = "my-secret" # pragma: allowlist secret
         sig = _sign_claims("test-payload")
         assert len(sig) == 64  # SHA-256 hex
 
@@ -773,15 +795,16 @@ class TestInjectUserInfoUserContext:
 
         gctx = mock_request.state.plugin_global_context
         assert gctx is not None
-        assert gctx.user_context is not None
-        assert gctx.user_context.user_id == "alice@example.com"
-        assert gctx.user_context.email == "alice@example.com"
-        assert gctx.user_context.is_admin is True
-        assert gctx.user_context.full_name == "Alice"
-        assert gctx.user_context.teams == ["team-1", "team-2"]
-        assert gctx.user_context.team_id == "team-1"
-        assert gctx.user_context.auth_method == "bearer"
-        assert gctx.user_context.authenticated_at is not None
+        uc = gctx.user_context
+        assert uc is not None
+        assert uc.user_id == "alice@example.com"
+        assert uc.email == "alice@example.com"
+        assert uc.is_admin is True
+        assert uc.full_name == "Alice"
+        assert uc.teams == ["team-1", "team-2"]
+        assert uc.team_id == "team-1"
+        assert uc.auth_method == "bearer"
+        assert uc.authenticated_at is not None
 
     def test_populates_legacy_user_dict(self):
         # First-Party
@@ -826,10 +849,11 @@ class TestInjectUserInfoUserContext:
 
         _inject_userinfo_instate(mock_request, mock_user)
 
-        assert existing_gctx.user_context is not None
-        assert existing_gctx.user_context.auth_method == "basic"
+        uc = existing_gctx.user_context
+        assert uc is not None
+        assert uc.auth_method == "basic"
         # [] is a list, so isinstance([], list) is True → teams = []
-        assert existing_gctx.user_context.teams == []
+        assert uc.teams == []
 
     def test_no_request_still_builds_context(self):
         # First-Party
@@ -1170,7 +1194,6 @@ class TestRBACProxyUserContextFailure:
             caught = False
             try:
                 from mcpgateway.middleware.rbac import UserContext
-
                 UserContext(
                     user_id=proxy_user,
                     email=proxy_user,
@@ -1182,7 +1205,9 @@ class TestRBACProxyUserContextFailure:
                     plugin_global_context.user_context = None
             except Exception as ctx_err:
                 caught = True
-                logging.getLogger("mcpgateway.middleware.rbac").debug(f"Could not build UserContext for proxy auth: {ctx_err}")
+                logging.getLogger("mcpgateway.middleware.rbac").debug(
+                    f"Could not build UserContext for proxy auth: {ctx_err}"
+                )
 
             assert caught
 
@@ -1270,8 +1295,7 @@ class TestResourceServiceIdentityInjection:
         user_identity = user_ctx
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
             if user_identity:
-                from mcpgateway.plugins.framework.models import UserContext as UserCtx
-
+                from mcpgateway.transports.context import UserContext as UserCtx
                 if isinstance(user_identity, UserCtx):
                     headers.update(build_identity_headers(user_identity))
 
@@ -1282,13 +1306,13 @@ class TestResourceServiceIdentityInjection:
         """build_identity_headers called in direct_proxy resource read path."""
         user_ctx = UserContext(user_id="bob@test.com", email="bob@test.com")
         mock_gateway = MagicMock()
-        plugin_global_context = GlobalContext(request_id="req-1")
-        plugin_global_context.user_context = user_ctx
+        plugin_global_context = GlobalContext(request_id="req-1", user_context=user_ctx)
         headers = {"Authorization": "Bearer tok"}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            if plugin_global_context and plugin_global_context.user_context:
-                headers.update(build_identity_headers(plugin_global_context.user_context, mock_gateway))
+            uc = plugin_global_context.user_context
+            if plugin_global_context and uc:
+                headers.update(build_identity_headers(uc, mock_gateway))
 
         assert "X-Forwarded-User-Id" in headers
 
@@ -1320,28 +1344,28 @@ class TestToolServiceIdentityInjection:
     def test_rest_tool_injects_identity_headers(self):
         """build_identity_headers called for REST tool invocation."""
         user_ctx = UserContext(user_id="bob@test.com", email="bob@test.com")
-        global_context = GlobalContext(request_id="req-1")
-        global_context.user_context = user_ctx
+        global_context = GlobalContext(request_id="req-1", user_context=user_ctx)
         headers = {}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            if global_context and global_context.user_context:
-                headers.update(build_identity_headers(global_context.user_context))
+            uc = global_context.user_context
+            if global_context and uc:
+                headers.update(build_identity_headers(uc))
 
         assert "X-Forwarded-User-Id" in headers
 
     def test_mcp_tool_injects_headers_and_meta(self):
         """build_identity_headers + build_identity_meta called for MCP tool invocation."""
         user_ctx = UserContext(user_id="charlie@test.com", email="charlie@test.com")
-        global_context = GlobalContext(request_id="req-2")
-        global_context.user_context = user_ctx
+        global_context = GlobalContext(request_id="req-2", user_context=user_ctx)
         headers = {}
         meta_data = {}
 
         with patch("mcpgateway.utils.identity_propagation._resolve_config", return_value=self._enabled_config()):
-            if global_context and global_context.user_context:
-                headers.update(build_identity_headers(global_context.user_context))
-                meta_data = build_identity_meta(global_context.user_context, meta_data)
+            uc = global_context.user_context
+            if global_context and uc:
+                headers.update(build_identity_headers(uc))
+                meta_data = build_identity_meta(uc, meta_data)
 
         assert "X-Forwarded-User-Id" in headers
         assert "user" in meta_data

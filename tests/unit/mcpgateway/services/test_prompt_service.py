@@ -208,8 +208,8 @@ class TestPromptServiceInit:
     @pytest.mark.asyncio
     async def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
         """Cover env-override parsing in PromptService._get_plugin_manager (PLUGINS_ENABLED)."""
-        # First-Party
-        from mcpgateway.plugins.framework import enable_plugins, reset_plugin_manager_factory
+        from mcpgateway.plugins import enable_plugins, reset_plugin_manager_factory
+
 
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
         enable_plugins(False)
@@ -889,7 +889,7 @@ class TestPromptService:
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+        from cpex.framework import GlobalContext, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
 
@@ -947,7 +947,7 @@ class TestPromptService:
         from contextlib import contextmanager
 
         # First-Party
-        from mcpgateway.plugins.framework import PromptHookType, PromptPrehookPayload
+        from cpex.framework import PromptHookType, PromptPrehookPayload
 
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))

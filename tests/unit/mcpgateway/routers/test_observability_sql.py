@@ -37,7 +37,7 @@ def allow_permission(monkeypatch):
             return True
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
 
 
 class TestQueryPerformancePostgresql:

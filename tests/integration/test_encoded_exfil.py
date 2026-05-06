@@ -14,7 +14,7 @@ import base64
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

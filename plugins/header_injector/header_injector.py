@@ -21,7 +21,7 @@ from typing import Dict, Optional
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

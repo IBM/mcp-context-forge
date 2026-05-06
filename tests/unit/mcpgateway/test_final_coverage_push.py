@@ -25,7 +25,7 @@ from mcpgateway.schemas import BaseModelWithConfigDict
 async def _call_toolops(handler, monkeypatch, **kwargs):
     # First-Party
     import mcpgateway.middleware.rbac as rbac_module
-    import mcpgateway.plugins.framework as plugins_framework
+    import cpex.framework as plugins_framework
 
     class DummyPermissionService:
         def __init__(self, db):

@@ -37,8 +37,8 @@ from typing import Optional
 import jwt
 from pydantic import BaseModel, Field
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     HttpAuthResolveUserPayload,
     Plugin,
     PluginConfig,

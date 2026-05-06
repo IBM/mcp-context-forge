@@ -20,7 +20,7 @@ import yaml
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginManager,
     PromptHookType,

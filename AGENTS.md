@@ -28,12 +28,12 @@ mcpgateway/                 # Core FastAPI application
 ├── routers/                # HTTP endpoint definitions (19 routers)
 ├── middleware/             # Cross-cutting concerns (16 middleware)
 ├── transports/             # Protocol implementations (SSE, WebSocket, stdio, streamable HTTP)
-├── plugins/                # Plugin framework infrastructure
+├── plugins/                # Plugin integration (uses cpex external package)
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugin_templates/           # Starter templates for building new plugins
+plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)

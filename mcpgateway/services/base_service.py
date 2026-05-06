@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 
 # First-Party
-from mcpgateway.plugins.framework import get_plugin_manager
+from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
 

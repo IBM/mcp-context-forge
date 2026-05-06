@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -6796,6 +6796,7 @@ class ToolPluginBinding(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    on_error: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -6809,6 +6810,7 @@ class ToolPluginBinding(Base):
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
         Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_tool_plugin_bindings_on_error_valid"),
     )
 
     def __repr__(self) -> str:

@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, ToolPostInvokePayload, ToolPostInvokeResult
+from cpex.framework import Plugin, PluginConfig, PluginContext, ToolPostInvokePayload, ToolPostInvokeResult
 
 
 class ToolOutputSentinelConfig(BaseModel):

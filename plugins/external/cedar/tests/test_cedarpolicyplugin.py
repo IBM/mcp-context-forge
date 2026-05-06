@@ -7,10 +7,10 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
-from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.plugins.framework.hooks.resources import ResourcePostFetchPayload, ResourcePreFetchPayload
-from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
-from mcpgateway.plugins.framework.models import (
+from cpex.framework.hooks.prompts import PromptPosthookPayload, PromptPrehookPayload
+from cpex.framework.hooks.resources import ResourcePostFetchPayload, ResourcePreFetchPayload
+from cpex.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework.models import (
     GlobalContext,
     PluginConfig,
     PluginContext,

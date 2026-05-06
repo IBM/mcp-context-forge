@@ -33,10 +33,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.hooks.tools import (
+from cpex.framework.hooks.tools import (
     ToolPostInvokePayload,
 )
-from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginContext
+from cpex.framework.models import GlobalContext, PluginConfig, PluginContext
 from plugins.output_length_guard import (
     OutputLengthGuardConfig,
     OutputLengthGuardPlugin,

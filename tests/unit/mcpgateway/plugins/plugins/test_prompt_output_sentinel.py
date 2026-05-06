@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import PluginConfig, PromptPosthookPayload
+from cpex.framework import PluginConfig, PromptPosthookPayload
 from plugins.test_prompt_output_sentinel import PromptOutputSentinelPlugin
 
 

@@ -6,7 +6,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["resource_post_fetch"]
     tags: ["plugin", "resource", "parity", "test"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
     conditions:
       - resources: ["time://formats"]
@@ -23,7 +23,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["tool_post_invoke"]
     tags: ["plugin", "tool", "parity", "test"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 110
     conditions:
       - tools: ["fast-time-get-system-time"]
@@ -39,7 +39,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["prompt_post_fetch"]
     tags: ["plugin", "prompt", "parity", "test"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 120
     conditions:
       - prompts: ["fast-time-convert-time-detailed"]

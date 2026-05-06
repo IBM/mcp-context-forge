@@ -20,8 +20,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.admin import admin_add_resource
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError, ResourceHookType
-from mcpgateway.plugins.framework.models import PluginResult
+from cpex.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError, ResourceHookType
+from cpex.framework.models import PluginResult
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 
 
@@ -111,7 +111,7 @@ class TestResourceServicePluginIntegration:
     def resource_service_with_plugins(self):
         """Create a ResourceService instance with a mocked plugin manager."""
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult as PR
+        from cpex.framework.models import PluginResult as PR
 
         mock_manager = MagicMock()
         mock_manager._initialized = False
@@ -330,8 +330,9 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_content_filtered_by_plugin(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with content filtering by post-fetch hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        from cpex.framework.models import PluginResult
+        from cpex.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -483,8 +484,9 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_post_fetch_blocking(self, resource_service_with_plugins, mock_db):
         """Test read_resource blocked by post-fetch hook."""
         # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        from cpex.framework.models import PluginResult
+        from cpex.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -579,8 +581,9 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_context_propagation(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test context propagation from pre-fetch to post-fetch."""
         # First-Party
-        from mcpgateway.plugins.framework import ResourceHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        from cpex.framework.models import PluginResult
+        from cpex.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True

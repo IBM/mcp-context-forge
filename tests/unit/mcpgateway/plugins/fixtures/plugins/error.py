@@ -8,7 +8,7 @@ Authors: Mihai Criveti
 Error plugin.
 """
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PluginContext,
     Plugin,
     PromptPosthookPayload,

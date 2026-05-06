@@ -4770,7 +4770,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
 	@find . -type f -name '*.toml' \
 	  -not -path './.cache/*' \
-	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"

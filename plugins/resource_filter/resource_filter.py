@@ -18,8 +18,8 @@ import re
 from typing import List, Pattern
 from urllib.parse import urlparse
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -88,8 +88,8 @@ class ResourceFilterPlugin(Plugin):
         # Check if URI has a scheme
         if not parsed.scheme:
             violation = PluginViolation(reason="Invalid URI format", description="URI must have a valid scheme (protocol)", code="INVALID_URI", details={"uri": payload.uri})
-            # In permissive mode, log but continue
-            if self.mode == PluginMode.PERMISSIVE:
+            # In transform mode, log but continue
+            if self.mode == PluginMode.TRANSFORM:
                 return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
             return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
@@ -101,8 +101,8 @@ class ResourceFilterPlugin(Plugin):
                 code="PROTOCOL_BLOCKED",
                 details={"uri": payload.uri, "protocol": parsed.scheme, "allowed": self.allowed_protocols},
             )
-            # In permissive mode, log but continue
-            if self.mode == PluginMode.PERMISSIVE:
+            # In transform mode, log but continue
+            if self.mode == PluginMode.TRANSFORM:
                 return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
             return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
@@ -115,8 +115,8 @@ class ResourceFilterPlugin(Plugin):
                 violation = PluginViolation(
                     reason="Domain is blocked", description=f"Domain '{parsed.netloc}' is in blocked list", code="DOMAIN_BLOCKED", details={"uri": payload.uri, "domain": parsed.netloc}
                 )
-                # In permissive mode, log but continue
-                if self.mode == PluginMode.PERMISSIVE:
+                # In transform mode, log but continue
+                if self.mode == PluginMode.TRANSFORM:
                     return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
                 return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
@@ -172,8 +172,8 @@ class ResourceFilterPlugin(Plugin):
                     code="CONTENT_TOO_LARGE",
                     details={"uri": payload.uri, "size": len(filtered_text.encode("utf-8")), "max_size": self.max_content_size},
                 )
-                # In permissive mode, log but continue
-                if self.mode == PluginMode.PERMISSIVE:
+                # In transform mode, log but continue
+                if self.mode == PluginMode.TRANSFORM:
                     return ResourcePostFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
                 return ResourcePostFetchResult(continue_processing=False, violation=violation)
 

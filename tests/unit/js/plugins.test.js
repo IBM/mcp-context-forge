@@ -800,7 +800,7 @@ describe("showPluginDetails", () => {
     expect(modalContent.innerHTML).toContain("A test plugin");
     expect(modalContent.innerHTML).toContain("Alice");
     expect(modalContent.innerHTML).toContain("1.2.3");
-    expect(modalContent.innerHTML).toContain("enforce");
+    expect(modalContent.innerHTML).toContain("Enforce");
     expect(modalContent.innerHTML).toContain("100");
     expect(modalContent.innerHTML).toContain("pre_request");
     expect(modalContent.innerHTML).toContain("post_request");
@@ -880,7 +880,7 @@ describe("showPluginDetails", () => {
 
     await showPluginDetails("test");
 
-    expect(modalContent.innerHTML).toContain("bg-yellow-100 text-yellow-800");
+    expect(modalContent.innerHTML).toContain("bg-blue-100 text-blue-800");
   });
 
   test("shows error message on fetch failure", async () => {

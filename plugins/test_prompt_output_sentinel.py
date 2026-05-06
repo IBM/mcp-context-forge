@@ -17,7 +17,7 @@ from copy import deepcopy
 
 from pydantic import BaseModel, Field
 
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PromptPosthookPayload, PromptPosthookResult
+from cpex.framework import Plugin, PluginConfig, PluginContext, PromptPosthookPayload, PromptPosthookResult
 
 
 class PromptOutputSentinelConfig(BaseModel):

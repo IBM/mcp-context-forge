@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional
 
 import orjson
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -75,7 +75,7 @@ class ToonEncoderPlugin(Plugin):
         _skip_on_error: Whether to continue on conversion errors.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginConfig, HookType
+        >>> from cpex.framework import PluginConfig, HookType
         >>> config = PluginConfig(
         ...     name="ToonEncoder",
         ...     kind="plugins.toon_encoder.toon_encoder.ToonEncoderPlugin",
@@ -139,7 +139,7 @@ class ToonEncoderPlugin(Plugin):
 
         Examples:
             >>> import asyncio
-            >>> from mcpgateway.plugins.framework import PluginConfig, PluginContext, GlobalContext, HookType
+            >>> from cpex.framework import PluginConfig, PluginContext, GlobalContext, HookType
             >>> config = PluginConfig(
             ...     name="test", kind="test", hooks=[HookType.TOOL_POST_INVOKE], priority=1
             ... )
@@ -332,7 +332,7 @@ class ToonEncoderPlugin(Plugin):
             Dictionary with conversion statistics.
 
         Examples:
-            >>> from mcpgateway.plugins.framework import PluginConfig, HookType
+            >>> from cpex.framework import PluginConfig, HookType
             >>> config = PluginConfig(
             ...     name="test", kind="test", hooks=[HookType.TOOL_POST_INVOKE], priority=1
             ... )

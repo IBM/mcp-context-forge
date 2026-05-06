@@ -7,19 +7,19 @@ Plugins: How They Work in ContextForge
 - Hybrid model: Runs both self-contained plugins in‑process and external plugins as MCP servers; both implement the same hook interface.
 - Lifecycle hooks: Six production hooks cover prompts, tools, and resources: `prompt_pre_fetch`, `prompt_post_fetch`, `tool_pre_invoke`, `tool_post_invoke`, `resource_pre_fetch`, `resource_post_fetch`.
 - Sequential execution: Plugins execute in priority order (ascending). Each result can modify payloads or block processing.
-- Modes: `enforce`, `enforce_ignore_error`, `permissive`, `disabled` control blocking and error behavior.
+- Modes: `sequential`, `transform`, `disabled` control blocking and error behavior. Use `sequential` with `on_error: ignore` to block violations but allow errors to pass.
 - Context sharing: Per-request GlobalContext plus per-plugin PluginContext with shared state across pre/post pairs; gateway auto-cleans stale contexts.
 - Configuration: Single YAML at `plugins/config.yaml` (Jinja-enabled). Strict Pydantic validation; per-plugin conditions for selective execution.
 - Safety: Per-call timeouts, payload size guardrails, error isolation, and audit visibility.
 
 **Core Interfaces**
-- Base class: `mcpgateway.plugins.framework.base.Plugin`
+- Base class: `cpex.framework.base.Plugin`
   - Exposes async methods for each hook; plugins override only the hooks they need.
   - Properties from config: `.name`, `.mode`, `.priority`, `.hooks`, `.tags`, `.conditions`.
-- Hook payload/result models (Pydantic) in `mcpgateway/plugins/framework/models.py`:
+- Hook payload/result models (Pydantic) in `cpex.framework.models`:
   - Prompt
     - `PromptPrehookPayload(name: str, args: dict[str, str])`
-    - `PromptPosthookPayload(name: str, result: PromptResult)`
+    - `PromptPosthookPayload(prompt_id: str, result: PromptResult)`
     - Results: `PromptPrehookResult`, `PromptPosthookResult`
   - Tool
     - `ToolPreInvokePayload(name: str, args: dict[str, Any])`
@@ -35,7 +35,7 @@ Plugins: How They Work in ContextForge
     - `violation: Optional[PluginViolation]` (when blocking or auditing)
     - `metadata: dict[str, Any] = {}` (accumulates across plugins)
 - Violation schema: `PluginViolation(reason, description, code, details)`; manager injects `violation.plugin_name` at runtime.
-- Contexts in `models.py`
+- Contexts in `cpex.framework.models`
   - `GlobalContext(request_id, user?, tenant_id?, server_id?, state={}, metadata={})`
   - `PluginContext(state={}, global_context: GlobalContext, metadata={})` with helpers `get_state`/`set_state`.
 
@@ -51,9 +51,8 @@ Plugins: How They Work in ContextForge
 - Ordering: Deterministic, by ascending `priority`. Lower runs first.
 - Conditions: A plugin's `conditions` must match for the current context to execute it. Fields include `server_ids`, `tenant_ids`, `tools`, `prompts`, `resources`, `user_patterns`, `content_types`. Matching helpers in `utils.py`.
 - Modes and blocking:
-  - `enforce`: If a result sets `continue_processing=False`, manager immediately returns a block with the violation.
-  - `enforce_ignore_error`: Enforce violations; errors don't block (manager may continue based on global settings).
-  - `permissive`: Log/report violations; continue.
+  - `sequential`: If a result sets `continue_processing=False`, manager immediately returns a block with the violation. Use `on_error: ignore` to block violations but allow errors to pass.
+  - `transform`: Log/report violations; continue.
   - `disabled`: Loaded but not executed.
 - Timeouts and errors:
   - Per-plugin timeout (default 30s) enforced via `asyncio.wait_for`.
@@ -68,7 +67,7 @@ Plugins: How They Work in ContextForge
   - `kind`: fully-qualified class path for native, or literal `external` for MCP plugins
   - `description`, `version`, `author`, `tags`
   - `hooks`: any of the six production hooks
-  - `mode`: `enforce | enforce_ignore_error | permissive | disabled`
+  - `mode`: `sequential | transform | disabled`
   - `priority`: int (smaller → earlier)
   - `conditions`: list of selector blocks (see Execution Model)
   - `applied_to` (optional): advanced targeting templates for tools/prompts/resources and context extraction
@@ -102,7 +101,7 @@ Plugins: How They Work in ContextForge
 - Validation: `script` must exist (if absolute) and be `.py`/`.sh` or executable; `url` must pass security validation.
 
 **Authoring Workflow**
-- CLI: `mcpplugins bootstrap --destination <dir> [--type native|external]` creates a project from templates in `plugin_templates/`.
+- CLI: `mcpplugins bootstrap --destination <dir> [--type native|external]` creates a project from CPEX's built-in templates (bundled in the `cpex` package).
   - Native template: Python class extending `Plugin`, with `plugin-manifest.yaml.jinja`, example config, and README.
   - External template: Full project with runtime config, tests, container build, and MCP server entrypoint.
 - External plugin dev loop (from Lifecycle docs):
@@ -236,9 +235,9 @@ Examples:
 
 **Example: Minimal Native Plugin**
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
-from mcpgateway.plugins.framework import PromptPrehookPayload, PromptPrehookResult
-from mcpgateway.plugins.framework import PluginViolation
+from cpex.framework import Plugin, PluginConfig, PluginContext
+from cpex.framework import PromptPrehookPayload, PromptPrehookResult
+from cpex.framework import PluginViolation
 
 class MyGuard(Plugin):
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -261,7 +260,7 @@ plugins:
   - name: "MyGuard"
     kind: "plugins.my_guard.plugin.MyGuard"
     hooks: ["prompt_pre_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
 ```
 
@@ -297,10 +296,10 @@ async function toolPreInvoke({ payload, context }: any) {
 - Federation: `federation_pre_sync`, `federation_post_sync`
 
 **Where to Look in the Code**
-- Framework: `mcpgateway/plugins/framework/{base.py,models.py,manager.py,registry.py,loader/,external/mcp/client.py}`
+- Framework: provided by the [`cpex`](https://github.com/contextforge-org/contextforge-plugins-framework) package (`cpex.framework`)
 - Built-in plugins: `plugins/{argument_normalizer,pii_filter,regex_filter,deny_filter,resource_filter}`
 - Gateway config: `plugins/config.yaml`
-- Templates and CLI: `plugin_templates/` and CLI `mcpplugins` in `mcpgateway/plugins/tools/cli.py`; prompts handled by `cookiecutter.json`.
+- Templates and CLI: Templates are bundled in the `cpex` package; CLI `mcpplugins` in `cpex.tools.cli`; prompts handled by `cookiecutter.json`.
 
 **Testing Plugins**
 - Code quality & pre-commit (see AGENTS.md for details):
@@ -317,7 +316,7 @@ async function toolPreInvoke({ payload, context }: any) {
 - Unit test a native plugin (pytest):
   ```python
   import pytest
-  from mcpgateway.plugins.framework import (
+  from cpex.framework import (
       HookType, PluginConfig, PluginContext, GlobalContext,
       PromptPrehookPayload, PromptPrehookResult,
   )
@@ -344,7 +343,7 @@ async function toolPreInvoke({ payload, context }: any) {
 - Unit test violation behavior (native):
   ```python
   import pytest
-  from mcpgateway.plugins.framework import (
+  from cpex.framework import (
       HookType, PluginConfig, PluginContext, GlobalContext,
       PromptPrehookPayload, PluginViolation,
   )
@@ -371,8 +370,8 @@ async function toolPreInvoke({ payload, context }: any) {
 - Integration test the pipeline via `PluginManager`:
   ```python
   import pytest
-  from mcpgateway.plugins.framework.manager import PluginManager
-  from mcpgateway.plugins.framework import GlobalContext, PromptPrehookPayload
+  from cpex.framework.manager import PluginManager
+  from cpex.framework import GlobalContext, PromptPrehookPayload
 
   @pytest.mark.asyncio
   async def test_manager_runs_plugins(tmp_path):
@@ -384,7 +383,7 @@ async function toolPreInvoke({ payload, context }: any) {
             - name: "PIIFilterPlugin"
               kind: "cpex_pii_filter.PIIFilterPlugin"
               hooks: ["prompt_pre_fetch"]
-              mode: "permissive"
+              mode: "transform"
               priority: 1
               config:
                 detect_email: true
@@ -419,7 +418,7 @@ async function toolPreInvoke({ payload, context }: any) {
      import pytest, json
      from mcp import ClientSession
      from mcp.client.streamable_http import streamablehttp_client
-     from mcpgateway.plugins.framework.models import HookType
+     from cpex.framework.models import HookType
 
      @pytest.mark.asyncio
      async def test_mcp_server_tool_pre_invoke():
