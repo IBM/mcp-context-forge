@@ -25,6 +25,7 @@ from starlette.types import ASGIApp
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 
 logger = logging.getLogger(__name__)
 
@@ -94,22 +95,22 @@ async def run_pre_request_hooks(
         # This guard can be disabled with PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=true
         # for deployments that require plugin-driven token exchange (e.g. WXO auth).
         #
-        # Note: When using a custom auth header (e.g., X-MCP-Gateway-Auth), the
-        # standard Authorization header is NOT protected, allowing it to pass through
-        # to downstream servers for their authentication.
+        # When AUTH_HEADER_NAME is customized (e.g. X-MCP-Gateway-Auth), the
+        # standard Authorization header carries the downstream-server token and
+        # MUST also stay protected from plugin overrides — otherwise a plugin
+        # could swap out a client-supplied downstream token. Both headers are
+        # protected; plugins may still create either header when the client
+        # did not send it.
         if not settings.plugins_can_override_auth_headers:
-            # Get the configured auth header name (handle mocks in tests)
-            auth_header_name = getattr(settings, "auth_header_name", "Authorization")
-            if not isinstance(auth_header_name, str):
-                auth_header_name = "Authorization"  # Fallback for mocked settings
+            auth_header_name = _resolve_auth_header_name(settings)
 
-            # Build list of protected headers - always protect the configured auth header
-            _auth_protected_headers = {auth_header_name.lower(), "cookie", "x-api-key", "proxy-authorization"}
-
-            # If using custom auth header, don't protect standard Authorization header
-            # This allows Authorization to pass through to downstream servers
-            if auth_header_name.lower() != "authorization":
-                _auth_protected_headers.discard("authorization")
+            _auth_protected_headers = {
+                auth_header_name.lower(),
+                "authorization",
+                "cookie",
+                "x-api-key",
+                "proxy-authorization",
+            }
 
             original_lower = {h.lower() for h in headers}
             overridden = {k.lower() for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}

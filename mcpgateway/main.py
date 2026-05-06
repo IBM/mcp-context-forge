@@ -197,7 +197,15 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import (
+    _resolve_auth_header_name,
+    extract_websocket_bearer_token,
+    get_auth_header_value,
+    is_proxy_auth_trust_active,
+    require_admin_auth,
+    require_docs_auth_override,
+    verify_jwt_token,
+)
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
 
@@ -2431,7 +2439,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         if is_protected:
             try:
-                token = request.headers.get("Authorization")
+                token = get_auth_header_value(request.headers)
                 cookie_token = request.cookies.get("jwt_token")
 
                 # Use dedicated docs authentication that bypasses global auth settings
@@ -2534,15 +2542,18 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            token = request.headers.get("Authorization")
+            token = get_auth_header_value(request.headers)
             cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
-            # Extract token from header or cookie
+            # Extract token from header or cookie. Bearer scheme matched
+            # case-insensitively to align with ConfigurableHTTPBearer.
             jwt_token = None
             if cookie_token:
                 jwt_token = cookie_token
-            elif token and token.startswith("Bearer "):
-                jwt_token = token.split(" ", 1)[1]
+            elif token:
+                scheme, _, credentials_value = token.partition(" ")
+                if scheme.lower() == "bearer" and credentials_value:
+                    jwt_token = credentials_value.strip() or None
 
             username = None
             token_teams = None
@@ -4045,7 +4056,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
         auth_token = None
-        auth_header = request.headers.get("authorization", "")
+        auth_header = get_auth_header_value(request.headers) or ""
         if auth_header.lower().startswith("bearer "):
             auth_token = auth_header[7:]
         elif hasattr(request, "cookies") and request.cookies:
@@ -10627,10 +10638,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 data = await websocket.receive_text()
                 client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
-                # Build headers for /rpc request - forward auth credentials
+                # Build headers for /rpc request - forward auth credentials.
+                # Use the configured AUTH_HEADER_NAME so ConfigurableHTTPBearer in
+                # the loopback target finds the JWT.
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
                 if auth_token:
-                    rpc_headers["Authorization"] = f"Bearer {auth_token}"
+                    rpc_headers[_resolve_auth_header_name(settings)] = f"Bearer {auth_token}"
                 if proxy_user:
                     rpc_headers[settings.proxy_user_header] = proxy_user
                 # Forward passthrough headers captured from the WebSocket handshake (see #3640).
@@ -10711,7 +10724,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
-        auth_header = request.headers.get("authorization", "")
+        auth_header = get_auth_header_value(request.headers) or ""
         if auth_header.lower().startswith("bearer "):
             auth_token = auth_header[7:]
         elif hasattr(request, "cookies") and request.cookies:

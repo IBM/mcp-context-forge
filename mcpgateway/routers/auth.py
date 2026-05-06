@@ -25,6 +25,7 @@ from mcpgateway.routers.email_auth import create_access_token, get_client_ip, ge
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 # Initialize logging
 logging_service = LoggingService()
@@ -218,12 +219,16 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
         # User is already authenticated via dependency injection
         user = current_user
 
-        # Extract JWT from Authorization header
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        # Extract JWT from the configured auth header (default: Authorization).
+        # Reading from settings.auth_header_name keeps logout aligned with the
+        # auth dependency that just validated the same caller; otherwise a custom
+        # AUTH_HEADER_NAME lets a request authenticate but never revoke its token.
+        auth_header = get_auth_header_value(request.headers) or ""
+        scheme, _, raw_token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not raw_token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No valid authorization token provided")
 
-        token = auth_header[7:]  # Remove "Bearer " prefix
+        token = raw_token.strip()
 
         # Decode token to get JTI and expiry
         # Third-Party

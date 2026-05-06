@@ -23,7 +23,7 @@ import warnings
 # Third-Party
 from cpex.framework import GlobalContext
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -40,15 +40,16 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
+from mcpgateway.utils.verify_credentials import ConfigurableHTTPBearer, is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
 
 # Generic 403 message — intentionally vague to avoid leaking permission names to callers
 _ACCESS_DENIED_MSG = "Access denied"
 
-# HTTP Bearer security scheme for token extraction
-security = HTTPBearer(auto_error=False)
+# Bearer security scheme — uses the configured auth header (AUTH_HEADER_NAME)
+# so RBAC token extraction stays aligned with the rest of the auth flow.
+security = ConfigurableHTTPBearer(auto_error=False)
 
 
 def get_db(request: Request = None) -> Generator[Session, None, None]:

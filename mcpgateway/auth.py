@@ -73,7 +73,7 @@ import uuid
 # Third-Party
 from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -92,75 +92,20 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    security,
+    verify_jwt_token_cached,
+)
 
-
-class ConfigurableHTTPBearer(HTTPBearer):
-    """HTTPBearer with configurable header name.
-
-    This class extends HTTPBearer to support custom authentication header names,
-    allowing ContextForge to use alternative headers like X-MCP-Gateway-Auth
-    instead of the standard Authorization header to avoid collisions with
-    downstream server authentication.
-
-    Inherits from HTTPBearer to maintain compatibility with FastAPI's OpenAPI
-    schema generation and security dependencies.
-    """
-
-    def __init__(self, *, scheme_name: Optional[str] = None, auto_error: bool = True):
-        """Initialize the configurable bearer authentication scheme.
-
-        Args:
-            scheme_name: Optional scheme name for OpenAPI docs
-            auto_error: Whether to automatically raise 403 on missing credentials
-        """
-        # Initialize parent HTTPBearer for OpenAPI compatibility
-        super().__init__(scheme_name=scheme_name, auto_error=auto_error)
-
-    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
-        """Extract bearer token from configured authentication header.
-
-        Args:
-            request: The incoming request
-
-        Returns:
-            HTTPAuthorizationCredentials if token found, None otherwise
-
-        Raises:
-            HTTPException: If auto_error is True and credentials are missing
-        """
-        # Use configured header name (default: Authorization)
-        # Get the header name and ensure it's a string (handle mocks in tests)
-        auth_header_name = getattr(settings, "auth_header_name", "Authorization")
-        if not isinstance(auth_header_name, str):
-            auth_header_name = "Authorization"  # Fallback for mocked settings
-
-        # Starlette normalizes headers to lowercase, so we need to search case-insensitively
-        auth_header_name_lower = auth_header_name.lower()
-
-        # Search through all headers case-insensitively
-        authorization = None
-        for header_name, header_value in request.headers.items():
-            if header_name.lower() == auth_header_name_lower:
-                authorization = header_value
-                break
-
-        if not authorization:
-            if self.auto_error:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authenticated")
-            return None
-
-        scheme, _, credentials = authorization.partition(" ")
-        if scheme.lower() != "bearer":
-            if self.auto_error:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid authentication credentials")
-            return None
-
-        return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
-
-
-# Security scheme with configurable header
-security = ConfigurableHTTPBearer(auto_error=False)
+__all__ = [
+    "ConfigurableHTTPBearer",
+    "security",
+    "get_current_user",
+    "get_user_team_roles",
+    "normalize_token_teams",
+    "resolve_session_teams",
+]
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name

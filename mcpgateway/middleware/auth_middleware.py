@@ -33,6 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
@@ -146,10 +147,11 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
 
         # 2. Try configured authentication header (default: Authorization)
         if not token:
-            auth_header_name = settings.auth_header_name.lower()
-            auth_header = request.headers.get(auth_header_name)
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.replace("Bearer ", "")
+            auth_header = get_auth_header_value(request.headers)
+            if auth_header:
+                scheme, _, credentials_value = auth_header.partition(" ")
+                if scheme.lower() == "bearer" and credentials_value:
+                    token = credentials_value
 
         # If no token found, continue without user context
         if not token:

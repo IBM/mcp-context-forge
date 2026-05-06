@@ -1,12 +1,22 @@
 # Configurable JWT Authentication Header
 
-ContextForge supports configurable HTTP headers for JWT authentication, allowing you to avoid header collisions with downstream MCP servers.
+ContextForge supports configurable HTTP headers for JWT authentication, allowing you to free up the standard `Authorization` header for downstream MCP servers.
 
 ## Overview
 
-By default, ContextForge uses the standard `Authorization` header for JWT authentication. However, when client applications need to pass their own JWT tokens to downstream MCP servers, this creates a header collision where ContextForge's authentication overwrites the client's token.
+By default, ContextForge uses the standard `Authorization` header for JWT authentication. When a client wants to send a *different* token to a downstream MCP server (for example, the user's own bearer token), the gateway-bound `Authorization` value collides with the downstream-bound one.
 
-The `AUTH_HEADER_NAME` configuration option solves this problem by allowing you to specify an alternative header for ContextForge authentication, preserving the original `Authorization` header for passthrough to backend servers.
+The `AUTH_HEADER_NAME` configuration option lets ContextForge read its own JWT from a different header (for example `X-MCP-Gateway-Auth`), so the standard `Authorization` header is left untouched on the inbound request and remains available for downstream forwarding.
+
+!!! warning "Authorization is not auto-forwarded to every downstream server"
+    Setting `AUTH_HEADER_NAME` only changes which header the *gateway* reads on the inbound request. Whether `Authorization` reaches a particular downstream MCP server depends on **how that gateway is registered**:
+
+    * `auth_type=none` registered gateways forward the inbound `Authorization` header as-is.
+    * `auth_type=basic`, `auth_type=bearer`, or `auth_type=oauth` registered gateways **replace** `Authorization` with the configured server credentials. The client's `Authorization` is not forwarded.
+    * For all gateway auth types, clients can opt into explicit downstream passthrough by sending `X-Upstream-Authorization: Bearer <token>`. ContextForge renames it to `Authorization` on the upstream request. This is the recommended mechanism when the registered gateway already uses its own auth.
+    * Internal gateway-to-gateway loopback never forwards `Authorization` (loop-prevention).
+
+    Use `AUTH_HEADER_NAME` together with `X-Upstream-Authorization` (or `auth_type=none` registrations) when you need a downstream-bound `Authorization` header.
 
 ## Configuration
 
@@ -35,16 +45,25 @@ While you can use any header name, these are commonly used alternatives:
 
 ### Scenario 1: JWT Passthrough to Downstream Servers
 
-**Problem**: Your client application has existing JWT-based authentication and needs to pass tokens to downstream MCP servers, but ContextForge's authentication overwrites the `Authorization` header.
+**Problem**: Your client has its own JWT for a downstream MCP server, but ContextForge's authentication uses the same `Authorization` header.
 
-**Solution**: Configure ContextForge to use an alternative authentication header:
+**Solution**: Configure ContextForge to read its JWT from a different header. Pair it with the appropriate forwarding mechanism for your registered gateway:
 
 ```bash
 # .env configuration
 AUTH_HEADER_NAME=X-MCP-Gateway-Auth
 ```
 
-**Client Request**:
+**Client Request (recommended — works regardless of gateway auth_type)**:
+```http
+POST /mcp HTTP/1.1
+Host: contextforge.example.com
+X-MCP-Gateway-Auth: Bearer <contextforge-jwt>
+X-Upstream-Authorization: Bearer <downstream-server-jwt>
+Content-Type: application/json
+```
+
+**Client Request (alternative — only when the registered gateway has `auth_type=none`)**:
 ```http
 POST /mcp HTTP/1.1
 Host: contextforge.example.com
@@ -54,9 +73,9 @@ Content-Type: application/json
 ```
 
 **Result**:
-- ContextForge authenticates using `X-MCP-Gateway-Auth` header
-- Original `Authorization` header is preserved and passed to downstream MCP servers
-- Backend servers receive the client's original JWT for their authentication
+- ContextForge authenticates using `X-MCP-Gateway-Auth`.
+- With `X-Upstream-Authorization`: the gateway renames it to `Authorization` on the upstream request, regardless of how the gateway is registered.
+- With raw `Authorization` and `auth_type=none`: the gateway forwards it as-is. With other auth types, the gateway will replace it with the registered credentials.
 
 ### Scenario 2: Multi-Tenant Deployments
 
@@ -93,24 +112,26 @@ X-Mcp-Gateway-Auth: Bearer token
 
 ### Header Passthrough
 
-When using a custom authentication header (not `Authorization`), the standard `Authorization` header is automatically preserved and passed through to downstream servers:
+`AUTH_HEADER_NAME` only changes how the gateway reads its own JWT on the inbound request. Downstream forwarding is governed by the gateway registration and the existing passthrough machinery:
 
-1. **Custom Auth Header**: ContextForge extracts JWT from configured header
-2. **Authorization Header**: Preserved in request and forwarded to backend
-3. **Other Headers**: All other headers pass through unchanged
+1. **Custom Auth Header (inbound)**: ContextForge extracts its JWT from `AUTH_HEADER_NAME`. The configured header and the standard `Authorization` header are both protected from plugin overrides on the inbound request.
+2. **Authorization to a downstream server**: forwarded only when the gateway is registered with `auth_type=none`, or when the client explicitly opts in via `X-Upstream-Authorization` (recommended).
+3. **Loopback (internal gateway-to-gateway)**: `Authorization` is never forwarded, regardless of `AUTH_HEADER_NAME`.
+4. **Other Headers**: subject to the standard passthrough allowlist (`enable_header_passthrough`, per-gateway overrides).
 
 ### Security Considerations
 
 #### Protected Headers
 
-When using a custom authentication header, ContextForge protects the configured header from plugin modification while allowing the standard `Authorization` header to pass through:
+When `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=false` (the default), ContextForge prevents plugin pre-request hooks from replacing client-supplied auth-sensitive headers. Both the gateway-bound and the downstream-bound auth headers are protected, so a plugin cannot silently swap a client's downstream token:
 
 **With `AUTH_HEADER_NAME=Authorization` (default)**:
-- Protected: `Authorization`, `Cookie`, `X-API-Key`, `Proxy-Authorization`
+- Protected from override: `Authorization`, `Cookie`, `X-API-Key`, `Proxy-Authorization`
 
 **With `AUTH_HEADER_NAME=X-MCP-Gateway-Auth`**:
-- Protected: `X-MCP-Gateway-Auth`, `Cookie`, `X-API-Key`, `Proxy-Authorization`
-- **Not Protected**: `Authorization` (allows passthrough)
+- Protected from override: `X-MCP-Gateway-Auth`, `Authorization`, `Cookie`, `X-API-Key`, `Proxy-Authorization`
+
+In both modes, plugins **may still create** `Authorization` (or the configured custom header) when the client did not send one — only existing client-supplied values are protected.
 
 #### Plugin Override Control
 
@@ -223,17 +244,24 @@ curl -v -H "X-MCP-Gateway-Auth: Bearer token" ...
 
 ### Authorization Header Not Passed Through
 
-**Symptom**: Downstream servers don't receive the `Authorization` header
+**Symptom**: Downstream servers don't receive the `Authorization` header even though `AUTH_HEADER_NAME` is set.
 
-**Solution**: Ensure you're using a custom authentication header (not `Authorization`):
+**Likely cause**: The registered gateway's `auth_type` is `basic`, `bearer`, or `oauth`. ContextForge replaces the inbound `Authorization` with those configured credentials. `AUTH_HEADER_NAME` only frees up the inbound side — it does not override gateway-credential injection.
 
-```bash
-# This enables passthrough
-AUTH_HEADER_NAME=X-MCP-Gateway-Auth
+**Solutions** (pick the one that matches your deployment):
 
-# This does NOT enable passthrough (default behavior)
-AUTH_HEADER_NAME=Authorization
+```http
+# Send the downstream-bound token via X-Upstream-Authorization (recommended)
+X-MCP-Gateway-Auth: Bearer <gateway-jwt>
+X-Upstream-Authorization: Bearer <downstream-jwt>
 ```
+
+```text
+# Or register the upstream gateway with auth_type=none, in which case the
+# client's inbound Authorization header is forwarded as-is.
+```
+
+If the request is going through internal loopback (gateway-to-gateway) the `Authorization` header is intentionally dropped to prevent loops; use `X-Upstream-Authorization` instead.
 
 ### Plugin Conflicts
 

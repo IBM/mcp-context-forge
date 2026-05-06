@@ -96,7 +96,14 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials, verify_oauth_access_token
+from mcpgateway.utils.verify_credentials import (
+    _resolve_auth_header_name,
+    get_auth_header_value,
+    is_proxy_auth_trust_active,
+    require_auth_header_first,
+    verify_credentials,
+    verify_oauth_access_token,
+)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -2040,8 +2047,11 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
 
         # Extract and verify user context
         # Use require_auth_header_first to match streamable_http_auth token precedence:
-        # Authorization header > request cookies > jwt_token parameter
-        auth_header = req_headers.get("authorization")
+        # configured auth header (default Authorization) > request cookies > jwt_token parameter.
+        # When AUTH_HEADER_NAME is customized, the gateway token is read from that
+        # header so a downstream-bound Authorization header cannot be misvalidated
+        # as the gateway token.
+        auth_header = get_auth_header_value(req_headers)
         cookie_token = request.cookies.get("jwt_token")
 
         try:
@@ -4120,9 +4130,13 @@ class SessionManagerWrapper:
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                         "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                     }
-                    # Copy auth header if present
-                    if "authorization" in headers:
-                        rpc_headers["authorization"] = headers["authorization"]
+                    # Forward the inbound gateway auth header (default: Authorization,
+                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
+                    # the same caller. Hardcoding "authorization" here would silently
+                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                    if _gw_auth_lower in headers:
+                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                     # Forward passthrough headers for upstream MCP servers (see #3640).
                     # First-Party
                     from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4287,8 +4301,9 @@ class SessionManagerWrapper:
                                 "x-mcp-session-id": mcp_session_id,
                                 "x-forwarded-internally": "true",
                             }
-                            if "authorization" in headers:
-                                rpc_headers["authorization"] = headers["authorization"]
+                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                            if _gw_auth_lower in headers:
+                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                             # Forward passthrough headers for upstream MCP servers (see #3640).
                             # First-Party
                             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
@@ -4785,7 +4800,7 @@ class _StreamableHttpAuthHandler:
             if origin and headers.get("access-control-request-method"):
                 return True
 
-        authorization = headers.get("authorization")
+        authorization = get_auth_header_value(headers)
         proxy_trusted = is_proxy_auth_trust_active(settings)
         proxy_user = headers.get(settings.proxy_user_header) if proxy_trusted else None
 
