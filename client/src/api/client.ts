@@ -2,14 +2,13 @@
  * API client — typed fetch wrapper.
  *
  * Security guarantees:
- *  - JWT is read from sessionStorage; never from a URL query param.
- *  - Authorization: Bearer header is added on every authenticated request.
- *  - Content-Type and X-Requested-With are always set on mutating requests.
+ *  - Authentication uses same-origin httpOnly cookies; JWTs are never stored in web storage.
+ *  - CSRF tokens are read from the non-httpOnly csrf_token cookie and sent on mutating requests.
+ *  - Content-Type and X-Requested-With are always set on JSON requests.
  *  - Non-2xx responses throw a typed ApiError; callers never handle raw text.
- *  - 401 responses clear the stored token and redirect to /app/login.
+ *  - Protected 401 responses redirect to /app/login.
  */
 
-const TOKEN_KEY = "mcpgateway_token";
 const LOGIN_PATH = "/app/login";
 
 export class ApiError extends Error {
@@ -23,20 +22,28 @@ export class ApiError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Token helpers — sessionStorage only
-// ---------------------------------------------------------------------------
-
 export function getToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
+  return null;
 }
 
 export function setToken(token: string): void {
-  sessionStorage.setItem(TOKEN_KEY, token);
+  void token;
+  // Kept for backward-compatible imports; cookie auth does not expose JWTs to JS.
 }
 
 export function clearToken(): void {
-  sessionStorage.removeItem(TOKEN_KEY);
+  // Kept for backward-compatible imports; cookies are cleared by /app/auth/logout.
+}
+
+function getCookie(name: string): string | null {
+  const prefix = `${encodeURIComponent(name)}=`;
+  const cookie = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
+
+  if (!cookie) return null;
+  return decodeURIComponent(cookie.slice(prefix.length));
 }
 
 // ---------------------------------------------------------------------------
@@ -71,10 +78,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...extraHeaders,
   };
 
-  if (!unauthenticated) {
-    const token = getToken();
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+  if (method !== "GET") {
+    const csrfToken = getCookie("csrf_token");
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
     }
   }
 
@@ -82,18 +89,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    // Credentials: omit — auth is via Bearer header, not cookies.  // pragma: allowlist secret
-    // This also means the browser will NOT auto-send cookies cross-origin,
-    // making CSRF attacks structurally impossible for these requests.
-    credentials: "omit", // pragma: allowlist secret
+    credentials: "same-origin",
     signal,
   });
 
   if (response.status === 401) {
-    clearToken();
-    // replace() rather than href= so the failed page is not added to history
-    // (the user can't hit Back into an unauthenticated state).
-    window.location.replace(LOGIN_PATH);
+    if (!unauthenticated && path !== "/app/auth/me") {
+      // replace() rather than href= so the failed page is not added to history
+      // (the user can't hit Back into an unauthenticated state).
+      window.location.replace(LOGIN_PATH);
+    }
     throw new ApiError(401, null, "Session expired — redirecting to login");
   }
 

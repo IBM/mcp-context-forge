@@ -2,7 +2,8 @@ import { test, expect } from "../fixtures/api-mock";
 import { APP, TOKEN_STORAGE_KEY } from "../utils/paths";
 
 test.describe("Login flow", () => {
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, apiMock }) => {
+    await apiMock.mockMe({ status: 401 });
     await page.addInitScript((key) => {
       window.sessionStorage.removeItem(key);
     }, TOKEN_STORAGE_KEY);
@@ -10,7 +11,6 @@ test.describe("Login flow", () => {
 
   test("successful login navigates to the dashboard", async ({ page, apiMock }) => {
     await apiMock.mockLogin();
-    await apiMock.mockMe();
 
     await page.goto(APP.LOGIN);
     await page.getByLabel(/email address/i).fill("test@example.com");
@@ -24,14 +24,10 @@ test.describe("Login flow", () => {
       (key) => window.sessionStorage.getItem(key),
       TOKEN_STORAGE_KEY,
     );
-    expect(token).not.toBeNull();
+    expect(token).toBeNull();
   });
 
   test("401 response keeps user on the login page without a token", async ({ page, apiMock }) => {
-    // A 401 from /auth/login is currently treated as a generic session-expiry
-    // by the API client (clearToken + window.location.replace). That wipes
-    // React state, so the error alert is not observable here — we assert the
-    // outcome the user experiences: stuck on /app/login, no token persisted.
     await apiMock.mockLogin({ status: 401 });
 
     await page.goto(APP.LOGIN);
@@ -40,6 +36,7 @@ test.describe("Login flow", () => {
     await page.getByRole("button", { name: /^sign in$/i }).click();
 
     await expect(page).toHaveURL(new RegExp(`${APP.LOGIN}$`));
+    await expect(page.getByRole("alert")).toHaveText(/invalid/i);
     const token = await page.evaluate(
       (key) => window.sessionStorage.getItem(key),
       TOKEN_STORAGE_KEY,
@@ -58,17 +55,14 @@ test.describe("Login flow", () => {
     await expect(page.getByRole("alert")).toHaveText(/login failed/i);
   });
 
-  test("submit button shows loading state during request", async ({ page, apiMock }) => {
+  test("submit button shows loading state during request", async ({ page }) => {
     // Delay the response so the loading state is observable.
-    await page.route("**/auth/login", async (route) => {
+    await page.route("**/app/auth/login", async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
-          access_token: "mock-token-12345",
-          token_type: "bearer",
-          expires_in: 3600,
           user: {
             email: "test@example.com",
             full_name: "Test User",
@@ -78,10 +72,10 @@ test.describe("Login flow", () => {
             email_verified: true,
             password_change_required: false,
           },
+          csrf_token: "mock-csrf-token",
         }),
       });
     });
-    await apiMock.mockMe();
 
     await page.goto(APP.LOGIN);
     await page.getByLabel(/email address/i).fill("test@example.com");
