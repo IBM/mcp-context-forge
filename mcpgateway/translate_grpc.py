@@ -139,7 +139,7 @@ class GrpcEndpoint:
             # List all services
             request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
 
-            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout else stub.ServerReflectionInfo(iter([request]))
+            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
 
             service_names = []
             for resp in response:
@@ -174,7 +174,7 @@ class GrpcEndpoint:
             # Request file descriptor containing this service
             request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
 
-            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout else stub.ServerReflectionInfo(iter([request]))
+            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
 
             for resp in response:
                 if resp.HasField("file_descriptor_response"):
@@ -296,7 +296,7 @@ class GrpcEndpoint:
         unary = channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)
 
         def _call(req):
-            return unary(req, timeout=timeout) if timeout else unary(req)
+            return unary(req, timeout=timeout) if timeout is not None else unary(req)
 
         response_msg = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
 
