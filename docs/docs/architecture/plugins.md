@@ -1591,6 +1591,57 @@ capabilities:
   - read:context
 ```
 
+### Plugin Violation Observability
+
+When a plugin returns a violation, the gateway records violation metadata on the active span so that policy blocks and enforcement failures are visible in tracing backends.
+
+#### Span Attributes
+
+The following attributes are added to the span when a violation is present:
+
+- `plugin.had_violation`: Boolean flag indicating that a plugin blocked or rejected the request
+- `plugin.violation.reason`: Human-readable reason such as `Content policy violation`
+- `plugin.violation.code`: Machine-readable code such as `PROHIBITED_CONTENT`
+- `plugin.violation.description`: Detailed explanation of the violation
+- `plugin.violation.http_status_code`: Optional HTTP status code, such as `403`
+- `plugin.violation.mcp_error_code`: Optional MCP error code, such as `-32001`
+- `plugin.violation.details.*`: Sanitized violation detail fields emitted as span attributes
+
+The plugin name remains available through the existing `plugin.name` attribute, which can be combined with the violation fields for filtering and aggregation.
+
+#### Querying Violations
+
+Example Jaeger and OpenTelemetry-style filters:
+
+**All plugin violations**
+
+```text
+service.name="mcpgateway" AND plugin.had_violation=true
+```
+
+**Filter by violation code**
+
+```text
+plugin.violation.code="PROHIBITED_CONTENT"
+```
+
+**Aggregate by plugin and violation code**
+
+```text
+GROUP BY plugin.name, plugin.violation.code
+```
+
+These queries make it easier to identify which plugins are blocking requests most often and which policy codes are driving those decisions.
+
+#### Security
+
+Violation details are sanitized before they are written to span attributes.
+
+- Fields matching `OTEL_REDACT_FIELDS` patterns are redacted before export
+- Common sensitive keys such as `password`, `secret`, `token`, and `api_key` are masked as `***`
+- Identity-related fields respect the `OTEL_CAPTURE_IDENTITY_ATTRIBUTES` setting
+- Prefer stable codes in `plugin.violation.code` for dashboards and alerts, and reserve descriptions for operator-facing detail
+
 ### Plugin Signing
 
 Future versions will support cryptographic signing of plugins for supply chain security (e.g., leveraging Sigstore signing infrastructure).
