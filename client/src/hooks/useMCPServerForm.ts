@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent } from "react";
+import { useState, useCallback, useMemo, type FormEvent } from "react";
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import {
@@ -188,7 +188,7 @@ export interface UseMCPServerFormReturn {
   // Actions
   resetForm: () => void;
   validateForm: () => boolean;
-  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => void;
+  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
   getFormData: () => MCPServerFormData;
 }
 
@@ -273,9 +273,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     },
   );
 
-  // Use useQuery for PUT request to update MCP gateway
+  // handleSubmit guards against a missing gatewayId before calling updateGateway,
+  // so this URL is only ever used when gatewayId is defined.
   const { execute: updateGateway, isLoading: isUpdating } = useQuery<unknown, MCPServerFormData>(
-    gatewayId ? `/gateways/${gatewayId}` : "/gateways/",
+    `/gateways/${gatewayId}`,
     {
       method: "PUT",
       enabled: false, // Don't execute immediately
@@ -331,12 +332,19 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
 
   const validateField = useCallback((field: keyof FormErrors, value: string) => {
     try {
-      // Validate individual field
       const fieldSchema =
         mcpServerFormSchema.shape[field as keyof typeof mcpServerFormSchema.shape];
       if (fieldSchema) {
-        fieldSchema.parse(value);
-        // Clear error for this field if validation passes
+        // passthroughHeaders is stored as a comma-separated string in form state
+        // but the Zod schema expects an array; convert before validating
+        const parseValue =
+          field === "passthroughHeaders"
+            ? value
+                .split(",")
+                .map((h) => h.trim())
+                .filter((h) => h.length > 0)
+            : value;
+        fieldSchema.parse(parseValue);
         setErrors((prev) => {
           const newErrors = { ...prev };
           delete newErrors[field];
@@ -418,6 +426,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
 
           // Call the appropriate API based on mode (create or update)
           if (isEditMode) {
+            if (!gatewayId) {
+              setErrors({ submit: "Cannot update: gateway ID is missing." });
+              return;
+            }
             await updateGateway(formData);
           } else {
             await createGateway(formData);
@@ -476,8 +488,15 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     [validateForm, getFormData, createGateway, updateGateway, resetForm, isEditMode],
   );
 
-  // Check if form is valid (for enabling/disabling submit button)
-  const isValid = name.trim() !== "" && url.trim() !== "";
+  const isValid = useMemo(() => {
+    if (!name.trim() || !url.trim()) return false;
+    try {
+      const parsed = new URL(url.trim());
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, [name, url]);
 
   return {
     // State
