@@ -306,7 +306,7 @@ async def handle_sso_callback(
     # '!*%', and our own session-bound state uses '.' as a separator
     # (sso_service._STATE_BINDING_SEPARATOR). Bound length only; downstream token
     # exchange and HMAC verification validate integrity.
-    code: Optional[str] = Query(None, max_length=512, description="Authorization code from SSO provider"),
+    code: Optional[str] = Query(None, max_length=4096, description="Authorization code from SSO provider"),
     state: Optional[str] = Query(None, max_length=128, description="CSRF state parameter"),
     # error values are RFC 6749 Section 4.1.2.1 / 5.2 enum-like snake_case tokens
     # (invalid_request, unauthorized_client, access_denied, ...).

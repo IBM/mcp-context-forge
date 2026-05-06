@@ -37,13 +37,19 @@ import pytest
 # Pattern mirrors (keep in sync with the router:line references).
 # ---------------------------------------------------------------------------
 
-# mcpgateway/routers/sso.py:306 - OAuth error code (RFC 6749 Section 4.1.2.1
+# mcpgateway/routers/sso.py:313 - OAuth error code (RFC 6749 Section 4.1.2.1
 # / 5.2 enum-like snake_case tokens)
 SSO_ERROR = r"^[a-zA-Z0-9_]+$"
 
 # mcpgateway/routers/sso.py (scopes/code/state) deliberately have NO pattern
 # after the B1/B2/B3 fix; they are bounded only by max_length. No regex to
 # test - absence is the invariant.
+#
+# Length bounds (mirror of router signature; update both together):
+#   - mcpgateway/routers/sso.py:309  code   max_length=4096   # see B5 below
+#   - mcpgateway/routers/sso.py:310  state  max_length=128
+SSO_CODE_MAX_LENGTH = 4096
+SSO_STATE_MAX_LENGTH = 128
 
 # mcpgateway/routers/log_search.py:629 - user_id (email OR service account)
 # mcpgateway/routers/observability.py:69 - user_email (email OR service account)
@@ -138,6 +144,36 @@ def test_oauth_state_accepts_session_bound_format(state: str) -> None:
 def test_oauth_scopes_accepts_provider_specific_values(scopes: str) -> None:
     """OAuth `scopes` are provider-specific per RFC 6749 §3.3; no Query-layer regex."""
     assert 1 <= len(scopes) <= 500
+
+
+# ---------------------------------------------------------------------------
+# B5 regression: OAuth `code` must accept Microsoft Entra ID v2 codes
+# (>1500 chars). RFC 6749 leaves auth code size undefined; the previous 512
+# bound rejected Entra ID before token exchange (issue #4490). 4096 leaves
+# headroom below nginx's default 8K request-line buffer while comfortably
+# covering all observed providers (Google ~30, GitHub ~20, Cognito ~36,
+# Keycloak ~43, Entra ID 1200-2000+).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "4/0Adeu5BWxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # Google ~70 chars
+        "P5I7mdxxdv13_JfXrCSq",  # GitHub ~20 chars
+        "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111",  # AWS Cognito UUID-style ~36 chars
+        "M.R3_BAY.2-CXyB!fnBSi-EX*MNVfn8C8mF*KsXZkphQOEdmH" + "x" * 1500,  # Entra ID v2 ~1550 chars
+        "x" * 4096,  # boundary - exactly at the bound
+    ],
+)
+def test_oauth_code_accepts_provider_specific_lengths(code: str) -> None:
+    """OAuth `code` is opaque (RFC 6749 §A.11); bounded only by max_length=4096."""
+    assert 1 <= len(code) <= SSO_CODE_MAX_LENGTH
+
+
+def test_oauth_code_max_length_above_entra_id_floor() -> None:
+    """Regression guard: code limit must stay above the 512 floor that broke Entra ID (#4490)."""
+    assert SSO_CODE_MAX_LENGTH > 512, "Reverting below 513 will reintroduce the Entra ID HTTP 422 regression."
 
 
 # ---------------------------------------------------------------------------
