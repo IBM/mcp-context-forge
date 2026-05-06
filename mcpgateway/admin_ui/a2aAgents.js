@@ -1,7 +1,7 @@
 import { getAuthHeaders, loadAuthHeaders } from "./auth.js";
 import { closeModal, openModal } from "./modals.js";
 import { escapeHtml, validateInputName, validateUrl } from "./security.js";
-import { applyVisibilityRestrictions } from "./teams.js";
+import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   decodeHtml,
   fetchWithTimeout,
@@ -413,7 +413,7 @@ export const editA2AAgent = async function (agentId) {
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&
-        teamId
+        isTeamScopedView()
           ? "team"
           : visibility;
       if (effectiveVisibility === "public" && publicRadio) {

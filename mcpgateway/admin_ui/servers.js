@@ -6,7 +6,7 @@ import { openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
 import { validateInputName, validateUrl } from "./security.js";
-import { applyVisibilityRestrictions } from "./teams.js";
+import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   safeGetElement,
   fetchWithTimeout,
@@ -66,7 +66,6 @@ export const viewServer = async function (serverId) {
         const serverDesc = document.createElement("p");
         serverDesc.className = "text-sm text-gray-600 dark:text-gray-400 mt-1";
         serverDesc.textContent = decodeHtml(server.description);
-        serverDesc.textContent = server.description;
         headerTextDiv.appendChild(serverDesc);
       }
 
@@ -712,11 +711,10 @@ export const editServer = async function (serverId) {
     if (visibility) {
       // When public visibility is disabled and we're in a team-scoped view,
       // coerce legacy-public records to team.
-      const _teamId = new URL(window.location.href).searchParams.get("team_id");
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&
-        _teamId
+        isTeamScopedView()
           ? "team"
           : visibility;
       if (effectiveVisibility === "public" && publicRadio) {

@@ -14,7 +14,7 @@ import {
   serverSideToolSearch,
 } from "./search.js";
 import { getEditSelections } from "./servers.js";
-import { applyVisibilityRestrictions } from "./teams.js";
+import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import { initToolSelect } from "./tools.js";
 import {
   buildTableUrl,
@@ -339,7 +339,7 @@ export const editGateway = async function (gatewayId) {
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&
-        teamId
+        isTeamScopedView()
           ? "team"
           : visibility;
       if (effectiveVisibility === "public" && publicRadio) {

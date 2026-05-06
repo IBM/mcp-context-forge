@@ -2,7 +2,7 @@ import { getSelectedGatewayIds } from "./gateways.js";
 import { openModal } from "./modals.js";
 import { validateInputName } from "./security.js";
 import { getEditSelections } from "./servers.js";
-import { applyVisibilityRestrictions } from "./teams.js";
+import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   decodeHtml,
   fetchWithTimeout,
@@ -645,11 +645,10 @@ export const editResource = async function (resourceId) {
     if (visibility) {
       // When public visibility is disabled and we're in a team-scoped view,
       // coerce legacy-public records to team.
-      const _teamId = new URL(window.location.href).searchParams.get("team_id");
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&
-        _teamId
+        isTeamScopedView()
           ? "team"
           : visibility;
       if (effectiveVisibility === "public" && publicRadio) {
