@@ -383,6 +383,9 @@ class TokenCatalogService:
         tags: Optional[List[str]] = None,
         team_id: Optional[str] = None,
         caller_permissions: Optional[List[str]] = None,
+        is_admin: bool = False,
+        caller_token_teams: Optional[List[str]] = None,
+        caller_token_teams_provided: bool = False,
         is_active: bool = True,
     ) -> tuple[EmailApiToken, str]:
         """
@@ -394,7 +397,7 @@ class TokenCatalogService:
 
         The function will:
         - Validate the existence of the user.
-        - Ensure the user is an active member of the specified team.
+        - Ensure the user is an active member of the specified team (unless admin bypass applies).
         - Verify that the token name is unique for the user+team combination.
         - Generate a JWT with the specified scoping parameters (e.g., permissions, IP, etc.).
         - Store the token in the database with the relevant details and return the token and raw JWT string.
@@ -410,6 +413,18 @@ class TokenCatalogService:
             team_id (Optional[str]): The team ID to which the token should be scoped. This is required for team-level scoping.
             caller_permissions (Optional[List[str]]): The permissions of the caller creating the token. Used for
                 scope containment validation to ensure the new token cannot have broader permissions than the caller.
+                Also used with is_admin and caller_token_teams to determine admin bypass eligibility.
+            is_admin (bool): Whether the caller is a platform admin. Used with caller_permissions and
+                caller_token_teams for defense-in-depth validation of admin bypass (default is False).
+            caller_token_teams (Optional[List[str]]): The caller's token narrowing scope (from JWT ``teams`` claim
+                via ``current_user["token_teams"]``). Required for admin bypass evaluation: only un-narrowed
+                sessions (``caller_token_teams_provided=True`` and ``caller_token_teams is None``) may bypass
+                team-membership checks. Narrowed (``["team-a"]``) and public-only (``[]``) sessions never bypass,
+                even if their effective permissions include ``"*"`` via a global ``platform_admin`` role.
+            caller_token_teams_provided (bool): Whether the caller resolved ``caller_token_teams`` from the
+                authenticated session. Defaults to ``False``: callers that did not opt in cannot satisfy the
+                admin bypass, even if they pass ``is_admin=True`` and ``caller_permissions=["*"]``. Routers
+                that intend to allow the bypass must set this to ``True`` (default is False).
             is_active (bool): Whether the token should be created as active (default is True).
 
         Returns:
@@ -455,13 +470,33 @@ class TokenCatalogService:
             if not team:
                 raise ValueError(f"Team not found: {team_id}")
 
-            # Verify user is an active member of the team
-            membership = self.db.execute(
-                select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
-            ).scalar_one_or_none()
+            # Admin bypass: Only un-narrowed platform admins may create team tokens
+            # without being active team members. This supports service account
+            # workflows and centralized token management.
+            #
+            # Triple-gated defense-in-depth — ALL must hold for bypass:
+            #   1. is_admin=True               — caller flagged as platform admin by router
+            #   2. caller_token_teams_provided — router opted into bypass evaluation and
+            #      caller_token_teams is None  — session is un-narrowed (no JWT `teams` claim)
+            #   3. caller_permissions == ["*"] — effective permissions are wildcard
+            #
+            # Why all three: a narrowed admin (is_admin=True, token_teams=["other"]) can still
+            # have caller_permissions=["*"] from the global `platform_admin` role, because
+            # `_get_caller_permissions` falls through to PermissionService for narrowed
+            # sessions. Without the token_teams gate, narrowed admins would silently bypass
+            # membership for teams they were never granted access to. Defaulting
+            # caller_token_teams_provided=False also keeps callers that haven't been audited
+            # for this contract from accidentally satisfying the bypass.
+            is_unrestricted_admin = is_admin and caller_token_teams_provided and caller_token_teams is None and caller_permissions is not None and caller_permissions == ["*"]
 
-            if not membership:
-                raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
+            if not is_unrestricted_admin:
+                # Verify user is an active member of the team
+                membership = self.db.execute(
+                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+                ).scalar_one_or_none()
+
+                if not membership:
+                    raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
         # Check for duplicate active token name for this user within the same team scope,
         # matching DB constraint uq_email_api_tokens_user_name_team (user_email, name, team_id).
@@ -639,26 +674,50 @@ class TokenCatalogService:
         result = self.db.execute(query)
         return result.scalars().all()
 
-    async def list_team_tokens(self, team_id: str, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:
-        """List API tokens for a team (accessible by any active team member).
+    async def list_team_tokens(
+        self,
+        team_id: str,
+        user_email: str,
+        include_inactive: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        caller_permissions: Optional[List[str]] = None,
+        is_admin: bool = False,
+        caller_token_teams: Optional[List[str]] = None,
+        caller_token_teams_provided: bool = False,
+    ) -> List[EmailApiToken]:
+        """List API tokens for a team (accessible by any active team member or un-narrowed admin).
 
         Args:
             team_id: Team ID to list tokens for
-            user_email: User's email (must be an active member of the team)
+            user_email: User's email (must be an active member of the team unless admin bypass applies)
             include_inactive: Include inactive/expired tokens
             limit: Maximum tokens to return
             offset: Number of tokens to skip
+            caller_permissions: Caller's effective permissions (for admin bypass check)
+            is_admin: Whether the caller is a platform admin (for admin bypass check)
+            caller_token_teams: Caller's token narrowing scope from JWT ``teams`` claim. Must be ``None``
+                (un-narrowed) for admin bypass to apply. Narrowed (``["team-a"]``) and public-only (``[]``)
+                sessions never bypass membership, even when ``caller_permissions == ["*"]`` from a global
+                ``platform_admin`` role.
+            caller_token_teams_provided: Whether the caller resolved ``caller_token_teams`` from the
+                authenticated session. Defaults to ``False``: callers that did not opt in cannot satisfy
+                the admin bypass. Routers that intend to allow the bypass must set this to ``True``.
 
         Returns:
             List[EmailApiToken]: Team's API tokens
 
         Raises:
-            ValueError: If user is not an active member of the team
+            ValueError: If user is not an active member of the team (unless admin bypass applies)
         """
-        team_ids = await self.get_user_team_ids(user_email)
+        # Triple-gated admin bypass — see create_token() for the security rationale.
+        is_unrestricted_admin = is_admin and caller_token_teams_provided and caller_token_teams is None and caller_permissions is not None and caller_permissions == ["*"]
 
-        if team_id not in team_ids:
-            raise ValueError(f"User {user_email} is not an active member of team {team_id}")
+        if not is_unrestricted_admin:
+            team_ids = await self.get_user_team_ids(user_email)
+
+            if team_id not in team_ids:
+                raise ValueError(f"User {user_email} is not an active member of team {team_id}")
 
         # Validate parameters
         if limit <= 0 or limit > 1000:
