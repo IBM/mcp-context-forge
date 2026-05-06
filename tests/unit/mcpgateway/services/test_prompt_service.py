@@ -30,7 +30,7 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.schemas import PromptArgument, PromptCreate, PromptMetrics, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError
+from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService, PromptValidationError, _coerce_plugin_prompt_result
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
@@ -223,6 +223,24 @@ class TestPromptService:
     # ──────────────────────────────────────────────────────────────────
     #   register_prompt
     # ──────────────────────────────────────────────────────────────────
+
+    def test_coerce_plugin_prompt_result_accepts_plain_dict(self):
+        """Covers CPEX prompt post-hook payloads returned as plain dictionaries."""
+        result = _coerce_plugin_prompt_result(
+            {
+                "description": "plain",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {"type": "text", "text": "plain body"},
+                    }
+                ],
+            }
+        )
+
+        assert result.description == "plain"
+        assert len(result.messages) == 1
+        assert result.messages[0].content.text == "plain body"
 
     @pytest.mark.asyncio
     async def test_register_prompt_success(self, prompt_service, test_db):
