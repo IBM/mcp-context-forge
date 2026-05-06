@@ -10,9 +10,9 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 import base64
-import json
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
+import json
 import logging
 import time
 from types import SimpleNamespace

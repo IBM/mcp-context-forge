@@ -894,7 +894,6 @@ class GrpcService:
         stored_descriptors = discovered.get("_file_descriptors", [])
         has_stored_descriptors = bool(stored_descriptors)
 
-
         endpoint = GrpcEndpoint(
             target=service.target,
             reflection_enabled=not has_stored_descriptors,

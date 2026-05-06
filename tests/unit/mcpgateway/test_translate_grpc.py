@@ -16,6 +16,7 @@ import pytest
 
 # Check if gRPC is available
 try:
+    # Third-Party
     import grpc  # noqa: F401
 
     GRPC_AVAILABLE = True
@@ -24,9 +25,9 @@ except ImportError:
 
 # First-Party
 from mcpgateway.translate_grpc import (
+    expose_grpc_via_sse,
     GrpcEndpoint,
     GrpcToMcpTranslator,
-    expose_grpc_via_sse,
 )
 
 
@@ -449,8 +450,11 @@ class TestExposeGrpcViaSse:
 
 @pytest.mark.asyncio
 async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
-    import mcpgateway.translate_grpc as tg
+    # Standard
     from types import SimpleNamespace
+
+    # First-Party
+    import mcpgateway.translate_grpc as tg
 
     class DummyRequest:
         def SerializeToString(self):
@@ -525,6 +529,7 @@ async def test_endpoint_start_without_reflection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     monkeypatch.setattr(tg, "descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
@@ -553,6 +558,7 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discover_services_success_no_grpc(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -589,6 +595,7 @@ async def test_discover_services_success_no_grpc(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discover_service_details_error_fallback(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -609,6 +616,7 @@ async def test_discover_service_details_error_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_validation_errors(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -626,6 +634,7 @@ async def test_invoke_validation_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_message_type_missing(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -639,6 +648,7 @@ async def test_invoke_message_type_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_validation_errors(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -666,6 +676,7 @@ async def test_invoke_streaming_validation_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_message_type_missing(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -680,6 +691,7 @@ async def test_invoke_streaming_message_type_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_rpc_error(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     class DummyRequest:
@@ -829,6 +841,7 @@ async def test_discover_service_details_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_discover_services_ignores_non_list_services_response(monkeypatch):
     """HasField(False) responses should be ignored without attempting detail discovery."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -853,6 +866,7 @@ async def test_discover_services_ignores_non_list_services_response(monkeypatch)
 @pytest.mark.asyncio
 async def test_discover_service_details_ignores_non_descriptor_response(monkeypatch):
     """HasField(False) responses should not mutate the services map."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -877,6 +891,7 @@ async def test_discover_service_details_ignores_non_descriptor_response(monkeypa
 @pytest.mark.asyncio
 async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch):
     """pool.Add exceptions are swallowed as 'already in pool'."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -927,6 +942,7 @@ async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch)
 @pytest.mark.asyncio
 async def test_discover_service_details_skips_unrelated_service(monkeypatch):
     """Services that don't match the requested name are ignored."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -1008,6 +1024,7 @@ def test_import_fallback_sets_grpc_unavailable(monkeypatch):
     import builtins
     import runpy
 
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     real_import = builtins.__import__
@@ -1029,6 +1046,7 @@ class TestGrpcEndpointLoadFileDescriptors:
 
     def test_load_file_descriptors_populates_pool(self):
         """Test that valid FileDescriptorProto bytes are loaded into the pool."""
+        # Third-Party
         from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
 
         # Create a minimal valid FileDescriptorProto
@@ -1048,6 +1066,7 @@ class TestGrpcEndpointLoadFileDescriptors:
 
     def test_load_file_descriptors_skips_duplicates(self):
         """Test that loading the same descriptor twice doesn't raise."""
+        # Third-Party
         from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
 
         fd = FileDescriptorProto()

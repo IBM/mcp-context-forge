@@ -28,6 +28,7 @@ from mcpgateway.services.grpc_service import (
 
 # Check if gRPC is available
 try:
+    # Third-Party
     import grpc  # noqa: F401
 
     GRPC_AVAILABLE = True
@@ -49,6 +50,7 @@ class TestGrpcService:
     @pytest.fixture(autouse=True)
     def _skip_tls_path_validation(self, monkeypatch):
         """Disable TLS path validation for unit tests."""
+        # Standard
         from pathlib import Path
 
         monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda path_str, label="TLS path": Path(path_str).resolve())
@@ -293,7 +295,8 @@ class TestGrpcService:
 
         # Test page 1
         with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
-            from mcpgateway.schemas import PaginationMeta, PaginationLinks
+            # First-Party
+            from mcpgateway.schemas import PaginationLinks, PaginationMeta
 
             mock_paginate.return_value = {
                 "data": services_page1,
@@ -684,6 +687,7 @@ class TestGrpcService:
         sample_db_service.target = "new-host:50051"
 
         # Existing tool with old url
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         existing_tool = MagicMock(spec=DbTool)
@@ -714,6 +718,7 @@ class TestGrpcService:
         sample_db_service.discovered_services = {}
 
         # But there's a stale tool from a previous reflection
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         stale_tool = MagicMock(spec=DbTool)
@@ -767,6 +772,7 @@ class TestGrpcService:
             }
         }
 
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         existing_tool = MagicMock(spec=DbTool)
@@ -906,6 +912,7 @@ class TestGrpcService:
             },
         }
 
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         existing_tool = MagicMock(spec=DbTool)
@@ -956,6 +963,7 @@ class TestGrpcService:
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     async def test_invoke_method_with_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method uses stored descriptors instead of reflection."""
+        # Standard
         import base64
 
         fake_descriptor_bytes = b"\x0a\x05hello"
@@ -1033,8 +1041,10 @@ class TestGrpcService:
     @patch("mcpgateway.services.grpc_service.reflection_pb2")
     async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
         """Test that _perform_reflection collects file descriptor bytes into _file_descriptors."""
+        # Standard
         import base64
 
+        # Third-Party
         from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
 
         # Build a real serialized FileDescriptorProto
