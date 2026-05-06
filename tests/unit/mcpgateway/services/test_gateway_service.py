@@ -7806,7 +7806,6 @@ def test_resolve_tool_title():
     assert _resolve_tool_title(tool_no_title) is None
 
 
-
 class TestToolReachabilityRestoration:
     """Test that tools are marked as reachable when successfully fetched during gateway refresh."""
 
@@ -7974,3 +7973,67 @@ class TestToolReachabilityRestoration:
 
         # Verify no new tools were created
         assert len(tools_to_add) == 0, "No new tools should be created"
+
+    @pytest.mark.asyncio
+    async def test_disabled_tool_reachable_flipped_but_enabled_preserved(self, gateway_service):
+        """Admin-disabled tool: refresh flips reachable=True but must NOT re-enable it."""
+        # Setup mock database
+        mock_db = MagicMock()
+
+        # Create a mock gateway
+        mock_gateway = MagicMock(spec=DbGateway)
+        mock_gateway.id = "gateway-123"
+        mock_gateway.name = "test-gateway"
+        mock_gateway.url = "http://example.com"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = {"token": "test-token"}
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.owner_email = None
+
+        # Create a mock tool that admin disabled (enabled=False) AND offline (reachable=False)
+        mock_existing_tool = MagicMock(spec=DbTool)
+        mock_existing_tool.original_name = "test-tool"
+        mock_existing_tool.reachable = False  # Tool is currently offline
+        mock_existing_tool.enabled = False  # Admin disabled the tool
+        mock_existing_tool.url = "http://example.com"
+        mock_existing_tool.original_description = "Test tool"
+        mock_existing_tool.description = "Test tool"
+        mock_existing_tool.integration_type = "MCP"
+        mock_existing_tool.request_type = "POST"
+        mock_existing_tool.headers = {}
+        mock_existing_tool.input_schema = {}
+        mock_existing_tool.output_schema = None
+        mock_existing_tool.jsonpath_filter = ""
+        mock_existing_tool.title = "Test Tool"
+        mock_existing_tool.auth_type = "bearer"
+        mock_existing_tool.auth_value = "encrypted-value"
+        mock_existing_tool.visibility = "public"
+
+        # Mock the database query to return the existing tool
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_existing_tool]
+        mock_db.execute.return_value = mock_result
+
+        # Create a tool from the gateway (simulating successful fetch)
+        from mcpgateway.schemas import ToolCreate
+        fetched_tool = ToolCreate(
+            name="test-tool",
+            description="Test tool",
+            input_schema={},
+            integration_type="REST",
+            request_type="POST",
+        )
+
+        # Call _update_or_create_tools
+        gateway_service._update_or_create_tools(
+            db=mock_db,
+            tools=[fetched_tool],
+            gateway=mock_gateway,
+            created_via="health_check"
+        )
+
+        # Verify reachable was flipped True (gateway is up so the tool is reachable)
+        assert mock_existing_tool.reachable is True, "Tool should be marked reachable on successful fetch"
+        # Critical security invariant: refresh must NOT re-enable admin-disabled tools
+        assert mock_existing_tool.enabled is False, "Admin-disabled tool must remain disabled after refresh"
