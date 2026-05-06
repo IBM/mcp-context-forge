@@ -296,6 +296,7 @@ class GrpcEndpoint:
         unary = channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)
 
         def _call(req):
+            """Sync gRPC unary call dispatched to a thread executor; binds ``timeout`` when set."""
             return unary(req, timeout=timeout) if timeout is not None else unary(req)
 
         response_msg = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
