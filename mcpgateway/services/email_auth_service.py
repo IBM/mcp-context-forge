@@ -1120,7 +1120,11 @@ class EmailAuthService:
             PasswordValidationError: If new password violates policy or reuse checks.
         """
         reset_token = await self.validate_password_reset_token(token, ip_address=ip_address, user_agent=user_agent)
-        user = await self.get_user_by_email(reset_token.user_email)
+        # Use _fetch_user_from_db to get a session-attached object — mutations
+        # (password_hash, password_changed_at, failed_login_attempts) must be
+        # tracked by self.db so self.db.commit() is durable.  Also ensures the
+        # real password_hash is present for the reuse check (cached objects store "").
+        user = self._fetch_user_from_db(reset_token.user_email)
         if not user or not user.is_active:
             password_reset_completions_counter.labels(outcome="invalid_user").inc()
             raise AuthenticationError("This reset link is invalid")
