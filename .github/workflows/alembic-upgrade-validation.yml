@@ -76,8 +76,8 @@ jobs:
           load: true
           push: false
           tags: ${{ env.TARGET_IMAGE }}
-          cache-from: type=gha,scope=alembic-upgrade-validation
-          cache-to: type=gha,mode=max,scope=alembic-upgrade-validation
+          cache-from: type=gha,scope=containerfile-lite-amd64
+          cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
       - name: Run upgrade validation
         run: |
