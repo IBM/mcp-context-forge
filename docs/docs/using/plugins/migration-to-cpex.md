@@ -228,7 +228,7 @@ The `mcpplugins` CLI (provided by `cpex`) replaces the deleted `plugin_templates
 
 ```bash
 # Bootstrap a new plugin
-cpex bootstrap --destination plugins/my_plugin --type native
+mcpplugins bootstrap --destination plugins/my_plugin --type native
 ```
 
 ---
@@ -245,11 +245,11 @@ The field signature is unchanged from the old in-tree model. Ensure you pass `re
 
 **`AttributeError: 'ToolPreInvokePayload' object has no attribute 'arguments'`**
 
-The field was renamed to `.args`. See [Step 4](#step-4-update-payload-field-names).
+The field was renamed to `.args`. See [Step 3](#step-3-update-payload-field-names).
 
 **`AttributeError: 'PromptPosthookPayload' object has no attribute 'name'`**
 
-The field was renamed to `.prompt_id`. See [Step 4](#step-4-update-payload-field-names).
+The field was renamed to `.prompt_id`. See [Step 3](#step-3-update-payload-field-names).
 
 **Plugin not executing after mode change**
 

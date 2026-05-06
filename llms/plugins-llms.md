@@ -19,7 +19,7 @@ Plugins: How They Work in ContextForge
 - Hook payload/result models (Pydantic) in `cpex.framework.models`:
   - Prompt
     - `PromptPrehookPayload(name: str, args: dict[str, str])`
-    - `PromptPosthookPayload(name: str, result: PromptResult)`
+    - `PromptPosthookPayload(prompt_id: str, result: PromptResult)`
     - Results: `PromptPrehookResult`, `PromptPosthookResult`
   - Tool
     - `ToolPreInvokePayload(name: str, args: dict[str, Any])`

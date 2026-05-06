@@ -5,4 +5,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PLUGINS_CONFIG_PATH="${SCRIPT_DIR}/resources/plugins/config.yaml"
 
-exec python -m mcpgateway.plugins.framework.external.mcp.server.runtime
+exec python -m cpex.framework.external.mcp.server.runtime
