@@ -1,0 +1,41 @@
+# Derivative gateway image for the wipe-on-disable convergence test.
+#
+# Single change vs. mcpgateway/mcpgateway:latest: replace the
+# cpex-rate-limiter wheel from PyPI with a locally-built one from
+# cpex-plugins:feat/rate-limiter-wipe-on-disable-only — that wheel
+# carries the wipe-on-disable code path; without it, the runtime falls
+# back to "stop checking counters but leave them in place," which is
+# the slow-convergence behaviour we're trying to measure against.
+#
+# Wheel-build flow (decoupled, run BEFORE this image build — see
+# wipe-test/README.md for the maturin command and wipe-test/wheels/
+# layout):
+#
+#   1. Build the wheel from cpex-plugins/...rate_limiter (on the
+#      wipe-on-disable branch) via maturin's manylinux Docker image,
+#      output into mcp-context-forge/wipe-test/wheels/
+#   2. docker build -f wipe-test/Containerfile.gateway \
+#                   -t mcpgateway-wipe-test:local .
+#      (build context = mcp-context-forge repo root)
+
+ARG BASE_IMAGE=mcpgateway/mcpgateway:latest
+
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Force-reinstall the wheel built from the wipe-on-disable branch over
+# whatever cpex-rate-limiter version came from PyPI in the base image.
+# --no-deps keeps the rest of the dependency tree untouched.
+#
+# The base mcpgateway image was assembled with uv and is stripped down
+# at runtime — no `pip` binary, no `pip` module. `python -m ensurepip`
+# bootstraps pip from the stdlib's bundled wheel; we then use that pip
+# just for our install.
+COPY wipe-test/wheels/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl /tmp/
+RUN /app/.venv/bin/python -m ensurepip --upgrade \
+    && /app/.venv/bin/python -m pip install --force-reinstall --no-deps \
+        /tmp/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl \
+    && rm -f /tmp/cpex_rate_limiter-*-cp311-abi3-manylinux*.whl
+
+USER 1001

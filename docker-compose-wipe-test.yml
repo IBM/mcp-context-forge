@@ -1,0 +1,35 @@
+# Compose override for the wipe-on-disable convergence test.
+#
+# Usage:
+#   1. Build the wheel from cpex-plugins:feat/rate-limiter-wipe-on-disable-only
+#      and the derivative gateway image (one-time, or whenever the wheel
+#      changes — see wipe-test/README.md for exact commands).
+#
+#   2. Bring up the stack as a compose override:
+#        docker compose -p wipe-test \
+#          -f docker-compose.yml \
+#          -f docker-compose-wipe-test.yml \
+#          up -d --no-build
+#
+#   3. Tear down:
+#        docker compose -p wipe-test \
+#          -f docker-compose.yml \
+#          -f docker-compose-wipe-test.yml \
+#          down -v
+#
+# What this override changes vs. docker-compose.yml:
+#   * `gateway` uses the derivative image (mcpgateway-wipe-test:local)
+#     built from wipe-test/Containerfile.gateway.
+#
+# Plain Redis from the base compose is reused as-is — wipe-on-disable
+# is independent of TLS-or-not for Redis. All other services
+# (postgres, pgbouncer, fast_time_server, nginx, observability stack)
+# also inherit unchanged.
+
+services:
+  gateway:
+    image: mcpgateway-wipe-test:local             # built from wipe-test/Containerfile.gateway
+    # NOTE: the base compose's gateway service has a `build:` block pointing at
+    # Containerfile.lite. Compose merges the `build:` key rather than replacing it,
+    # so when bringing this stack up always pass `--no-build` to docker compose
+    # — see wipe-test/README.md. The derivative image must already exist.
