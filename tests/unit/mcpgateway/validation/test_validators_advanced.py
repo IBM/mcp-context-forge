@@ -2030,3 +2030,210 @@ class TestGatewayTestUrlValidation:
                 allowed_hosts,
                 "Gateway URL"
             )
+
+    def test_empty_url_rejected(self):
+        """Test that empty URLs are rejected."""
+        allowed_hosts = ["example.com"]
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            SecurityValidator.validate_gateway_test_url("", allowed_hosts, "Gateway URL")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            SecurityValidator.validate_gateway_test_url(None, allowed_hosts, "Gateway URL")
+
+    def test_url_without_hostname_rejected(self, mock_dns_public):
+        """Test that URLs without hostnames are rejected."""
+        allowed_hosts = ["example.com"]
+
+        # URL with no hostname
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url("https:///path", allowed_hosts, "Gateway URL")
+
+    def test_ipv4_mapped_ipv6_loopback_blocked(self):
+        """Test that IPv4-mapped IPv6 loopback addresses are blocked."""
+        allowed_hosts = ["::ffff:127.0.0.1"]
+
+        # IPv4-mapped IPv6 loopback should be blocked
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "http://[::ffff:127.0.0.1]/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_ipv4_mapped_ipv6_in_resolved_address_blocked(self, monkeypatch):
+        """Test that IPv4-mapped IPv6 addresses in DNS resolution are unwrapped and checked."""
+        import socket
+
+        # Mock DNS to return IPv4-mapped IPv6 private address
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            # Return IPv4-mapped IPv6 address for private IP
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, '', ('::ffff:192.168.1.1', port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["mapped.example.com"]
+
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://mapped.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_dns_resolution_failure_rejected(self, monkeypatch):
+        """Test that DNS resolution failures are rejected."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            raise socket.gaierror("Name or service not known")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["nonexistent.example.com"]
+
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://nonexistent.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_cgnat_address_blocked(self, monkeypatch):
+        """Test that carrier-grade NAT (CGNAT) addresses are blocked."""
+        import socket
+
+        # Mock DNS to return CGNAT IP (100.64.0.0/10)
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('100.64.1.1', port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["cgnat.example.com"]
+
+        # Should be blocked even if in allowlist
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://cgnat.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_cgnat_direct_ip_blocked(self):
+        """Test that direct CGNAT IP addresses are blocked."""
+        allowed_hosts = ["100.64.0.1"]
+
+        # CGNAT addresses (100.64.0.0/10) should be blocked
+        cgnat_ips = [
+            "http://100.64.0.1/test",
+            "http://100.64.255.254/test",
+            "http://100.127.255.255/test",
+        ]
+
+        for url in cgnat_ips:
+            with pytest.raises(ValueError, match="is not allowed"):
+                SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    def test_resolved_ip_exception_continues_checking(self, monkeypatch):
+        """Test that exceptions during resolved IP checking don't stop validation."""
+        import socket
+
+        # Mock DNS to return mix of valid and invalid entries
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('not-an-ip', port or 443)),  # Invalid
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443)),  # Valid public IP
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["mixed.example.com"]
+
+        # Should succeed because one address is valid
+        result = SecurityValidator.validate_gateway_test_url(
+            "https://mixed.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result == "https://mixed.example.com/test"
+
+    def test_url_parse_exception_rejected(self):
+        """Test that URLs that raise exceptions during parsing are rejected."""
+        allowed_hosts = ["example.com"]
+
+        # URL that might cause parsing issues - test the exception handling path
+        # Using a malformed URL structure
+        with pytest.raises(ValueError, match="is not allowed"):
+            # Create a URL object that will fail hostname extraction
+            SecurityValidator.validate_gateway_test_url("http://", allowed_hosts, "Gateway URL")
+
+    def test_wildcard_subdomain_match(self, monkeypatch):
+        """Test wildcard subdomain pattern matching."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["*.example.com"]
+
+        # Test wildcard match for subdomain
+        result = SecurityValidator.validate_gateway_test_url(
+            "https://sub.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result == "https://sub.example.com/test"
+
+        # Test that base domain matches wildcard pattern
+        result2 = SecurityValidator.validate_gateway_test_url(
+            "https://example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result2 == "https://example.com/test"
+
+    def test_hostname_not_in_allowlist_rejected(self, monkeypatch):
+        """Test that hostnames not in allowlist are rejected with generic message."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["allowed.example.com"]
+
+        # Test that non-matching hostname is rejected
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://notallowed.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_ipv4_mapped_ipv6_public_unwrapping(self):
+        """Test that IPv4-mapped IPv6 public addresses are unwrapped and checked."""
+        # Use IPv4-mapped public IP - this hits the unwrapping logic on line 1560
+        # Even though it's a public IP, it should fail allowlist check
+        allowed_hosts = ["8.8.8.8"]
+
+        # IPv4-mapped public IP should be unwrapped and pass through to allowlist check
+        # It will fail because the IP itself is not in the allowlist (need hostname match)
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "http://[::ffff:8.8.8.8]/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    def test_url_with_missing_hostname_rejected(self):
+        """Test that URLs without a hostname are rejected (covers lines 1545-1547)."""
+        allowed_hosts = ["example.com"]
+
+        # URL with no hostname (http:///test has hostname=None)
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "http:///test",
+                allowed_hosts,
+                "Gateway URL"
+            )
