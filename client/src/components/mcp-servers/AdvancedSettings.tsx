@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { Info, TriangleAlert } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -12,16 +12,13 @@ import { CACertificateUpload } from "@/components/mcp-servers/CACertificateUploa
 import { NoneAuth } from "@/components/mcp-servers/NoneAuth";
 import { BasicAuth } from "@/components/mcp-servers/BasicAuth";
 import { BearerTokenAuth } from "@/components/mcp-servers/BearerTokenAuth";
-import { CustomHeadersAuth } from "@/components/mcp-servers/CustomHeadersAuth";
+import { CustomHeadersAuth, type CustomHeader } from "@/components/mcp-servers/CustomHeadersAuth";
 import { OAuth2Auth } from "@/components/mcp-servers/OAuth2Auth";
 import { QueryParameterAuth } from "@/components/mcp-servers/QueryParameterAuth";
 
-type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth" | "query";
+export type { CustomHeader };
 
-export interface CustomHeader {
-  key: string;
-  value: string;
-}
+type AuthType = "none" | "basic" | "bearer" | "custom" | "oauth" | "query";
 
 interface AdvancedSettingsProps {
   visibility: string;
@@ -39,9 +36,23 @@ interface AdvancedSettingsProps {
   oauthClientId: string;
   oauthClientSecret: string;
   oauthTokenUrl: string;
+  oauthGrantType: string;
+  oauthIssuerUrl: string;
+  oauthRedirectUri: string;
+  oauthAuthorizationUrl: string;
+  oauthScopes: string;
+  oauthStoreTokens: boolean;
+  oauthAutoRefresh: boolean;
   onOAuthClientIdChange: (value: string) => void;
   onOAuthClientSecretChange: (value: string) => void;
   onOAuthTokenUrlChange: (value: string) => void;
+  onOAuthGrantTypeChange: (value: string) => void;
+  onOAuthIssuerUrlChange: (value: string) => void;
+  onOAuthRedirectUriChange: (value: string) => void;
+  onOAuthAuthorizationUrlChange: (value: string) => void;
+  onOAuthScopesChange: (value: string) => void;
+  onOAuthStoreTokensChange: (checked: boolean) => void;
+  onOAuthAutoRefreshChange: (checked: boolean) => void;
   queryParamName: string;
   queryParamApiKey: string;
   onQueryParamNameChange: (value: string) => void;
@@ -69,9 +80,23 @@ export function AdvancedSettings({
   oauthClientId,
   oauthClientSecret,
   oauthTokenUrl,
+  oauthGrantType,
+  oauthIssuerUrl,
+  oauthRedirectUri,
+  oauthAuthorizationUrl,
+  oauthScopes,
+  oauthStoreTokens,
+  oauthAutoRefresh,
   onOAuthClientIdChange,
   onOAuthClientSecretChange,
   onOAuthTokenUrlChange,
+  onOAuthGrantTypeChange,
+  onOAuthIssuerUrlChange,
+  onOAuthRedirectUriChange,
+  onOAuthAuthorizationUrlChange,
+  onOAuthScopesChange,
+  onOAuthStoreTokensChange,
+  onOAuthAutoRefreshChange,
   queryParamName,
   queryParamApiKey,
   onQueryParamNameChange,
@@ -107,9 +132,23 @@ export function AdvancedSettings({
             clientId={oauthClientId}
             clientSecret={oauthClientSecret}
             tokenUrl={oauthTokenUrl}
+            grantType={oauthGrantType}
+            issuerUrl={oauthIssuerUrl}
+            redirectUri={oauthRedirectUri}
+            authorizationUrl={oauthAuthorizationUrl}
+            scopes={oauthScopes}
+            storeTokens={oauthStoreTokens}
+            autoRefresh={oauthAutoRefresh}
             onClientIdChange={onOAuthClientIdChange}
             onClientSecretChange={onOAuthClientSecretChange}
             onTokenUrlChange={onOAuthTokenUrlChange}
+            onGrantTypeChange={onOAuthGrantTypeChange}
+            onIssuerUrlChange={onOAuthIssuerUrlChange}
+            onRedirectUriChange={onOAuthRedirectUriChange}
+            onAuthorizationUrlChange={onOAuthAuthorizationUrlChange}
+            onScopesChange={onOAuthScopesChange}
+            onStoreTokensChange={onOAuthStoreTokensChange}
+            onAutoRefreshChange={onOAuthAutoRefreshChange}
           />
         );
       case "query":
@@ -199,7 +238,7 @@ export function AdvancedSettings({
       {renderAuthContent()}
 
       {/* One-time authentication */}
-      <div className="space-y-2">
+      <div className="space-y-1">
         <div className="flex items-center gap-2">
           <label
             htmlFor="one-time-auth"
@@ -211,10 +250,20 @@ export function AdvancedSettings({
         </div>
         <div className="flex items-center gap-3">
           <Switch id="one-time-auth" checked={oneTimeAuth} onCheckedChange={onOneTimeAuthChange} />
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p
+            className={`text-sm ${oneTimeAuth ? "text-neutral-900 dark:text-neutral-100" : "text-neutral-600 dark:text-neutral-400"}`}
+          >
             {"Use credentials once, don't store them. Health checks will be disabled."}
           </p>
         </div>
+        {oneTimeAuth && (
+          <div className="mt-3 flex items-start gap-3 rounded-md bg-neutral-50 p-3 dark:bg-neutral-800">
+            <TriangleAlert className="text-yellow-300 mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              Add passthrough headers when one-time authentication is enabled.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Passthrough headers */}
