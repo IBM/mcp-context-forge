@@ -310,5 +310,3 @@ describe("useMCPServerForm", () => {
     });
   });
 });
-
-// Made with Bob
