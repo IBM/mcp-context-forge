@@ -2430,24 +2430,24 @@ class PendingUserApproval(Base):
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", String(36), ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("tool_id", String(36), ForeignKey("tools.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and resources
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and prompts
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -2491,7 +2491,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False, index=True)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2517,7 +2517,7 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2569,7 +2569,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
