@@ -4598,6 +4598,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=gateway.auth_type,
             auth_value=encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
+            # Status fields - tools successfully fetched from gateway are reachable
+            enabled=True,
+            reachable=True,
             # Federation metadata - consistent across all scenarios
             created_by=created_by or "system",
             created_from_ip=created_from_ip,
@@ -4693,6 +4696,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
+
+                    # Always mark tool as reachable when successfully fetched from gateway
+                    if not existing_tool.reachable:
+                        existing_tool.reachable = True
+                        fields_to_update = True
+
                     if fields_to_update:
                         existing_tool.url = gateway.url
                         # Only overwrite user-facing description if it hasn't been customized
