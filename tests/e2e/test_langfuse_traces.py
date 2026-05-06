@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""End-to-end smoke checks for Langfuse trace export.
+"""Location: ./tests/e2e/test_langfuse_traces.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+End-to-end smoke checks for Langfuse trace export.
 
 These tests are environment-gated and intended for manual or CI runs against a
 live gateway + Langfuse stack. They are skipped unless both services are

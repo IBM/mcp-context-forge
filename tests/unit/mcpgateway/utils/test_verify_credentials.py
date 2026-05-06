@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_verify_credentials.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -624,9 +624,12 @@ async def test_require_docs_auth_override_enforces_revocation_and_user_status(mo
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
 
     verified_payload = {"sub": "alice@example.com", "jti": "token-jti"}
-    with patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)), patch(
-        "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
-        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+    with (
+        patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)),
+        patch(
+            "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
+            new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await vc.require_docs_auth_override(auth_header="Bearer token", jwt_token=None)
@@ -1670,11 +1673,11 @@ async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypat
     mock_user.is_admin = False
     mock_user.email = "proxy-user@example.com"
 
-    with patch("mcpgateway.db.get_db") as mock_get_db, patch(
-        "mcpgateway.services.email_auth_service.EmailAuthService"
-    ) as mock_auth_service, patch(
-        "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-    ) as mock_resolve_teams:
+    with (
+        patch("mcpgateway.db.get_db") as mock_get_db,
+        patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+        patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+    ):
         mock_get_db.return_value = iter([Mock()])
         mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_resolve_teams.return_value = ["team1"]

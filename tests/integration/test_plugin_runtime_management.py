@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for plugin runtime management — multi-instance.
+"""Location: ./tests/integration/test_plugin_runtime_management.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for plugin runtime management — multi-instance.
 
 Tests against a live gateway via HTTP endpoints (docker-compose with 3 replicas).
 For CI-compatible Redis tests, see test_plugin_runtime_redis.py.
@@ -235,9 +240,7 @@ class TestPutAdminPluginsValidation:
             headers=auth_headers,
             timeout=10,
         )
-        assert resp.status_code in (400, 422), (
-            f"missing required 'enabled' should return 4xx; got {resp.status_code}"
-        )
+        assert resp.status_code in (400, 422), f"missing required 'enabled' should return 4xx; got {resp.status_code}"
 
     def test_truthy_string_enabled_coerced_to_bool(self, auth_headers):
         """Pydantic's default ``bool`` coerces truthy strings — document the contract.
@@ -254,18 +257,14 @@ class TestPutAdminPluginsValidation:
             headers=auth_headers,
             timeout=10,
         )
-        assert resp.status_code == 200, (
-            f"truthy string 'yes' should be coerced to True; got {resp.status_code}"
-        )
+        assert resp.status_code == 200, f"truthy string 'yes' should be coerced to True; got {resp.status_code}"
         # Read back and confirm the coercion actually took effect.
         state = requests.get(
             f"{GATEWAY_URL}/admin/plugins",
             headers=auth_headers,
             timeout=10,
         ).json()
-        assert state.get("plugins_globally_enabled") is True, (
-            f"after PUT enabled='yes' the global flag should be True; got {state.get('plugins_globally_enabled')!r}"
-        )
+        assert state.get("plugins_globally_enabled") is True, f"after PUT enabled='yes' the global flag should be True; got {state.get('plugins_globally_enabled')!r}"
 
     def test_unauthenticated_request(self):
         """Request without auth returns 401/403."""
@@ -329,9 +328,7 @@ class TestPutAdminPluginsNameMode:
             headers=auth_headers,
             timeout=10,
         )
-        assert resp.status_code in (400, 422), (
-            f"invalid mode value should return 4xx; got {resp.status_code}"
-        )
+        assert resp.status_code in (400, 422), f"invalid mode value should return 4xx; got {resp.status_code}"
 
     def test_nonexistent_plugin_returns_404(self, auth_headers):
         """Non-existent plugin returns 404."""

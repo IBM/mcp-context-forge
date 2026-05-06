@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration reproducer for issue #4205 — upstream session isolation.
+"""Location: ./tests/integration/test_issue_4205_upstream_session_isolation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Integration reproducer for issue #4205 — upstream session isolation.
 The original reproducer (Dawid Nowak, issue #4205): start a stateful MCP
 server (rust-sdk counter example), register it with ContextForge, then
 drive multiple downstream MCP sessions through the gateway. Before this
@@ -9,23 +13,17 @@ session across downstream clients carrying the same user identity, so
 every client saw — and mutated — the same counter. Increment from one
 browser tab leaked into another; resetting the counter was effectively
 impossible.
-
 This test recreates that scenario at the integration layer using:
-
   * the real ``UpstreamSessionRegistry`` (the 1:1 replacement for the
     deleted ``MCPSessionPool``);
   * an in-memory stateful counter that plays the role of the upstream
     MCP server, wired in via the registry's injectable SessionFactory;
   * two downstream sessions identified by different ``Mcp-Session-Id``s.
-
 The load-bearing assertion is that counter state never leaks across
 downstream sessions. If the registry's 1:1 contract ever regresses, the
 ``increment(5) … increment(3) … get_counter`` sequence below sees the
 combined count and this test fails loudly, in the exact shape of the
 original bug report.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

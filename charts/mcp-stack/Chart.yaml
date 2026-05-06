@@ -22,8 +22,8 @@ type: application
 # * appVersion   - upstream application version; shown in UIs but not
 #                  used for upgrade logic.
 # --------------------------------------------------------------------
-version: 1.0.0-RC-3
-appVersion: "1.0.0-RC-3"
+version: 1.0.0
+appVersion: "1.0.0"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
 icon: https://ibm.github.io/mcp-context-forge/images/contextforge-icon_black.svg

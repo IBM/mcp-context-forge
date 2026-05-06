@@ -1,4 +1,11 @@
-"""MCP roots compliance tests — client-announced roots are visible to the server."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_roots.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP roots compliance tests — client-announced roots are visible to the server.
+"""
 
 from __future__ import annotations
 

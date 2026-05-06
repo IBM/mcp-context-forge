@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for URLReputationPlugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/url_reputation/test_url_reputation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for URLReputationPlugin.
+"""
 
 # Third-Party
 import pytest

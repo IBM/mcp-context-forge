@@ -192,7 +192,7 @@ curl -X POST http://localhost:4444/mcp/sse \
 
 #### Reference
 
-- **Full Migration Guide:** [MIGRATION-PLUGIN-CONDITIONS.md](../architecture/MIGRATION-PLUGIN-CONDITIONS.md)
+- **Full Migration Guide:** [MIGRATION-PLUGIN-CONDITIONS.md](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md)
 - **Validation Script:** `scripts/validate_plugin_conditions.py`
 - **Issue:** #3930
 - **PR:** #4078
@@ -662,10 +662,10 @@ cp plugins/config.yaml.backup plugins/config.yaml
 
 ### Documentation
 
-- **CHANGELOG:** [CHANGELOG.md](../../CHANGELOG.md)
+- **CHANGELOG:** [CHANGELOG.md](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)
 - **Configuration Reference:** [configuration.md](configuration.md)
 - **RBAC Guide:** [rbac.md](rbac.md)
-- **Plugin Migration:** [MIGRATION-PLUGIN-CONDITIONS.md](../architecture/MIGRATION-PLUGIN-CONDITIONS.md)
+- **Plugin Migration:** [MIGRATION-PLUGIN-CONDITIONS.md](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md)
 - **MySQL Migration:** [mysql-to-postgresql-migration.md](mysql-to-postgresql-migration.md)
 
 ### Support Channels

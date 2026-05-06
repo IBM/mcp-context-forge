@@ -823,7 +823,7 @@ OBSERVABILITY_EXCLUDE_PATHS=["/health.*","/metrics.*"]
 - Review [Configuration Reference](../configuration.md) for all observability settings
 - Explore [OpenTelemetry Integration](observability.md) for external monitoring
 - Set up [Phoenix Integration](phoenix.md) for AI-specific observability
-- Configure [Prometheus Metrics](../observability.md#prometheus-metrics-important) for time-series monitoring
+- Configure [Prometheus Metrics](../observability.md#prometheus-metrics) for time-series monitoring
 - Implement [Custom Dashboards](#admin-ui-dashboards) based on your metrics
 
 ## Related Documentation

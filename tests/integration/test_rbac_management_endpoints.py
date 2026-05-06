@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Integration tests for RBAC enforcement on management endpoints.
+"""Location: ./tests/integration/test_rbac_management_endpoints.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for RBAC enforcement on management endpoints.
 
 HTTP-level tests using TestClient(app) with temp SQLite and real RBAC decorators.
 Verifies that teams, tokens, and RBAC admin endpoints enforce permissions correctly.

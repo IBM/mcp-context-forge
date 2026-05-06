@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01 test fixtures for cross-user and cross-tenant access control tests."""
+"""Location: ./tests/playwright/security/owasp/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OWASP A01 test fixtures for cross-user and cross-tenant access control tests.
+"""
 
 # Future
 from __future__ import annotations

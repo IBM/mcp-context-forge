@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_observability.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -884,6 +884,7 @@ class TestObservability:
         """create_span wraps the context when auto-injected attributes are present."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         mock_span = MagicMock()
@@ -906,6 +907,7 @@ class TestObservability:
         """Test SpanWithAttributes records errors and sets status."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         class DummyStatusCode:
@@ -949,6 +951,7 @@ class TestObservability:
         """SpanWithAttributes should sanitize and bound exception messages."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         class DummyStatusCode:

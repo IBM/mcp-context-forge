@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/cross_hook_context.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Cross-hook context sharing test plugin.
 
@@ -43,9 +44,7 @@ class CrossHookContextPlugin(Plugin):
     RESOURCE_PRE_FETCH, and PROMPT_PRE_FETCH.
     """
 
-    async def http_pre_request(
-        self, payload: HttpPreRequestPayload, context: PluginContext
-    ) -> HttpPreRequestResult:
+    async def http_pre_request(self, payload: HttpPreRequestPayload, context: PluginContext) -> HttpPreRequestResult:
         """Store initial context data in HTTP_PRE_REQUEST hook.
 
         Args:
@@ -55,11 +54,7 @@ class CrossHookContextPlugin(Plugin):
         Returns:
             Result allowing processing to continue.
         """
-        logger.info(
-            f"🔍 [CrossHookContextPlugin] HTTP_PRE_REQUEST executed - "
-            f"request_id={context.global_context.request_id}, "
-            f"path={payload.path}, method={payload.method}"
-        )
+        logger.info(f"🔍 [CrossHookContextPlugin] HTTP_PRE_REQUEST executed - " f"request_id={context.global_context.request_id}, " f"path={payload.path}, method={payload.method}")
 
         # Store data in plugin-specific state
         context.state["http_timestamp"] = "2025-01-01T00:00:00Z"
@@ -71,9 +66,7 @@ class CrossHookContextPlugin(Plugin):
 
         return HttpPreRequestResult(continue_processing=True)
 
-    async def http_auth_check_permission(
-        self, payload: HttpAuthCheckPermissionPayload, context: PluginContext
-    ) -> HttpAuthCheckPermissionResult:
+    async def http_auth_check_permission(self, payload: HttpAuthCheckPermissionPayload, context: PluginContext) -> HttpAuthCheckPermissionResult:
         """Verify context from HTTP_PRE_REQUEST is accessible.
 
         Args:
@@ -86,11 +79,7 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
-        logger.info(
-            f"🔍 [CrossHookContextPlugin] HTTP_AUTH_CHECK_PERMISSION executed - "
-            f"request_id={context.global_context.request_id}, "
-            f"user_email={payload.user_email}"
-        )
+        logger.info(f"🔍 [CrossHookContextPlugin] HTTP_AUTH_CHECK_PERMISSION executed - " f"request_id={context.global_context.request_id}, " f"user_email={payload.user_email}")
 
         # Verify we can read data stored in HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
@@ -106,14 +95,9 @@ class CrossHookContextPlugin(Plugin):
         # Verify request_id consistency
         shared_request_id = context.global_context.state["shared_request_id"]
         if shared_request_id != context.global_context.request_id:
-            raise ValueError(
-                f"Request ID mismatch! shared_request_id={shared_request_id}, "
-                f"global_context.request_id={context.global_context.request_id}"
-            )
+            raise ValueError(f"Request ID mismatch! shared_request_id={shared_request_id}, " f"global_context.request_id={context.global_context.request_id}")
 
-        logger.info(
-            f"✅ [CrossHookContextPlugin] Request ID verified: {context.global_context.request_id}"
-        )
+        logger.info(f"✅ [CrossHookContextPlugin] Request ID verified: {context.global_context.request_id}")
 
         # Add permission-specific data
         context.state["permission_checked"] = True
@@ -121,9 +105,7 @@ class CrossHookContextPlugin(Plugin):
 
         return HttpAuthCheckPermissionResult(continue_processing=True)
 
-    async def tool_pre_invoke(
-        self, payload: ToolPreInvokePayload, context: PluginContext
-    ) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Verify context from HTTP hooks is accessible in tool hooks.
 
         Args:
@@ -136,11 +118,7 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
-        logger.info(
-            f"🔍 [CrossHookContextPlugin] TOOL_PRE_INVOKE executed - "
-            f"request_id={context.global_context.request_id}, "
-            f"tool_name={payload.name}"
-        )
+        logger.info(f"🔍 [CrossHookContextPlugin] TOOL_PRE_INVOKE executed - " f"request_id={context.global_context.request_id}, " f"tool_name={payload.name}")
 
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
@@ -154,10 +132,7 @@ class CrossHookContextPlugin(Plugin):
         if "shared_request_id" in context.global_context.state:
             shared_request_id = context.global_context.state["shared_request_id"]
             if shared_request_id != context.global_context.request_id:
-                raise ValueError(
-                    f"Request ID mismatch in tool hook! shared_request_id={shared_request_id}, "
-                    f"global_context.request_id={context.global_context.request_id}"
-                )
+                raise ValueError(f"Request ID mismatch in tool hook! shared_request_id={shared_request_id}, " f"global_context.request_id={context.global_context.request_id}")
 
         # Add tool-specific data
         context.state["tool_name"] = payload.name
@@ -165,9 +140,7 @@ class CrossHookContextPlugin(Plugin):
 
         return ToolPreInvokeResult(continue_processing=True)
 
-    async def resource_pre_fetch(
-        self, payload: ResourcePreFetchPayload, context: PluginContext
-    ) -> ResourcePreFetchResult:
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Verify context from HTTP hooks is accessible in resource hooks.
 
         Args:
@@ -180,11 +153,7 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
-        logger.info(
-            f"🔍 [CrossHookContextPlugin] RESOURCE_PRE_FETCH executed - "
-            f"request_id={context.global_context.request_id}, "
-            f"resource_uri={payload.uri}"
-        )
+        logger.info(f"🔍 [CrossHookContextPlugin] RESOURCE_PRE_FETCH executed - " f"request_id={context.global_context.request_id}, " f"resource_uri={payload.uri}")
 
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
@@ -197,10 +166,7 @@ class CrossHookContextPlugin(Plugin):
         # Verify request_id consistency
         shared_request_id = context.global_context.state["shared_request_id"]
         if shared_request_id != context.global_context.request_id:
-            raise ValueError(
-                f"Request ID mismatch in resource hook! shared_request_id={shared_request_id}, "
-                f"global_context.request_id={context.global_context.request_id}"
-            )
+            raise ValueError(f"Request ID mismatch in resource hook! shared_request_id={shared_request_id}, " f"global_context.request_id={context.global_context.request_id}")
 
         # Add resource-specific data
         context.state["resource_uri"] = payload.uri
@@ -208,9 +174,7 @@ class CrossHookContextPlugin(Plugin):
 
         return ResourcePreFetchResult(continue_processing=True)
 
-    async def prompt_pre_fetch(
-        self, payload: PromptPrehookPayload, context: PluginContext
-    ) -> PromptPrehookResult:
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Verify context from HTTP hooks is accessible in prompt hooks.
 
         Args:
@@ -223,11 +187,7 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
-        logger.info(
-            f"🔍 [CrossHookContextPlugin] PROMPT_PRE_FETCH executed - "
-            f"request_id={context.global_context.request_id}, "
-            f"prompt_id={payload.prompt_id}"
-        )
+        logger.info(f"🔍 [CrossHookContextPlugin] PROMPT_PRE_FETCH executed - " f"request_id={context.global_context.request_id}, " f"prompt_id={payload.prompt_id}")
 
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
@@ -240,10 +200,7 @@ class CrossHookContextPlugin(Plugin):
         # Verify request_id consistency
         shared_request_id = context.global_context.state["shared_request_id"]
         if shared_request_id != context.global_context.request_id:
-            raise ValueError(
-                f"Request ID mismatch in prompt hook! shared_request_id={shared_request_id}, "
-                f"global_context.request_id={context.global_context.request_id}"
-            )
+            raise ValueError(f"Request ID mismatch in prompt hook! shared_request_id={shared_request_id}, " f"global_context.request_id={context.global_context.request_id}")
 
         # Add prompt-specific data
         context.state["prompt_id"] = payload.prompt_id

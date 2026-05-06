@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Verify populated data via REST API GET endpoints.
+"""Location: ./tests/populate/verify.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Verify populated data via REST API GET endpoints.
 
 Usage:
     python -m tests.populate.verify

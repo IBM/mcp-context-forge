@@ -1,4 +1,10 @@
-"""merge token_blocklist (PR #4371) with audit-identity main head
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/bb43712cae28_merge_token_blocklist_with_audit_identity_heads.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+merge token_blocklist (PR #4371) with audit-identity main head
 
 Revision ID: bb43712cae28
 Revises: cae28b15a507, b2c3d4e5f6g7
@@ -15,7 +21,7 @@ from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
 revision: str = "bb43712cae28"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = ("cae28b15a507", "b2c3d4e5f6g7")  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6g7"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

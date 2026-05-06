@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for log aggregator helper functions."""
+"""Location: ./tests/unit/mcpgateway/services/test_log_aggregator_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for log aggregator helper functions.
+"""
 
 # Standard
 from datetime import datetime, timedelta, timezone

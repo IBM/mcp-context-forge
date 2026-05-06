@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Permission Matrix Tests for RBAC System.
+"""Location: ./tests/unit/mcpgateway/services/test_rbac_permission_matrix.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Permission Matrix Tests for RBAC System.
 
 Systematically verifies each role × permission grant/deny using an in-memory
 SQLite DB with bootstrapped roles (not mocks — catches drift from bootstrap_db.py).

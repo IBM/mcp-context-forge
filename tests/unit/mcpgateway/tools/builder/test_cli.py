@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/tools/builder/test_cli.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -287,9 +287,7 @@ class TestBuildCommand:
 
         mock_factory.return_value = (mock_deployer, "python")
 
-        result = runner.invoke(
-            app, ["build", str(config_file), "--plugin", "Plugin1", "--plugin", "Plugin2"]
-        )
+        result = runner.invoke(app, ["build", str(config_file), "--plugin", "Plugin1", "--plugin", "Plugin2"])
         assert result.exit_code == 0
 
     @patch("mcpgateway.tools.builder.cli.DeployFactory.create_deployer")
@@ -357,13 +355,7 @@ class _DummyPipeline(CICDModule):
 
 def test_pipeline_validate_verbose_logs(tmp_path):
     config_file = tmp_path / "mcp-stack.yaml"
-    config_file.write_text(
-        "deployment:\n"
-        "  type: compose\n"
-        "gateway:\n"
-        "  image: mcpgateway:latest\n"
-        "plugins: []\n"
-    )
+    config_file.write_text("deployment:\n" "  type: compose\n" "gateway:\n" "  image: mcpgateway:latest\n" "plugins: []\n")
 
     deployer = _DummyPipeline(verbose=True)
     with patch.object(deployer.console, "print") as mock_print:

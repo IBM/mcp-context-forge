@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_sqlalchemy_modifier.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhav Kandukuri
 
@@ -153,6 +153,7 @@ def test_json_contains_tag_expr_empty_values(mock_session: Any):
 def test_json_contains_tag_expr_sqlite_match_any(mock_session: Any):
     """Test SQLite tag filtering with match_any=True."""
     import re
+
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="tools")
     expr = json_contains_tag_expr(mock_session, col, ["api", "data"], match_any=True)
@@ -167,6 +168,7 @@ def test_json_contains_tag_expr_sqlite_match_any(mock_session: Any):
 def test_json_contains_tag_expr_sqlite_match_all(mock_session: Any):
     """Test SQLite tag filtering with match_any=False (match all)."""
     import re
+
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="resources")
     expr = json_contains_tag_expr(mock_session, col, ["api", "data"], match_any=False)
@@ -180,6 +182,7 @@ def test_json_contains_tag_expr_sqlite_match_all(mock_session: Any):
 def test_json_contains_tag_expr_sqlite_single_tag(mock_session: Any):
     """Test SQLite tag filtering with a single tag value."""
     import re
+
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="prompts")
     expr = json_contains_tag_expr(mock_session, col, ["single"], match_any=True)
@@ -234,6 +237,7 @@ def test_json_contains_tag_expr_sqlite_redundant_empty_guard(mock_session: Any):
     with patch("mcpgateway.utils.sqlalchemy_modifier._ensure_list", return_value=TruthyEmptyValues()):
         with pytest.raises(ValueError, match="values must be non-empty"):
             json_contains_tag_expr(mock_session, DummyColumn(name="tags", table_name="tools"), ["ignored"])
+
 
 def test_json_contains_tag_expr_same_column_no_collision(mock_session: Any):
     """Test that filtering the same column twice doesn't cause collision."""
@@ -317,7 +321,7 @@ def test_json_contains_tag_expr_postgresql_compiles(mock_session: Any):
 
     # Create a real column for testing
     metadata = MetaData()
-    test_table = Table('tools', metadata, Column('tags', JSON))
+    test_table = Table("tools", metadata, Column("tags", JSON))
     col = test_table.c.tags
 
     expr = json_contains_tag_expr(mock_session, col, ["api", "data"], match_any=True)
@@ -335,12 +339,11 @@ def test_json_contains_tag_expr_postgresql_compiles(mock_session: Any):
     # Verify the EXISTS subquery structure uses table_valued pattern:
     # Should have "FROM jsonb_array_elements(...) AS elem" with "elem.value ->>"
     import re
+
     # Pattern: jsonb_array_elements followed by alias
-    assert re.search(r"jsonb_array_elements.*AS elem", sql_str), \
-        f"Expected 'jsonb_array_elements(...) AS elem' pattern, got: {sql_str}"
+    assert re.search(r"jsonb_array_elements.*AS elem", sql_str), f"Expected 'jsonb_array_elements(...) AS elem' pattern, got: {sql_str}"
     # Pattern: explicit column reference elem.value ->> 'id'
-    assert re.search(r"\(elem\.value ->> 'id'\)", sql_str), \
-        f"Expected '(elem.value ->> 'id')' pattern for dict tag extraction, got: {sql_str}"
+    assert re.search(r"\(elem\.value ->> 'id'\)", sql_str), f"Expected '(elem.value ->> 'id')' pattern for dict tag extraction, got: {sql_str}"
 
 
 def test_json_contains_tag_expr_postgresql_match_all(mock_session: Any):
@@ -351,7 +354,7 @@ def test_json_contains_tag_expr_postgresql_match_all(mock_session: Any):
     mock_session.get_bind().dialect.name = "postgresql"
 
     metadata = MetaData()
-    test_table = Table('resources', metadata, Column('tags', JSON))
+    test_table = Table("resources", metadata, Column("tags", JSON))
     col = test_table.c.tags
 
     expr = json_contains_tag_expr(mock_session, col, ["tag1", "tag2"], match_any=False)

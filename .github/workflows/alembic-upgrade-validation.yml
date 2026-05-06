@@ -1,3 +1,26 @@
+# Migration CI coverage decision
+# --------------------------------
+# This workflow runs on every PR that touches migration files and covers:
+#   • SQLite fresh install (HEAD schema from scratch)
+#   • PostgreSQL fresh install
+#   • SQLite upgrade roundtrip (base-image → HEAD → downgrade back to base)
+#   • PostgreSQL upgrade roundtrip
+#
+# The full migration suite (rollback tests, performance benchmarks, and
+# cross-DB schema consistency) is NOT run on every PR because:
+#   • Runtime cost: the full suite can exceed 30 minutes with cold Docker pulls
+#   • Risk profile: rollback and perf tests rarely regress on a typical PR;
+#     the upgrade/roundtrip harness here already catches broken migrations and
+#     stranded Alembic heads — the most common PR-time failure modes
+#   • Cross-DB consistency: requires two live engine containers and is better
+#     suited to a controlled environment
+#
+# Those slower checks are available as:
+#   make migration-test-rollback   — downgrade/reverse pytest + roundtrip
+#   make migration-test-cross-db   — cross-DB schema consistency
+#   make migration-test-all        — full suite
+# Run them manually before release or via workflow_dispatch on this workflow.
+
 name: Alembic Upgrade Validation
 
 on:

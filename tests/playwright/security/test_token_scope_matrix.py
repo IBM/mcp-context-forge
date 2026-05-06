@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Token team-claim matrix and scope-containment coverage."""
+"""Location: ./tests/playwright/security/test_token_scope_matrix.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Token team-claim matrix and scope-containment coverage.
+"""
 
 # Future
 from __future__ import annotations

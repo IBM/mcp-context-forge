@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_cross_hook_context_sharing.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for cross-hook context sharing functionality.
 
@@ -87,10 +88,7 @@ class TestCrossHookContextSharing:
         3. The plugin doesn't raise any ValueError about missing context
         """
         # Make a request that triggers both HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
-        response = test_client_with_plugins.get(
-            "/tools",
-            headers={"Authorization": "Bearer test-token"}
-        )
+        response = test_client_with_plugins.get("/tools", headers={"Authorization": "Bearer test-token"})
 
         # If cross-hook context sharing works, the plugin won't raise ValueError
         # and the request will succeed (or fail for other reasons like auth)
@@ -98,13 +96,10 @@ class TestCrossHookContextSharing:
 
         # Note: This might return 401 if auth fails, but that's OK -
         # we're testing that the plugin's cross-hook context access works
-        assert response.status_code in [200, 401], \
-            "Plugin should not raise ValueError about missing context"
+        assert response.status_code in [200, 401], "Plugin should not raise ValueError about missing context"
 
     @pytest.mark.asyncio
-    async def test_http_to_tool_context_sharing(
-        self, test_db, test_client_with_plugins, plugin_manager
-    ):
+    async def test_http_to_tool_context_sharing(self, test_db, test_client_with_plugins, plugin_manager):
         """Test context sharing from HTTP hooks to TOOL_PRE_INVOKE hook.
 
         This test verifies that:
@@ -129,28 +124,15 @@ class TestCrossHookContextSharing:
 
         # Make a request to invoke the tool
         response = test_client_with_plugins.post(
-            "/rpc/",
-            json={
-                "jsonrpc": "2.0",
-                "id": "test-1",
-                "method": "tools/call",
-                "params": {
-                    "name": "test_cross_hook_tool",
-                    "arguments": {}
-                }
-            },
-            headers={"Authorization": "Bearer test-token"}
+            "/rpc/", json={"jsonrpc": "2.0", "id": "test-1", "method": "tools/call", "params": {"name": "test_cross_hook_tool", "arguments": {}}}, headers={"Authorization": "Bearer test-token"}
         )
 
         # The plugin should successfully access context from HTTP hooks
         # If it fails to find the context, it will raise ValueError and return 500
-        assert response.status_code != 500, \
-            "Cross-hook context sharing should work for HTTP → Tool"
+        assert response.status_code != 500, "Cross-hook context sharing should work for HTTP → Tool"
 
     @pytest.mark.asyncio
-    async def test_http_to_resource_context_sharing(
-        self, test_db, test_client_with_plugins, plugin_manager
-    ):
+    async def test_http_to_resource_context_sharing(self, test_db, test_client_with_plugins, plugin_manager):
         """Test context sharing from HTTP hooks to RESOURCE_PRE_FETCH hook.
 
         This test verifies that context stored in HTTP_PRE_REQUEST is
@@ -173,19 +155,13 @@ class TestCrossHookContextSharing:
         created = await resource_service.register_resource(test_db, resource_data)
 
         # Make a request to read the resource
-        response = test_client_with_plugins.get(
-            f"/resources/{created.id}",
-            headers={"Authorization": "Bearer test-token"}
-        )
+        response = test_client_with_plugins.get(f"/resources/{created.id}", headers={"Authorization": "Bearer test-token"})
 
         # The plugin should successfully access context from HTTP hooks
-        assert response.status_code != 500, \
-            "Cross-hook context sharing should work for HTTP → Resource"
+        assert response.status_code != 500, "Cross-hook context sharing should work for HTTP → Resource"
 
     @pytest.mark.asyncio
-    async def test_http_to_prompt_context_sharing(
-        self, test_db, test_client_with_plugins, plugin_manager
-    ):
+    async def test_http_to_prompt_context_sharing(self, test_db, test_client_with_plugins, plugin_manager):
         """Test context sharing from HTTP hooks to PROMPT_PRE_FETCH hook.
 
         This test verifies that context stored in HTTP_PRE_REQUEST is
@@ -204,21 +180,13 @@ class TestCrossHookContextSharing:
             description="Test prompt for cross-hook context",
         )
 
-        created = await prompt_service.register_prompt(
-            test_db,
-            prompt_data,
-            user_email="test@example.com"
-        )
+        created = await prompt_service.register_prompt(test_db, prompt_data, user_email="test@example.com")
 
         # Make a request to get the prompt
-        response = test_client_with_plugins.get(
-            f"/prompts/{created.name}",
-            headers={"Authorization": "Bearer test-token"}
-        )
+        response = test_client_with_plugins.get(f"/prompts/{created.name}", headers={"Authorization": "Bearer test-token"})
 
         # The plugin should successfully access context from HTTP hooks
-        assert response.status_code != 500, \
-            "Cross-hook context sharing should work for HTTP → Prompt"
+        assert response.status_code != 500, "Cross-hook context sharing should work for HTTP → Prompt"
 
     @pytest.mark.asyncio
     async def test_global_context_consistency(self, test_client_with_plugins, plugin_manager):
@@ -228,17 +196,13 @@ class TestCrossHookContextSharing:
         the same request_id) is used across all hooks in a single request.
         """
         # Make a request that triggers multiple hooks
-        response = test_client_with_plugins.get(
-            "/tools",
-            headers={"Authorization": "Bearer test-token"}
-        )
+        response = test_client_with_plugins.get("/tools", headers={"Authorization": "Bearer test-token"})
 
         # The plugin stores request_id in global context during HTTP_PRE_REQUEST
         # and verifies it's present in subsequent hooks
         # If the global context wasn't shared, the plugin would raise ValueError
 
-        assert response.status_code in [200, 401], \
-            "GlobalContext should be consistent across all hooks"
+        assert response.status_code in [200, 401], "GlobalContext should be consistent across all hooks"
 
     @pytest.mark.asyncio
     async def test_plugin_context_isolation(self, plugin_manager):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/tools/builder/test_dagger_deploy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -121,9 +121,7 @@ class TestMCPStackDaggerBuild:
         """Test building only plugins."""
         mock_load.return_value = {
             "gateway": {"repo": "https://github.com/test/gateway.git"},
-            "plugins": [
-                {"name": "Plugin1", "repo": "https://github.com/test/plugin1.git"}
-            ],
+            "plugins": [{"name": "Plugin1", "repo": "https://github.com/test/plugin1.git"}],
         }
         mock_get_deploy.return_value = tmp_path / "deploy"
 
@@ -199,9 +197,7 @@ class TestMCPStackDaggerDeploy:
     @patch.object(MCPStackDagger, "generate_manifests")
     @patch.object(MCPStackDagger, "_deploy_compose")
     @pytest.mark.asyncio
-    async def test_deploy_compose_full(
-        self, mock_deploy, mock_gen_manifests, mock_certs, mock_build, mock_load, mock_get_deploy, mock_dagger_connection, tmp_path
-    ):
+    async def test_deploy_compose_full(self, mock_deploy, mock_gen_manifests, mock_certs, mock_build, mock_load, mock_get_deploy, mock_dagger_connection, tmp_path):
         """Test full Docker Compose deployment with Dagger."""
         mock_load.return_value = {
             "deployment": {"type": "compose", "project_name": "test"},
@@ -266,9 +262,7 @@ class TestMCPStackDaggerVerify:
     @pytest.mark.asyncio
     async def test_verify_kubernetes(self, mock_verify_kubernetes, mock_load, mock_get_deploy, mock_dagger_connection, tmp_path):
         """Test Kubernetes deployment verification with Dagger."""
-        mock_load.return_value = {
-            "deployment": {"type": "kubernetes", "namespace": "test-ns"}
-        }
+        mock_load.return_value = {"deployment": {"type": "kubernetes", "namespace": "test-ns"}}
         mock_get_deploy.return_value = tmp_path / "deploy"
 
         stack = MCPStackDagger()
@@ -329,9 +323,7 @@ class TestMCPStackDaggerGenerateManifests:
     @patch("mcpgateway.tools.builder.dagger_deploy.load_config")
     @patch("mcpgateway.tools.builder.dagger_deploy.generate_plugin_config")
     @patch("mcpgateway.tools.builder.dagger_deploy.generate_kubernetes_manifests")
-    def test_generate_manifests_kubernetes(
-        self, mock_k8s_gen, mock_plugin_gen, mock_load, tmp_path
-    ):
+    def test_generate_manifests_kubernetes(self, mock_k8s_gen, mock_plugin_gen, mock_load, tmp_path):
         """Test generating Kubernetes manifests with Dagger."""
         mock_load.return_value = {
             "deployment": {"type": "kubernetes", "namespace": "test-ns"},
@@ -349,9 +341,7 @@ class TestMCPStackDaggerGenerateManifests:
     @patch("mcpgateway.tools.builder.dagger_deploy.load_config")
     @patch("mcpgateway.tools.builder.dagger_deploy.generate_plugin_config")
     @patch("mcpgateway.tools.builder.dagger_deploy.generate_compose_manifests")
-    def test_generate_manifests_compose(
-        self, mock_compose_gen, mock_plugin_gen, mock_load, tmp_path
-    ):
+    def test_generate_manifests_compose(self, mock_compose_gen, mock_plugin_gen, mock_load, tmp_path):
         """Test generating Docker Compose manifests with Dagger."""
         mock_load.return_value = {
             "deployment": {"type": "compose"},

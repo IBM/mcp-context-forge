@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Trace payload redaction and bounded serialization helpers."""
+"""Location: ./mcpgateway/utils/trace_redaction.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Trace payload redaction and bounded serialization helpers.
+"""
 
 # Standard
 import json

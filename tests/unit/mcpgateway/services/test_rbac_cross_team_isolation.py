@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Cross-Team Isolation Tests for RBAC System.
+"""Location: ./tests/unit/mcpgateway/services/test_rbac_cross_team_isolation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Cross-Team Isolation Tests for RBAC System.
 
 Verifies that team-scoped roles are isolated to their assigned team,
 and that personal team roles are excluded from check_any_team aggregation.

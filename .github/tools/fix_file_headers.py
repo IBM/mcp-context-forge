@@ -547,8 +547,10 @@ def process_file(
                     new_header_lines = []
                     # Always use correct location path
                     new_header_lines.append(f"Location: ./{relative_path_str}")
-                    new_header_lines.append(existing_header_fields.get("Copyright") or f"Copyright {COPYRIGHT_YEAR}")
-                    new_header_lines.append(existing_header_fields.get("SPDX-License-Identifier") or f"SPDX-License-Identifier: {LICENSE}")
+                    # Always use the expected copyright year (don't preserve incorrect year)
+                    new_header_lines.append(f"Copyright {COPYRIGHT_YEAR}")
+                    # Always use the expected license (don't preserve incorrect license)
+                    new_header_lines.append(f"SPDX-License-Identifier: {LICENSE}")
                     # Preserve existing Authors field if it exists, otherwise use the provided authors
                     new_header_lines.append(existing_header_fields.get("Authors") or f"Authors: {authors}")
 

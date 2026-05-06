@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/audit_trail_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Audit Trail Service.
 
@@ -157,6 +158,7 @@ class AuditTrailService:
 
             if auth_method is None or acting_as is None or delegation_chain is None:
                 try:
+                    # First-Party
                     from mcpgateway.transports.context import user_identity_var  # pylint: disable=import-outside-toplevel
 
                     identity = user_identity_var.get()
@@ -167,8 +169,14 @@ class AuditTrailService:
                             acting_as = identity.service_account
                         if delegation_chain is None and identity.delegation_chain:
                             delegation_chain = {"chain": identity.delegation_chain}
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(
+                        "Failed to extract user identity context for audit trail",
+                        extra={
+                            "error": str(e),
+                            "correlation_id": correlation_id,
+                        },
+                    )
 
             # Create audit trail entry
             audit_entry = AuditTrail(

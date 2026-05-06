@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_observability_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -33,6 +33,7 @@ def mock_request():
 def mock_call_next():
     async def _call_next(request):
         return Response("OK", status_code=200)
+
     return _call_next
 
 
@@ -61,14 +62,15 @@ async def test_dispatch_trace_setup_success(mock_request, mock_call_next):
     mock_session = MagicMock()
     mock_session.is_active = True
     mock_session.in_transaction.return_value = False
-    with \
-         patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace, \
-         patch.object(middleware.service, "start_span", return_value="span123") as mock_start_span, \
-         patch.object(middleware.service, "end_span") as mock_end_span, \
-         patch.object(middleware.service, "end_trace") as mock_end_trace, \
-         patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session") as mock_attach, \
-         patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=("traceX", "spanY", "flags")), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123") as mock_start_span,
+        patch.object(middleware.service, "end_span") as mock_end_span,
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session") as mock_attach,
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=("traceX", "spanY", "flags")),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
         mock_start_trace.assert_called_once()
@@ -81,8 +83,7 @@ async def test_dispatch_trace_setup_success(mock_request, mock_call_next):
 @pytest.mark.asyncio
 async def test_dispatch_trace_setup_failure(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
-    with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
 
@@ -93,12 +94,14 @@ async def test_dispatch_exception_during_request(mock_request):
         raise RuntimeError("Request failed")
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
-    with patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span") as mock_end_span, \
-         patch.object(middleware.service, "add_event") as mock_add_event, \
-         patch.object(middleware.service, "end_trace") as mock_end_trace, \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span") as mock_end_span,
+        patch.object(middleware.service, "add_event") as mock_add_event,
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         with pytest.raises(RuntimeError):
             await middleware.dispatch(mock_request, failing_call_next)
         mock_end_span.assert_called()
@@ -114,8 +117,7 @@ async def test_dispatch_exception_during_request(mock_request):
 async def test_dispatch_trace_setup_cleanup_close_failure_logs_debug(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
-    with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with patch.object(middleware.service, "start_trace", side_effect=Exception("trace fail")), patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
 
@@ -124,12 +126,14 @@ async def test_dispatch_trace_setup_cleanup_close_failure_logs_debug(mock_reques
 async def test_dispatch_end_span_failure_logs_warning(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
-    with patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span", side_effect=Exception("end span fail")), \
-         patch.object(middleware.service, "end_trace"), \
-         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span", side_effect=Exception("end span fail")),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
         mock_warning.assert_called()
@@ -139,12 +143,14 @@ async def test_dispatch_end_span_failure_logs_warning(mock_request, mock_call_ne
 async def test_dispatch_end_trace_failure_logs_warning(mock_request, mock_call_next):
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
-    with patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "end_trace", side_effect=Exception("end trace fail")), \
-         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace", side_effect=Exception("end trace fail")),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
         mock_warning.assert_called()
@@ -157,13 +163,15 @@ async def test_dispatch_exception_logging_failure_logs_warning(mock_request):
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
-    with patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "add_event", side_effect=Exception("add event fail")), \
-         patch.object(middleware.service, "end_trace"), \
-         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "add_event", side_effect=Exception("add event fail")),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         with pytest.raises(RuntimeError):
             await middleware.dispatch(mock_request, failing_call_next)
         mock_warning.assert_called()
@@ -176,20 +184,24 @@ async def test_dispatch_end_trace_error_failure_logs_warning(mock_request):
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
 
-    with patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "add_event"), \
-         patch.object(middleware.service, "end_trace", side_effect=Exception("end trace fail")), \
-         patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning, \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False):
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "add_event"),
+        patch.object(middleware.service, "end_trace", side_effect=Exception("end trace fail")),
+        patch("mcpgateway.middleware.observability_middleware.logger.warning") as mock_warning,
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
         with pytest.raises(RuntimeError):
             await middleware.dispatch(mock_request, failing_call_next)
         mock_warning.assert_called()
 
+
 # ============================================================================
 # Session Reuse Tests
 # ============================================================================
+
 
 @pytest.fixture
 def mock_observability_service():
@@ -231,7 +243,7 @@ async def test_get_db_reuses_middleware_session():
 
     # Verify get_db() commits the middleware session (Issue #3731 fix)
     # Transaction control is now delegated to get_db(), not middleware
-        # Verify the session is NOT closed (middleware will handle that)
+    # Verify the session is NOT closed (middleware will handle that)
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""End-to-end tests for OpenTelemetry baggage tracing.
+"""Location: ./tests/e2e/test_baggage_tracing.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+End-to-end tests for OpenTelemetry baggage tracing.
 
 Tests cover:
 - Full request flow with baggage extraction

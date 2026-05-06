@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Buffered metrics service for batching metric writes to the database.
+"""Location: ./mcpgateway/services/metrics_buffer_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Buffered metrics service for batching metric writes to the database.
 This service accumulates metrics in memory and flushes them to the database
 periodically, reducing DB write pressure under high load.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for metrics_query_service.
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_query_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for metrics_query_service.
 
 Tests cover:
 - Retention cutoff calculation
@@ -8,6 +13,7 @@ Tests cover:
 - Current hour aggregation
 - Three-source merging logic
 """
+
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -354,7 +360,7 @@ class TestAggregateMetricsCombined:
         current_result.successful = 20
         current_result.failed = 5
         current_result.min_rt = 0.01  # New minimum
-        current_result.max_rt = 3.0   # New maximum
+        current_result.max_rt = 3.0  # New maximum
         current_result.avg_rt = 0.2
         current_result.last_time = datetime(2024, 1, 15, 10, 45, tzinfo=timezone.utc)  # Most recent
 
@@ -370,7 +376,7 @@ class TestAggregateMetricsCombined:
 
         # Verify min/max pick the correct extremes
         assert result.min_response_time == 0.01  # From current hour
-        assert result.max_response_time == 3.0   # From current hour
+        assert result.max_response_time == 3.0  # From current hour
 
         # Verify weighted average: (0.5*100 + 0.3*50 + 0.2*25) / 175 = 70/175 = 0.4
         assert result.avg_response_time == pytest.approx(0.4)

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP session and subscription generators for load testing."""
+"""Location: ./tests/load/generators/sessions.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP session and subscription generators for load testing.
+"""
 
 import json
 import random

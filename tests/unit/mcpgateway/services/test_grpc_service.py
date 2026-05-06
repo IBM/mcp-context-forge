@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_grpc_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Contributors
 
@@ -137,7 +137,15 @@ class TestGrpcService:
                 mock_db,
                 sample_service_create,
                 user_email="test@example.com",
-                metadata={"created_by": "test@example.com", "created_from_ip": "127.0.0.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1},
+                metadata={
+                    "created_by": "test@example.com",
+                    "created_from_ip": "127.0.0.1",
+                    "created_via": "ui",
+                    "created_user_agent": "test/1.0",
+                    "import_batch_id": None,
+                    "federation_source": None,
+                    "version": 1,
+                },
             )
 
         assert result.name == "test-grpc-service"

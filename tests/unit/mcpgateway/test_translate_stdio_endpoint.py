@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for StdIOEndpoint with environment variable support.
-
-Location: ./tests/unit/mcpgateway/test_translate_stdio_endpoint.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/test_translate_stdio_endpoint.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta
 
+Unit tests for StdIOEndpoint with environment variable support.
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
 
@@ -279,7 +278,7 @@ sys.stdout.flush()
             "DEBUG": "false",
         }
 
-        endpoint = StdIOEndpoint( "jq -cMn env", pubsub, env_vars)
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, env_vars)
 
         await endpoint.start()
 

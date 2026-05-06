@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/client/benchmark_sweep.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Concurrency Sweep Benchmark
 
 Runs benchmarks across multiple concurrency levels to find optimal configuration.
@@ -26,7 +30,6 @@ from typing import List, Tuple
 import httpx
 
 from benchmark_httpx import BenchmarkConfig, BenchmarkResult, BenchmarkRunner
-
 
 # Default concurrency levels to test
 DEFAULT_LEVELS: List[Tuple[int, int]] = [
@@ -81,16 +84,8 @@ async def run_sweep(
         results.append(result)
 
         # Print intermediate result
-        success_rate = (
-            (result.successful_requests / result.total_requests * 100)
-            if result.total_requests > 0
-            else 0
-        )
-        print(
-            f"  Result: {result.rps:,.1f} RPS, "
-            f"P99={result.p99_latency_ms:.2f}ms, "
-            f"{success_rate:.1f}% success"
-        )
+        success_rate = (result.successful_requests / result.total_requests * 100) if result.total_requests > 0 else 0
+        print(f"  Result: {result.rps:,.1f} RPS, " f"P99={result.p99_latency_ms:.2f}ms, " f"{success_rate:.1f}% success")
 
     return results
 
@@ -100,18 +95,11 @@ def print_sweep_table(results: List[BenchmarkResult]):
     print("\n" + "=" * 120)
     print("CONCURRENCY SWEEP RESULTS")
     print("=" * 120)
-    print(
-        f"{'Pattern':<35} {'Requests':>12} {'RPS':>12} {'Avg(ms)':>10} "
-        f"{'P50(ms)':>10} {'P99(ms)':>10} {'Max(ms)':>10} {'Success%':>10}"
-    )
+    print(f"{'Pattern':<35} {'Requests':>12} {'RPS':>12} {'Avg(ms)':>10} " f"{'P50(ms)':>10} {'P99(ms)':>10} {'Max(ms)':>10} {'Success%':>10}")
     print("-" * 120)
 
     for r in results:
-        success_rate = (
-            (r.successful_requests / r.total_requests * 100)
-            if r.total_requests > 0
-            else 0
-        )
+        success_rate = (r.successful_requests / r.total_requests * 100) if r.total_requests > 0 else 0
         print(
             f"{r.pattern:<35} {r.total_requests:>12,} {r.rps:>12,.1f} "
             f"{r.avg_latency_ms:>10.2f} {r.p50_latency_ms:>10.2f} "

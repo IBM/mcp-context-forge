@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add password_reset_tokens table
+"""Location: ./mcpgateway/alembic/versions/w6g7h8i9j0k1_add_password_reset_tokens.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add password_reset_tokens table
 
 Revision ID: w6g7h8i9j0k1
 Revises: 8a16a77260f0

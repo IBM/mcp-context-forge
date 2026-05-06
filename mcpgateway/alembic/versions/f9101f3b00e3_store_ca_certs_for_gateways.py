@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""store ca-certs for gateways
+"""Location: ./mcpgateway/alembic/versions/f9101f3b00e3_store_ca_certs_for_gateways.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+store ca-certs for gateways
 
 Revision ID: f9101f3b00e3
 Revises: a706a3320c56
 Create Date: 2025-11-05 15:18:16.659224
-
 """
 
 # Standard

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for well_known and server_well_known routers."""
+"""Location: ./tests/unit/mcpgateway/routers/test_well_known.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for well_known and server_well_known routers.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -15,7 +21,6 @@ from mcpgateway.routers.well_known import (
     get_well_known_file_content,
     validate_security_txt,
 )
-
 
 # ---------- get_base_url_with_protocol ----------
 

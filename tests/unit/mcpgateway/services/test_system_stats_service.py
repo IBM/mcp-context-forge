@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/mcpgateway/services/test_system_stats_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
+
 import pytest
 from unittest.mock import MagicMock, patch
 from mcpgateway.services.system_stats_service import SystemStatsService
@@ -319,10 +328,7 @@ def test_get_comprehensive_stats_success():
     mock_db.execute.side_effect = mock_execute_side_effect
 
     result = service.get_comprehensive_stats(mock_db)
-    expected_keys = [
-        "users", "teams", "mcp_resources", "tokens",
-        "sessions", "metrics", "security", "workflow"
-    ]
+    expected_keys = ["users", "teams", "mcp_resources", "tokens", "sessions", "metrics", "security", "workflow"]
     for key in expected_keys:
         assert key in result
         assert "total" in result[key]

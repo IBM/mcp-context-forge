@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/unit/mcpgateway/transports/test_redis_event_store.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for RedisEventStore.
 
 Tests the Redis-backed event store implementation for multi-worker

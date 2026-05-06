@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""High-throughput Locust load test for maximum RPS.
+"""Location: ./tests/loadtest/locustfile_highthroughput.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+High-throughput Locust load test for maximum RPS.
 This locustfile is optimized for achieving 1000+ RPS by:
 1. Focusing on fast endpoints only (health, tools, servers)
 2. Minimizing wait times between requests
 3. Avoiding slow endpoints (admin UI, external MCP calls)
-
 Usage:
     locust -f tests/loadtest/locustfile_highthroughput.py --host=http://localhost:8080 \
         --users=1000 --spawn-rate=100 --run-time=3m --headless
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 import logging
@@ -50,7 +50,7 @@ def _load_env_file() -> dict[str, str]:
                     if "=" in line:
                         key, _, value = line.partition("=")
                         key = key.strip()
-                        value = value.strip().strip('"\'')
+                        value = value.strip().strip("\"'")
                         env_vars[key] = value
             break
     return env_vars

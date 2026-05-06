@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.db_isready."""
+"""Location: ./tests/unit/mcpgateway/utils/test_db_isready.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.db_isready.
+"""
 
 # Standard
 from types import SimpleNamespace

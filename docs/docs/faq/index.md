@@ -313,8 +313,6 @@
     AUTO_CREATE_PERSONAL_TEAMS=true
     ```
 
-    Upgrading from earlier releases? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
-
 ???+ info "🔁 Does basic auth still work?"
     Basic auth for API endpoints is **disabled by default** for security. To enable it, set `API_ALLOW_BASIC_AUTH=true`. Email/password authentication is recommended for the Admin UI. For programmatic API access, use JWT tokens.
 

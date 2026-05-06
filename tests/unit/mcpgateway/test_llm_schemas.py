@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_llm_schemas.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for LLM schemas.
 """
@@ -577,7 +578,10 @@ class TestLLMSchemaXSSValidation:
     def test_provider_update_none_fields_pass_through(self):
         """Optional None fields on LLMProviderUpdate must pass through validators."""
         update = LLMProviderUpdate(
-            name=None, description=None, api_base=None, config=None,
+            name=None,
+            description=None,
+            api_base=None,
+            config=None,
         )
         assert update.name is None
         assert update.description is None
@@ -600,7 +604,10 @@ class TestLLMSchemaXSSValidation:
     def test_model_update_none_fields_pass_through(self):
         """Optional None fields on LLMModelUpdate must pass through validators."""
         update = LLMModelUpdate(
-            model_id=None, model_name=None, model_alias=None, description=None,
+            model_id=None,
+            model_name=None,
+            model_alias=None,
+            description=None,
         )
         assert update.model_id is None
         assert update.model_name is None

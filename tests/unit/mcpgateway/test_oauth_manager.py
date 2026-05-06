@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_oauth_manager.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -1055,7 +1055,7 @@ class TestOAuthManager:
                         # This should work without token storage
                         result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
-                        expected = {"success": True, "user_id": "user123", "expires_at": None}  # No token storage means no expiration tracking
+                        expected = {"success": True, "user_id": "user123", "expires_at": None, "token_aud": None}  # No token storage means no expiration tracking
                         assert result == expected
 
                         # PKCE: Now includes code_verifier parameter and CA certificate parameters

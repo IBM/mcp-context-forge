@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add title column to tools, resources, and prompts
+"""Location: ./mcpgateway/alembic/versions/a7f3c9e1b2d4_add_title_to_tools_resources_prompts.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add title column to tools, resources, and prompts
 
 Revision ID: a7f3c9e1b2d4
 Revises: 225bde88217e

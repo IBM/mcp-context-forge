@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for malicious pattern detection (US-3)
+"""Location: ./tests/unit/mcpgateway/services/test_content_pattern_detection.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for malicious pattern detection (US-3)
 
 Tests the ContentSecurityService.detect_malicious_patterns method
 to verify XSS, command injection, SQL injection, and template injection detection.

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Metrics generators for load testing."""
+"""Location: ./tests/load/generators/metrics.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Metrics generators for load testing.
+"""
 
 import random
 from datetime import datetime, timedelta

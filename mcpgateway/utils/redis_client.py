@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Centralized Redis client factory for consistent configuration.
+"""Location: ./mcpgateway/utils/redis_client.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Centralized Redis client factory for consistent configuration.
 This module provides a single source of truth for Redis client creation,
 ensuring all services use the same connection pool and settings.
-
 Performance: Uses hiredis C parser by default (ADR-026) for up to 83x faster
 response parsing on large responses. Falls back to pure-Python parser if
 hiredis is unavailable or explicitly disabled via REDIS_PARSER setting.
-
-SPDX-License-Identifier: Apache-2.0
-
 Usage:
     from mcpgateway.utils.redis_client import get_redis_client, close_redis_client
 
@@ -25,6 +25,9 @@ Usage:
 # Standard
 import logging
 from typing import Any, Optional
+
+# First-Party
+from mcpgateway.utils.db_isready import _sanitize
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +162,10 @@ async def get_redis_client() -> Optional[Any]:
             f"health_check={settings.redis_health_check_interval}s"
         )
     except ImportError as e:
-        logger.error(f"Redis parser configuration error: {e}")
+        logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
         _client = None
     except Exception as e:
-        logger.warning(f"Failed to connect to Redis: {e}")
+        logger.warning(f"Failed to connect to Redis: {_sanitize(str(e))}")
         _client = None
 
     _initialized = True
@@ -178,7 +181,7 @@ async def close_redis_client() -> None:
             await _client.aclose()
             logger.info("Redis client closed")
         except Exception as e:
-            logger.warning(f"Error closing Redis client: {e}")
+            logger.warning(f"Error closing Redis client: {_sanitize(str(e))}")
 
     _client = None
     _initialized = False

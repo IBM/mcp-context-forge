@@ -191,5 +191,5 @@ make testing-down
 
 - [ADR-052: GET /mcp Stream and Server-Initiated Request Correlation](adr/052-get-stream-and-server-initiated-requests.md)
 - [ADR-038: Multi-Worker Session Affinity](adr/038-multi-worker-session-affinity.md)
-- [Rust MCP Runtime — DEVELOPING § GET /mcp Stream Relay](../../crates/mcp_runtime/DEVELOPING.md)
+- [Rust MCP Runtime — DEVELOPING § GET /mcp Stream Relay](https://github.com/IBM/mcp-context-forge/blob/main/crates/mcp_runtime/DEVELOPING.md)
 - [MCP Streamable HTTP — Listening for messages from the server](https://modelcontextprotocol.io/specification/draft/basic/transports#listening-for-messages-from-the-server)

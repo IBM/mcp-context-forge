@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Render JMeter plans by inlining shared REST/MCP fragments.
+"""Location: ./tests/jmeter/render_fragments.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Render JMeter plans by inlining shared REST/MCP fragments.
 
 Usage:
   python3 tests/jmeter/render_fragments.py --out /tmp/jmeter-rendered

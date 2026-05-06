@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for RegistryCache Redis timeout and circuit breaker functionality.
+"""Location: ./tests/unit/mcpgateway/cache/test_registry_cache_timeout.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit tests for RegistryCache Redis timeout and circuit breaker functionality.
 Tests verify that:
 1. Redis operations timeout after configured duration
 2. Circuit breaker opens after threshold failures
 3. Circuit breaker allows retry after timeout
 4. Cache falls back to in-memory on Redis timeout
 5. Automatic recovery when Redis becomes available
-
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

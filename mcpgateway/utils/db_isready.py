@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/db_isready.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -177,8 +177,8 @@ def _sanitize(txt: str) -> str:
         Same *txt* but with credentials replaced by ``***``.
     """
 
-    redacted = _CRED_RE.sub(r"://\\1:***@", txt)
-    return _PWD_RE.sub(r"\\1=***", redacted)
+    redacted = _CRED_RE.sub(r"://\1:***@", txt)
+    return _PWD_RE.sub(r"\1=***", redacted)
 
 
 def _format_target(url: URL) -> str:

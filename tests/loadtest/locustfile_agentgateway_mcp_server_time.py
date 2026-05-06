@@ -1,38 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Load testing for external MCP server via Streamable HTTP.
+"""Location: ./tests/loadtest/locustfile_agentgateway_mcp_server_time.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Load testing for external MCP server via Streamable HTTP.
 This module tests an MCP server at http://localhost:3000 using the
 Streamable HTTP transport protocol. It calls the `localhost-get-system-time`
 tool to measure MCP server performance.
-
 User Classes:
 - MCPServerTimeUser: MCP protocol test via Streamable HTTP (weight: 10)
 - MCPServerTimeStressUser: High-frequency stress test (weight: 1)
-
 Default Parameters:
 - Users: 50
 - Spawn rate: 10/s
 - Run time: 60s
 - Host: http://localhost:3000
-
 Usage:
     # Web UI with class picker
     make load-test-agentgateway-mcp-server-time
-
     # Or manually:
     locust -f locustfile_agentgateway_mcp_server_time.py --class-picker
-
     # Headless
     locust -f locustfile_agentgateway_mcp_server_time.py \
            --host=http://localhost:3000 \
            --users=50 --spawn-rate=10 --run-time=60s --headless
-
 Environment Variables:
     MCP_SERVER_URL: MCP Server URL (default: http://localhost:3000/mcp)
     MCP_TOOL_NAME: Tool name to call (default: localhost-get-system-time)
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 import logging

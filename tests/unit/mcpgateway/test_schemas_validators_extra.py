@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Extra schema validator tests to cover edge cases."""
+"""Location: ./tests/unit/mcpgateway/test_schemas_validators_extra.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extra schema validator tests to cover edge cases.
+"""
 
 # Standard
 import base64

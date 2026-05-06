@@ -1,4 +1,11 @@
-"""Gateway-proxy target: live ContextForge serving /mcp backed by the reference server."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/targets/gateway_proxy.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Gateway-proxy target: live ContextForge serving /mcp backed by the reference server.
+"""
 
 from __future__ import annotations
 

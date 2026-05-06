@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/test_resource_hooks.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -47,7 +47,7 @@ class TestResourceHooks:
 
     def test_resource_post_fetch_payload(self):
         """Test ResourcePostFetchPayload creation and attributes."""
-        content = ResourceContent(type="resource", id="123",uri="file:///test.txt", text="Test content")
+        content = ResourceContent(type="resource", id="123", uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
         assert payload.uri == "file:///test.txt"
         assert payload.content == content
@@ -85,7 +85,7 @@ class TestResourceHooks:
             tags=["test"],
         )
         plugin = Plugin(config)
-        content = ResourceContent(type="resource",  id="123",uri="file:///test.txt", text="Test content")
+        content = ResourceContent(type="resource", id="123", uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
         context = PluginContext(global_context=GlobalContext(request_id="test-123"))
 
@@ -164,7 +164,7 @@ class TestResourceHooks:
         plugin = ContentFilterPlugin(config)
         content = ResourceContent(
             type="resource",
-             id="123",
+            id="123",
             uri="test://config",
             text="Database config:\npassword: secret123\nport: 5432",
         )

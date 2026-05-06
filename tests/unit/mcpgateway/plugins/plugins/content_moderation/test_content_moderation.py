@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/content_moderation/test_content_moderation.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for ContentModerationPlugin.
 """
@@ -36,25 +37,17 @@ def _create_plugin(config_dict=None) -> ContentModerationPlugin:
         "provider": "ibm_watson",
         "fallback_provider": "ibm_granite",
         "fallback_on_error": "warn",
-        "ibm_watson": {
-            "api_key": "test-watson-key",
-            "url": "https://api.us-south.natural-language-understanding.watson.cloud.ibm.com",
-            "version": "2022-04-07"
-        },
-        "ibm_granite": {
-            "ollama_url": "http://localhost:11434",
-            "model": "granite3-guardian",
-            "temperature": 0.1
-        },
+        "ibm_watson": {"api_key": "test-watson-key", "url": "https://api.us-south.natural-language-understanding.watson.cloud.ibm.com", "version": "2022-04-07"},
+        "ibm_granite": {"ollama_url": "http://localhost:11434", "model": "granite3-guardian", "temperature": 0.1},
         "categories": {
             "hate": {"threshold": 0.7, "action": "block"},
             "violence": {"threshold": 0.8, "action": "block"},
             "sexual": {"threshold": 0.6, "action": "warn"},
-            "profanity": {"threshold": 0.6, "action": "redact"}
+            "profanity": {"threshold": 0.6, "action": "redact"},
         },
         "audit_decisions": True,
         "enable_caching": True,
-        "max_text_length": 10000
+        "max_text_length": 10000,
     }
 
     if config_dict:
@@ -72,14 +65,7 @@ def _create_plugin(config_dict=None) -> ContentModerationPlugin:
 
 def _create_context(user="testuser", request_id="req-123") -> PluginContext:
     """Helper to create plugin context."""
-    return PluginContext(
-        global_context=GlobalContext(
-            request_id=request_id,
-            user=user,
-            tenant_id="tenant-abc",
-            server_id="server-xyz"
-        )
-    )
+    return PluginContext(global_context=GlobalContext(request_id=request_id, user=user, tenant_id="tenant-abc", server_id="server-xyz"))
 
 
 class TestContentModerationPlugin:
@@ -112,14 +98,7 @@ class TestContentModerationPlugin:
         """Test text extraction from different payload types."""
         plugin = _create_plugin()
 
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={
-                "query": "This is a test query",
-                "context": "Additional context",
-                "metadata": "nested text"
-            }
-        )
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "This is a test query", "context": "Additional context", "metadata": "nested text"})
 
         texts = await plugin._extract_text_content(payload)
         assert "This is a test query" in texts
@@ -127,7 +106,7 @@ class TestContentModerationPlugin:
         assert "nested text" in texts
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch("plugins.content_moderation.content_moderation.httpx.AsyncClient")
     async def test_ibm_watson_moderation_success(self, mock_client_class):
         """Test successful IBM Watson moderation."""
         # Setup mock response
@@ -135,23 +114,9 @@ class TestContentModerationPlugin:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "emotion": {
-                "document": {
-                    "emotion": {
-                        "anger": 0.8,
-                        "disgust": 0.3,
-                        "fear": 0.1,
-                        "sadness": 0.2
-                    }
-                }
-            },
-            "sentiment": {
-                "document": {
-                    "score": -0.8,
-                    "label": "negative"
-                }
-            },
-            "concepts": []
+            "emotion": {"document": {"emotion": {"anger": 0.8, "disgust": 0.3, "fear": 0.1, "sadness": 0.2}}},
+            "sentiment": {"document": {"score": -0.8, "label": "negative"}},
+            "concepts": [],
         }
         mock_client.post.return_value = mock_response
         mock_client_class.return_value = mock_client
@@ -168,7 +133,7 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch("plugins.content_moderation.content_moderation.httpx.AsyncClient")
     async def test_ibm_granite_moderation_harmful(self, mock_client_class):
         """Test IBM Granite Guardian flags harmful content (Yes response)."""
         mock_client = AsyncMock()
@@ -191,7 +156,7 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch("plugins.content_moderation.content_moderation.httpx.AsyncClient")
     async def test_ibm_granite_moderation_safe(self, mock_client_class):
         """Test IBM Granite Guardian passes safe content (No response)."""
         mock_client = AsyncMock()
@@ -213,41 +178,25 @@ class TestContentModerationPlugin:
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    @patch("plugins.content_moderation.content_moderation.httpx.AsyncClient")
     async def test_openai_moderation_success(self, mock_client_class):
         """Test successful OpenAI moderation."""
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "results": [{
-                "flagged": True,
-                "categories": {
-                    "hate": True,
-                    "violence": False,
-                    "sexual": False,
-                    "self-harm": False,
-                    "harassment": False
-                },
-                "category_scores": {
-                    "hate": 0.85,
-                    "violence": 0.1,
-                    "sexual": 0.05,
-                    "self-harm": 0.01,
-                    "harassment": 0.2
+            "results": [
+                {
+                    "flagged": True,
+                    "categories": {"hate": True, "violence": False, "sexual": False, "self-harm": False, "harassment": False},
+                    "category_scores": {"hate": 0.85, "violence": 0.1, "sexual": 0.05, "self-harm": 0.01, "harassment": 0.2},
                 }
-            }]
+            ]
         }
         mock_client.post.return_value = mock_response
         mock_client_class.return_value = mock_client
 
-        config = {
-            "provider": "openai",
-            "openai": {
-                "api_key": "test-openai-key",
-                "api_base": "https://api.openai.com/v1"
-            }
-        }
+        config = {"provider": "openai", "openai": {"api_key": "test-openai-key", "api_base": "https://api.openai.com/v1"}}
         plugin = _create_plugin(config)
         plugin._client = mock_client
 
@@ -290,35 +239,18 @@ class TestContentModerationPlugin:
 
         # Test BLOCK action
         from plugins.content_moderation.content_moderation import ModerationResult
-        block_result = ModerationResult(
-            flagged=True,
-            categories={"hate": 0.9},
-            action=ModerationAction.BLOCK,
-            provider=ModerationProvider.IBM_WATSON,
-            confidence=0.9
-        )
+
+        block_result = ModerationResult(flagged=True, categories={"hate": 0.9}, action=ModerationAction.BLOCK, provider=ModerationProvider.IBM_WATSON, confidence=0.9)
         modified = await plugin._apply_moderation_action("hateful content", block_result)
         assert modified == ""
 
         # Test REDACT action
-        redact_result = ModerationResult(
-            flagged=True,
-            categories={"profanity": 0.8},
-            action=ModerationAction.REDACT,
-            provider=ModerationProvider.IBM_WATSON,
-            confidence=0.8
-        )
+        redact_result = ModerationResult(flagged=True, categories={"profanity": 0.8}, action=ModerationAction.REDACT, provider=ModerationProvider.IBM_WATSON, confidence=0.8)
         modified = await plugin._apply_moderation_action("some content", redact_result)
         assert modified == "[CONTENT REMOVED BY MODERATION]"
 
         # Test WARN action (no change)
-        warn_result = ModerationResult(
-            flagged=False,
-            categories={"toxic": 0.5},
-            action=ModerationAction.WARN,
-            provider=ModerationProvider.IBM_WATSON,
-            confidence=0.5
-        )
+        warn_result = ModerationResult(flagged=False, categories={"toxic": 0.5}, action=ModerationAction.WARN, provider=ModerationProvider.IBM_WATSON, confidence=0.5)
         modified = await plugin._apply_moderation_action("mild content", warn_result)
         assert modified == "mild content"
 
@@ -329,19 +261,11 @@ class TestContentModerationPlugin:
         context = _create_context()
 
         # Mock moderation to return blocking result
-        plugin._moderate_content = AsyncMock(return_value=MagicMock(
-            flagged=True,
-            action=ModerationAction.BLOCK,
-            confidence=0.9,
-            categories={"hate": 0.9},
-            provider=ModerationProvider.IBM_WATSON,
-            modified_content=None
-        ))
-
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={"query": "hateful content here"}
+        plugin._moderate_content = AsyncMock(
+            return_value=MagicMock(flagged=True, action=ModerationAction.BLOCK, confidence=0.9, categories={"hate": 0.9}, provider=ModerationProvider.IBM_WATSON, modified_content=None)
         )
+
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "hateful content here"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -357,19 +281,13 @@ class TestContentModerationPlugin:
         context = _create_context()
 
         # Mock moderation to return redaction result
-        plugin._moderate_content = AsyncMock(return_value=MagicMock(
-            flagged=True,
-            action=ModerationAction.REDACT,
-            confidence=0.7,
-            categories={"profanity": 0.7},
-            provider=ModerationProvider.IBM_WATSON,
-            modified_content="[CONTENT REMOVED BY MODERATION]"
-        ))
-
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={"query": "some bad words"}
+        plugin._moderate_content = AsyncMock(
+            return_value=MagicMock(
+                flagged=True, action=ModerationAction.REDACT, confidence=0.7, categories={"profanity": 0.7}, provider=ModerationProvider.IBM_WATSON, modified_content="[CONTENT REMOVED BY MODERATION]"
+            )
         )
+
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "some bad words"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -384,19 +302,11 @@ class TestContentModerationPlugin:
         context = _create_context()
 
         # Mock moderation to return blocking result
-        plugin._moderate_content = AsyncMock(return_value=MagicMock(
-            flagged=True,
-            action=ModerationAction.BLOCK,
-            confidence=0.95,
-            categories={"violence": 0.95},
-            provider=ModerationProvider.IBM_GRANITE,
-            modified_content=None
-        ))
-
-        payload = ToolPreInvokePayload(
-            name="search_tool",
-            args={"query": "how to make bombs"}
+        plugin._moderate_content = AsyncMock(
+            return_value=MagicMock(flagged=True, action=ModerationAction.BLOCK, confidence=0.95, categories={"violence": 0.95}, provider=ModerationProvider.IBM_GRANITE, modified_content=None)
         )
+
+        payload = ToolPreInvokePayload(name="search_tool", args={"query": "how to make bombs"})
 
         result = await plugin.tool_pre_invoke(payload, context)
 
@@ -412,19 +322,11 @@ class TestContentModerationPlugin:
         context = _create_context()
 
         # Mock moderation to return warning result
-        plugin._moderate_content = AsyncMock(return_value=MagicMock(
-            flagged=True,
-            action=ModerationAction.WARN,
-            confidence=0.6,
-            categories={"toxic": 0.6},
-            provider=ModerationProvider.IBM_WATSON,
-            modified_content=None
-        ))
-
-        payload = ToolPostInvokePayload(
-            name="search_tool",
-            result="This is some mildly toxic content in the results"
+        plugin._moderate_content = AsyncMock(
+            return_value=MagicMock(flagged=True, action=ModerationAction.WARN, confidence=0.6, categories={"toxic": 0.6}, provider=ModerationProvider.IBM_WATSON, modified_content=None)
         )
+
+        payload = ToolPostInvokePayload(name="search_tool", result="This is some mildly toxic content in the results")
 
         result = await plugin.tool_post_invoke(payload, context)
 
@@ -440,22 +342,14 @@ class TestContentModerationPlugin:
         plugin._moderate_with_ibm_watson = AsyncMock(side_effect=Exception("Watson API error"))
 
         # Mock fallback provider to succeed
-        plugin._moderate_with_ibm_granite = AsyncMock(return_value=MagicMock(
-            flagged=False,
-            action=ModerationAction.WARN,
-            confidence=0.2,
-            categories={"hate": 0.1},
-            provider=ModerationProvider.IBM_GRANITE
-        ))
+        plugin._moderate_with_ibm_granite = AsyncMock(
+            return_value=MagicMock(flagged=False, action=ModerationAction.WARN, confidence=0.2, categories={"hate": 0.1}, provider=ModerationProvider.IBM_GRANITE)
+        )
 
         # Mock pattern fallback
-        plugin._moderate_with_patterns = AsyncMock(return_value=MagicMock(
-            flagged=False,
-            action=ModerationAction.WARN,
-            confidence=0.1,
-            categories={"hate": 0.0},
-            provider=ModerationProvider.IBM_WATSON
-        ))
+        plugin._moderate_with_patterns = AsyncMock(
+            return_value=MagicMock(flagged=False, action=ModerationAction.WARN, confidence=0.1, categories={"hate": 0.0}, provider=ModerationProvider.IBM_WATSON)
+        )
 
         result = await plugin._moderate_content("test content")
 
@@ -473,10 +367,7 @@ class TestContentModerationPlugin:
         # Mock all moderation methods to fail
         plugin._moderate_content = AsyncMock(side_effect=Exception("All services down"))
 
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={"query": "test content"}
-        )
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "test content"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -496,13 +387,7 @@ class TestContentModerationPlugin:
         # Primary (ibm_watson) raises to trigger fallback chain down to patterns.
         plugin._moderate_with_ibm_watson = AsyncMock(side_effect=Exception("mocked"))
         plugin._moderate_with_ibm_granite = AsyncMock(side_effect=Exception("mocked"))
-        plugin._moderate_with_patterns = AsyncMock(return_value=MagicMock(
-            flagged=False,
-            action=ModerationAction.WARN,
-            confidence=0.1,
-            categories={},
-            provider=ModerationProvider.IBM_WATSON
-        ))
+        plugin._moderate_with_patterns = AsyncMock(return_value=MagicMock(flagged=False, action=ModerationAction.WARN, confidence=0.1, categories={}, provider=ModerationProvider.IBM_WATSON))
 
         await plugin._moderate_content(long_text)
 
@@ -516,20 +401,11 @@ class TestContentModerationPlugin:
         plugin = _create_plugin({"audit_decisions": True})
         context = _create_context()
 
-        plugin._moderate_content = AsyncMock(return_value=MagicMock(
-            flagged=True,
-            action=ModerationAction.WARN,
-            confidence=0.8,
-            categories={"toxic": 0.8},
-            provider=ModerationProvider.IBM_WATSON
-        ))
+        plugin._moderate_content = AsyncMock(return_value=MagicMock(flagged=True, action=ModerationAction.WARN, confidence=0.8, categories={"toxic": 0.8}, provider=ModerationProvider.IBM_WATSON))
 
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={"query": "test content"}
-        )
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "test content"})
 
-        with patch('plugins.content_moderation.content_moderation.logger') as mock_logger:
+        with patch("plugins.content_moderation.content_moderation.logger") as mock_logger:
             await plugin.prompt_pre_fetch(payload, context)
 
             # Verify audit log was created
@@ -547,22 +423,19 @@ class TestContentModerationPlugin:
         multi_category_result = MagicMock(
             flagged=True,
             categories={
-                "hate": 0.9,      # Above threshold (0.7) - should trigger BLOCK
-                "violence": 0.85, # Above threshold (0.8) - should trigger BLOCK
-                "sexual": 0.5     # Below threshold (0.6) - should not trigger
+                "hate": 0.9,  # Above threshold (0.7) - should trigger BLOCK
+                "violence": 0.85,  # Above threshold (0.8) - should trigger BLOCK
+                "sexual": 0.5,  # Below threshold (0.6) - should not trigger
             },
             action=ModerationAction.BLOCK,
             confidence=0.9,
-            provider=ModerationProvider.IBM_WATSON
+            provider=ModerationProvider.IBM_WATSON,
         )
 
         plugin._moderate_content = AsyncMock(return_value=multi_category_result)
         context = _create_context()
 
-        payload = PromptPrehookPayload(
-            prompt_id="test_prompt",
-            args={"query": "content with multiple violations"}
-        )
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "content with multiple violations"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 

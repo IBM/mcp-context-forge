@@ -1,4 +1,10 @@
-"""Security-best-practices probes against the live gateway.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_security_best_practices.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Security-best-practices probes against the live gateway.
 
 MCP 2025-11-25 § Security Best Practices enumerates wire-testable
 hardening the server SHOULD apply. We can't exhaustively test OS-level

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SSL context caching utilities for ContextForge services.
+"""Location: ./mcpgateway/utils/ssl_context_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+SSL context caching utilities for ContextForge services.
 
 This module provides caching for SSL contexts to avoid repeatedly creating
 them for the same CA certificates, improving performance for services that

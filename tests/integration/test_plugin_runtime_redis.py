@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for plugin runtime management with real Redis.
+"""Location: ./tests/integration/test_plugin_runtime_redis.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for plugin runtime management with real Redis.
 
 Tests the Redis read/write/publish path directly — not via HTTP endpoints.
 Validates that the plugin framework correctly interacts with Redis for
@@ -22,7 +27,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Redis fixture (same pattern as test_rate_limiter.py)
@@ -57,7 +61,10 @@ def redis_url():
         try:
             res = subprocess.run(
                 ["docker", "run", "-d", "--rm", "-p", f"{port}:6379", "--name", "pytest-plugin-redis", "redis:7"],
-                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             container_id = res.stdout.strip()
         except Exception as exc:

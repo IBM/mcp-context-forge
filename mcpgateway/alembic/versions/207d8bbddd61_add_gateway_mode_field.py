@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_gateway_mode_field
+"""Location: ./mcpgateway/alembic/versions/207d8bbddd61_add_gateway_mode_field.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_gateway_mode_field
 
 Revision ID: 207d8bbddd61
 Revises: c1c2c3c4c5c6
 Create Date: 2026-01-21 09:48:44.636655
-
 """
 
 # Standard

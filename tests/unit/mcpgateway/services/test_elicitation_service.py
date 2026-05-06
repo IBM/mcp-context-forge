@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_elicitation_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
 Unit tests for elicitation services.
 """
 
@@ -23,6 +24,7 @@ class DummyElicitResult:
 # --------------------------------------------------------------------------- #
 # SERVICE INITIALIZATION AND CLEANUP
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.asyncio
 async def test_service_start_and_shutdown(monkeypatch):
@@ -58,9 +60,7 @@ async def test_create_elicitation_and_complete(monkeypatch):
         service.complete_elicitation(req_id, result)
 
     schema = {"type": "object", "properties": {"x": {"type": "string"}}}
-    task = asyncio.create_task(
-        service.create_elicitation("u", "d", "msg", schema, timeout=0.5)
-    )
+    task = asyncio.create_task(service.create_elicitation("u", "d", "msg", schema, timeout=0.5))
 
     # give coroutine time to execute and create _pending
     for _ in range(30):
@@ -112,6 +112,7 @@ def test_complete_get_and_count(monkeypatch):
 # CLEANUP LOOP AND EXPIRED CLEANUP
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_cleanup_expired(monkeypatch):
     service = svc.ElicitationService()
@@ -135,6 +136,7 @@ async def test_cleanup_loop_cancel(monkeypatch):
 # --------------------------------------------------------------------------- #
 # SCHEMA VALIDATION TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_validate_schema_success(monkeypatch):
     s = svc.ElicitationService()
@@ -177,6 +179,7 @@ def test_validate_schema_warns(monkeypatch, caplog):
 # --------------------------------------------------------------------------- #
 # GLOBAL SINGLETON TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_global_singleton(monkeypatch):
     s1 = svc.get_elicitation_service()

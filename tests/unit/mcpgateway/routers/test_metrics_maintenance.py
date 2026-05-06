@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for metrics maintenance router."""
+"""Location: ./tests/unit/mcpgateway/routers/test_metrics_maintenance.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for metrics maintenance router.
+"""
 
 # Standard
 from datetime import datetime, timezone

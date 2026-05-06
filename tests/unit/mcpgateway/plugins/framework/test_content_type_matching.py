@@ -1,4 +1,10 @@
-"""Unit tests for content type matching in plugin framework.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_content_type_matching.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for content type matching in plugin framework.
 
 Tests the content_types condition matching functionality added to fix issue #3925.
 """
@@ -101,117 +107,60 @@ class TestContentTypeMatching:
 
     def test_matches_content_type_combined_with_server_id(self):
         """Test content_types combined with server_ids condition."""
-        condition = PluginCondition(
-            server_ids={"srv1"},
-            content_types=["application/json"]
-        )
+        condition = PluginCondition(server_ids={"srv1"}, content_types=["application/json"])
 
         # Both match
-        context1 = GlobalContext(
-            request_id="req1",
-            server_id="srv1",
-            content_type="application/json"
-        )
+        context1 = GlobalContext(request_id="req1", server_id="srv1", content_type="application/json")
         assert matches(condition, context1) is True
 
         # Server ID mismatch
-        context2 = GlobalContext(
-            request_id="req2",
-            server_id="srv2",
-            content_type="application/json"
-        )
+        context2 = GlobalContext(request_id="req2", server_id="srv2", content_type="application/json")
         assert matches(condition, context2) is False
 
         # Content type mismatch
-        context3 = GlobalContext(
-            request_id="req3",
-            server_id="srv1",
-            content_type="text/plain"
-        )
+        context3 = GlobalContext(request_id="req3", server_id="srv1", content_type="text/plain")
         assert matches(condition, context3) is False
 
     def test_matches_content_type_combined_with_tenant_id(self):
         """Test content_types combined with tenant_ids condition."""
-        condition = PluginCondition(
-            tenant_ids={"tenant1"},
-            content_types=["application/json"]
-        )
+        condition = PluginCondition(tenant_ids={"tenant1"}, content_types=["application/json"])
 
         # Both match
-        context1 = GlobalContext(
-            request_id="req1",
-            tenant_id="tenant1",
-            content_type="application/json"
-        )
+        context1 = GlobalContext(request_id="req1", tenant_id="tenant1", content_type="application/json")
         assert matches(condition, context1) is True
 
         # Tenant ID mismatch
-        context2 = GlobalContext(
-            request_id="req2",
-            tenant_id="tenant2",
-            content_type="application/json"
-        )
+        context2 = GlobalContext(request_id="req2", tenant_id="tenant2", content_type="application/json")
         assert matches(condition, context2) is False
 
     def test_matches_content_type_combined_with_user_patterns(self):
         """Test content_types combined with user_patterns condition."""
-        condition = PluginCondition(
-            user_patterns=["admin"],
-            content_types=["application/json"]
-        )
+        condition = PluginCondition(user_patterns=["admin"], content_types=["application/json"])
 
         # Both match
-        context1 = GlobalContext(
-            request_id="req1",
-            user="admin_user",
-            content_type="application/json"
-        )
+        context1 = GlobalContext(request_id="req1", user="admin_user", content_type="application/json")
         assert matches(condition, context1) is True
 
         # User pattern mismatch
-        context2 = GlobalContext(
-            request_id="req2",
-            user="regular_user",
-            content_type="application/json"
-        )
+        context2 = GlobalContext(request_id="req2", user="regular_user", content_type="application/json")
         assert matches(condition, context2) is False
 
     def test_matches_content_type_all_conditions_combined(self):
         """Test content_types with all other conditions."""
-        condition = PluginCondition(
-            server_ids={"srv1"},
-            tenant_ids={"tenant1"},
-            user_patterns=["admin"],
-            content_types=["application/json"]
-        )
+        condition = PluginCondition(server_ids={"srv1"}, tenant_ids={"tenant1"}, user_patterns=["admin"], content_types=["application/json"])
 
         # All match
-        context1 = GlobalContext(
-            request_id="req1",
-            server_id="srv1",
-            tenant_id="tenant1",
-            user="admin_user",
-            content_type="application/json"
-        )
+        context1 = GlobalContext(request_id="req1", server_id="srv1", tenant_id="tenant1", user="admin_user", content_type="application/json")
         assert matches(condition, context1) is True
 
         # One condition fails
-        context2 = GlobalContext(
-            request_id="req2",
-            server_id="srv1",
-            tenant_id="tenant1",
-            user="admin_user",
-            content_type="text/plain"
-        )
+        context2 = GlobalContext(request_id="req2", server_id="srv1", tenant_id="tenant1", user="admin_user", content_type="text/plain")
         assert matches(condition, context2) is False
 
     def test_matches_content_type_multipart_form_data(self):
         """Test matching multipart/form-data content type."""
         condition = PluginCondition(content_types=["multipart/form-data"])
-        context = GlobalContext(
-            request_id="req1",
-            content_type="multipart/form-data; boundary=----WebKitFormBoundary"
-        )
+        context = GlobalContext(request_id="req1", content_type="multipart/form-data; boundary=----WebKitFormBoundary")
         assert matches(condition, context) is True
 
     def test_matches_content_type_xml(self):

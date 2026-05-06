@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the password hash generation CLI utility."""
+"""Location: ./tests/unit/mcpgateway/utils/test_hash_password.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the password hash generation CLI utility.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, patch

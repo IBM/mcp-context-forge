@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/services/a2a_protocol.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Helpers for preparing outbound A2A requests across protocol versions.
 """

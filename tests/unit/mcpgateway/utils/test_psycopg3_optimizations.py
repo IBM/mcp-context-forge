@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for psycopg3 optimization helpers."""
+"""Location: ./tests/unit/mcpgateway/utils/test_psycopg3_optimizations.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for psycopg3 optimization helpers.
+"""
 
 # Standard
 import builtins

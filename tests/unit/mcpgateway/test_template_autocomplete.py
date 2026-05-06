@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_template_autocomplete.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Regression tests ensuring all password inputs in HTML templates have correct
 autocomplete attributes to prevent browser autofill on sensitive fields.
@@ -12,7 +13,6 @@ from html.parser import HTMLParser
 from pathlib import Path
 import re
 from typing import Dict, List, Optional, Tuple
-
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "mcpgateway" / "templates"
 
@@ -72,10 +72,7 @@ class TestPasswordAutocompleteAttributes:
                     ident = field.get("id") or field.get("name") or "(anonymous)"
                     missing.append(f"{tpl.name}#{ident}")
 
-        assert not missing, (
-            "Password fields without autocomplete attribute:\n  "
-            + "\n  ".join(missing)
-        )
+        assert not missing, "Password fields without autocomplete attribute:\n  " + "\n  ".join(missing)
 
     def test_expected_autocomplete_values(self) -> None:
         """Fields with known semantic roles must use the correct value."""
@@ -90,16 +87,12 @@ class TestPasswordAutocompleteAttributes:
                 if fid == field_key:
                     actual = field.get("autocomplete")
                     if actual != expected:
-                        wrong.append(
-                            f"{tpl_name}#{field_key}: expected '{expected}', got '{actual}'"
-                        )
+                        wrong.append(f"{tpl_name}#{field_key}: expected '{expected}', got '{actual}'")
                     break
             else:
                 wrong.append(f"{tpl_name}#{field_key}: field not found")
 
-        assert not wrong, (
-            "Incorrect autocomplete values:\n  " + "\n  ".join(wrong)
-        )
+        assert not wrong, "Incorrect autocomplete values:\n  " + "\n  ".join(wrong)
 
     def test_api_key_and_secret_fields_use_off(self) -> None:
         """All password fields NOT in the expected-override map must use 'off'."""
@@ -113,14 +106,9 @@ class TestPasswordAutocompleteAttributes:
                     continue  # checked elsewhere
                 actual = field.get("autocomplete")
                 if actual != "off":
-                    not_off.append(
-                        f"{tpl.name}#{fid}: expected 'off', got '{actual}'"
-                    )
+                    not_off.append(f"{tpl.name}#{fid}: expected 'off', got '{actual}'")
 
-        assert not not_off, (
-            "Non-credential password fields must have autocomplete='off':\n  "
-            + "\n  ".join(not_off)
-        )
+        assert not not_off, "Non-credential password fields must have autocomplete='off':\n  " + "\n  ".join(not_off)
 
     def test_login_template_preserves_credential_autocomplete(self) -> None:
         """login.html password field must keep autocomplete='current-password'."""
@@ -128,22 +116,15 @@ class TestPasswordAutocompleteAttributes:
         fields = _collect_password_fields(tpl_path)
         assert len(fields) >= 1, "login.html should have at least 1 password field"
         pw_field = fields[0]
-        assert pw_field.get("autocomplete") == "current-password", (
-            f"login.html password should be 'current-password', "
-            f"got '{pw_field.get('autocomplete')}'"
-        )
+        assert pw_field.get("autocomplete") == "current-password", f"login.html password should be 'current-password', " f"got '{pw_field.get('autocomplete')}'"
 
     def test_change_password_template_has_correct_values(self) -> None:
         """change-password-required.html must use current-password and new-password."""
         tpl_path = TEMPLATES_DIR / "change-password-required.html"
         fields = _collect_password_fields(tpl_path)
-        assert len(fields) == 3, (
-            f"Expected 3 password fields in change-password-required.html, got {len(fields)}"
-        )
+        assert len(fields) == 3, f"Expected 3 password fields in change-password-required.html, got {len(fields)}"
         values = [f.get("autocomplete") for f in fields]
-        assert values == ["current-password", "new-password", "new-password"], (
-            f"Unexpected autocomplete values: {values}"
-        )
+        assert values == ["current-password", "new-password", "new-password"], f"Unexpected autocomplete values: {values}"
 
     def test_commented_out_fields_are_future_proofed(self) -> None:
         """Commented-out password fields should also have autocomplete for when they are enabled."""
@@ -164,10 +145,7 @@ class TestPasswordAutocompleteAttributes:
                 ident = field.get("id") or field.get("name") or "(anonymous)"
                 missing.append(f"admin.html (commented)#{ident}")
 
-        assert not missing, (
-            "Commented-out password fields without autocomplete attribute:\n  "
-            + "\n  ".join(missing)
-        )
+        assert not missing, "Commented-out password fields without autocomplete attribute:\n  " + "\n  ".join(missing)
 
 
 class TestOAuthCallbackUrlNotHardcoded:
@@ -184,14 +162,6 @@ class TestOAuthCallbackUrlNotHardcoded:
 
         # Find all <code>...</code> blocks containing oauth/callback
         matches = re.findall(r"<code[^>]*>(.*?)</code", clean, flags=re.DOTALL)
-        hardcoded = [
-            m.strip()
-            for m in matches
-            if "oauth/callback" in m and "localhost" in m
-        ]
+        hardcoded = [m.strip() for m in matches if "oauth/callback" in m and "localhost" in m]
 
-        assert not hardcoded, (
-            "Found hardcoded localhost OAuth callback URLs in <code> hints "
-            "(should use {{ request.base_url }}):\n  "
-            + "\n  ".join(hardcoded)
-        )
+        assert not hardcoded, "Found hardcoded localhost OAuth callback URLs in <code> hints " "(should use {{ request.base_url }}):\n  " + "\n  ".join(hardcoded)

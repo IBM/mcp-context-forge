@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_sso_entra_role_mapping.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Test Microsoft EntraID role mapping functionality.
 Tests group extraction, role mapping, and role synchronization.
@@ -326,7 +327,9 @@ class TestEntraIDRoleSynchronization:
             await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
 
             # Verify role was assigned
-            mock_role_service.assign_role_to_user.assert_called_once_with(user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="user@company.com", grant_source="sso")
+            mock_role_service.assign_role_to_user.assert_called_once_with(
+                user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="user@company.com", grant_source="sso"
+            )
 
     @pytest.mark.asyncio
     async def test_sync_user_roles_revoke_old_roles(self, sso_service, entra_provider):
@@ -537,7 +540,6 @@ class TestEntraIDRoleRevocationOnLogin:
 
             # Verify only team_admin was revoked
             mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@company.com", role_id="admin-role-456", scope="team", scope_id=None)
-
 
     @pytest.mark.asyncio
     async def test_sync_user_roles_uses_user_email_as_granted_by(self, sso_service, entra_provider):

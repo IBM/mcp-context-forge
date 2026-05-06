@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add app_user_email column to oauth_states.
+"""Location: ./mcpgateway/alembic/versions/a4f1c7d8e9b0_add_app_user_email_to_oauth_states.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add app_user_email column to oauth_states.
 
 Revision ID: a4f1c7d8e9b0
 Revises: 9f5d93ced2b3

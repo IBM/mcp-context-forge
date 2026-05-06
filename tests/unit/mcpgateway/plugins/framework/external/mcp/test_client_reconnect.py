@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_reconnect.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mohan Lakshmaiah
 
@@ -163,8 +163,8 @@ class TestReconnectSession:
         plugin._config.mcp.reconnect_attempts = 3
         plugin._config.mcp.reconnect_delay = 0.1
 
-        with patch.object(plugin, '_cleanup_session', new_callable=AsyncMock) as mock_cleanup:
-            with patch.object(plugin, '_ExternalPlugin__connect_to_http_server', new_callable=AsyncMock) as mock_connect:
+        with patch.object(plugin, "_cleanup_session", new_callable=AsyncMock) as mock_cleanup:
+            with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new_callable=AsyncMock) as mock_connect:
                 await plugin._reconnect_session()
 
                 mock_cleanup.assert_called_once()
@@ -177,8 +177,8 @@ class TestReconnectSession:
         plugin._config.mcp.reconnect_attempts = 2
         plugin._config.mcp.reconnect_delay = 0.05
 
-        with patch.object(plugin, '_cleanup_session', new_callable=AsyncMock) as mock_cleanup:
-            with patch.object(plugin, '_ExternalPlugin__connect_to_stdio_server', new_callable=AsyncMock) as mock_connect:
+        with patch.object(plugin, "_cleanup_session", new_callable=AsyncMock) as mock_cleanup:
+            with patch.object(plugin, "_ExternalPlugin__connect_to_stdio_server", new_callable=AsyncMock) as mock_connect:
                 await plugin._reconnect_session()
 
                 mock_cleanup.assert_called_once()
@@ -204,9 +204,9 @@ class TestReconnectSession:
             if call_count < 3:
                 raise ConnectionError("Connection failed")
 
-        with patch.object(plugin, '_cleanup_session', new_callable=AsyncMock):
-            with patch.object(plugin, '_ExternalPlugin__connect_to_http_server', new_callable=AsyncMock, side_effect=mock_connect_fail):
-                with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+        with patch.object(plugin, "_cleanup_session", new_callable=AsyncMock):
+            with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new_callable=AsyncMock, side_effect=mock_connect_fail):
+                with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
                     await plugin._reconnect_session()
 
                     # Verify linear backoff delays
@@ -222,9 +222,9 @@ class TestReconnectSession:
         plugin._reconnect_attempts = 2
         plugin._reconnect_delay = 0.01
 
-        with patch.object(plugin, '_cleanup_session', new_callable=AsyncMock):
-            with patch.object(plugin, '_ExternalPlugin__connect_to_http_server', new_callable=AsyncMock, side_effect=ConnectionError("Connection failed")):
-                with patch('asyncio.sleep', new_callable=AsyncMock):
+        with patch.object(plugin, "_cleanup_session", new_callable=AsyncMock):
+            with patch.object(plugin, "_ExternalPlugin__connect_to_http_server", new_callable=AsyncMock, side_effect=ConnectionError("Connection failed")):
+                with patch("asyncio.sleep", new_callable=AsyncMock):
                     with pytest.raises(PluginError) as exc_info:
                         await plugin._reconnect_session()
 
@@ -258,15 +258,14 @@ class TestInvokeHookWithReconnection:
                 raise McpError(ErrorData(code=-1, message="Connection lost"))
             # Return successful response
             from mcp.types import CallToolResult, TextContent
-            return CallToolResult(
-                content=[TextContent(type="text", text='{"result": {"name": "test", "args": {}}}')]
-            )
+
+            return CallToolResult(content=[TextContent(type="text", text='{"result": {"name": "test", "args": {}}}')])
 
         mock_session.call_tool = mock_call_tool
 
-        with patch('mcpgateway.plugins.framework.external.mcp.client.get_hook_registry') as mock_registry:
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
             mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
-            with patch.object(plugin, '_reconnect_session', new_callable=AsyncMock) as mock_reconnect:
+            with patch.object(plugin, "_reconnect_session", new_callable=AsyncMock) as mock_reconnect:
                 payload = ToolPreInvokePayload(name="test", args={})
                 result = await plugin.invoke_hook("tool_pre_invoke", payload, mock_plugin_context)
 
@@ -292,15 +291,14 @@ class TestInvokeHookWithReconnection:
                 raise PluginError(error=PluginErrorModel(message="Session terminated", plugin_name="TestHTTPPlugin"))
             # Return successful response
             from mcp.types import CallToolResult, TextContent
-            return CallToolResult(
-                content=[TextContent(type="text", text='{"result": {"name": "test", "args": {}}}')]
-            )
+
+            return CallToolResult(content=[TextContent(type="text", text='{"result": {"name": "test", "args": {}}}')])
 
         mock_session.call_tool = mock_call_tool
 
-        with patch('mcpgateway.plugins.framework.external.mcp.client.get_hook_registry') as mock_registry:
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
             mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
-            with patch.object(plugin, '_reconnect_session', new_callable=AsyncMock) as mock_reconnect:
+            with patch.object(plugin, "_reconnect_session", new_callable=AsyncMock) as mock_reconnect:
                 payload = ToolPreInvokePayload(name="test", args={})
                 result = await plugin.invoke_hook("tool_pre_invoke", payload, mock_plugin_context)
 
@@ -321,9 +319,9 @@ class TestInvokeHookWithReconnection:
 
         mock_session.call_tool = mock_call_tool
 
-        with patch('mcpgateway.plugins.framework.external.mcp.client.get_hook_registry') as mock_registry:
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
             mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
-            with patch.object(plugin, '_reconnect_session', new_callable=AsyncMock) as mock_reconnect:
+            with patch.object(plugin, "_reconnect_session", new_callable=AsyncMock) as mock_reconnect:
                 payload = ToolPreInvokePayload(name="test", args={})
 
                 with pytest.raises(PluginError) as exc_info:
@@ -349,9 +347,9 @@ class TestInvokeHookWithReconnection:
 
         mock_session.call_tool = mock_call_tool
 
-        with patch('mcpgateway.plugins.framework.external.mcp.client.get_hook_registry') as mock_registry:
+        with patch("mcpgateway.plugins.framework.external.mcp.client.get_hook_registry") as mock_registry:
             mock_registry.return_value.get_result_type.return_value = ToolPreInvokePayload
-            with patch.object(plugin, '_reconnect_session', new_callable=AsyncMock, side_effect=PluginError(error=PluginErrorModel(message="Reconnection failed", plugin_name="TestHTTPPlugin"))):
+            with patch.object(plugin, "_reconnect_session", new_callable=AsyncMock, side_effect=PluginError(error=PluginErrorModel(message="Reconnection failed", plugin_name="TestHTTPPlugin"))):
                 payload = ToolPreInvokePayload(name="test", args={})
 
                 with pytest.raises(PluginError) as exc_info:

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""RBAC populator - creates custom roles and assigns roles to users."""
+"""Location: ./tests/populate/populators/rbac.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC populator - creates custom roles and assigns roles to users.
+"""
 
 # Standard
 import logging

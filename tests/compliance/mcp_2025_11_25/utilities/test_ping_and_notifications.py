@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Utility method checks (ping and notifications)."""
+"""Location: ./tests/compliance/mcp_2025_11_25/utilities/test_ping_and_notifications.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Utility method checks (ping and notifications).
+"""
 
 # Third-Party
 import pytest

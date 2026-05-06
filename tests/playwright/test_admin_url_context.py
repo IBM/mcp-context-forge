@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_admin_url_context.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Regression tests for admin UI URL context preservation.
 Covers issues #3321 (delete/toggle loses tab/team_id) and

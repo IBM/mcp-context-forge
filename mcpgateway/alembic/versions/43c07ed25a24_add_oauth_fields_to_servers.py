@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""add_oauth_fields_to_servers
+"""Location: ./mcpgateway/alembic/versions/43c07ed25a24_add_oauth_fields_to_servers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_oauth_fields_to_servers
 
 Revision ID: 43c07ed25a24
 Revises: b9e496e91e71

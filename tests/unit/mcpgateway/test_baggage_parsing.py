@@ -1,4 +1,10 @@
-"""Unit tests for baggage.py parsing edge cases.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_baggage_parsing.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for baggage.py parsing edge cases.
 
 This module targets specific uncovered lines in baggage parsing logic.
 """

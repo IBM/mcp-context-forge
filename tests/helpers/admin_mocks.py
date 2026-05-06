@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test helpers for mocking admin-user DB lookups.
+"""Location: ./tests/helpers/admin_mocks.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test helpers for mocking admin-user DB lookups.
 
 The Layer-1 / Layer-2 admin check goes through
 ``mcpgateway.utils.admin_check.is_user_admin(db, email)``, which issues

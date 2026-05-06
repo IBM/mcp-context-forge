@@ -1,41 +1,36 @@
 # -*- coding: utf-8 -*-
-"""Load testing for slow-time-server via ContextForge.
+"""Location: ./tests/loadtest/locustfile_slow_time_server.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Load testing for slow-time-server via ContextForge.
 This module tests the slow-time-server through the gateway to validate
 timeout enforcement, circuit breaker behaviour, session pool resilience,
 and load testing under realistic slow-tool conditions.
-
 User Classes:
 - SlowTimeUser: Normal latency testing (get_slow_time with 2s delay)
 - TimeoutStormUser: All users hit tools with delays exceeding timeout
 - MixedLatencyUser: Mix of instant, slow, and timeout tools
 - CircuitBreakerUser: Exercises get_flaky_time for circuit breaker testing
-
 Default Parameters:
 - Users: 10
 - Spawn rate: 2/s
 - Run time: 120s
 - Host: http://localhost:8080  (via nginx proxy)
-
 Usage:
     # Via gateway (through nginx)
     locust -f locustfile_slow_time_server.py --host=http://localhost:8080
-
     # Direct to slow-time-server REST API
     locust -f locustfile_slow_time_server.py --host=http://localhost:8081
-
     # Headless with specific scenario
     locust -f locustfile_slow_time_server.py \
            --host=http://localhost:8080 \
            --users=10 --spawn-rate=2 --run-time=120s --headless
-
 Environment Variables:
     MCPGATEWAY_BEARER_TOKEN: JWT token for gateway auth
     SLOW_TIME_DELAY: Default delay for slow tools (default: 2)
     SLOW_TIME_GATEWAY_ID: Gateway ID for slow_time_server
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 import logging

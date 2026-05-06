@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""User generator for load testing."""
+"""Location: ./tests/load/generators/users.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+User generator for load testing.
+"""
 
 import hashlib
 from datetime import datetime

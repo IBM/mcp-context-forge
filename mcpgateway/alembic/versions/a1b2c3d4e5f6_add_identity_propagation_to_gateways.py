@@ -1,9 +1,14 @@
-"""add identity_propagation to gateways
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/a1b2c3d4e5f6_add_identity_propagation_to_gateways.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add identity_propagation to gateways
 
 Revision ID: a1b2c3d4e5f6
 Revises: d2b501bf4262
 Create Date: 2026-02-17
-
 """
 
 # Standard

@@ -1,8 +1,7 @@
 # Single Sign-On (SSO) Authentication
 
 !!! note "Multi‑Tenancy (introduced in v0.7.0)"
-    Multi‑tenancy (email authentication, teams, RBAC, resource visibility) was introduced in v0.7.0. If you're upgrading from 0.6.0, review the
-    [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
+    Multi‑tenancy (email authentication, teams, RBAC, resource visibility) was introduced in v0.7.0. If you're upgrading from 0.6.0, review the [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
     For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
 

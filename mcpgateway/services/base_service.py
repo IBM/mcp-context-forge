@@ -1,7 +1,14 @@
+# -*- coding: utf-8 -*-
 # Copyright (c) 2025 IBM Corp. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Abstract base class for services with visibility-filtered listing."""
+"""Location: ./mcpgateway/services/base_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Abstract base class for services with visibility-filtered listing.
+"""
 
 # Standard
 from abc import ABC
