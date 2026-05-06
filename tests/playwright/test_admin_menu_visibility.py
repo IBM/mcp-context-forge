@@ -129,13 +129,13 @@ def _inject_jwt_cookie(
     token_use: Optional[str] = None,
 ) -> None:
     """Inject a JWT cookie into the page context for authentication.
-    
+
     For remote servers, falls back to form-based login since we can't generate
     valid JWT tokens with the remote server's secret.
     """
     # Check if we're testing against a remote server (not localhost)
     is_remote = not any(host in BASE_URL for host in ["localhost", "127.0.0.1", "0.0.0.0"])
-    
+
     if is_remote:
         # Use form-based login for remote servers
         from .pages.login_page import LoginPage
@@ -282,7 +282,7 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
     token = os.getenv("MCP_AUTH", "")
     if not token:
         token = _make_user_jwt("admin@example.com", is_admin=True)
-    
+
     # Ensure base_url ends with / for proper relative URL resolution
     base_url_with_slash = BASE_URL.rstrip('/') + '/'
     ctx = playwright.request.new_context(
