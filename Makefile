@@ -7396,10 +7396,15 @@ playwright-preflight:
 # pytest-xdist and pytest-html no longer require an inline `uv pip install`
 # (both live in the `dev` dependency group); `uv run` syncs them on demand.
 #
-# pytest-playwright is suppressed globally (`addopts = -p no:playwright` in
-# pyproject.toml) because its session fixtures pollute the asyncio event loop
-# and break unrelated async tests. UI targets opt back in via `-p playwright`
-# below — that's the only place playwright-driven tests should run.
+# Two plugins are suppressed globally via `addopts` in pyproject.toml and only
+# opted back in by the targets that need them:
+#   * pytest-playwright (`-p no:playwright`) — its session fixtures pollute the
+#     asyncio event loop and break unrelated async tests. UI targets re-enable
+#     it with `-p playwright` (run_playwright_test below).
+#   * pytest-benchmark (`-p no:benchmark`) — its single-process timing model
+#     conflicts with pytest-xdist (`-n auto`/`-n N`) used by `make test` and
+#     friends. The benchmarking targets (e.g. `migration-test-performance`)
+#     re-enable it with `-p benchmark` and run without `-n`.
 define run_playwright_test
 	@echo "🎭 Running Playwright UI tests ($(1))..."
 	@$(MAKE) --no-print-directory playwright-preflight
@@ -8406,7 +8411,11 @@ migration-test-postgres: uv                   ## Run PostgreSQL compose migratio
 
 migration-test-performance: uv               ## Run migration performance benchmarking
 	@echo "⚡ Running migration performance tests..."
-	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_migration_performance.py \
+	@# pytest-benchmark is suppressed globally (`-p no:benchmark` in pyproject.toml)
+	@# because its measurement model conflicts with pytest-xdist's worker pool. This
+	@# target is the canonical opt-in: `-p benchmark` re-enables the plugin and the
+	@# absence of `-n` keeps execution single-process so timings stay meaningful.
+	@$(UV_BIN) run pytest -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Performance tests complete!"
 
