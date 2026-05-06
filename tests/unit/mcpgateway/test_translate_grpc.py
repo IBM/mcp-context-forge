@@ -514,8 +514,8 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_endpoint_start_without_reflection(monkeypatch):
-    monkeypatch.setattr("mcpgateway.translate_grpc.descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
-    monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc.descriptor_pool", SimpleNamespace(DescriptorPool=lambda: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda pool=None: MagicMock()))
     endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False, tls_enabled=False)
     mock_grpc = MagicMock()
     mock_grpc.insecure_channel.return_value = "chan"
@@ -532,8 +532,8 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
     # First-Party
     import mcpgateway.translate_grpc as tg
 
-    monkeypatch.setattr(tg, "descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
-    monkeypatch.setattr(tg, "message_factory", SimpleNamespace(MessageFactory=lambda: MagicMock()))
+    monkeypatch.setattr(tg, "descriptor_pool", SimpleNamespace(DescriptorPool=lambda: MagicMock()))
+    monkeypatch.setattr(tg, "message_factory", SimpleNamespace(MessageFactory=lambda pool=None: MagicMock()))
     endpoint = tg.GrpcEndpoint(
         target="secure.example.com:443",
         reflection_enabled=True,

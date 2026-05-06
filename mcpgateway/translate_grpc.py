@@ -89,8 +89,11 @@ class GrpcEndpoint:
         self._channel: Optional[grpc.Channel] = None
         self._services: Dict[str, Any] = {}
         self._descriptors: Dict[str, Any] = {}
-        self._pool = descriptor_pool.Default()
-        self._factory = message_factory.MessageFactory()
+        # Per-endpoint private descriptor pool. NEVER use ``descriptor_pool.Default()``: reflected
+        # descriptors come from untrusted upstream services, and adding them to the process-wide
+        # default pool can cause cross-request type confusion or symbol collisions.
+        self._pool = descriptor_pool.DescriptorPool()
+        self._factory = message_factory.MessageFactory(pool=self._pool)
 
     async def start(self) -> None:
         """Initialize gRPC channel and perform reflection if enabled."""
@@ -278,9 +281,9 @@ class GrpcEndpoint:
             None, channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString), request_msg
         )
 
-        # Convert protobuf response to JSON
-        # pylint: disable=unexpected-keyword-arg
-        response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
+        # Convert protobuf response to JSON.
+        # protobuf>=5 renamed `including_default_value_fields` -> `always_print_fields_with_no_presence`; do not revert.
+        response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
 
         logger.debug(f"Successfully invoked {service}.{method}")
         return response_dict
@@ -353,8 +356,8 @@ class GrpcEndpoint:
         # Yield responses as they arrive
         try:
             for response_msg in stream_call:
-                # pylint: disable=unexpected-keyword-arg
-                response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
+                # See note in invoke() about the kwarg rename in protobuf >=5.x.
+                response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
                 yield response_dict
         except grpc.RpcError as e:
             logger.error(f"Streaming RPC error: {e}")
