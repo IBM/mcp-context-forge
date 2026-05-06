@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useIntl } from "react-intl";
 import { useAuth } from "../auth/useAuth";
 import { useRouter } from "../router";
@@ -6,12 +6,18 @@ import { ApiError } from "../api/client";
 
 export function Login() {
   const intl = useIntl();
-  const { login } = useAuth();
+  const { isAuthenticated, login } = useAuth();
   const { navigate } = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate("/app/");
+    }
+  }, [isAuthenticated, navigate]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

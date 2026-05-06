@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useState, useEffect } from "react";
+import { createContext, useCallback, useContext, useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { api, setToken, clearToken, ApiError } from "../api/client";
+import { api, ApiError } from "../api/client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,20 +17,19 @@ export interface User {
 }
 
 interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  expires_in: number;
   user: User;
+  csrf_token: string;
 }
 
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
 }
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,44 +39,38 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const authVersion = useRef(0);
   const [state, setState] = useState<AuthState>({
-    // Restore session: if a token exists in sessionStorage we treat the user
-    // as authenticated until the first API call proves otherwise (401 clears it).
     user: null,
-    isAuthenticated: sessionStorage.getItem("mcpgateway_token") !== null,
+    isAuthenticated: false,
+    isLoading: true,
   });
 
-  // Rehydrate user on mount if token exists
   useEffect(() => {
-    const token = sessionStorage.getItem("mcpgateway_token");
-    if (token && !state.user) {
-      // Try new endpoint first, fallback to legacy endpoint for backward compatibility
-      const fetchUser = async () => {
-        try {
-          return await api.get<User>("/auth/email/me");
-        } catch (err) {
-          // Fallback to old endpoint if new one doesn't exist
-          if (err instanceof ApiError && err.status === 404) {
-            console.warn("Falling back to legacy auth endpoint");
-            return await api.get<User>("/auth/me");
-          }
-          throw err;
-        }
-      };
+    let cancelled = false;
+    const version = authVersion.current;
 
-      fetchUser()
-        .then((user) => {
-          setState({ user, isAuthenticated: true });
-        })
-        .catch((err) => {
-          // Token invalid or expired - clear auth state
+    api
+      .get<User>("/app/auth/me")
+      .then((user) => {
+        if (!cancelled && version === authVersion.current) {
+          setState({ user, isAuthenticated: true, isLoading: false });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled && version === authVersion.current) {
           if (err instanceof ApiError && err.status === 401) {
-            clearToken();
-            setState({ user: null, isAuthenticated: false });
+            setState({ user: null, isAuthenticated: false, isLoading: false });
+            return;
           }
-        });
-    }
-  }, [state.user]);
+          setState({ user: null, isAuthenticated: false, isLoading: false });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = useCallback(
     async (
@@ -85,21 +78,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password: string, // pragma: allowlist secret
     ): Promise<void> => {
       const data = await api.post<LoginResponse>(
-        "/auth/login",
+        "/app/auth/login",
         { email, password },
         { unauthenticated: true },
       );
 
-      setToken(data.access_token);
-      setState({ user: data.user, isAuthenticated: true });
+      authVersion.current += 1;
+      setState({ user: data.user, isAuthenticated: true, isLoading: false });
     },
     [],
   );
 
-  const logout = useCallback((): void => {
-    clearToken();
-    setState({ user: null, isAuthenticated: false });
-    window.location.href = "/app/login";
+  const logout = useCallback(async (): Promise<void> => {
+    try {
+      await api.post<{ message: string }>("/app/auth/logout");
+    } catch {
+      // Client-side logout should still complete if the server-side session is already gone
+      // or the CSRF cookie has expired.
+    } finally {
+      authVersion.current += 1;
+      setState({ user: null, isAuthenticated: false, isLoading: false });
+      window.location.href = "/app/login";
+    }
   }, []);
 
   return (

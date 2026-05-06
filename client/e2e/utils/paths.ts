@@ -36,12 +36,11 @@ export const APP = {
  * so they match regardless of origin (dev vs. reverse-proxied gateway).
  */
 export const API = {
-  LOGIN: "**/auth/login",
-  ME: "**/auth/me",
+  LOGIN: "**/app/auth/login",
+  ME: "**/app/auth/me",
 } as const;
 
 /**
- * sessionStorage key the client uses for the bearer token. Must match
- * `TOKEN_KEY` in `client/src/api/client.ts`.
+ * Legacy sessionStorage key kept so tests can assert cookie auth no longer writes it.
  */
 export const TOKEN_STORAGE_KEY = "mcpgateway_token";
