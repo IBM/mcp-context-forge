@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/protocol_compliance/fixtures/gateway_live.py
+"""Location: ./tests/live_gateway/protocol_compliance/fixtures/gateway_live.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti

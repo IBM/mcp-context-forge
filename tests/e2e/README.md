@@ -31,7 +31,7 @@ make test-mcp-protocol-e2e
 MCP_CLI_BASE_URL=http://localhost:4444 make test-mcp-protocol-e2e
 
 # Run directly with pytest
-pytest tests/e2e/test_mcp_protocol_e2e.py -v
+pytest tests/live_gateway/mcp/test_mcp_protocol_e2e.py -v
 ```
 
 The legacy `make test-mcp-cli` target is retained as a deprecation alias and

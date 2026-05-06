@@ -847,7 +847,7 @@ test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gate
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
 	@$(UV_BIN) run playwright install --with-deps chromium >/dev/null
-	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_rbac_transport.py -v -s --tb=short \
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/mcp/test_mcp_rbac_transport.py -v -s --tb=short \
 		|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }
 	@echo "✅ MCP RBAC transport tests passed!"
 
@@ -877,7 +877,7 @@ test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak 
 	@echo "   Requires one of:"
 	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
 	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
-	@$(UV_BIN) run pytest tests/live_gateway/sso/ -v -s --tb=short \
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
@@ -886,7 +886,7 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compl
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
 	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
-	@$(UV_BIN) run --extra plugins pytest tests/live_gateway/ -v --tb=short \
+	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
 		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
 
@@ -7495,7 +7495,7 @@ test-owasp: uv playwright-install  ## 🔒 Run OWASP access-control security tes
 	@$(MAKE) --no-print-directory playwright-preflight
 	@mkdir -p $(ZAP_REPORTS)
 	@TEST_BASE_URL='$(TEST_BASE_URL)' \
-	 $(UV_BIN) run pytest tests/playwright/security/owasp/ \
+	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01 --tb=short \
 		|| { echo '❌ OWASP security tests failed!'; exit 1; }
 	@echo "✅ OWASP security tests completed!"
@@ -7512,7 +7512,7 @@ test-zap: uv playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZA
 	 ZAP_BASE_URL='$(ZAP_BASE_URL)' \
 	 ZAP_API_KEY='$(ZAP_API_KEY)' \
 	 ZAP_TARGET_URL='$(ZAP_TARGET_URL)' \
-	 $(UV_BIN) run pytest tests/playwright/security/owasp/ \
+	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
 		-v -m owasp_a01_zap --tb=short \
 		|| { echo '❌ ZAP DAST scan failed!'; exit 1; }
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
@@ -7680,9 +7680,9 @@ async-monitor:
 		--host localhost \
 		--console-enabled
 
-async-debug:
+async-debug: uv
 	@echo "🐛 Running async tests with debug mode..."
-	@PYTHONASYNCIODEBUG=1 $(VENV_PYTHON) -X dev \
+	@PYTHONASYNCIODEBUG=1 $(UV_BIN) run --extra plugins python -X dev \
 		-m pytest tests/ \
 		--asyncio-mode=auto \
 		--capture=no \
@@ -8419,25 +8419,21 @@ migration-test-performance: uv               ## Run migration performance benchm
 		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Performance tests complete!"
 
-migration-test-rollback:                  ## Run only downgrade/reverse migration tests (pytest + roundtrip)
+migration-test-rollback: uv               ## Run only downgrade/reverse migration tests (pytest + roundtrip)
 	@echo "⏪ Running reverse migration (downgrade) tests..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	        pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
-	               $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-	        -k 'reverse or rollback' \
-	        -v --tb=short --log-cli-level=INFO"
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	                     $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+		-k 'reverse or rollback' \
+		-v --tb=short --log-cli-level=INFO
 	@echo "🔄 Running upgrade/downgrade roundtrip validation..."
 	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 	@echo "✅ Rollback tests complete!"
 
-migration-test-cross-db:                  ## Run cross-database schema consistency test
+migration-test-cross-db: uv               ## Run cross-database schema consistency test
 	@echo "🔀 Running cross-database schema consistency test..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-	        UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
-	        pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
-	        -v --tb=short --log-cli-level=INFO"
+	@UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+	 $(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Cross-database schema consistency check complete!"
 
 migration-setup:                          ## Setup migration test environment

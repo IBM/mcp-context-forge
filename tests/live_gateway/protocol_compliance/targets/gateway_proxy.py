@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/protocol_compliance/targets/gateway_proxy.py
+"""Location: ./tests/live_gateway/protocol_compliance/targets/gateway_proxy.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
@@ -30,7 +30,7 @@ class GatewayProxyTarget(ComplianceTarget):
     @asynccontextmanager
     async def _open_client(self, transport: Transport, **client_kwargs: object) -> AsyncIterator[Client]:
         # Trailing slash matters — see the IPv6/path-rewrite notes in
-        # tests/e2e/test_mcp_protocol_e2e.py::mcp_url.
+        # tests/live_gateway/mcp/test_mcp_protocol_e2e.py::mcp_url.
         streamable = StreamableHttpTransport(
             url=f"{self._base_url}/mcp/",
             auth=BearerAuth(self._auth_token),

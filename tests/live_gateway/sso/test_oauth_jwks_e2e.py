@@ -19,7 +19,7 @@ Usage:
     docker compose --profile sso up -d
     make test-e2e-sso
     # or directly:
-    pytest tests/e2e/sso/test_oauth_jwks_e2e.py -v -s --tb=short
+    pytest tests/live_gateway/sso/test_oauth_jwks_e2e.py -v -s --tb=short
 """
 
 # Future

@@ -98,7 +98,6 @@ jobs:
           uv run --extra plugins pytest -n 0 \
             --durations=5 \
             --ignore=tests/fuzz \
-            --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \

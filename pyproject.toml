@@ -679,7 +679,7 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
-    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/protocol_compliance)",
+    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/live_gateway/protocol_compliance)",
     "target_reference: marks tests that exercise the reference FastMCP server target",
     "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
     "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",

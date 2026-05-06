@@ -55,7 +55,7 @@ Test coverage includes:
 
 * Unit tests under `tests/unit/`
 * Integration tests under `tests/integration/`
-* End-to-end tests under `tests/e2e/`
+* End-to-end tests under `tests/e2e/` (in-process FastAPI) and `tests/live_gateway/` (live infrastructure: MCP / SSO / Rust / protocol compliance)
 * UI automation under `tests/playwright/` (Playwright)
 * Load testing under `tests/loadtest/` (Locust)
 * Example payload performance testing under `tests/hey/`
@@ -63,9 +63,10 @@ Test coverage includes:
 Use:
 
 ```bash
-make test                        # run full suite
+make test                        # run full suite (in-process; no live services required)
 pytest tests/unit/               # run only unit tests
-pytest tests/e2e/                # run end-to-end scenarios
+pytest tests/e2e/                # run in-process end-to-end scenarios
+make test-live-gateway           # run live-gateway tests (mcp + sso + rust + compliance)
 pytest tests/playwright/         # run UI automation tests
 locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```
