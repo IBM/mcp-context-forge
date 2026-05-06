@@ -34,9 +34,13 @@ Playwright artifacts (screenshots, videos, traces) are written to `test-results/
 
 ### Installation
 
+Playwright (and `pytest-playwright`, `pytest-html`, `python-owasp-zap-v2.4`)
+lives in the `dev` dependency group, so it's installed automatically by
+the standard project bootstrap — no extras needed:
+
 ```bash
-# Install the project with Playwright dependencies
-pip install -e ".[playwright]"
+# One-shot project setup (creates .venv, installs runtime + dev deps)
+make install-dev
 
 # Install Playwright browsers (only needed once)
 make playwright-install      # Installs Chromium only

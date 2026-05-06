@@ -918,7 +918,7 @@ Likely area:
 - client compatibility expectations in:
   - `mcpgateway.wrapper`
   - `tests/e2e/test_mcp_cli_protocol.py`
-  - `tests/e2e_rust/test_mcp_access_matrix.py`
+  - `tests/live_gateway/e2e_rust/test_mcp_access_matrix.py`
 
 Recommended next step:
 - Change the Python gateway compression policy so MCP endpoints bypass

@@ -133,7 +133,7 @@ dev = [
     "fastmcp>=2.0",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
-    "hypothesis>=6.140.3",
+    "hypothesis>=6.152.1",
     "locust>=2.35.0",
     "mypy>=1.18.2",
     "pexpect>=4.9.0",
@@ -145,19 +145,25 @@ dev = [
     "pyrefly>=0.35.0",
     "pyright>=1.1.406",
     "pyroma>=5.0",
+    "playwright>=1.58.0",
+    "python-owasp-zap-v2.4>=0.1.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.2.0",
+    "pytest-benchmark>=5.2.3",
     "pytest-cov>=7.0.0",
     "pytest-env>=1.1.5",
     "pytest-examples>=0.0.18",
+    "pytest-html>=4.2.0",
     "pytest-httpx>=0.35.0",
     "pytest-instafail>=0.5.0",
     "pytest-integration-mark>=0.2.0",
     # "pytest-md-report>=0.7.0",
+    "pytest-playwright>=0.7.2",
     "pytest-rerunfailures>=16.0.1",
     "pytest-timeout>=2.4.0",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
+    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
     "radon>=6.0.1",
@@ -221,19 +227,6 @@ llmchat = [
     "langsmith>=0.7.33", # Transitive pin (langchain-core)
 ]
 
-# Fuzzing and property-based testing
-fuzz = [
-    "hypothesis>=6.152.1",
-    "pytest-benchmark>=5.2.3",
-    "pytest-xdist>=3.8.0",
-    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
-]
-
-# Coverage-guided fuzzing (requires clang/libfuzzer)
-fuzz-atheris = [
-    "atheris>=3.0.0",
-]
-
 # Observability dependencies (optional)
 observability = [
     "opentelemetry-api>=1.41.0",
@@ -293,15 +286,6 @@ grpc = [
     "grpcio-reflection>=1.80.0",
     "grpcio-tools>=1.80.0",
     "protobuf>=6.33.6", # grpcio-reflection 1.78.x caps at <7.0.0
-]
-
-# UI Testing
-playwright = [
-    "playwright>=1.58.0",
-    "pytest-html>=4.2.0",
-    "pytest-playwright>=0.7.2",
-    "pytest-timeout>=2.4.0",
-    "python-owasp-zap-v2.4>=0.1.0",
 ]
 
 # Convenience meta-extras
@@ -636,7 +620,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/e2e/test_mcp_protocol_e2e.py"
+addopts = "-ra -q -p no:playwright -p no:benchmark --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -695,7 +679,7 @@ markers = [
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
-    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/protocol_compliance)",
+    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/live_gateway/protocol_compliance)",
     "target_reference: marks tests that exercise the reference FastMCP server target",
     "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
     "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",

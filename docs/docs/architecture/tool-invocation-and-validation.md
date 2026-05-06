@@ -170,8 +170,8 @@ Unit tests:
 
 End-to-end (via `make test-mcp-protocol-e2e`):
 
-- `tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-test-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
-- `tests/e2e/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-test-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
+- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-test-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
+- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-test-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
 
 ## Adding a new backend
 
