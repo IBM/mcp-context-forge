@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, Monitor, Moon, Settings2, Sun, User } from "lucide-react";
+import { ChevronDown, LogOut, Monitor, Moon, Settings2, Sun } from "lucide-react";
 import { useIntl } from "react-intl";
 import { useAuth } from "../../auth/useAuth";
 import { useTheme } from "../../hooks/useTheme";
@@ -32,10 +32,10 @@ export function HeaderProfileMenu() {
           className="h-8 gap-1.5 rounded-lg px-1.5 hover:bg-muted"
           aria-label={displayName}
         >
-          <span className="flex size-6 items-center justify-center overflow-hidden rounded-md bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200">
-            {/* Replace this placeholder with a real user image once the auth payload exposes an avatar URL. */}
-            <User className="size-4" aria-hidden="true" />
-          </span>
+          <span
+            className="block size-6 overflow-hidden rounded-md bg-muted"
+            aria-hidden="true"
+          />
           <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
