@@ -1822,7 +1822,7 @@ class TestGatewayTestUrlValidation:
         naive allowlist checks. The validator must normalize before checking.
         """
         allowed_hosts = ["trusted.com"]
-        with pytest.raises(ValueError, match="not in the approved allowlist"):
+        with pytest.raises(ValueError, match="is not allowed"):
             SecurityValidator.validate_gateway_test_url(
                 "https://evil.com./bypass",
                 allowed_hosts,
@@ -1934,7 +1934,7 @@ class TestGatewayTestUrlValidation:
     def test_wildcard_does_not_match_different_domain(self, mock_dns_public):
         """Test that wildcard patterns don't match unrelated domains."""
         allowed_hosts = ["*.example.com"]
-        with pytest.raises(ValueError, match="not in the approved allowlist"):
+        with pytest.raises(ValueError, match="is not allowed"):
             SecurityValidator.validate_gateway_test_url(
                 "https://evil.com/test",
                 allowed_hosts,
@@ -1943,7 +1943,7 @@ class TestGatewayTestUrlValidation:
 
     def test_empty_allowlist_rejects_all(self, mock_dns_public):
         """Test that empty allowlist rejects all URLs (AC #1)."""
-        with pytest.raises(ValueError, match="not in the approved allowlist"):
+        with pytest.raises(ValueError, match="is not allowed"):
             SecurityValidator.validate_gateway_test_url(
                 "https://example.com/",
                 [],
@@ -2003,7 +2003,7 @@ class TestGatewayTestUrlValidation:
         ]
 
         for url in collaborator_domains:
-            with pytest.raises(ValueError, match="not in the approved allowlist"):
+            with pytest.raises(ValueError, match="is not allowed"):
                 SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
 
     def test_multiple_allowlist_patterns(self, mock_dns_public):
@@ -2024,7 +2024,7 @@ class TestGatewayTestUrlValidation:
             assert result == url
 
         # This should be rejected
-        with pytest.raises(ValueError, match="not in the approved allowlist"):
+        with pytest.raises(ValueError, match="is not allowed"):
             SecurityValidator.validate_gateway_test_url(
                 "https://evil.com/",
                 allowed_hosts,

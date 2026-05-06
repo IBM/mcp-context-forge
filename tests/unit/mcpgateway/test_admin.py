@@ -3640,6 +3640,7 @@ class TestAdminMetricsRoutes:
         mock_prompt_reset.assert_awaited_once_with(mock_db)
 
 
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 class TestAdminGatewayTestRoute:
     """Test the gateway test endpoint with enhanced coverage."""
 
@@ -14478,6 +14479,7 @@ async def test_change_password_required_handler_outer_exception(monkeypatch, moc
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
     class MockResponse:
         status_code = 200
@@ -14562,6 +14564,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -14576,6 +14579,7 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(monkeypatch, mock_db):
     """Cover the 401 branch when OAuth auth-code flow requires a user email."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -14591,6 +14595,7 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_header(monkeypatch, mock_db):
     """Cover stored-token injection for OAuth auth-code flow."""
 
@@ -14634,6 +14639,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_token_exception_returns_500(monkeypatch, mock_db):
     """Cover exception handler when retrieving stored OAuth tokens fails."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -14650,6 +14656,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, mock_db):
     """Cover client-credentials OAuth branch in admin_test_gateway."""
 
@@ -14693,6 +14700,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypatch, mock_db):
     """Cover OAuthManager exception path in client-credentials flow."""
     # Third-Party
@@ -14731,6 +14739,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
         ({"a": "1"}, {"a": "1"}),
     ],
 )
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, mock_db, body, expected_data):
     """Cover application/x-www-form-urlencoded request body formatting (str and dict)."""
 
@@ -14776,6 +14785,7 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a dict (raw DbGateway)."""
 
@@ -14815,6 +14825,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a str (decode_auth path)."""
 
@@ -14855,6 +14866,7 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
     """Gateway with auth_type=None should not attempt decode_auth."""
 
@@ -14894,6 +14906,7 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db):
     """Stored gateway auth merges with (and overrides) caller-supplied headers."""
 

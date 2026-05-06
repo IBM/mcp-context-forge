@@ -1515,6 +1515,14 @@ class SecurityValidator:
         3. Unconditional blocking of private IPs, loopback, and link-local addresses
         4. Standard URL validation (scheme, structure, XSS patterns)
 
+        **Security Note - DNS TOCTOU Limitation:**
+        This validation resolves DNS at validation time to check for private IPs, but the
+        HTTP client will re-resolve DNS at connection time. An attacker controlling DNS can
+        return a public IP during validation and a private IP during connection (DNS rebinding).
+        True mitigation requires pinning the validated IP into the connection (custom resolver/
+        transport, or IP allowlist check at connect callback). This is tracked as a known
+        limitation for future improvement.
+
         Args:
             value (str): The URL to validate
             allowed_hosts (list[str]): List of allowed host patterns. Supports:
@@ -1548,7 +1556,7 @@ class SecurityValidator:
             ... )
             Traceback (most recent call last):
                 ...
-            ValueError: Gateway URL is not in the approved allowlist
+            ValueError: Gateway URL is not allowed
 
             Private IP address (blocked unconditionally):
 
@@ -1600,10 +1608,25 @@ class SecurityValidator:
         # This prevents testing internal services regardless of allowlist
         try:
             ip_addr = ipaddress.ip_address(hostname_normalized)
+            # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+            # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
+            if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
+                ip_addr = ip_addr.ipv4_mapped
+
+            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
+            is_cgnat = False
+            if ip_addr.version == 4:
+                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                is_cgnat = ip_addr in cgnat_network
+
             # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-            # Block loopback (127.0.0.0/8)
-            # Block link-local (169.254.0.0/16)
-            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+            # Block loopback (127.0.0.0/8, ::1)
+            # Block link-local (169.254.0.0/16, fe80::/10)
+            # Block unspecified (0.0.0.0, ::)
+            # Block multicast (224.0.0.0/4, ff00::/8)
+            # Block reserved (240.0.0.0/4)
+            # Block carrier-grade NAT (100.64.0.0/10)
+            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
                 raise ValueError(f"{field_name} is not allowed")
         except ValueError as e:
             # If it's our security error, re-raise it
@@ -1617,7 +1640,17 @@ class SecurityValidator:
             for _, _, _, _, sockaddr in addr_info:
                 try:
                     resolved_ip = ipaddress.ip_address(sockaddr[0])
-                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local:
+                    # Unwrap IPv4-mapped IPv6 addresses
+                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                        resolved_ip = resolved_ip.ipv4_mapped
+
+                    # Check for carrier-grade NAT (100.64.0.0/10)
+                    is_cgnat = False
+                    if resolved_ip.version == 4:
+                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                        is_cgnat = resolved_ip in cgnat_network
+
+                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
                         raise ValueError(f"{field_name} is not allowed")
                 except ValueError as e:
                     if "is not allowed" in str(e):
@@ -1630,7 +1663,8 @@ class SecurityValidator:
         # Check against allowlist
         if not allowed_hosts:
             # Empty allowlist means reject all
-            raise ValueError(f"{field_name} is not in the approved allowlist")
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
 
         allowed = False
         for pattern in allowed_hosts:
@@ -1650,7 +1684,8 @@ class SecurityValidator:
                     break
 
         if not allowed:
-            raise ValueError(f"{field_name} is not in the approved allowlist")
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
 
         return validated_url
 

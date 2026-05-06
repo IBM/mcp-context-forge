@@ -14029,7 +14029,9 @@ async def admin_test_gateway(
                         hostname = parsed.hostname.lower().rstrip(".")
                         if hostname not in allowed_hosts:
                             allowed_hosts.append(hostname)
-                except Exception:
+                except (ValueError, AttributeError) as e:
+                    # Log parse failures to help debug "URL not in allowlist" mysteries
+                    LOGGER.debug("Failed to parse registered gateway URL '%s': %s", url, e)
                     continue
         except Exception as e:
             LOGGER.warning("Failed to build allowlist from registered gateways: %s", e)
@@ -14039,9 +14041,7 @@ async def admin_test_gateway(
 
     # Validate URL with allowlist enforcement
     try:
-        validated_base_url = SecurityValidator.validate_gateway_test_url(
-            str(request.base_url), allowed_hosts, "Gateway test URL"
-        )
+        validated_base_url = SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
     except ValueError as e:
         # Log the actual error for security monitoring, but return generic message
         LOGGER.warning(
