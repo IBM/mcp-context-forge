@@ -19,5 +19,3 @@ export const MainNavIcon = ({ className }: { className?: string }) => (
     />
   </svg>
 );
-
-// Made with Bob
