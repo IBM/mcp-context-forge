@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/framework/external/unix/test_server.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -21,7 +21,8 @@ try:
     # Third-Party
     from google.protobuf import json_format
     from google.protobuf.struct_pb2 import Struct
-    #First-Party
+
+    # First-Party
     from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
     from mcpgateway.plugins.framework.external.unix.server.server import UnixSocketPluginServer
 
@@ -602,9 +603,7 @@ class TestUnixSocketPluginServerMessageHandling:
             plugin_name="TestPlugin",
             code="MODEL_ERR",
         )
-        mock_plugin_server.invoke_hook = AsyncMock(
-            return_value={"error": error_model}
-        )
+        mock_plugin_server.invoke_hook = AsyncMock(return_value={"error": error_model})
 
         request = plugin_service_pb2.InvokeHookRequest()
         request.hook_type = "tool_pre_invoke"
@@ -653,9 +652,7 @@ class TestUnixSocketPluginServerMessageHandling:
     @pytest.mark.asyncio
     async def test_handle_get_plugin_config_exception(self, server, mock_plugin_server):
         """Test _handle_get_plugin_config handles exceptions."""
-        mock_plugin_server.get_plugin_config = AsyncMock(
-            side_effect=RuntimeError("DB error")
-        )
+        mock_plugin_server.get_plugin_config = AsyncMock(side_effect=RuntimeError("DB error"))
 
         request = plugin_service_pb2.GetPluginConfigRequest(name="TestPlugin")
         response_bytes = await server._handle_get_plugin_config(request)
@@ -668,9 +665,7 @@ class TestUnixSocketPluginServerMessageHandling:
     @pytest.mark.asyncio
     async def test_handle_get_plugin_configs_exception(self, server, mock_plugin_server):
         """Test _handle_get_plugin_configs handles exceptions."""
-        mock_plugin_server.get_plugin_configs = AsyncMock(
-            side_effect=RuntimeError("DB error")
-        )
+        mock_plugin_server.get_plugin_configs = AsyncMock(side_effect=RuntimeError("DB error"))
 
         request = plugin_service_pb2.GetPluginConfigsRequest()
         response_bytes = await server._handle_get_plugin_configs(request)

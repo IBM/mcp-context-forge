@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -770,7 +770,7 @@ class TestFetchToolsAfterOauthTokenValidation:
     @pytest.mark.asyncio
     async def test_sse_connection_401_diagnostic_error(self, gateway_service):
         """_connect_to_sse_server_without_validation produces diagnostic message on 401-like errors."""
-        validation_warnings = ["Token audience mismatch: token aud=[api://wrong], expected 'api://correct'"]
+        validation_warnings = ["Token audience mismatch: token aud does not match expected resource or gateway URL"]
 
         with patch("mcpgateway.services.gateway_service.sse_client", side_effect=Exception("HTTP 401 Unauthorized")):
             with pytest.raises(GatewayConnectionError, match="Possible causes.*audience mismatch"):

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_bootstrap_db_advisory_lock.py
-Copyright 2025
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for advisory_lock retry logic in bootstrap_db.py.
 """
@@ -34,8 +36,8 @@ class TestAdvisoryLockRetry:
         mock_conn.execute.side_effect = [
             mock_result_false,  # First lock attempt fails
             mock_result_false,  # Second lock attempt fails
-            mock_result_true,   # Third lock attempt succeeds
-            MagicMock()         # Unlock call in finally block
+            mock_result_true,  # Third lock attempt succeeds
+            MagicMock(),  # Unlock call in finally block
         ]
 
         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:

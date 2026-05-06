@@ -1,4 +1,10 @@
-"""OAuth 2.1 / Authorization compliance tests (MCP 2025-11-25 § Authorization).
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_oauth_authorization.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth 2.1 / Authorization compliance tests (MCP 2025-11-25 § Authorization).
 
 Two tiers:
 

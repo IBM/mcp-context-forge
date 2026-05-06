@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for keycloak discovery utilities."""
+"""Location: ./tests/unit/mcpgateway/utils/test_keycloak_discovery.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for keycloak discovery utilities.
+"""
 
 # Third-Party
 import httpx
@@ -263,6 +269,7 @@ def test_discover_keycloak_endpoints_sync_incomplete(monkeypatch: pytest.MonkeyP
 
 def test_discover_keycloak_endpoints_sync_unexpected(monkeypatch: pytest.MonkeyPatch):
     """Sync discovery should handle unexpected exceptions gracefully."""
+
     def boom(*args, **kwargs):  # noqa: ANN001
         raise RuntimeError("fail")
 

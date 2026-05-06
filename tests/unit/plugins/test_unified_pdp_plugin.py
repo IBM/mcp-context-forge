@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the UnifiedPDPPlugin class (unified_pdp.py)."""
+"""Location: ./tests/unit/plugins/test_unified_pdp_plugin.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the UnifiedPDPPlugin class (unified_pdp.py).
+"""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,20 +15,16 @@ from plugins.unified_pdp.pdp_models import AccessDecision, Decision, EngineDecis
 from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
 from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload
 
-
 # ---------------------------------------------------------------------------
 # Helpers — minimal fakes for the framework types
 # ---------------------------------------------------------------------------
+
 
 def _make_plugin_config(engines=None):
     """Build a minimal PluginConfig mock."""
     cfg = MagicMock()
     cfg.config = {
-        "engines": engines or [
-            {"name": "native", "enabled": True, "priority": 1, "settings": {"rules": [
-                {"subject_role": "*", "action": "*", "resource": "*", "effect": "allow"}
-            ]}}
-        ],
+        "engines": engines or [{"name": "native", "enabled": True, "priority": 1, "settings": {"rules": [{"subject_role": "*", "action": "*", "resource": "*", "effect": "allow"}]}}],
         "combination_mode": "all_must_allow",
         "default_decision": "deny",
         "cache": {"enabled": False, "ttl_seconds": 60, "max_entries": 100},
@@ -62,6 +64,7 @@ def _deny_decision():
 # ---------------------------------------------------------------------------
 # TestUnifiedPDPPlugin
 # ---------------------------------------------------------------------------
+
 
 class TestUnifiedPDPPlugin:
     """Tests for the plugin class hook methods."""
@@ -244,6 +247,7 @@ class TestUnifiedPDPPlugin:
             "performance": {"timeout_ms": 2000, "parallel_evaluation": True},
         }
         from plugins.unified_pdp.pdp import PolicyDecisionPoint
+
         pdp = UnifiedPDPPlugin._build_pdp(raw)
         assert isinstance(pdp, PolicyDecisionPoint)
 
@@ -252,6 +256,7 @@ class TestUnifiedPDPPlugin:
     def test_build_pdp_empty_config_does_not_crash(self):
         pdp = UnifiedPDPPlugin._build_pdp({})
         from plugins.unified_pdp.pdp import PolicyDecisionPoint
+
         assert isinstance(pdp, PolicyDecisionPoint)
 
     # --- shutdown calls PDP close ---

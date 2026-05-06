@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add performance monitoring tables for system metrics tracking.
+"""Location: ./mcpgateway/alembic/versions/m7g8h9i0j1k2_add_performance_tables.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add performance monitoring tables for system metrics tracking.
 
 Revision ID: m7g8h9i0j1k2
 Revises: l6f7g8h9i0j1
 Create Date: 2025-12-17 10:00:00.000000
-
 """
 
 # Standard

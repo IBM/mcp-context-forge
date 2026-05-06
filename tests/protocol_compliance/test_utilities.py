@@ -1,4 +1,11 @@
-"""MCP utility compliance tests — progress notifications and cancellation."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_utilities.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP utility compliance tests — progress notifications and cancellation.
+"""
 
 from __future__ import annotations
 

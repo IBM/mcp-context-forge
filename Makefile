@@ -1274,6 +1274,7 @@ generate-report:                           ## Display most recent load test repo
 # 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
 # =============================================================================
 # help: 📊 REST API POPULATION
+# help: populate-tiny        - Populate via REST API (50 each, ~500 entities, ~30 sec)
 # help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
 # help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
 # help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
@@ -1282,7 +1283,18 @@ generate-report:                           ## Display most recent load test repo
 # help: populate-clean       - Delete all loadtest.example.com entities via API
 # help: populate-report      - Show latest population report
 
-.PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+.PHONY: populate-tiny populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+
+populate-tiny:                             ## Populate via REST API - tiny (50 each)
+	@echo "📊 Populating via REST API (tiny profile)..."
+	@echo "   Target: 50 of each entity type, ~500 entities"
+	@echo "   Time: ~30 seconds"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile tiny"
+	@echo ""
+	@echo "✅ Tiny API population complete!"
+	@echo "📄 Report: reports/tiny_populate_report.json"
 
 populate-small:                            ## Populate via REST API - small (100 users)
 	@echo "📊 Populating via REST API (small profile)..."
@@ -8384,11 +8396,13 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## �
 # help: migration-test-sqlite    - Run SQLite container migration tests only
 # help: migration-test-postgres  - Run PostgreSQL compose migration tests only
 # help: migration-test-performance - Run migration performance benchmarking
+# help: migration-test-rollback  - Run only downgrade/reverse migration tests (pytest + roundtrip)
+# help: migration-test-cross-db  - Run cross-database schema consistency test
 # help: migration-setup          - Setup migration test environment
 # help: migration-cleanup        - Clean up migration test containers and volumes
 # help: migration-debug          - Debug migration test failures with diagnostic info
 # help: migration-status         - Show current version configuration and supported versions
-# help: upgrade-validate         - Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+# help: upgrade-validate         - Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 
 # Migration testing configuration
 MIGRATION_TEST_DIR := tests/migration
@@ -8400,7 +8414,7 @@ UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
-        migration-setup migration-cleanup migration-debug migration-status upgrade-validate
+        migration-test-rollback migration-test-cross-db migration-setup migration-cleanup migration-debug migration-status upgrade-validate
 
 migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
@@ -8447,10 +8461,29 @@ migration-test-performance:               ## Run migration performance benchmark
 		-v --tb=short --log-cli-level=INFO"
 	@echo "✅ Performance tests complete!"
 
-.PHONY: migration-setup
-migration-setup:                           ## Setup migration test environment
-	@echo "🔧 Setting up migration test environment..."
+migration-test-rollback:                  ## Run only downgrade/reverse migration tests (pytest + roundtrip)
+	@echo "⏪ Running reverse migration (downgrade) tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	               $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	        -k 'reverse or rollback' \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "🔄 Running upgrade/downgrade roundtrip validation..."
+	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
+	@echo "✅ Rollback tests complete!"
+
+migration-test-cross-db:                  ## Run cross-database schema consistency test
+	@echo "🔀 Running cross-database schema consistency test..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+	        UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+	        pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+	        -v --tb=short --log-cli-level=INFO"
+	@echo "✅ Cross-database schema consistency check complete!"
+
+migration-setup:                          ## Setup migration test environment
+	@echo "🔧 Setting up migration test environment..."
 	@mkdir -p $(MIGRATION_REPORTS_DIR)
 	@mkdir -p $(MIGRATION_TEST_DIR)/logs
 	@echo "📦 Pulling required container images..."
@@ -8514,7 +8547,7 @@ migration-status:                          ## Show current version configuration
 		cd $(MIGRATION_TEST_DIR) && python3 version_status.py"
 
 .PHONY: upgrade-validate
-upgrade-validate:                         ## Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+upgrade-validate:                         ## Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 	@echo "🔄 Running upgrade validation harness..."
 	@echo "  Base image:   $(UPGRADE_BASE_IMAGE)"
 	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"
@@ -8539,7 +8572,8 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-doc                              - Build Rust documentation
 # help: rust-vet                              - Run cargo vet (strict supply-chain auditing)
 # help: rust-licenses                         - Run cargo-deny license check
-# help: rust-coverage                         - Run coverage (cargo-llvm-cov)
+# help: rust-coverage                         - Run coverage (terminal, HTML, Cobertura XML)
+# help: rust-diff-cover                       - Run changed-line coverage for Rust
 # help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
 # help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
 # help:
@@ -8559,7 +8593,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 # help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-bench-check
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
@@ -8688,8 +8722,20 @@ rust-coverage: rust-ensure-deps         ## Run coverage for Rust workspace
 	@echo "🦀 Running coverage (workspace)..."
 	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "Install cargo-llvm-cov: cargo install cargo-llvm-cov"; exit 1; }
 	@mkdir -p coverage
-	@cargo llvm-cov --workspace --cobertura --output-path coverage/cobertura.xml
-	@echo "✅ Coverage written to coverage/cobertura.xml"
+	@cargo llvm-cov --workspace --html --output-dir coverage/rust
+	@cargo llvm-cov report --cobertura --output-path coverage/cobertura.xml
+	@cargo llvm-cov report
+	@echo "✅ Coverage artefacts: HTML in coverage/rust/html/index.html & XML in coverage/cobertura.xml ✔"
+
+rust-diff-cover:                       ## Run changed-line coverage for Rust
+	@echo "📊  Running Rust diff-cover against main branch..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@if [ ! -f coverage/cobertura.xml ]; then \
+		echo "ℹ️  No coverage/cobertura.xml found - running rust-coverage first..."; \
+		$(MAKE) --no-print-directory rust-coverage; \
+	fi
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		diff-cover coverage/cobertura.xml --compare-branch=main --fail-under=90"
 
 rust-bench-check: rust-ensure-deps      ## Verify benchmarks build (no run; for CI)
 	@echo "🦀 Verifying Rust benchmarks build (no run)..."

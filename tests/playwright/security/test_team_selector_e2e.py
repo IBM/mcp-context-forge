@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""End-to-end Playwright test: team selector click flow inside an iframe.
+"""Location: ./tests/playwright/security/test_team_selector_e2e.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+End-to-end Playwright test: team selector click flow inside an iframe.
 
 This is the regression test for the most visible symptom of PR #3373:
 
@@ -58,7 +63,6 @@ import pytest
 # Local
 from ..conftest import _ensure_admin_logged_in
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ def _open_team_selector_dropdown(iframe_host: FrameLocator, page: Page, timeout:
         '[aria-label*="team" i][aria-haspopup]',
         '[aria-controls="team-selector-items"]',
         # Fallback: any button that is a sibling/ancestor of the items container
-        '#team-selector-items',  # used only to check visibility below
+        "#team-selector-items",  # used only to check visibility below
     ]
 
     # First try explicit toggle buttons
@@ -118,8 +122,7 @@ def _open_team_selector_dropdown(iframe_host: FrameLocator, page: Page, timeout:
     # Last resort: find the button that wraps or precedes the items container
     # by evaluating in the frame
     frame = _get_admin_frame(page)
-    clicked = frame.evaluate(
-        """
+    clicked = frame.evaluate("""
         () => {
             const container = document.getElementById('team-selector-items');
             if (!container) return false;
@@ -137,8 +140,7 @@ def _open_team_selector_dropdown(iframe_host: FrameLocator, page: Page, timeout:
             }
             return false;
         }
-        """
-    )
+        """)
     return bool(clicked)
 
 
@@ -153,15 +155,13 @@ def _wait_for_teams_loaded(iframe_host: FrameLocator, page: Page, timeout: int =
     poll_ms = 500
     elapsed = 0
     while elapsed < deadline_ms:
-        count = frame.evaluate(
-            """
+        count = frame.evaluate("""
             () => {
                 const c = document.getElementById('team-selector-items');
                 if (!c) return 0;
                 return c.querySelectorAll('.team-selector-item').length;
             }
-            """
-        )
+            """)
         if count and count > 0:
             return True
         page.wait_for_timeout(poll_ms)
@@ -193,9 +193,7 @@ def iframe_host_with_teams(page: Page, base_url: str):
             headers.pop("x-frame-options", None)
             headers.pop("X-Frame-Options", None)
             if "content-security-policy" in headers:
-                headers["content-security-policy"] = headers["content-security-policy"].replace(
-                    "frame-ancestors 'none'", "frame-ancestors 'self'"
-                )
+                headers["content-security-policy"] = headers["content-security-policy"].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
             route.fulfill(status=response.status, headers=headers, body=response.body())
         except Exception:
             # If route.fetch() or route.fulfill() failed, try to continue the route
@@ -209,8 +207,7 @@ def iframe_host_with_teams(page: Page, base_url: str):
     page.route(admin_pattern, _strip_framing_headers)
 
     admin_url = f"{base_url}/admin/"
-    page.set_content(
-        f"""<!DOCTYPE html>
+    page.set_content(f"""<!DOCTYPE html>
 <html><head><title>Team Selector E2E iframe host</title></head>
 <body style="margin:0;padding:0">
 <iframe id="admin-frame"
@@ -218,8 +215,7 @@ def iframe_host_with_teams(page: Page, base_url: str):
         style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-    )
+</body></html>""")
 
     frame_locator = page.frame_locator("#admin-frame")
     try:
@@ -259,9 +255,7 @@ class TestTeamSelectorDropdownE2E:
     # Test 1: innerHTML guard does NOT strip data-action from real server HTML
     # ------------------------------------------------------------------
 
-    def test_server_rendered_team_items_have_data_action_not_onclick(
-        self, iframe_host_with_teams: FrameLocator, page: Page
-    ) -> None:
+    def test_server_rendered_team_items_have_data_action_not_onclick(self, iframe_host_with_teams: FrameLocator, page: Page) -> None:
         """Team items fetched from /admin/teams/partial must have data-action, not onclick.
 
         This test calls the real ``/admin/teams/partial?render=selector``
@@ -279,8 +273,7 @@ class TestTeamSelectorDropdownE2E:
         """
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             async () => {
                 // Fetch the real partial HTML from the server
                 let html;
@@ -351,8 +344,7 @@ class TestTeamSelectorDropdownE2E:
                     teamIds: teamIds,
                 };
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             reason = result.get("reason", "unknown")
@@ -361,27 +353,16 @@ class TestTeamSelectorDropdownE2E:
             else:
                 pytest.skip(f"Could not fetch team partial: {reason}")
 
-        assert result["onclickViolations"] == [], (
-            f"Server-rendered team items must NOT have onclick (innerHTML guard regression).\n"
-            f"Violations: {result['onclickViolations']}"
-        )
-        assert result["missingDataAction"] == [], (
-            f"Server-rendered team items must have data-action='select-team'.\n"
-            f"Items missing it: {result['missingDataAction']}"
-        )
-        assert result["missingTeamId"] == [], (
-            f"Server-rendered team items must have data-team-id.\n"
-            f"Items missing it: {result['missingTeamId']}"
-        )
+        assert result["onclickViolations"] == [], f"Server-rendered team items must NOT have onclick (innerHTML guard regression).\n" f"Violations: {result['onclickViolations']}"
+        assert result["missingDataAction"] == [], f"Server-rendered team items must have data-action='select-team'.\n" f"Items missing it: {result['missingDataAction']}"
+        assert result["missingTeamId"] == [], f"Server-rendered team items must have data-team-id.\n" f"Items missing it: {result['missingTeamId']}"
         assert result["buttonCount"] > 0, "Expected at least one team item button"
 
     # ------------------------------------------------------------------
     # Test 2: Delegation listener fires when a team item is clicked
     # ------------------------------------------------------------------
 
-    def test_team_item_click_calls_selectTeamFromSelector(
-        self, iframe_host_with_teams: FrameLocator, page: Page
-    ) -> None:
+    def test_team_item_click_calls_selectTeamFromSelector(self, iframe_host_with_teams: FrameLocator, page: Page) -> None:
         """Clicking a team item inside the iframe must call selectTeamFromSelector.
 
         This test:
@@ -399,8 +380,7 @@ class TestTeamSelectorDropdownE2E:
         """
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 const container = document.getElementById('team-selector-items');
                 if (!container) return { skipped: true, reason: 'no #team-selector-items' };
@@ -451,19 +431,14 @@ class TestTeamSelectorDropdownE2E:
                     container.innerHTML = '';
                 }
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             pytest.skip(f"Team selector container not present: {result.get('reason')}")
 
         # Guard assertions
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must strip onclick from injected team item inside iframe"
-        )
-        assert result["dataAction"] == "select-team", (
-            "data-action='select-team' must survive innerHTML guard inside iframe"
-        )
+        assert result["hasOnclick"] is False, "innerHTML guard must strip onclick from injected team item inside iframe"
+        assert result["dataAction"] == "select-team", "data-action='select-team' must survive innerHTML guard inside iframe"
 
         # Delegation listener assertion
         assert result["called"], (
@@ -471,18 +446,13 @@ class TestTeamSelectorDropdownE2E:
             "This means the DOMContentLoaded delegation listener on #team-selector-items "
             "is not firing — the fix in admin.js may not be active inside the iframe."
         )
-        assert result["calledTeamId"] == "e2e-team-42", (
-            f"selectTeamFromSelector must receive the clicked button; "
-            f"expected data-team-id='e2e-team-42', got '{result['calledTeamId']}'"
-        )
+        assert result["calledTeamId"] == "e2e-team-42", f"selectTeamFromSelector must receive the clicked button; " f"expected data-team-id='e2e-team-42', got '{result['calledTeamId']}'"
 
     # ------------------------------------------------------------------
     # Test 3: Full end-to-end — open dropdown, click team, URL changes
     # ------------------------------------------------------------------
 
-    def test_clicking_team_item_navigates_to_team_id_url(
-        self, iframe_host_with_teams: FrameLocator, page: Page
-    ) -> None:
+    def test_clicking_team_item_navigates_to_team_id_url(self, iframe_host_with_teams: FrameLocator, page: Page) -> None:
         """Clicking a team item must navigate the admin page to ?team_id=<id>.
 
         This is the full end-to-end regression for the bug report symptom:
@@ -514,8 +484,7 @@ class TestTeamSelectorDropdownE2E:
 
         if teams_loaded:
             # ---- Real teams path ----
-            result: Dict[str, Any] = frame.evaluate(
-                """
+            result: Dict[str, Any] = frame.evaluate("""
                 () => {
                     const container = document.getElementById('team-selector-items');
                     if (!container) return { path: 'no-container' };
@@ -556,28 +525,20 @@ class TestTeamSelectorDropdownE2E:
                         window.updateTeamContext = origUpdate;
                     }
                 }
-                """
-            )
+                """)
 
             if result.get("path") in ("no-container", "no-button"):
                 pytest.skip(f"Team selector not usable: {result.get('path')}")
 
             # Core regression assertions
-            assert result["hasOnclick"] is False, (
-                "innerHTML guard must strip onclick from real server-rendered team items"
-            )
-            assert result["dataAction"] == "select-team", (
-                "Real server-rendered team items must have data-action='select-team'"
-            )
+            assert result["hasOnclick"] is False, "innerHTML guard must strip onclick from real server-rendered team items"
+            assert result["dataAction"] == "select-team", "Real server-rendered team items must have data-action='select-team'"
             assert result["updateCalled"], (
                 f"updateTeamContext must be called when a real team item is clicked.\n"
                 f"Team: {result.get('teamName')} (id={result.get('teamId')})\n"
                 f"This is the exact symptom from the bug report: clicking a team does nothing."
             )
-            assert result["updateCalledWith"] == result["teamId"], (
-                f"updateTeamContext must be called with the team's ID.\n"
-                f"Expected: {result['teamId']}, got: {result['updateCalledWith']}"
-            )
+            assert result["updateCalledWith"] == result["teamId"], f"updateTeamContext must be called with the team's ID.\n" f"Expected: {result['teamId']}, got: {result['updateCalledWith']}"
 
             # ---- Step 5: Verify URL change (best-effort) ----
             # updateTeamContext navigates to ?team_id=<id>.  Give it a moment.
@@ -592,17 +553,12 @@ class TestTeamSelectorDropdownE2E:
                 parsed = urllib.parse.urlparse(frame_url)
                 qs = urllib.parse.parse_qs(parsed.query)
                 actual_team_id = qs.get("team_id", [None])[0]
-                assert actual_team_id == result["teamId"], (
-                    f"URL ?team_id= must match the clicked team.\n"
-                    f"Expected: {result['teamId']}, got: {actual_team_id}\n"
-                    f"Full URL: {frame_url}"
-                )
+                assert actual_team_id == result["teamId"], f"URL ?team_id= must match the clicked team.\n" f"Expected: {result['teamId']}, got: {actual_team_id}\n" f"Full URL: {frame_url}"
 
         else:
             # ---- Synthetic path: no teams in DB ----
             # Inject a synthetic item and verify the full delegation + navigation chain.
-            result = frame.evaluate(
-                """
+            result = frame.evaluate("""
                 () => {
                     const container = document.getElementById('team-selector-items');
                     if (!container) return { path: 'no-container' };
@@ -660,38 +616,22 @@ class TestTeamSelectorDropdownE2E:
                         container.innerHTML = '';
                     }
                 }
-                """
-            )
+                """)
 
             if result.get("path") in ("no-container", "no-button"):
                 pytest.skip(f"Team selector not usable (synthetic path): {result.get('path')}")
 
-            assert result["hasOnclick"] is False, (
-                "innerHTML guard must strip onclick from synthetic team item"
-            )
-            assert result["dataAction"] == "select-team", (
-                "data-action='select-team' must survive innerHTML guard"
-            )
-            assert result["selectorCalled"], (
-                "selectTeamFromSelector must be called via delegation listener "
-                "when a synthetic team item is clicked (no teams in DB path)"
-            )
-            assert result["updateCalled"], (
-                "updateTeamContext must be called when selectTeamFromSelector runs "
-                "(no teams in DB path)"
-            )
-            assert result["updateCalledWith"] == "synthetic-team-e2e", (
-                f"updateTeamContext must receive the correct team ID; "
-                f"got: {result['updateCalledWith']}"
-            )
+            assert result["hasOnclick"] is False, "innerHTML guard must strip onclick from synthetic team item"
+            assert result["dataAction"] == "select-team", "data-action='select-team' must survive innerHTML guard"
+            assert result["selectorCalled"], "selectTeamFromSelector must be called via delegation listener " "when a synthetic team item is clicked (no teams in DB path)"
+            assert result["updateCalled"], "updateTeamContext must be called when selectTeamFromSelector runs " "(no teams in DB path)"
+            assert result["updateCalledWith"] == "synthetic-team-e2e", f"updateTeamContext must receive the correct team ID; " f"got: {result['updateCalledWith']}"
 
     # ------------------------------------------------------------------
     # Test 4: Regression guard — inline onclick in innerHTML is stripped
     # ------------------------------------------------------------------
 
-    def test_inline_onclick_is_stripped_by_innerhtml_guard_inside_iframe(
-        self, iframe_host_with_teams: FrameLocator, page: Page
-    ) -> None:
+    def test_inline_onclick_is_stripped_by_innerhtml_guard_inside_iframe(self, iframe_host_with_teams: FrameLocator, page: Page) -> None:
         """The innerHTML guard must strip onclick from any HTML set via innerHTML.
 
         This is the direct regression test for the root cause: if someone
@@ -707,8 +647,7 @@ class TestTeamSelectorDropdownE2E:
         """
         frame = _get_admin_frame(page)
 
-        result: Dict[str, Any] = frame.evaluate(
-            """
+        result: Dict[str, Any] = frame.evaluate("""
             () => {
                 const container = document.getElementById('team-selector-items');
                 if (!container) return { skipped: true, reason: 'no #team-selector-items' };
@@ -761,26 +700,17 @@ class TestTeamSelectorDropdownE2E:
                     container.innerHTML = '';
                 }
             }
-            """
-        )
+            """)
 
         if result.get("skipped"):
             pytest.skip(f"Team selector not present: {result.get('reason')}")
 
         # Guard must strip onclick
-        assert result["hasOnclick"] is False, (
-            "innerHTML guard must strip onclick='selectTeamFromSelector(this)' — "
-            "this is the root cause of the original bug"
-        )
+        assert result["hasOnclick"] is False, "innerHTML guard must strip onclick='selectTeamFromSelector(this)' — " "this is the root cause of the original bug"
 
         # data-action must survive
-        assert result["dataAction"] == "select-team", (
-            "data-action='select-team' must survive the innerHTML guard — "
-            "this is the fix that makes items clickable again"
-        )
-        assert result["dataTeamId"] == "regression-team-1", (
-            "data-team-id must survive the innerHTML guard"
-        )
+        assert result["dataAction"] == "select-team", "data-action='select-team' must survive the innerHTML guard — " "this is the fix that makes items clickable again"
+        assert result["dataTeamId"] == "regression-team-1", "data-team-id must survive the innerHTML guard"
 
         # Delegation listener must fire (onclick was stripped, but data-action + delegation works)
         assert result["called"], (
@@ -789,18 +719,13 @@ class TestTeamSelectorDropdownE2E:
             "If this fails: the DOMContentLoaded delegation listener on #team-selector-items "
             "is not registered, meaning the fix in admin.js is not active."
         )
-        assert result["calledTeamId"] == "regression-team-1", (
-            f"selectTeamFromSelector must receive the correct button; "
-            f"got data-team-id='{result['calledTeamId']}'"
-        )
+        assert result["calledTeamId"] == "regression-team-1", f"selectTeamFromSelector must receive the correct button; " f"got data-team-id='{result['calledTeamId']}'"
 
     # ------------------------------------------------------------------
     # Test 5: No JS errors during team selector interaction
     # ------------------------------------------------------------------
 
-    def test_no_js_errors_during_team_selector_click(
-        self, iframe_host_with_teams: FrameLocator, page: Page
-    ) -> None:
+    def test_no_js_errors_during_team_selector_click(self, iframe_host_with_teams: FrameLocator, page: Page) -> None:
         """Clicking a team item must not produce uncaught JS errors.
 
         Captures ``pageerror`` events (uncaught exceptions) during the
@@ -817,8 +742,7 @@ class TestTeamSelectorDropdownE2E:
         try:
             frame = _get_admin_frame(page)
 
-            frame.evaluate(
-                """
+            frame.evaluate("""
                 () => {
                     const container = document.getElementById('team-selector-items');
                     if (!container) return;
@@ -840,8 +764,7 @@ class TestTeamSelectorDropdownE2E:
                     // Clean up
                     container.innerHTML = '';
                 }
-                """
-            )
+                """)
 
             page.wait_for_timeout(500)
 
@@ -850,7 +773,8 @@ class TestTeamSelectorDropdownE2E:
 
         # Filter out known benign errors from third-party CDN resources
         critical_errors = [
-            e for e in js_errors
+            e
+            for e in js_errors
             if not any(
                 benign in e
                 for benign in [
@@ -864,7 +788,4 @@ class TestTeamSelectorDropdownE2E:
             )
         ]
 
-        assert critical_errors == [], (
-            "Uncaught JS errors during team selector click inside iframe:\n"
-            + "\n".join(f"  - {e}" for e in critical_errors)
-        )
+        assert critical_errors == [], "Uncaught JS errors during team selector click inside iframe:\n" + "\n".join(f"  - {e}" for e in critical_errors)

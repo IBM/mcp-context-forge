@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""RBAC Endpoint Coverage Tests.
+"""Location: ./tests/unit/mcpgateway/middleware/test_rbac_endpoint_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC Endpoint Coverage Tests.
 
 Verifies that RBAC-protected endpoints enforce their declared permissions
 at the decorator level. Uses the real require_permission decorator with

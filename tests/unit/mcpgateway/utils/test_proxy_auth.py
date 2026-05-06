@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_proxy_auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -335,13 +335,12 @@ class TestProxyAuthentication:
         mock_user.is_admin = True
         mock_user.email = "admin-user@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service, patch(
-            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-        ) as mock_resolve_teams:
+        with (
+            patch.object(vc, "settings", mock_settings),
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
             # _resolve_teams_from_db returns None for admins (admin bypass)
@@ -367,13 +366,12 @@ class TestProxyAuthentication:
         mock_user.is_admin = False
         mock_user.email = "multi-team-user@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service, patch(
-            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-        ) as mock_resolve_teams:
+        with (
+            patch.object(vc, "settings", mock_settings),
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
             mock_resolve_teams.return_value = ["team-a", "team-b", "team-c"]
@@ -397,13 +395,12 @@ class TestProxyAuthentication:
         mock_user.is_admin = False
         mock_user.email = "mcp-user@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service, patch(
-            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-        ) as mock_resolve_teams:
+        with (
+            patch.object(vc, "settings", mock_settings),
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
             mock_resolve_teams.return_value = ["team1"]
@@ -430,11 +427,7 @@ class TestProxyAuthentication:
         mock_request.cookies = {}
         mock_request.state = Mock()
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service:
+        with patch.object(vc, "settings", mock_settings), patch("mcpgateway.db.get_db") as mock_get_db, patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=None)
 
@@ -457,11 +450,7 @@ class TestProxyAuthentication:
         disabled_user.is_active = False  # Account disabled
         disabled_user.email = "disabled-user@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service:
+        with patch.object(vc, "settings", mock_settings), patch("mcpgateway.db.get_db") as mock_get_db, patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=disabled_user)
 
@@ -485,11 +474,7 @@ class TestProxyAuthentication:
         disabled_admin.is_active = False  # Even disabled admins must be rejected
         disabled_admin.email = "disabled-admin@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service:
+        with patch.object(vc, "settings", mock_settings), patch("mcpgateway.db.get_db") as mock_get_db, patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service:
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=disabled_admin)
 
@@ -513,13 +498,12 @@ class TestProxyAuthentication:
         mock_user.is_active = True
         mock_user.email = "user@example.com"
 
-        with patch.object(vc, "settings", mock_settings), patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service, patch(
-            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-        ) as mock_resolve_teams:
+        with (
+            patch.object(vc, "settings", mock_settings),
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
             mock_get_db.return_value = iter([Mock()])
             mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
             mock_resolve_teams.return_value = ["team1"]
@@ -834,13 +818,12 @@ class TestWebSocketAuthentication:
         mock_user.is_active = True
         mock_user.email = "proxy-user"
 
-        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings, patch(
-            "mcpgateway.db.get_db"
-        ) as mock_get_db, patch(
-            "mcpgateway.services.email_auth_service.EmailAuthService"
-        ) as mock_auth_service, patch(
-            "mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock
-        ) as mock_resolve_teams:
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings,
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.trust_proxy_auth_dangerously = True

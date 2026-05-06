@@ -1,26 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Rate limiter algorithm scale test — resource divergence across algorithms.
+"""Location: ./tests/loadtest/locustfile_rate_limiter_scale.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Rate limiter algorithm scale test — resource divergence across algorithms.
 Why this test exists
 --------------------
 The algorithm comparison test (locustfile_rate_limiter_algorithms.py) uses a
 single user, which creates one Redis key per algorithm.  At that scale the
 memory difference between fixed_window (1 integer per key) and sliding_window
 (30 timestamps per key) is invisible — a few hundred bytes vs a single integer.
-
 This test uses many unique users so each one creates its own rate limit key.
 Redis memory diverges visibly as user count grows:
-
   fixed_window    1 key  per user  =   N integers          (O(N))
   sliding_window  1 key  per user  =   N × W timestamps    (O(N × W))
   token_bucket    1 hash per user  =   tokens + last_refill (~0.2 KiB/key)
-
 With 100 users and a 30/m limit (W=30 timestamps/window):
   fixed_window    ~100 Redis keys   → ~10 KB
   sliding_window  ~100 Redis keys   → ~30–90 KB  (sorted sets, ~30 entries each)
-
 At 1,000 users the gap becomes ~1 MB vs ~30 MB — clearly measurable.
-
 How it works
 ------------
   - N unique users (default 100), each with a distinct email identity
@@ -30,13 +29,11 @@ How it works
   - A background thread polls Redis memory (DBSIZE + INFO memory) every 10s
     and builds a timeline showing how memory grows as users are added
   - Results show: rate accuracy, gateway resources, and Redis memory timeline
-
 Run it the same way as the single-user test — just more users:
   docker exec mcp-context-forge-redis-1 redis-cli FLUSHDB
   RL_ALGORITHM=fixed_window make benchmark-rate-limiter-scale
   # restart gateways, flush Redis
   RL_ALGORITHM=sliding_window make benchmark-rate-limiter-scale
-
 Environment Variables
 ---------------------
   RL_ALGORITHM:           Algorithm (default: fixed_window)
@@ -52,9 +49,6 @@ Environment Variables
   JWT_ALGORITHM:          JWT algorithm (default: HS256)
   JWT_AUDIENCE:           JWT audience (default: mcpgateway-api)
   JWT_ISSUER:             JWT issuer (default: mcpgateway)
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
@@ -301,9 +295,7 @@ def _scan_rl_dimension(dimension: str, timeout: int = 20) -> int:
     unprefixed layout. Scan both so this test works before and after the
     change, and against mixed deployments.
     """
-    return _scan_redis_pattern(f"rl:{dimension}:*", timeout=timeout) + _scan_redis_pattern(
-        f"rl:*:{dimension}:*", timeout=timeout
-    )
+    return _scan_redis_pattern(f"rl:{dimension}:*", timeout=timeout) + _scan_redis_pattern(f"rl:*:{dimension}:*", timeout=timeout)
 
 
 def _scan_rl_sample_keys(dimension: str, timeout: int = 15) -> list[str]:
@@ -388,10 +380,7 @@ def _detect_algorithm_from_redis() -> str:
     try:
         sample_keys = _scan_rl_sample_keys("user")
         if not sample_keys:
-            return (
-                f"unknown — no rl:user:* or rl:*:user:* keys in Redis "
-                f"(expected for {RL_ALGORITHM}?)"
-            )
+            return f"unknown — no rl:user:* or rl:*:user:* keys in Redis " f"(expected for {RL_ALGORITHM}?)"
 
         r_type = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "TYPE", sample_keys[0]],

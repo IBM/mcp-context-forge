@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_token_catalog_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -427,10 +427,10 @@ class TestTokenCatalogService:
         mock_team_member.is_active = True
 
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
-            mock_user,         # User exists
-            mock_team,         # Team exists
+            mock_user,  # User exists
+            mock_team,  # Team exists
             mock_team_member,  # User is active team member
-            mock_api_token,    # Existing token with same name AND same team_id
+            mock_api_token,  # Existing token with same name AND same team_id
         ]
 
         with pytest.raises(ValueError, match="Token with name .* already exists for user test@example.com in team 'team-456'"):

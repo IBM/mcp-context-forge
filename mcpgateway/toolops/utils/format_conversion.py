@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/toolops/utils/tool_format_conversion.py
-Copyright 2025
+"""Location: ./mcpgateway/toolops/utils/format_conversion.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
 ContextForge - module for converting MCP tool format to toolops specific internal format.
-
 """
 
 # Standard

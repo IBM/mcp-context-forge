@@ -126,7 +126,7 @@ testing:
 
 ## Setup and deployment steps
 
-The Make commands below wrap Ansible playbooks under the hood (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](../../../ansible/ocp/README.md) for details.
+The Make commands below wrap Ansible playbooks under the hood (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
 
 **0. Create Docker Hub pull secret** (one-time per namespace, required to pull `redis:7` without hitting anonymous rate limits):
 

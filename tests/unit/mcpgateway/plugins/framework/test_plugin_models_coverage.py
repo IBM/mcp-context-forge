@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Coverage tests for mcpgateway.plugins.framework.models — world-writable UDS, gRPC configs, edge cases."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_plugin_models_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage tests for mcpgateway.plugins.framework.models — world-writable UDS, gRPC configs, edge cases.
+"""
 
 # Standard
 from pathlib import Path, PurePath

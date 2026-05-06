@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Metrics Rollup Service for hourly aggregation of raw metrics.
+"""Location: ./mcpgateway/services/metrics_rollup_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Metrics Rollup Service for hourly aggregation of raw metrics.
 This service provides automatic rollup of raw metrics into hourly summaries,
 enabling efficient historical queries without scanning millions of raw records.
-
 Features:
 - Hourly aggregation with percentile calculation
 - Upsert logic to handle re-runs safely
 - Background task for periodic rollup
 - Optional deletion of raw metrics after rollup
 - PostgreSQL and SQLite support
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

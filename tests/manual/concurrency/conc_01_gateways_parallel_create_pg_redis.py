@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""CONC-01 manual concurrency check: parallel same-name gateway creation.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/manual/concurrency/conc_01_gateways_parallel_create_pg_redis.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CONC-01 manual concurrency check: parallel same-name gateway creation.
 
 This script targets the parent-scope CONC-01 scenario on /gateways.
 

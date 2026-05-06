@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -74,7 +74,6 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.auth_context import (
-    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
     get_request_identity,
@@ -83,6 +82,7 @@ from mcpgateway.auth_context import (
     get_token_teams_from_request,
     get_user_email,
     has_valid_internal_mcp_runtime_auth_header,
+    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
 )
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -10483,10 +10483,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except Exception:
-                # Log error and return invalid method
+            except ToolNotFoundError:
+                # Method name not registered as a tool → spec-mandated -32601
                 logger.error("Method not found: %s", method)
-                raise JSONRPCError(-32000, "Invalid method", params)
+                raise JSONRPCError(-32601, f"Method not found: {method}", {})
+            except Exception as exc:
+                # Truly unexpected error during handling → -32603
+                logger.error("Unexpected error invoking method %s: %s", method, exc)
+                raise JSONRPCError(-32603, "Internal error", {})
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 

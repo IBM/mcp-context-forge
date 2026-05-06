@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the Performance Monitoring Service.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_performance_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the Performance Monitoring Service.
 """
 
 # Standard
@@ -58,8 +60,8 @@ class TestSystemMetrics:
     def test_get_system_metrics_without_psutil(self):
         """Test system metrics when psutil is not available."""
         service = PerformanceService()
-        with patch('mcpgateway.services.performance_service.PSUTIL_AVAILABLE', False):
-            with patch('mcpgateway.services.performance_service.psutil', None):
+        with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", False):
+            with patch("mcpgateway.services.performance_service.psutil", None):
                 result = service.get_system_metrics()
                 assert isinstance(result, SystemMetricsSchema)
                 assert result.cpu_percent == 0.0
@@ -87,7 +89,7 @@ class TestSystemMetrics:
         result = service.get_system_metrics()
 
         # Load average is only available on Unix
-        if os.name != 'nt':
+        if os.name != "nt":
             # May be None if getloadavg fails
             if result.load_avg_1m is not None:
                 assert result.load_avg_1m >= 0
@@ -123,7 +125,7 @@ class TestWorkerMetrics:
     def test_get_worker_metrics_without_psutil(self):
         """Test worker metrics when psutil is not available."""
         service = PerformanceService()
-        with patch('mcpgateway.services.performance_service.PSUTIL_AVAILABLE', False):
+        with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", False):
             result = service.get_worker_metrics()
             assert isinstance(result, list)
             assert len(result) == 0
@@ -259,7 +261,7 @@ class TestGunicornMetrics:
     def test_get_gunicorn_metrics_without_psutil(self):
         """Test Gunicorn metrics when psutil is not available."""
         service = PerformanceService()
-        with patch('mcpgateway.services.performance_service.PSUTIL_AVAILABLE', False):
+        with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", False):
             result = service.get_gunicorn_metrics()
             assert isinstance(result, GunicornMetricsSchema)
 
@@ -291,7 +293,7 @@ class TestGunicornMetrics:
         mock_current = MagicMock(spec=psutil.Process)
         mock_current.parent.return_value = mock_parent
 
-        with patch('mcpgateway.services.performance_service.psutil.Process', return_value=mock_current):
+        with patch("mcpgateway.services.performance_service.psutil.Process", return_value=mock_current):
             result = service.get_gunicorn_metrics()
 
         assert isinstance(result, GunicornMetricsSchema)
@@ -343,7 +345,7 @@ class TestRequestMetrics:
     def test_get_request_metrics_without_prometheus(self):
         """Test request metrics when Prometheus is not available."""
         service = PerformanceService()
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', False):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", False):
             result = service.get_request_metrics()
             assert isinstance(result, RequestMetricsSchema)
             assert result.requests_total == 0
@@ -355,8 +357,8 @@ class TestRequestMetrics:
         mock_registry = MagicMock()
         mock_registry.collect.return_value = []
 
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.REGISTRY', mock_registry):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
                 result = service.get_request_metrics()
 
         assert isinstance(result, RequestMetricsSchema)
@@ -379,8 +381,8 @@ class TestRequestMetrics:
         mock_registry = MagicMock()
         mock_registry.collect.return_value = [mock_metric]
 
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.REGISTRY', mock_registry):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
                 result = service.get_request_metrics()
 
         assert isinstance(result, RequestMetricsSchema)
@@ -404,9 +406,9 @@ class TestDatabaseMetrics:
         mock_engine = MagicMock()
         mock_engine.pool = mock_pool
 
-        with patch('mcpgateway.services.performance_service.engine', mock_engine, create=True):
+        with patch("mcpgateway.services.performance_service.engine", mock_engine, create=True):
             # Import happens inside the function, so we need to patch it there
-            with patch.dict('sys.modules', {'mcpgateway.db': MagicMock(engine=mock_engine)}):
+            with patch.dict("sys.modules", {"mcpgateway.db": MagicMock(engine=mock_engine)}):
                 result = service.get_database_metrics()
 
         assert isinstance(result, DatabaseMetricsSchema)
@@ -419,7 +421,7 @@ class TestDatabaseMetrics:
         mock_module = MagicMock()
         mock_module.engine.pool.size.side_effect = Exception("Connection error")
 
-        with patch.dict('sys.modules', {'mcpgateway.db': mock_module}):
+        with patch.dict("sys.modules", {"mcpgateway.db": mock_module}):
             # Force the function to re-import by clearing any cached reference
             result = service.get_database_metrics()
 
@@ -434,7 +436,7 @@ class TestCacheMetrics:
     async def test_get_cache_metrics_without_redis(self):
         """Test cache metrics when Redis is not available."""
         service = PerformanceService()
-        with patch('mcpgateway.services.performance_service.REDIS_AVAILABLE', False):
+        with patch("mcpgateway.services.performance_service.REDIS_AVAILABLE", False):
             result = await service.get_cache_metrics()
             assert isinstance(result, CacheMetricsSchema)
             assert result.connected is False
@@ -444,7 +446,7 @@ class TestCacheMetrics:
         """Test cache metrics when Redis URL is not configured."""
         service = PerformanceService()
 
-        with patch('mcpgateway.services.performance_service.settings') as mock_settings:
+        with patch("mcpgateway.services.performance_service.settings") as mock_settings:
             mock_settings.redis_url = None
             result = await service.get_cache_metrics()
 
@@ -458,21 +460,23 @@ class TestCacheMetrics:
 
         # Create a proper async mock for the Redis client
         mock_client = AsyncMock()
-        mock_client.info = AsyncMock(return_value={
-            "redis_version": "7.0.0",
-            "used_memory": 1048576,
-            "connected_clients": 5,
-            "instantaneous_ops_per_sec": 100,
-            "keyspace_hits": 1000,
-            "keyspace_misses": 100,
-        })
+        mock_client.info = AsyncMock(
+            return_value={
+                "redis_version": "7.0.0",
+                "used_memory": 1048576,
+                "connected_clients": 5,
+                "instantaneous_ops_per_sec": 100,
+                "keyspace_hits": 1000,
+                "keyspace_misses": 100,
+            }
+        )
 
         async def mock_get_redis_client():
             return mock_client
 
-        with patch('mcpgateway.services.performance_service.REDIS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.get_redis_client', mock_get_redis_client):
-                with patch('mcpgateway.services.performance_service.settings') as mock_settings:
+        with patch("mcpgateway.services.performance_service.REDIS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.get_redis_client", mock_get_redis_client):
+                with patch("mcpgateway.services.performance_service.settings") as mock_settings:
                     mock_settings.redis_url = "redis://localhost:6379"
                     mock_settings.cache_type = "redis"
                     result = await service.get_cache_metrics()
@@ -531,12 +535,12 @@ class TestDashboard:
         service = PerformanceService()
 
         # Mock all the individual metric methods
-        with patch.object(service, 'get_system_metrics') as mock_sys:
-            with patch.object(service, 'get_request_metrics') as mock_req:
-                with patch.object(service, 'get_database_metrics') as mock_db:
-                    with patch.object(service, 'get_cache_metrics', new_callable=AsyncMock) as mock_cache:
-                        with patch.object(service, 'get_gunicorn_metrics') as mock_guni:
-                            with patch.object(service, 'get_worker_metrics') as mock_workers:
+        with patch.object(service, "get_system_metrics") as mock_sys:
+            with patch.object(service, "get_request_metrics") as mock_req:
+                with patch.object(service, "get_database_metrics") as mock_db:
+                    with patch.object(service, "get_cache_metrics", new_callable=AsyncMock) as mock_cache:
+                        with patch.object(service, "get_gunicorn_metrics") as mock_guni:
+                            with patch.object(service, "get_worker_metrics") as mock_workers:
                                 mock_sys.return_value = SystemMetricsSchema(
                                     cpu_percent=10.0,
                                     cpu_count=4,
@@ -570,11 +574,11 @@ class TestSnapshotOperations:
         service = PerformanceService(db=test_db)
 
         # Mock the metrics methods to return predictable data
-        with patch.object(service, 'get_system_metrics') as mock_sys:
-            with patch.object(service, 'get_request_metrics') as mock_req:
-                with patch.object(service, 'get_database_metrics') as mock_db:
-                    with patch.object(service, 'get_gunicorn_metrics') as mock_guni:
-                        with patch.object(service, 'get_worker_metrics') as mock_workers:
+        with patch.object(service, "get_system_metrics") as mock_sys:
+            with patch.object(service, "get_request_metrics") as mock_req:
+                with patch.object(service, "get_database_metrics") as mock_db:
+                    with patch.object(service, "get_gunicorn_metrics") as mock_guni:
+                        with patch.object(service, "get_worker_metrics") as mock_workers:
                             mock_sys.return_value = SystemMetricsSchema(
                                 cpu_percent=10.0,
                                 cpu_count=4,
@@ -642,11 +646,11 @@ class TestSnapshotOperations:
         mock_db = MagicMock()
         mock_db.commit.side_effect = Exception("Database error")
 
-        with patch.object(service, 'get_system_metrics') as mock_sys:
-            with patch.object(service, 'get_request_metrics') as mock_req:
-                with patch.object(service, 'get_database_metrics') as mock_dbm:
-                    with patch.object(service, 'get_gunicorn_metrics') as mock_guni:
-                        with patch.object(service, 'get_worker_metrics') as mock_workers:
+        with patch.object(service, "get_system_metrics") as mock_sys:
+            with patch.object(service, "get_request_metrics") as mock_req:
+                with patch.object(service, "get_database_metrics") as mock_dbm:
+                    with patch.object(service, "get_gunicorn_metrics") as mock_guni:
+                        with patch.object(service, "get_worker_metrics") as mock_workers:
                             mock_sys.return_value = SystemMetricsSchema(
                                 cpu_percent=10.0,
                                 cpu_count=4,
@@ -765,10 +769,7 @@ class TestHourlyAggregate:
         hour_start = datetime(2020, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
         # Clean up any existing aggregate for this hour
-        test_db.query(PerformanceAggregate).filter(
-            PerformanceAggregate.period_start == hour_start,
-            PerformanceAggregate.period_type == "hourly"
-        ).delete()
+        test_db.query(PerformanceAggregate).filter(PerformanceAggregate.period_start == hour_start, PerformanceAggregate.period_type == "hourly").delete()
         test_db.commit()
 
         result = service.create_hourly_aggregate(test_db, hour_start)
@@ -786,14 +787,8 @@ class TestHourlyAggregate:
         snapshot_time = hour_start + timedelta(minutes=30)
 
         # Clean up any existing data for this hour
-        test_db.query(PerformanceAggregate).filter(
-            PerformanceAggregate.period_start == hour_start,
-            PerformanceAggregate.period_type == "hourly"
-        ).delete()
-        test_db.query(PerformanceSnapshot).filter(
-            PerformanceSnapshot.timestamp >= hour_start,
-            PerformanceSnapshot.timestamp < hour_start + timedelta(hours=1)
-        ).delete()
+        test_db.query(PerformanceAggregate).filter(PerformanceAggregate.period_start == hour_start, PerformanceAggregate.period_type == "hourly").delete()
+        test_db.query(PerformanceSnapshot).filter(PerformanceSnapshot.timestamp >= hour_start, PerformanceSnapshot.timestamp < hour_start + timedelta(hours=1)).delete()
         test_db.commit()
 
         snapshot = PerformanceSnapshot(
@@ -842,6 +837,7 @@ class TestSingleton:
         """Test that get_performance_service returns a singleton."""
         # Reset the singleton
         import mcpgateway.services.performance_service as ps
+
         ps._performance_service = None
 
         service1 = get_performance_service()
@@ -852,6 +848,7 @@ class TestSingleton:
     def test_get_performance_service_with_db(self):
         """Test that get_performance_service updates db session."""
         import mcpgateway.services.performance_service as ps
+
         ps._performance_service = None
 
         mock_db = MagicMock()
@@ -877,7 +874,7 @@ class TestNetConnectionsCache:
 
         service = PerformanceService()
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', False):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", False):
             result = service._get_net_connections_cached()
 
         assert result == 0
@@ -888,8 +885,8 @@ class TestNetConnectionsCache:
 
         service = PerformanceService()
 
-        with patch.object(ps, 'PSUTIL_AVAILABLE', False):
-            with patch.object(ps, 'psutil', None):
+        with patch.object(ps, "PSUTIL_AVAILABLE", False):
+            with patch.object(ps, "psutil", None):
                 result = service._get_net_connections_cached()
 
         assert result == 0
@@ -906,8 +903,8 @@ class TestNetConnectionsCache:
         ps._net_connections_cache = 42
         ps._net_connections_cache_time = time.time()  # Just set
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
-            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
                 result = service._get_net_connections_cached()
 
         assert result == 42
@@ -957,9 +954,9 @@ class TestNetConnectionsCache:
 
         mock_connections = [MagicMock() for _ in range(10)]
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
-            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
-                with patch.object(psutil, 'net_connections', return_value=mock_connections):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
+                with patch.object(psutil, "net_connections", return_value=mock_connections):
                     result = service._get_net_connections_cached()
 
         assert result == 10
@@ -978,9 +975,9 @@ class TestNetConnectionsCache:
         ps._net_connections_cache = 42
         ps._net_connections_cache_time = time.time() - 20
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
-            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
-                with patch.object(psutil, 'net_connections', side_effect=psutil.AccessDenied()):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
+                with patch.object(psutil, "net_connections", side_effect=psutil.AccessDenied()):
                     result = service._get_net_connections_cached()
 
         # Should return stale cache value on error
@@ -999,9 +996,9 @@ class TestNetConnectionsCache:
         ps._net_connections_cache = 0
         ps._net_connections_cache_time = 0
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
-            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
-                with patch.object(psutil, 'net_connections', side_effect=OSError("Permission denied")):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
+                with patch.object(psutil, "net_connections", side_effect=OSError("Permission denied")):
                     result = service._get_net_connections_cached()
 
         # Should return 0 when no stale cache available
@@ -1022,9 +1019,9 @@ class TestNetConnectionsCache:
 
         mock_net_connections = MagicMock(side_effect=psutil.AccessDenied())
 
-        with patch.object(ps.settings, 'mcpgateway_performance_net_connections_enabled', True):
-            with patch.object(ps.settings, 'mcpgateway_performance_net_connections_cache_ttl', 15):
-                with patch.object(psutil, 'net_connections', mock_net_connections):
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
+                with patch.object(psutil, "net_connections", mock_net_connections):
                     # First call - error occurs, cache time updated
                     result1 = service._get_net_connections_cached()
                     # Second call - should use cache (not call psutil again)
@@ -1043,6 +1040,7 @@ class TestModuleConstants:
     def test_app_start_time(self):
         """Test that APP_START_TIME is set."""
         import time
+
         assert APP_START_TIME > 0
         assert APP_START_TIME <= time.time()
 
@@ -1075,8 +1073,8 @@ class TestRequestMetricsEdgeCases:
         mock_registry = MagicMock()
         mock_registry.collect.return_value = [mock_metric]
 
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.REGISTRY', mock_registry):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
                 result = service.get_request_metrics()
 
         assert result.requests_total == 1000
@@ -1102,8 +1100,8 @@ class TestRequestMetricsEdgeCases:
         mock_registry = MagicMock()
         mock_registry.collect.return_value = [mock_metric]
 
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.REGISTRY', mock_registry):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
                 result = service.get_request_metrics()
 
         assert result.response_time_avg_ms == 500.0  # 50/100 * 1000
@@ -1115,8 +1113,8 @@ class TestRequestMetricsEdgeCases:
         mock_registry = MagicMock()
         mock_registry.collect.side_effect = Exception("Registry error")
 
-        with patch('mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE', True):
-            with patch('mcpgateway.services.performance_service.REGISTRY', mock_registry):
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
                 result = service.get_request_metrics()
 
         assert isinstance(result, RequestMetricsSchema)

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add refresh_interval_seconds and last_refresh_at to gateways table.
+"""Location: ./mcpgateway/alembic/versions/a8f3b2c1d4e5_add_gateway_refresh_fields.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add refresh_interval_seconds and last_refresh_at to gateways table.
 
 Revision ID: a8f3b2c1d4e5
 Revises: 77243f5bfce5

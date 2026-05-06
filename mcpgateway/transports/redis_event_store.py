@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcpgateway/transports/redis_event_store.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Redis-backed event store for Streamable HTTP stateful sessions.
 
 Design goals:

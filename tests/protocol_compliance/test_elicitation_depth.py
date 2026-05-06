@@ -1,4 +1,10 @@
-"""Elicitation depth tests beyond the happy-path string response.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/protocol_compliance/test_elicitation_depth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Elicitation depth tests beyond the happy-path string response.
 
 Covers non-string schemas (numeric multi-field) so the harness proves the
 wire envelope carries structured response data correctly — not just a

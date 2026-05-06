@@ -308,12 +308,12 @@
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
+      src="https://cdn.jsdelivr.net/npm/marked@18.0.2/lib/marked.umd.js"
       integrity="{{ sri_hashes.marked }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.1/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
@@ -353,7 +353,7 @@
     {% else %}
     <link
       rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
       integrity="{{ sri_hashes.fontawesome }}"
       crossorigin="anonymous"
     />

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""A2A agent generator for load testing."""
+"""Location: ./tests/load/generators/a2a_agents.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+A2A agent generator for load testing.
+"""
 
 import random
 import uuid

@@ -1,33 +1,30 @@
 # -*- coding: utf-8 -*-
-"""MCP Streamable HTTP protocol load test — pure MCP protocol RPS measurement.
+"""Location: ./tests/loadtest/locustfile_mcp_protocol.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+MCP Streamable HTTP protocol load test — pure MCP protocol RPS measurement.
 This locustfile tests ONLY the MCP Streamable HTTP transport path through the
 gateway virtual server endpoint: /servers/{server_id}/mcp
-
 It exists to isolate MCP protocol overhead from REST API / admin UI / other
 endpoints so we can get a clean RPS number for just the MCP path.
-
 Test scenarios (selectable via --class-picker):
   MCPAgentUser        (weight 10) - Realistic agent: init once, then call 6 tools
   MCPToolCallerUser   (weight  5) - Heavy tool caller: tools/call in a tight loop
   MCPDiscoveryUser    (weight  3) - Discovery heavy: tools/list, resources/list, prompts/list
   MCPSessionChurnUser (weight  2) - Session churn: new session per request cycle
   MCPStressUser       (weight  1) - Max-throughput: constant_throughput, minimal overhead
-
 Usage:
     # Quick headless (150 users, 2 min)
     make load-test-mcp-protocol
-
     # Web UI with class picker
     make load-test-mcp-protocol-ui
-
     # High-load (500 users, 5 min)
     make load-test-mcp-protocol-heavy
-
     # Direct invocation
     locust -f tests/loadtest/locustfile_mcp_protocol.py \
         --host=http://localhost:4444 --users=150 --spawn-rate=30 --run-time=120s --headless
-
 Environment Variables:
     LOADTEST_HOST:             Gateway URL           (default: http://localhost:4444)
     MCP_SERVER_ID:             Virtual server UUID   (auto-detected from /servers if empty)
@@ -38,9 +35,6 @@ Environment Variables:
     JWT_ISSUER:                JWT issuer             (default: mcpgateway)
     PLATFORM_ADMIN_EMAIL:      Admin email            (default: admin@example.com)
     MCPGATEWAY_BEARER_TOKEN:   Pre-generated token    (optional, overrides JWT generation)
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

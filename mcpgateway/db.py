@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/db.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -1121,6 +1121,24 @@ class Base(DeclarativeBase):
 # ---------------------------------------------------------------------------
 # RBAC Models - SQLAlchemy Database Models
 # ---------------------------------------------------------------------------
+
+
+class MigrationMetadata(Base):
+    """Migration metadata for hermetic config snapshots.
+
+    Stores runtime configuration values at migration upgrade time so that
+    downgrade operations can be deterministic regardless of current env vars.
+    """
+
+    __tablename__ = "migration_metadata"
+
+    # Composite primary key
+    revision: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Config value and timestamp
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Role(Base):

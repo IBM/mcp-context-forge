@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for toolops utility helpers."""
+"""Location: ./tests/unit/mcpgateway/test_toolops_utils.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for toolops utility helpers.
+"""
 
 # Standard
 from types import SimpleNamespace

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Server Classification Service.
+"""Location: ./mcpgateway/services/server_classification_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Server Classification Service.
 Hot/cold classification for gated auto-refresh polling. The original
 implementation extracted per-URL recency signals from the upstream MCP
 session pool; with the pool replaced by UpstreamSessionRegistry (#4205)
@@ -10,9 +13,6 @@ each classification cycle purges Redis classification state so
 ``should_poll_server`` always returns True (same behaviour as disabling
 the feature flag) — prevents the regression that would occur if we
 published an "everything cold" result.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future

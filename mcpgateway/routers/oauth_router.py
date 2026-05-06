@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/oauth_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -71,6 +71,57 @@ def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) ->
     query = parsed.query if preserve_query else ""
     normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
     return normalized
+
+
+async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, Any], db: Session) -> None:
+    """Learn the IdP's audience identifier from the token and persist it.
+
+    Many IdPs (ServiceNow, Authentik, etc.) do not honor RFC 8707 and set the
+    ``aud`` claim to an abstract identifier (often the ``client_id``) rather than
+    the ``resource`` URL sent in the authorization request.  By persisting the
+    actual ``aud`` value as ``resource`` in the gateway's ``oauth_config``, we
+    ensure that subsequent token validation in ``_validate_audience`` succeeds
+    and that future OAuth requests use the IdP's preferred audience identifier.
+
+    Persistence is **first-write-only**: the learned audience is written only
+    when ``oauth_config["resource"]`` is currently unset.  The OAuth callback
+    path enforces gateway access (read-equivalent) but not ``gateways.update``,
+    so allowing every authenticated callback to overwrite shared gateway
+    configuration would let any user with gateway access mutate global state on
+    behalf of all other users.  To re-learn a stale audience after an IdP
+    change, an admin must clear the ``resource`` field via the gateway update
+    API (which does enforce ``gateways.update``).
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
+    already-set (truthy) resources are silently skipped.  Empty strings and
+    empty lists count as unset, so an admin can clear the field to trigger
+    re-learning on the next callback.
+
+    Args:
+        gateway: The gateway ORM object (will be mutated and flushed).
+        oauth_result: The result dict from ``complete_authorization_code_flow``,
+            expected to contain ``token_aud``.
+        db: Active database session.
+    """
+    token_aud = oauth_result.get("token_aud")
+    if token_aud is None:
+        return
+
+    # First-write-only: do not overwrite an existing usable resource.  Empty
+    # strings and empty lists are treated as unset (Python truthiness) so an
+    # admin can clear the field via the gateway update API to trigger
+    # re-learning on the next callback.  See docstring for the authorization
+    # rationale.
+    oauth_config = gateway.oauth_config or {}
+    if oauth_config.get("resource"):
+        return
+
+    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
+    updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
+    updated_config["resource"] = token_aud
+    gateway.oauth_config = updated_config
+    db.flush()
+    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -298,22 +349,10 @@ async def initiate_oauth_flow(
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
-        # RFC 8707: Set resource parameter for JWT access tokens
-        # Respect pre-configured resource (e.g., for providers requiring pre-registered resources)
-        # Only derive from gateway.url if not explicitly configured
-        if oauth_config.get("resource"):
-            # Normalize existing resource - preserve query for explicit config (RFC 8707 allows when necessary)
-            existing = oauth_config["resource"]
-            if isinstance(existing, list):
-                original_count = len(existing)
-                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
-                oauth_config["resource"] = [r for r in normalized if r]
-                if not oauth_config["resource"] and original_count > 0:
-                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
-            else:
-                oauth_config["resource"] = _normalize_resource_url(existing, preserve_query=True)
-        else:
-            # Default to gateway.url as the resource (strip query per RFC 8707 SHOULD NOT)
+        # RFC 8707: Set resource parameter for JWT access tokens.
+        # If resource was previously learned from the IdP's token aud claim, use it as-is.
+        # Otherwise derive from gateway.url for the first authorization request.
+        if not oauth_config.get("resource"):
             oauth_config["resource"] = _normalize_resource_url(gateway.url)
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
@@ -541,29 +580,23 @@ async def oauth_callback(
 
         # Complete OAuth flow
 
-        # RFC 8707: Add resource parameter for JWT access tokens
-        # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
-        # needs it for the token exchange request
-        # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
+        # RFC 8707: Set resource parameter for the token exchange request.
+        # If resource was previously learned from the IdP's token aud claim, use it as-is.
+        # Otherwise derive from gateway.url for the first authorization request.
         oauth_config_with_resource = gateway.oauth_config.copy()
-        if oauth_config_with_resource.get("resource"):
-            # Preserve query for explicit config (RFC 8707 allows when necessary)
-            existing = oauth_config_with_resource["resource"]
-            if isinstance(existing, list):
-                original_count = len(existing)
-                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
-                oauth_config_with_resource["resource"] = [r for r in normalized if r]
-                if not oauth_config_with_resource["resource"] and original_count > 0:
-                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
-            else:
-                oauth_config_with_resource["resource"] = _normalize_resource_url(existing, preserve_query=True)
-        else:
-            # Strip query for auto-derived (RFC 8707 SHOULD NOT)
+        if not oauth_config_with_resource.get("resource"):
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
+
+        # Learn the IdP's audience mapping from the token and persist as resource.
+        # RFC 8707 Section 2: "The authorization server may use the exact resource value
+        # as the audience or it may map from that value to a more general URI or abstract
+        # identifier for the given resource."  We persist whatever the IdP chose so that
+        # subsequent token validation matches.
+        await _persist_learned_audience(gateway, result, db)
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 

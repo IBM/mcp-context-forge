@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Export/Import E2E Tests.
+"""Location: ./tests/playwright/operations/test_export_import.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Export/Import E2E Tests.
 
 Tests the export and import workflow including full export, selective export,
 import with conflict strategies, and permission checks.

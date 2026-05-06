@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Coverage tests for mcpgateway.plugins.framework.external.mcp.client."""
+"""Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Coverage tests for mcpgateway.plugins.framework.external.mcp.client.
+"""
 
 # Standard
 import asyncio

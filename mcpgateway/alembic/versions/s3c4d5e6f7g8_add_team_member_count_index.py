@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add partial index for team member count queries
+"""Location: ./mcpgateway/alembic/versions/s3c4d5e6f7g8_add_team_member_count_index.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add partial index for team member count queries
 
 Revision ID: s3c4d5e6f7g8
 Revises: r2b3c4d5e6f7

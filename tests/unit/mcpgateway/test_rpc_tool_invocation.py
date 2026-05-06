@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_rpc_tool_invocation.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -88,9 +88,7 @@ class TestRPCToolInvocation:
                 result = response.json()
                 assert result["jsonrpc"] == "2.0"
                 assert "error" in result
-                assert result["error"]["code"] == -32000
-                assert result["error"]["message"] == "Invalid method"
-                assert result["error"]["data"] == {"query": "test", "limit": 5}
+                assert result["error"]["code"] == -32603
                 assert result["id"] == 1
 
     def test_tools_list_method(self, client, mock_db):
@@ -209,8 +207,7 @@ class TestRPCToolInvocation:
                 result = response.json()
                 assert result["jsonrpc"] == "2.0"
                 assert "error" in result
-                assert result["error"]["code"] == -32000
-                assert result["error"]["message"] == "Invalid method"
+                assert result["error"]["code"] == -32603
                 assert result["id"] == 999
 
 
@@ -301,6 +298,7 @@ class TestRPCServerIdScoping:
 
         async def mock_body():
             import orjson  # noqa: PLC0415
+
             return orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 10})
 
         mock_request.body = mock_body

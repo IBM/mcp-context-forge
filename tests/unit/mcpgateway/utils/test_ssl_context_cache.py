@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.ssl_context_cache."""
+"""Location: ./tests/unit/mcpgateway/utils/test_ssl_context_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.ssl_context_cache.
+"""
 
 # Standard
 import hashlib
@@ -252,6 +258,7 @@ def test_ssl_context_cache_ttl_invalid_value_raises_error():
         with patch.dict(os.environ, {"SSL_CONTEXT_CACHE_TTL": "not-a-number"}):
             try:
                 import mcpgateway.utils.ssl_context_cache
+
                 # If we get here, manually trigger the validation logic
                 ttl_val = os.getenv("SSL_CONTEXT_CACHE_TTL")
                 if ttl_val and ttl_val.strip():
@@ -280,6 +287,7 @@ def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):
         try:
             # Simulate module reload with invalid TTL
             import mcpgateway.utils.ssl_context_cache as module
+
             # Manually trigger the parsing logic
             ttl_value = "invalid"
             if ttl_value.strip() != "":

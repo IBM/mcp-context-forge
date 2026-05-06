@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/utils/test_ssl_key_manager.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
@@ -117,6 +117,7 @@ class TestSSLKeyManager:
             key_data = f.read()
             # Should be able to load without password
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
             private_key = load_pem_private_key(key_data, password=None)
             assert private_key is not None
 
@@ -186,6 +187,7 @@ class TestSSLKeyManager:
         with open(result, "rb") as f:
             key_data = f.read()
             from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
             private_key = load_pem_private_key(key_data, password=None)
             assert private_key is not None
 
@@ -201,14 +203,14 @@ class TestSSLKeyManagerIntegration:
         manager = SSLKeyManager()
 
         # Get initial atexit handlers count
-        initial_handlers = len(atexit._exithandlers) if hasattr(atexit, '_exithandlers') else 0
+        initial_handlers = len(atexit._exithandlers) if hasattr(atexit, "_exithandlers") else 0
 
         # Prepare key (should register cleanup)
         temp_path = manager.prepare_key_file(str(key_path), passphrase)
 
         # Verify atexit handler was registered
         # Note: This is implementation-dependent and may vary by Python version
-        if hasattr(atexit, '_exithandlers'):
+        if hasattr(atexit, "_exithandlers"):
             assert len(atexit._exithandlers) > initial_handlers
 
         # Manual cleanup for test

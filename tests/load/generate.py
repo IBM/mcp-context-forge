@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Main CLI for generating load test data.
+"""Location: ./tests/load/generate.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Main CLI for generating load test data.
 
 Usage:
     python -m tests.load.generate --profile production

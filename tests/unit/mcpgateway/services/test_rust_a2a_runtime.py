@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.services.rust_a2a_runtime."""
+"""Location: ./tests/unit/mcpgateway/services/test_rust_a2a_runtime.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.services.rust_a2a_runtime.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch

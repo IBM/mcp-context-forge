@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/services/rust_a2a_runtime.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Python client for the experimental Rust A2A runtime sidecar.
 """
