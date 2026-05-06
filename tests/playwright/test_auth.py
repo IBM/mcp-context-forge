@@ -65,7 +65,7 @@ class TestAuthentication:
         """Test successful access with valid email/password credentials."""
         page = context.new_page()
         # Go directly to admin and log in if redirected
-        page.goto("/admin")
+        page.goto(f"{BASE_URL}/admin")
         if re.search(r"/admin/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
@@ -95,7 +95,8 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin without credentials should redirect to login page when auth is required
-        response = page.goto("/admin")
+        admin_url = f"{BASE_URL}/admin"
+        response = page.goto(admin_url)
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
         if re.search(r"/admin/login", page.url):
@@ -109,7 +110,7 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin page and log in if needed
-        response = page.goto("/admin")
+        response = page.goto(f"{BASE_URL}/admin")
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
         if re.search(r"/admin/login", page.url):
@@ -195,7 +196,7 @@ class TestAuthentication:
         page = context.new_page()
 
         # First, log in successfully
-        page.goto("/admin")
+        page.goto(f"{BASE_URL}/admin")
         if re.search(r"/admin/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
@@ -210,7 +211,7 @@ class TestAuthentication:
             pytest.skip("JWT cookie not set after login. Cannot test redirect behavior.")
 
         # Now try to access the login page while already logged in
-        page.goto("/admin/login")
+        page.goto(f"{BASE_URL}/admin/login")
 
         # Verify that we were redirected to the admin dashboard, not the login page
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))

@@ -522,7 +522,7 @@ class TestGatewayActions:
     """Test cases for gateway row actions."""
 
     def test_gateway_row_actions_visible(self, gateways_page: GatewaysPage):
-        """Test that all gateway row action buttons are visible."""
+        """Test that all gateway row action buttons are accessible in the dropdown menu."""
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
@@ -530,24 +530,26 @@ class TestGatewayActions:
         if gateways_page.get_gateway_count() == 0:
             pytest.skip("No gateways available for testing")
 
-        # Get first gateway row
+        # Get first gateway row and open the actions dropdown
         first_row = gateways_page.get_gateway_row(0)
 
         # Row actions now live inside an overflow menu; open it so visibility asserts pass.
         gateways_page.open_action_dropdown(first_row)
 
-        # Verify all action buttons exist
-        expect(first_row.locator('button:has-text("Test")')).to_be_visible()
-        expect(first_row.locator('button:has-text("View")')).to_be_visible()
-        expect(first_row.locator('button:has-text("Edit")')).to_be_visible()
+        # Verify all action buttons exist in the dropdown menu
+        expect(first_row.locator('button[role="menuitem"]:has-text("Test")')).to_be_visible()
+        expect(first_row.locator('button[role="menuitem"]:has-text("View")')).to_be_visible()
+        expect(first_row.locator('button[role="menuitem"]:has-text("Edit")')).to_be_visible()
 
-        # Either Activate or Deactivate should be visible
-        activate_btn = first_row.locator('button:text-is("Activate")')
-        deactivate_btn = first_row.locator('button:text-is("Deactivate")')
-        assert activate_btn.is_visible() or deactivate_btn.is_visible()
+        # Either Activate or Deactivate should be visible based on gateway state
+        is_enabled = first_row.get_attribute("data-enabled")
+        if is_enabled == "true":
+            expect(first_row.locator('button[role="menuitem"]:text-is("Deactivate")')).to_be_visible()
+        else:
+            expect(first_row.locator('button[role="menuitem"]:text-is("Activate")')).to_be_visible()
 
         # Delete button should be visible
-        expect(first_row.locator('button:has-text("Delete")')).to_be_visible()
+        expect(first_row.locator('button[role="menuitem"]:has-text("Delete")')).to_be_visible()
 
     def test_test_button_click(self, gateways_page: GatewaysPage):
         """Test clicking the Test button for a gateway."""
@@ -610,11 +612,11 @@ class TestGatewayActions:
         if gateways_page.get_gateway_count() == 0:
             pytest.skip("No gateways available for testing")
 
-        # Find a gateway with Deactivate button
+        # Find an active gateway (data-enabled="true" means it can be deactivated)
         first_row = gateways_page.get_gateway_row(0)
-        deactivate_btn = first_row.locator('button:text-is("Deactivate")')
+        is_enabled = first_row.get_attribute("data-enabled")
 
-        if not deactivate_btn.is_visible():
+        if is_enabled != "true":
             pytest.skip("No active gateways available to deactivate")
 
         # Get gateway name before deactivation
@@ -634,11 +636,11 @@ class TestGatewayActions:
         # Search for the gateway
         gateways_page.search_gateways(gateway_name)
 
-        # Verify Activate button is now visible (gateway was deactivated)
+        # Verify gateway was deactivated by checking data-enabled attribute
         if gateways_page.gateway_exists(gateway_name):
             gateway_row = gateways_page.get_gateway_row_by_name(gateway_name)
-            activate_btn = gateway_row.locator('button:text-is("Activate")')
-            expect(activate_btn).to_be_visible()
+            is_enabled_after = gateway_row.get_attribute("data-enabled")
+            assert is_enabled_after == "false", f"Gateway '{gateway_name}' should be disabled after deactivation"
             logger.info("Gateway '%s' deactivated successfully", gateway_name)
 
             # Reactivate for cleanup
@@ -657,11 +659,11 @@ class TestGatewayActions:
         if gateways_page.get_gateway_count() == 0:
             pytest.skip("No gateways available for testing")
 
-        # Find a gateway with Activate button
+        # Find an inactive gateway (data-enabled="false" means it can be activated)
         first_row = gateways_page.get_gateway_row(0)
-        activate_btn = first_row.locator('button:text-is("Activate")')
+        is_enabled = first_row.get_attribute("data-enabled")
 
-        if not activate_btn.is_visible():
+        if is_enabled != "false":
             pytest.skip("No inactive gateways available to activate")
 
         # Get gateway name before activation
@@ -681,11 +683,11 @@ class TestGatewayActions:
         # Search for the gateway in the refreshed table
         gateways_page.search_gateways(gateway_name)
 
-        # Verify Deactivate button is now visible (gateway was activated)
+        # Verify gateway was activated by checking data-enabled attribute
         if gateways_page.gateway_exists(gateway_name):
             gateway_row = gateways_page.get_gateway_row_by_name(gateway_name)
-            deactivate_btn = gateway_row.locator('button:text-is("Deactivate")')
-            expect(deactivate_btn).to_be_visible()
+            is_enabled_after = gateway_row.get_attribute("data-enabled")
+            assert is_enabled_after == "true", f"Gateway '{gateway_name}' should be enabled after activation"
             logger.info("Gateway '%s' activated successfully", gateway_name)
 
     def test_delete_button_with_confirmation(self, gateways_page: GatewaysPage, test_gateway_data: dict):

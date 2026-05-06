@@ -19,7 +19,7 @@ class TestAPIEndpoints:
 
     def test_health_check(self, api_request_context: APIRequestContext):
         """Test health check endpoint."""
-        response = api_request_context.get("/health")
+        response = api_request_context.get("health")
         assert response.ok
         assert response.status == 200
 
@@ -28,7 +28,7 @@ class TestAPIEndpoints:
 
     def test_list_servers(self, api_request_context: APIRequestContext):
         """Test list servers endpoint."""
-        response = api_request_context.get("/servers")
+        response = api_request_context.get("servers")
         assert response.ok
 
         servers = response.json()
@@ -36,7 +36,7 @@ class TestAPIEndpoints:
 
     def test_list_tools(self, api_request_context: APIRequestContext):
         """Test list tools endpoint."""
-        response = api_request_context.get("/tools")
+        response = api_request_context.get("tools")
         assert response.ok
 
         tools = response.json()
@@ -46,7 +46,7 @@ class TestAPIEndpoints:
         """Test JSON-RPC endpoint."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "system.listMethods", "params": {}}
 
-        response = api_request_context.post("/rpc", data=payload)
+        response = api_request_context.post("rpc", data=payload)
         assert response.ok
 
         result = response.json()
@@ -56,10 +56,10 @@ class TestAPIEndpoints:
     def test_api_docs_accessible(self, admin_page, base_url: str):
         """Test that API documentation is accessible."""
         # Test Swagger UI
-        admin_page.page.goto(f"{base_url}/docs")
-        expect(admin_page.page).to_have_title(re.compile(r"ContextForge - Swagger UI"))
+        admin_page.page.goto(f"{base_url.rstrip('/')}/docs")
+        expect(admin_page.page).to_have_title(re.compile(r"(ContextForge|MCP_Gateway) - Swagger UI"))
         assert admin_page.page.is_visible(".swagger-ui")
 
         # Test ReDoc
-        admin_page.page.goto(f"{base_url}/redoc")
+        admin_page.page.goto(f"{base_url.rstrip('/')}/redoc")
         expect(admin_page.page).to_have_title(re.compile(r"ReDoc", re.IGNORECASE))

@@ -42,6 +42,9 @@ from .pages.version_page import VersionPage
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
+# Ensure BASE_URL has trailing slash for proper Playwright relative URL resolution
+if not BASE_URL.endswith("/"):
+    BASE_URL = BASE_URL + "/"
 API_TOKEN = os.getenv("MCP_AUTH", "")
 DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
 PLAYWRIGHT_VIDEO_SIZE = os.getenv("PLAYWRIGHT_VIDEO_SIZE", "1920x1080")
@@ -102,18 +105,29 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
             logger.warning("Admin transition: URL unchanged after wait (still %s)", page.url)
 
 
-def _goto_admin(page: Page, url: str) -> None:
+def _goto_admin(page: Page, url: str, base_url: Optional[str] = None) -> None:
     """Navigate to an admin URL with domcontentloaded wait strategy.
 
     The caller (_ensure_admin_logged_in) already waits for specific UI
     elements (e.g. [data-testid="servers-tab"]) and JS initialisation,
     so networkidle is redundant and stalls under SSE/setInterval traffic.
+
+    Args:
+        page: Playwright page object
+        url: Relative or absolute URL. If relative, base_url must be provided.
+        base_url: Base URL to prepend to relative URLs
     """
+    # If url is relative and base_url is provided, construct full URL
+    if base_url and not url.startswith(('http://', 'https://')):
+        full_url = f"{base_url.rstrip('/')}{url}"
+    else:
+        full_url = url
+
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.goto(full_url, wait_until="domcontentloaded", timeout=60000)
     except Exception as e:
         if "ERR_TOO_MANY_REDIRECTS" in str(e):
-            raise AssertionError(f"Admin page redirect loop detected at {url}. Server may be in a bad state or auth is misconfigured.") from e
+            raise AssertionError(f"Admin page redirect loop detected at {full_url}. Server may be in a bad state or auth is misconfigured.") from e
         raise
 
 
@@ -215,11 +229,11 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     if not DISABLE_JWT_FALLBACK:
         # ---- Primary path: inject a fresh JWT cookie per fixture ----
         _set_admin_jwt_cookie(page, admin_email)
-        _goto_admin(page, "/admin/")
+        _goto_admin(page, "/admin/", base_url)
         _wait_for_admin_transition(page)
     else:
         # ---- Fallback: interactive form login (JWT disabled) ----
-        _goto_admin(page, "/admin")
+        _goto_admin(page, "/admin", base_url)
         landing_url = page.url
         if re.search(r"/admin/?(?:[?#].*)?$", landing_url):
             _wait_for_admin_transition(page, previous_url=landing_url)
@@ -254,14 +268,14 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         if DISABLE_JWT_FALLBACK:
             break
         _set_admin_jwt_cookie(page, admin_email)
-        _goto_admin(page, "/admin/")
+        _goto_admin(page, "/admin/", base_url)
         _wait_for_admin_transition(page)
 
     if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
         # Rarely the JWT-cookie path races with the login redirect. Fall back
         # to the existing resilient form-login candidate flow instead of
         # failing the fixture outright.
-        _goto_admin(page, "/admin")
+        _goto_admin(page, "/admin", base_url)
         _wait_for_admin_transition(page)
         if login_page.is_on_login_page() or login_page.is_login_form_available():
             if not _retry_ui_login_before_jwt(page, login_page, admin_email, settings, current_password):
@@ -463,13 +477,15 @@ def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
 
 
 @pytest.fixture
-def test_tool_data():
+def test_tool_data(base_url: str):
     """Provide test data for tool creation."""
     unique_id = uuid.uuid4()
+    # Use base_url/health to avoid SSRF protection issues
+    tool_url = f"{base_url.rstrip('/')}/health"
     return {
         "name": f"test-api-tool-{unique_id}",
         "description": "Test API tool for automation",
-        "url": "https://api.example.com/test",
+        "url": tool_url,
         "integrationType": "REST",
         "requestType": "GET",
         "headers": '{"Authorization": "Bearer test-token"}',
