@@ -140,5 +140,6 @@ export function sanitizeCertificate(value: string, maxLength: number = 10000): s
     sanitized = sanitized.substring(0, maxLength);
   }
 
-  return sanitized.trim();
+  // Do not trim: PEM certs may require a trailing newline after -----END CERTIFICATE-----
+  return sanitized;
 }
