@@ -3377,6 +3377,29 @@
                     Leave blank to use standard discovery from authorization server
                   </p>
                 </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    >Resource (Audience) (optional)</label
+                  >
+                  <div id="server-oauth-resource-container" class="mt-1 space-y-2"></div>
+                  <button
+                    type="button"
+                    onclick="Admin.addOauthResource('server-oauth-resource-container')"
+                    class="mt-2 inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-700 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-indigo-300 dark:hover:bg-gray-800"
+                  >
+                    + Add Audience
+                  </button>
+                  <input
+                    type="hidden"
+                    name="oauth_resource"
+                    id="server-oauth-resource-json"
+                    value=""
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Allowed <code>aud</code> values. Leave empty to auto-learn from the first verified token.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -11705,6 +11728,29 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       />
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Leave blank to use standard discovery from authorization server
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Resource (Audience) (optional)</label
+                      >
+                      <div id="edit-server-oauth-resource-container" class="mt-1 space-y-2"></div>
+                      <button
+                        type="button"
+                        onclick="Admin.addOauthResource('edit-server-oauth-resource-container')"
+                        class="mt-2 inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-700 shadow-sm text-sm leading-4 font-medium rounded-md text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-indigo-300 dark:hover:bg-gray-800"
+                      >
+                        + Add Audience
+                      </button>
+                      <input
+                        type="hidden"
+                        name="oauth_resource"
+                        id="edit-server-oauth-resource-json"
+                        value=""
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Allowed <code>aud</code> values. Leave empty to auto-learn from the first verified token.
                       </p>
                     </div>
                   </div>

@@ -5415,10 +5415,15 @@ class _StreamableHttpAuthHandler:
         #    enabling cross-resource token confusion in shared-IdP
         #    deployments.
         configured_resource = server.oauth_config.get("resource")
-        expected_audience: Optional[Union[str, list[str]]]
-        if configured_resource:
-            expected_audience = configured_resource
-        else:
+        expected_audience: Optional[Union[str, list[str]]] = None
+        if isinstance(configured_resource, str) and configured_resource.strip():
+            expected_audience = configured_resource.strip()
+        elif isinstance(configured_resource, list):
+            cleaned_resources = [r.strip() for r in configured_resource if isinstance(r, str) and r.strip()]
+            if cleaned_resources:
+                expected_audience = cleaned_resources[0] if len(cleaned_resources) == 1 else cleaned_resources
+
+        if expected_audience is None:
             fallback_audiences: list[str] = []
             canonical_url = _build_server_resource_url(self.scope, server_id)
             if canonical_url:

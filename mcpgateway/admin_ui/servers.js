@@ -17,6 +17,111 @@ import {
   makeCopyIdButton,
 } from "./utils.js";
 
+let _oauthResourceCounter = 0;
+
+/**
+ * Add a new OAuth resource (audience) row to the specified container.
+ * @param {string} containerId - ID of the container div
+ * @param {string} [value=""] - Pre-populated audience value
+ * @param {boolean} [focus=true] - Whether to focus the value input
+ */
+export function addOauthResource(containerId, value = "", focus = true) {
+  const container = safeGetElement(containerId);
+  if (!container) {
+    console.error(`Container with ID ${containerId} not found`);
+    return;
+  }
+
+  const rowId = `oauth-resource-row-${++_oauthResourceCounter}`;
+  const row = document.createElement("div");
+  row.id = rowId;
+  row.className = "flex items-center space-x-2";
+
+  row.innerHTML = `
+    <div class="flex-1">
+      <input
+        type="text"
+        placeholder="https://api.example.com or your-client-id"
+        class="oauth-resource-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+      />
+    </div>
+    <button
+      type="button"
+      class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+      title="Remove audience"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+      </svg>
+    </button>
+  `;
+
+  const valueInput = row.querySelector(".oauth-resource-value");
+  const removeBtn = row.querySelector("button");
+
+  valueInput.value = value;
+
+  valueInput.addEventListener("input", () => updateOauthResourceJSON(containerId));
+  removeBtn.addEventListener("click", () => {
+    row.remove();
+    updateOauthResourceJSON(containerId);
+  });
+
+  container.appendChild(row);
+  updateOauthResourceJSON(containerId);
+
+  if (focus && valueInput) {
+    valueInput.focus();
+  }
+}
+
+/**
+ * Sync all OAuth resource rows into the hidden JSON input.
+ * @param {string} containerId - ID of the container div
+ */
+export function updateOauthResourceJSON(containerId) {
+  const container = safeGetElement(containerId);
+  if (!container) return;
+
+  const values = [];
+  const rows = container.querySelectorAll('[id^="oauth-resource-row-"]');
+  rows.forEach((row) => {
+    const v = row.querySelector(".oauth-resource-value")?.value?.trim();
+    if (v) values.push(v);
+  });
+
+  const hiddenId = containerId.replace("-container", "-json");
+  const hiddenInput = safeGetElement(hiddenId);
+  if (hiddenInput) {
+    hiddenInput.value = values.length > 0 ? JSON.stringify(values) : "";
+  }
+}
+
+/**
+ * Populate OAuth resource rows from an existing string or list value.
+ * @param {string} containerId - ID of the container div
+ * @param {string|string[]|null|undefined} resource - Stored ``oauth_config.resource`` value
+ */
+export function loadOauthResources(containerId, resource) {
+  const container = safeGetElement(containerId);
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  let values = [];
+  if (Array.isArray(resource)) {
+    values = resource.filter((v) => typeof v === "string" && v.trim());
+  } else if (typeof resource === "string" && resource.trim()) {
+    values = [resource.trim()];
+  }
+
+  values.forEach((v) => {
+    addOauthResource(containerId, v, false);
+  });
+
+  updateOauthResourceJSON(containerId);
+}
+
 /**
  * SECURE: View Server function
  */
@@ -855,11 +960,17 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+
+      loadOauthResources(
+        "edit-server-oauth-resource-container",
+        server.oauthConfig.resource
+      );
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";
       if (oauthScopesField) oauthScopesField.value = "";
       if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+      loadOauthResources("edit-server-oauth-resource-container", []);
     }
 
     // Store server data for modal population
