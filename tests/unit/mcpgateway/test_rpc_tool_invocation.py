@@ -82,6 +82,7 @@ class TestRPCToolInvocation:
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
                 with patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock) as mock_invoke:
+                    from mcpgateway.services.tool_service import ToolNotFoundError
                     mock_invoke.side_effect = ToolNotFoundError("Tool not found: test_tool")
 
                     request_body = {"jsonrpc": "2.0", "method": "test_tool", "params": {"query": "test", "limit": 5}, "id": 1}  # Direct tool name as method (old format)
