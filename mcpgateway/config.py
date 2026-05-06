@@ -68,8 +68,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
 if not logging.getLogger().handlers:
+    # Respect LOG_LEVEL environment variable for early logging configuration
+    log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
     logging.basicConfig(
-        level=logging.INFO,
+        level=log_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
