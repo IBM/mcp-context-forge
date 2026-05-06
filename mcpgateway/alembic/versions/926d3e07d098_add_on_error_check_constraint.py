@@ -23,32 +23,41 @@ CONSTRAINT_NAME = "ck_tool_plugin_bindings_on_error_valid"
 
 def upgrade() -> None:
     """Add CHECK constraint to on_error column."""
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
     if "tool_plugin_bindings" not in inspector.get_table_names():
+        return
+
+    # SQLite: CHECK constraints are only applied at table creation time.
+    # Fresh installs get the constraint from the ORM model in db.py.
+    if bind.dialect.name == "sqlite":
         return
 
     existing = {c["name"] for c in inspector.get_check_constraints("tool_plugin_bindings")}
     if CONSTRAINT_NAME in existing:
         return
 
-    with op.batch_alter_table("tool_plugin_bindings") as batch_op:
-        batch_op.create_check_constraint(
-            CONSTRAINT_NAME,
-            "on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL",
-        )
+    op.create_check_constraint(
+        CONSTRAINT_NAME,
+        "tool_plugin_bindings",
+        "on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL",
+    )
 
 
 def downgrade() -> None:
     """Remove CHECK constraint from on_error column."""
-    inspector = sa.inspect(op.get_bind())
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
 
     if "tool_plugin_bindings" not in inspector.get_table_names():
+        return
+
+    if bind.dialect.name == "sqlite":
         return
 
     existing = {c["name"] for c in inspector.get_check_constraints("tool_plugin_bindings")}
     if CONSTRAINT_NAME not in existing:
         return
 
-    with op.batch_alter_table("tool_plugin_bindings") as batch_op:
-        batch_op.drop_constraint(CONSTRAINT_NAME, type_="check")
+    op.drop_constraint(CONSTRAINT_NAME, "tool_plugin_bindings", type_="check")
