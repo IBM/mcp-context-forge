@@ -1233,7 +1233,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_reset_invalidate_sessions = True
 
             with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
-                with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
+                with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock(return_value=None)):
                         with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(return_value=True)):
                             result = await service.reset_password_with_token(token="token", new_password="NewPassword123!")
@@ -1253,7 +1253,7 @@ class TestEmailAuthServiceUserManagement:
         reset_token.user_email = "user@example.com"
 
         with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
-            with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
+            with patch.object(service, "_fetch_user_from_db", return_value=None):
                 with pytest.raises(AuthenticationError, match="invalid"):
                     await service.reset_password_with_token(token="token", new_password="NewPassword123!")
 
@@ -1275,7 +1275,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_policy_enabled = False
             mock_settings.password_prevent_reuse = True
             with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
-                with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
+                with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with pytest.raises(PasswordValidationError, match="different"):
                         await service.reset_password_with_token(token="token", new_password="same-password")
 
@@ -1309,7 +1309,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_reset_invalidate_sessions = False
 
             with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
-                with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
+                with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(side_effect=RuntimeError("smtp"))):
                         result = await service.reset_password_with_token(token="token", new_password="NewPassword123!")
 
@@ -1319,7 +1319,7 @@ class TestEmailAuthServiceUserManagement:
     @pytest.mark.asyncio
     async def test_unlock_user_account_not_found(self, service):
         """Unlock raises ValueError for unknown users."""
-        with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
+        with patch.object(service, "_fetch_user_from_db", return_value=None):
             with pytest.raises(ValueError, match="not found"):
                 await service.unlock_user_account("missing@example.com")
 
@@ -1331,8 +1331,9 @@ class TestEmailAuthServiceUserManagement:
         user.failed_login_attempts = 3
         user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=5)
 
-        with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
-            result = await service.unlock_user_account("user@example.com", unlocked_by="admin@example.com")
+        with patch.object(service, "_fetch_user_from_db", return_value=user):
+            with patch.object(service, "_invalidate_user_auth_cache", new_callable=AsyncMock):
+                result = await service.unlock_user_account("user@example.com", unlocked_by="admin@example.com")
 
         assert result is user
         assert user.failed_login_attempts == 0

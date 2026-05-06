@@ -37,6 +37,9 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Set
 
+# Third-Party
+import orjson
+
 logger = logging.getLogger(__name__)
 
 # Sentinel value to represent "user is not a member" in Redis cache
@@ -302,9 +305,6 @@ class AuthCache:
                 redis_key = self._get_redis_key("ctx", cache_key)
                 data = await redis.get(redis_key)
                 if data:
-                    # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
-
                     cached = orjson.loads(data)
                     result = CachedAuthContext(
                         user=cached.get("user"),
@@ -374,9 +374,6 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
-
                 redis_key = self._get_redis_key("ctx", cache_key)
                 await redis.setex(redis_key, ttl, orjson.dumps(data))
             except Exception as e:
@@ -387,6 +384,87 @@ class AuthCache:
             self._context_cache[cache_key] = CacheEntry(
                 value=context,
                 expiry=time.time() + ttl,
+            )
+
+    async def get_user(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get cached user dict for a given email (L1 → L2 lookup).
+
+        Args:
+            email: Normalised user email address.
+
+        Returns:
+            Cached user dict or None on cache miss.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user("test@example.com"))
+            >>> result is None  # Cache miss on fresh cache
+            True
+        """
+        if not self._enabled:
+            return None
+
+        # L1 check
+        with self._lock:
+            entry = self._user_cache.get(email)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # L2 check
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("user", email)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    user_dict = orjson.loads(data)
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    # Write-through to L1
+                    with self._lock:
+                        self._user_cache[email] = CacheEntry(
+                            value=user_dict,
+                            expiry=time.time() + self._user_ttl,
+                        )
+                    return user_dict
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user failed: {e}")
+
+        self._miss_count += 1
+        return None
+
+    async def set_user(self, email: str, user_dict: Dict[str, Any]) -> None:
+        """Store user dict in cache (L2 then L1).
+
+        Args:
+            email: Normalised user email address.
+            user_dict: Serialisable user data dict.
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user("test@example.com", {"email": "test@example.com"}))
+        """
+        if not self._enabled:
+            return
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("user", email)
+                await redis.setex(redis_key, self._user_ttl, orjson.dumps(user_dict))
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user failed: {e}")
+
+        # Store in L1
+        with self._lock:
+            self._user_cache[email] = CacheEntry(
+                value=user_dict,
+                expiry=time.time() + self._user_ttl,
             )
 
     async def invalidate_user(self, email: str) -> None:
@@ -729,9 +807,6 @@ class AuthCache:
                 if data is not None:
                     self._hit_count += 1
                     self._redis_hit_count += 1
-                    # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
-
                     team_ids = orjson.loads(data)
 
                     # Write-through: populate L1 from Redis hit
@@ -768,9 +843,6 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
-
                 redis_key = self._get_redis_key("teams", cache_key)
                 await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_ids))
             except Exception as e:
@@ -1180,6 +1252,7 @@ class AuthCache:
             "redis_hit_rate": self._redis_hit_count / redis_total if redis_total > 0 else 0.0,
             "redis_available": self._redis_available,
             "revoked_tokens_cached": len(self._revoked_jtis),
+            "user_cache_size": len(self._user_cache),
             "context_cache_size": len(self._context_cache),
             "role_cache_size": len(self._role_cache),
             "teams_list_cache_size": len(self._teams_list_cache),
