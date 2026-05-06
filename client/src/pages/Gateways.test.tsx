@@ -3,6 +3,8 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/test/test-utils";
 import { Gateways } from "./Gateways";
+import { useQuery } from "@/hooks/useQuery";
+import type { VirtualServer } from "@/types/server";
 
 // Mock the router
 const mockNavigate = vi.fn();
@@ -14,14 +16,34 @@ vi.mock("@/router", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useQuery", () => ({
+  useQuery: vi.fn(),
+}));
+
+const mockUseQuery = vi.mocked(useQuery);
+
 describe("Gateways", () => {
   beforeEach(() => {
     mockNavigate.mockClear();
+    mockUseQuery.mockReturnValue({
+      data: { servers: [] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
   });
 
-  it("renders the page title and all four action cards", () => {
+  it("requests the servers list on page load", () => {
     renderWithProviders(<Gateways />);
-    expect(screen.getByText("Connect a source")).toBeInTheDocument();
+
+    expect(mockUseQuery).toHaveBeenCalledWith("/servers?limit=12&include_pagination=true");
+  });
+
+  it("renders the source selection when no virtual servers exist", () => {
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("heading", { name: "Connect a source" })).toBeInTheDocument();
     expect(screen.getByText("MCP server")).toBeInTheDocument();
     expect(screen.getByText("AI agent")).toBeInTheDocument();
     expect(screen.getByText("REST API")).toBeInTheDocument();
@@ -29,62 +51,204 @@ describe("Gateways", () => {
     expect(
       screen.getByText("Register an endpoint implementing the Model Context Protocol"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Add an agent over A2A, OpenAI, or Anthropic protocols"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Wrap a HTTP endpoint as a MCP tool")).toBeInTheDocument();
-    expect(screen.getByText("Translate a gRPC endpoint as a MCP tool.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Virtual servers" })).not.toBeInTheDocument();
   });
 
-  it("navigates to servers page with open parameter when MCP server connect button is clicked", async () => {
+  it("renders the virtual server layout when servers exist", () => {
+    const mockServer: VirtualServer = {
+      id: "gateway-1",
+      name: "GH repo tasks",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: ["tool1", "tool2", "tool3", "tool4", "tool5", "tool6"],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: ["team", "enabled"],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: {
+        servers: [mockServer],
+      },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("heading", { name: "Virtual servers" })).toBeInTheDocument();
+    expect(screen.getByText("GH repo tasks")).toBeInTheDocument();
+    expect(screen.getByText("6")).toBeInTheDocument();
+    expect(screen.getByText("team")).toBeInTheDocument();
+    expect(screen.queryByText("MCP server")).not.toBeInTheDocument();
+  });
+
+  it("navigates to servers page with open parameter when MCP server connect is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Gateways />);
 
-    // The MCP server card should have a Connect button
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/i });
-    expect(buttons.length).toBeGreaterThanOrEqual(4);
-
-    // Click the first button (MCP server)
+    const buttons = screen.getAllByRole("button", { name: "+ Connect" });
     await user.click(buttons[0]!);
 
-    // Verify navigation to servers page with openForm=true parameter
     expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
   });
 
-  it("navigates to agents page when AI agent card button is clicked", async () => {
-    const user = userEvent.setup();
+  it("disables REST API and gRPC connect buttons until they are implemented", () => {
     renderWithProviders(<Gateways />);
 
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/i });
-    // The AI agent button should be the second one (index 1)
-    await user.click(buttons[1]!);
-
-    expect(mockNavigate).toHaveBeenCalledWith("/app/agents");
+    const buttons = screen.getAllByRole("button", { name: /\+ Connect/ });
+    expect(buttons).toHaveLength(4);
+    expect(buttons[0]).toBeEnabled();
+    expect(buttons[1]).toBeEnabled();
+    expect(buttons[2]).toBeDisabled();
+    expect(buttons[3]).toBeDisabled();
   });
 
-  it("logs message when REST API card button is clicked (not yet implemented)", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("does not navigate when a disabled connect button is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Gateways />);
 
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/i });
-    // The REST API button should be the third one (index 2)
+    const buttons = screen.getAllByRole("button", { name: /\+ Connect/ });
     await user.click(buttons[2]!);
 
-    expect(consoleSpy).toHaveBeenCalledWith("REST API gateway creation not yet implemented");
-    consoleSpy.mockRestore();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it("logs message when gRPC card button is clicked (not yet implemented)", async () => {
-    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("disables card-level selection on disabled action cards", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Gateways />);
 
-    const buttons = screen.getAllByRole("button", { name: /\+ Connect/i });
-    // The gRPC button should be the fourth one (index 3)
-    await user.click(buttons[3]!);
+    const restCard = screen.getByTestId("action-card-REST API");
+    expect(restCard).toHaveAttribute("aria-disabled", "true");
+    await user.click(restCard);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
 
-    expect(consoleSpy).toHaveBeenCalledWith("gRPC gateway creation not yet implemented");
-    consoleSpy.mockRestore();
+  it("disables Upload and per-row action items on virtual server cards", async () => {
+    const user = userEvent.setup();
+    const mockServer: VirtualServer = {
+      id: "gateway-1",
+      name: "GH repo tasks",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("button", { name: /Open GH repo tasks/i })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
+
+    for (const label of ["View details", "Test connection", "Edit server", "Delete"]) {
+      const item = await screen.findByRole("menuitem", { name: label });
+      expect(item).toHaveAttribute("data-disabled");
+    }
+  });
+
+  it("renders virtual server card without crashing when array fields are missing", () => {
+    const partialServer: VirtualServer = {
+      id: "gateway-2",
+      name: "Sparse server",
+      description: "",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "",
+      enabled: false,
+      visibility: "team",
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      metrics: null,
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [partialServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByText("Sparse server")).toBeInTheDocument();
+    const card = screen.getByTestId("virtual-server-card");
+    expect(card).toBeInTheDocument();
+    expect(card.querySelector('[data-testid="tool-count"]')).toHaveTextContent("0");
+    expect(card.querySelector('[data-testid="resource-count"]')).toHaveTextContent("0");
+    expect(card.querySelector('[data-testid="prompt-count"]')).toHaveTextContent("0");
   });
 });
