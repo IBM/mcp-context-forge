@@ -15,6 +15,7 @@ retrieval, updates, activation toggling, and deletion.
 import asyncio
 import base64
 from datetime import datetime, timezone
+import ipaddress
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -154,6 +155,18 @@ def _validate_grpc_target(target: str) -> None:
         host = target.rsplit(":", 1)[0].strip("[]")
     if not host:
         raise GrpcServiceError("Empty gRPC target address")
+
+    # Reserved / multicast IP literals are unconditionally blocked. SecurityValidator._validate_ssrf
+    # only checks blocked-networks / localhost / private; it does not flag is_reserved/is_multicast,
+    # so this guard runs before delegation to keep the original gRPC-validator semantics. Loopback is
+    # excluded because Python flags ``::1`` as both is_loopback AND is_reserved; loopback policy is
+    # handled by SecurityValidator below via ssrf_allow_localhost.
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    if addr is not None and not addr.is_loopback and (addr.is_reserved or addr.is_multicast):
+        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (reserved/multicast)")
 
     # Delegate the hostname/IP-network/DNS-resolution policy to the shared SecurityValidator
     # so gRPC and HTTP follow the same SSRF rules and a hostname like ``metadata.google.internal``
