@@ -145,9 +145,6 @@ def _validate_grpc_target(target: str) -> None:
             target = target[len(scheme_prefix) :]
             break
 
-    # First-Party
-    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
     # Extract host (strip port). Bracketed IPv6 literals: ``[::1]:50051``.
     if target.startswith("["):
         end = target.find("]")
