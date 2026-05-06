@@ -32,11 +32,11 @@ def upgrade() -> None:
     if CONSTRAINT_NAME in existing:
         return
 
-    op.create_check_constraint(
-        CONSTRAINT_NAME,
-        "tool_plugin_bindings",
-        "on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL",
-    )
+    with op.batch_alter_table("tool_plugin_bindings") as batch_op:
+        batch_op.create_check_constraint(
+            CONSTRAINT_NAME,
+            "on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL",
+        )
 
 
 def downgrade() -> None:
@@ -50,4 +50,5 @@ def downgrade() -> None:
     if CONSTRAINT_NAME not in existing:
         return
 
-    op.drop_constraint(CONSTRAINT_NAME, "tool_plugin_bindings", type_="check")
+    with op.batch_alter_table("tool_plugin_bindings") as batch_op:
+        batch_op.drop_constraint(CONSTRAINT_NAME, type_="check")
