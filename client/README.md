@@ -28,17 +28,21 @@ npm install
 The client development workflow requires both the client dev server and the backend gateway:
 
 1. **Build the client assets:**
+
    ```bash
    npm run build
    ```
 
 2. **Start the client development server:**
+
    ```bash
    npm run dev
    ```
+
    This starts the Vite dev server at `http://localhost:5173` with hot module replacement.
 
 3. **In another terminal, start the backend gateway:**
+
    ```bash
    make dev
    ```
@@ -317,7 +321,7 @@ Ensure TypeScript types are properly configured:
 ### MSW Not Intercepting Requests
 
 - Verify handlers are defined in `src/test/mocks/handlers.ts`
-- Check that paths match exactly (e.g., `/auth/login` not `/api/auth/login`)
+- Check that paths match exactly (e.g., `/app/auth/login` not `/api/auth/login`)
 - Ensure MSW server is started in `src/test/setup.ts`
 
 ### window.matchMedia Errors in Tests
