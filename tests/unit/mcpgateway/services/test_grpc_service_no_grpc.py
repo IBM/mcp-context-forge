@@ -9,9 +9,9 @@ Tests for GrpcService without requiring grpc packages.
 
 # Standard
 from datetime import datetime, timezone
+import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 import uuid
 
 # Third-Party
@@ -37,6 +37,7 @@ def _skip_grpc_target_validation(monkeypatch):
 @pytest.fixture(autouse=True)
 def _skip_tls_path_validation(monkeypatch):
     """Disable TLS path validation for unit tests."""
+    # Standard
     from pathlib import Path
 
     monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda path_str, label="TLS path": Path(path_str).resolve())
@@ -704,6 +705,7 @@ def test_validate_tls_path_allows_expected_prefixes_and_blocks_other_paths():
 
 @pytest.mark.asyncio
 async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -812,6 +814,7 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
@@ -847,6 +850,7 @@ async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -905,6 +909,7 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, db):
     """TLS reflection should read both cert and key when explicit paths are configured."""
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -963,6 +968,7 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
@@ -998,6 +1004,7 @@ async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_sets_reachable_false_on_error(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:

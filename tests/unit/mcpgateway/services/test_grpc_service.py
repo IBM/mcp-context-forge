@@ -8,6 +8,7 @@ Tests for gRPC Service functionality.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
@@ -1377,3 +1378,166 @@ class TestInvokeMethodGuards:
             await service.invoke_method(mock_db, "svc-1", "svc.M", {})
         labels = {label for _path, label in tls_calls}
         assert labels == {"TLS cert path", "TLS key path"}
+
+    def test_validate_grpc_target_empty_string(self):
+        # First-Party
+        from mcpgateway.services.grpc_service import _validate_grpc_target
+
+        with pytest.raises(GrpcServiceError, match="Empty gRPC target address"):
+            _validate_grpc_target("")
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_propagates_cancelled_error(self, service, mock_db, monkeypatch):
+        # Endpoint.start raising CancelledError must NOT be wrapped as GrpcServiceError.
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+        class CancellingEndpoint:
+            def __init__(self, **_kw):
+                self._services = None
+
+            async def start(self, timeout=None):
+                raise asyncio.CancelledError()
+
+            async def invoke(self, *_a, **_kw):
+                return None
+
+            async def close(self):
+                return None
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", CancellingEndpoint):
+            with pytest.raises(asyncio.CancelledError):
+                await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_re_raises_timeout(self, service, mock_db, monkeypatch):
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+        class HangingEndpoint:
+            def __init__(self, **_kw):
+                self._services = None
+
+            async def start(self, timeout=None):
+                raise asyncio.TimeoutError()
+
+            async def invoke(self, *_a, **_kw):
+                return None
+
+            async def close(self):
+                return None
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", HangingEndpoint):
+            with pytest.raises(asyncio.TimeoutError):
+                await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_re_raises_grpc_service_error_unwrapped(self, service, mock_db, monkeypatch):
+        # GrpcServiceError raised inside the try block must be re-raised AS-IS, not wrapped twice.
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+        class GrpcErrorEndpoint:
+            def __init__(self, **_kw):
+                self._services = None
+
+            async def start(self, timeout=None):
+                return None
+
+            async def invoke(self, *_a, **_kw):
+                raise GrpcServiceError("inner-error-marker")
+
+            async def close(self):
+                return None
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", GrpcErrorEndpoint):
+            with pytest.raises(GrpcServiceError, match="^inner-error-marker$"):
+                await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+
+
+class TestUpdateServiceVisibilityPropagation:
+    """Cover the bulk-update branch in update_service when scoping fields actually change."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.mark.asyncio
+    async def test_update_service_propagates_visibility_to_child_tools(self):
+        # First-Party
+        from mcpgateway.schemas import GrpcServiceUpdate
+        from mcpgateway.services.grpc_service import GrpcService
+
+        # Use a real DbGrpcService instance so GrpcServiceRead.model_validate(service) works at the
+        # end of update_service. Only the scoping fields need to differ from the update payload to
+        # exercise the bulk-update branch.
+        existing = DbGrpcService(
+            id="svc-1",
+            name="svc-name",
+            slug="svc-name",
+            target="localhost:50051",
+            description="d",
+            reflection_enabled=False,
+            tls_enabled=False,
+            tls_cert_path=None,
+            tls_key_path=None,
+            grpc_metadata={},
+            enabled=True,
+            reachable=True,
+            service_count=0,
+            method_count=0,
+            discovered_services={},
+            last_reflection=None,
+            tags=[],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email="old@example.com",
+        )
+
+        db = MagicMock()
+        # No ``name`` change in the payload, so the name-conflict SELECT is skipped: only the
+        # initial lookup and the bulk DbTool update execute.
+        db.execute.side_effect = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=existing)),  # initial lookup
+            MagicMock(rowcount=2),  # the bulk update DbTool
+        ]
+        update_payload = GrpcServiceUpdate(visibility="team", team_id="team-x", owner_email="new@example.com")
+        await GrpcService().update_service(db, "svc-1", update_payload)
+        assert db.execute.call_count == 2
+        # The second call should be the bulk UPDATE on the tools table.
+        second_call_arg = db.execute.call_args_list[1].args[0]
+        rendered = str(second_call_arg).lower()
+        assert "update" in rendered and "tools" in rendered

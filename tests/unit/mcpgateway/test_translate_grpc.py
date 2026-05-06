@@ -1089,3 +1089,31 @@ class TestGrpcEndpointLoadFileDescriptors:
         endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
         with pytest.raises(ValueError):
             endpoint.load_file_descriptors([b"not-valid-protobuf-data"])
+
+    def test_load_file_descriptors_rejects_single_bytes(self):
+        """Passing a single bytes object (not a sequence) is the classic Python footgun: the
+        for-loop would iterate byte-by-byte. The guard must raise TypeError eagerly."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        with pytest.raises(TypeError, match="must be a sequence of bytes"):
+            endpoint.load_file_descriptors(b"\x00\x01\x02")
+        with pytest.raises(TypeError, match="must be a sequence of bytes"):
+            endpoint.load_file_descriptors(bytearray(b"\x00\x01\x02"))
+
+    def test_load_file_descriptors_skips_pool_conflict(self):
+        """A FileDescriptorProto conflict at pool.Add should be logged and skipped, not raised."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        endpoint._pool = MagicMock()
+        endpoint._pool.Add = MagicMock(side_effect=TypeError("Conflict register for file 'a.proto': type already exists"))
+
+        # Build a minimally-valid FileDescriptorProto so ParseFromString succeeds,
+        # then verify the TypeError from Add is swallowed (no exception propagates).
+        # Third-Party
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto
+
+        fd = FileDescriptorProto()
+        fd.name = "a.proto"
+        fd.package = "a"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint.load_file_descriptors([proto_bytes])
+        assert endpoint._pool.Add.call_count == 1
