@@ -1,9 +1,9 @@
 import {
   Blocks,
   Box,
+  ChartLine,
   Code,
   House,
-  MessageSquareCode,
   MessageSquareMore,
   Server,
   Settings,
@@ -15,7 +15,7 @@ import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
 import { AgentIcon } from "../icons/AgentIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
-import { MainNavIcon } from "../icons/MainNavIcon.tsx";
+import { PromptIcon } from "../icons/PromptIcon.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -23,12 +23,10 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "../ui/sidebar";
-import { TeamSwitcher } from "./TeamSwitcher";
 
 interface NavItem {
   labelKey: string;
@@ -39,6 +37,7 @@ interface NavItem {
 const MAIN_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.dashboard", path: "/app/", icon: House },
   { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
+  { labelKey: "navigation.observability", path: "/app/observability", icon: ChartLine },
   { labelKey: "navigation.playground", path: "/app/playground", icon: MessageSquareMore },
 ];
 
@@ -49,7 +48,7 @@ const COMPONENTS_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.grpc", path: "/app/grpc", icon: Unplug },
   { labelKey: "navigation.tools", path: "/app/tools", icon: Wrench },
   { labelKey: "navigation.resources", path: "/app/resources", icon: Box },
-  { labelKey: "navigation.prompts", path: "/app/prompts", icon: MessageSquareCode },
+  { labelKey: "navigation.prompts", path: "/app/prompts", icon: PromptIcon },
 ];
 
 const ECOSYSTEM_NAV_ITEMS: NavItem[] = [
@@ -82,24 +81,7 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <div className="flex items-center gap-2 w-full">
-              <div className="flex h-8 w-8 items-center justify-center shrink-0">
-                <span className="text-lg font-bold">
-                  <MainNavIcon className="w-6 h-6" />
-                </span>
-              </div>
-              <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                <TeamSwitcher />
-              </div>
-            </div>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
-
+    <Sidebar collapsible="icon" className="top-12 h-[calc(100svh-3rem)]">
       <SidebarContent>
         {/* Main Navigation */}
         <SidebarGroup>
