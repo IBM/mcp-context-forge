@@ -17,6 +17,7 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -217,15 +218,34 @@ class RoleService:
             if await self._would_create_cycle(inherits_from, None):
                 raise ValueError("Role inheritance would create a cycle")
 
-        # Create the role
+        # Create the role with savepoint to handle race conditions
+        # If another process created the same role concurrently, we'll catch IntegrityError
+        # and return the existing role instead of failing
         role = Role(name=name, description=description, scope=scope, permissions=permissions, created_by=created_by, inherits_from=inherits_from, is_system_role=is_system_role)
 
-        self.db.add(role)
-        self.db.commit()
-        self.db.refresh(role)
+        try:
+            # Use nested transaction (savepoint) to allow rollback on conflict
+            with self.db.begin_nested():
+                self.db.add(role)
+            self.db.commit()
+            self.db.refresh(role)
 
-        logger.info("Created role: %s (scope: %s, id: %s)", role.name, role.scope, role.id)
-        return role
+            logger.info(f"Created role: {role.name} (scope: {role.scope}, id: {role.id})")
+            return role
+
+        except IntegrityError as e:
+            # Another process created this role concurrently - rollback savepoint and refetch
+            self.db.rollback()
+            logger.info(f"Role '{name}' (scope: {scope}) was created concurrently by another process - refetching existing role")
+
+            # Refetch the winner's row
+            existing = await self.get_role_by_name(name, scope)
+            if existing:
+                return existing
+
+            # If we still can't find it, something else went wrong - re-raise
+            logger.error(f"IntegrityError but role not found after refetch: {e}")
+            raise ValueError(f"Failed to create or fetch role '{name}' in scope '{scope}': {e}") from e
 
     async def get_role_by_id(self, role_id: str) -> Optional[Role]:
         """Get role by ID.
@@ -621,15 +641,36 @@ class RoleService:
         if existing and existing.is_active and not existing.is_expired():
             raise ValueError("User already has this role assignment")
 
-        # Create the assignment
+        # Create the assignment with savepoint to handle race conditions
+        # If another process created the same assignment concurrently, we'll catch IntegrityError
+        # and return the existing assignment instead of failing
         user_role = UserRole(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id, granted_by=granted_by, expires_at=expires_at, grant_source=grant_source)
 
-        self.db.add(user_role)
-        self.db.commit()
-        self.db.refresh(user_role)
+        try:
+            # Use nested transaction (savepoint) to allow rollback on conflict
+            with self.db.begin_nested():
+                self.db.add(user_role)
+            self.db.commit()
+            self.db.refresh(user_role)
 
         logger.info("Assigned role %s to %s (scope: %s, scope_id: %s)", role.name, user_email, scope, scope_id)
         return user_role
+            logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
+            return user_role
+
+        except IntegrityError as e:
+            # Another process created this assignment concurrently - rollback savepoint and refetch
+            self.db.rollback()
+            logger.info(f"Role assignment for {user_email} to role {role_id} (scope: {scope}, scope_id: {scope_id}) was created concurrently - refetching existing assignment")
+
+            # Refetch the winner's row
+            existing = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
+            if existing:
+                return existing
+
+            # If we still can't find it, something else went wrong - re-raise
+            logger.error(f"IntegrityError but user_role assignment not found after refetch: {e}")
+            raise ValueError(f"Failed to create or fetch role assignment for {user_email} to role {role_id}: {e}") from e
 
     async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
         """Revoke a role from a user.
