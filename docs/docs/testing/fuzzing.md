@@ -15,15 +15,19 @@ Fuzz testing generates thousands of random, malformed, or edge-case inputs to fi
 
 ### Installation
 
-Install fuzzing dependencies as an optional package group:
+Fuzzing dependencies (`hypothesis`, `pytest-benchmark`, `pytest-xdist`,
+`schemathesis`) live in the `dev` dependency group, so they're installed
+automatically by `make install-dev` / `uv sync`:
 
 ```bash
-# Via Makefile (recommended)
-make fuzz-install
+# One-shot project setup (creates .venv, installs runtime + dev deps)
+make install-dev
 
-# Or directly with pip
-pip install -e .[fuzz]
+# Or, if the venv already exists
+uv sync
 ```
+
+The legacy `make fuzz-install` alias is preserved and just runs `uv sync`.
 
 ### Running Tests
 
@@ -85,18 +89,16 @@ Uses libfuzzer to instrument code and guide input generation toward unexplored c
 - `tests/fuzz/fuzzers/fuzz_config_parser.py` - Configuration parsing fuzzing
 
 **Setup Requirements:**
-Atheris requires clang and libfuzzer to be installed:
+Atheris requires clang and libfuzzer to be available. On Linux the prebuilt
+wheel works out of the box; on macOS arm64 you need a clang+libfuzzer
+toolchain (`brew install llvm` is the simplest path).
+
+`atheris` is **not** a dev dependency — it's layered on demand via
+`uv run --with` by the `make fuzz-atheris` target so contributors who never
+fuzz aren't forced to deal with the clang/libfuzzer build:
 
 ```bash
-# Install LLVM/Clang (one-time setup)
-git clone --depth=1 https://github.com/llvm/llvm-project.git
-cd llvm-project
-cmake -DLLVM_ENABLE_PROJECTS='clang;compiler-rt' -G "Unix Makefiles" -S llvm -B build
-cmake --build build --parallel $(nproc)
-
-# Set environment and install
-export CLANG_BIN="$(pwd)/bin/clang"
-pip install -e .[fuzz-atheris]
+make fuzz-atheris
 ```
 
 **Running Atheris:**

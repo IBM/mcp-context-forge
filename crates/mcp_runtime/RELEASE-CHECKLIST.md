@@ -117,7 +117,7 @@ Rules:
 - [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity`
 - [ ] Confirm Rust plugin parity covers `resources/read`, `tools/call`, and `prompts/get`
 - [ ] `make testing-rebuild-rust-full`
-- [ ] `uv run pytest tests/e2e_rust/test_mcp_access_matrix.py -q -k 'invalid_arguments_return_structured_error'`
+- [ ] `uv run pytest tests/live_gateway/e2e_rust/test_mcp_access_matrix.py -q -k 'invalid_arguments_return_structured_error'`
 - [ ] Confirm malformed `prompts/get` arguments return MCP `-32602` on the Rust public path instead of an opaque backend decode failure
 - [ ] `cargo test --release --manifest-path crates/mcp_runtime/Cargo.toml`
 - [ ] Perform one manual `/mcp` tool call and confirm `x-contextforge-mcp-runtime: rust`
