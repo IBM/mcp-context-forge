@@ -1132,7 +1132,7 @@ class TestSecurityHardening:
 
     def test_enforce_descriptor_limits_count(self):
         # First-Party
-        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_COUNT, _enforce_descriptor_limits
+        from mcpgateway.services.grpc_service import _enforce_descriptor_limits, _GRPC_MAX_DESCRIPTOR_COUNT
 
         # Generate (limit + 1) unique 4-byte blobs by encoding the index.
         too_many = {i.to_bytes(4, "big") for i in range(_GRPC_MAX_DESCRIPTOR_COUNT + 1)}
@@ -1141,7 +1141,7 @@ class TestSecurityHardening:
 
     def test_enforce_descriptor_limits_per_blob(self):
         # First-Party
-        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_BYTES, _enforce_descriptor_limits
+        from mcpgateway.services.grpc_service import _enforce_descriptor_limits, _GRPC_MAX_DESCRIPTOR_BYTES
 
         oversized = {b"\x00" * (_GRPC_MAX_DESCRIPTOR_BYTES + 1)}
         with pytest.raises(GrpcServiceError, match="per-descriptor limit"):
@@ -1149,7 +1149,7 @@ class TestSecurityHardening:
 
     def test_enforce_descriptor_limits_total_size(self):
         # First-Party
-        from mcpgateway.services.grpc_service import _GRPC_MAX_DESCRIPTOR_BYTES, _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES, _enforce_descriptor_limits
+        from mcpgateway.services.grpc_service import _enforce_descriptor_limits, _GRPC_MAX_DESCRIPTOR_BYTES, _GRPC_MAX_TOTAL_DESCRIPTOR_BYTES
 
         # Each blob is under the per-blob cap but the aggregate exceeds the total cap.
         per_blob = _GRPC_MAX_DESCRIPTOR_BYTES
@@ -1371,7 +1371,6 @@ class TestInvokeMethodGuards:
             tls_calls.append((path, label))
             if len(tls_calls) == 2:
                 raise GrpcServiceError("spy-aborted")
-            return None
 
         monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", tls_spy)
         with pytest.raises(GrpcServiceError, match="spy-aborted"):

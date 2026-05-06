@@ -5840,7 +5840,10 @@ class ToolService(BaseService):
                         serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
                         tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
                         success = True
-                    except asyncio.CancelledError:
+                    except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                        # Re-raise so the LATER ``except Exception`` below cannot swallow cancellation.
+                        # Removing this clause would re-introduce the swallowed-cancellation bug from
+                        # PR #3202 review B7.
                         raise
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)

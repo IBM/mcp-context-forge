@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=no-member
 """add_grpc_service_id_to_tools
 
 Revision ID: w7x8y9z0a1b2
