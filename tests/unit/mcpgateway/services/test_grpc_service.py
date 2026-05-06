@@ -733,12 +733,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Should have executed delete statements for the stale tool
-        # 3 deletes: ToolMetric, server_tool_association, DbTool
-        delete_calls = [call for call in mock_db.execute.call_args_list if "DELETE" in str(call) or "delete" in str(call).lower()]
-        assert len(delete_calls) == 3
-        # At minimum, execute was called for the select + 3 deletes
-        assert mock_db.execute.call_count >= 4  # 1 select + 3 deletes
+        # Stale-tool cleanup fires exactly 3 deletes (ToolMetric, server_tool_association, DbTool)
+        # plus the initial SELECT for existing tools. Asserting on call_count is more robust than
+        # string-matching the SQLAlchemy Delete object repr.
+        assert mock_db.execute.call_count == 4
 
     def test_sync_tools_empty_discovered_services(self, service, mock_db, sample_db_service):
         """Test _sync_tools_from_reflection with empty discovered services and no existing tools."""
@@ -1282,3 +1280,101 @@ class TestVisibilityPropagation:
 
         # Exactly one DbTool was added (the good one).
         assert db.add.call_count == 1
+
+
+class TestInvokeMethodGuards:
+    """Edge-case coverage for GrpcService.invoke_method security/integrity guards."""
+
+    @pytest.fixture
+    def service(self):
+        return GrpcService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock()
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_service_not_found_raises(self, service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        with pytest.raises(GrpcServiceNotFoundError, match="not found"):
+            await service.invoke_method(mock_db, "missing-id", "svc.M", {})
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_disabled_service_raises(self, service, mock_db):
+        disabled = MagicMock(spec=DbGrpcService)
+        disabled.id = "svc-1"
+        disabled.name = "svc"
+        disabled.enabled = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = disabled
+        with pytest.raises(GrpcServiceError, match="is disabled"):
+            await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_invalid_method_format_raises(self, service, mock_db, monkeypatch):
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+        # Bypass real network/TLS validation; the GuardCheck runs after the format check.
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+        with pytest.raises(GrpcServiceError, match="Invalid method name"):
+            await service.invoke_method(mock_db, "svc-1", "NoDotMethod", {})
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_calls_target_validator(self, service, mock_db, monkeypatch):
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "host.example:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.discovered_services = {}
+        enabled.tls_enabled = False
+        enabled.grpc_metadata = {}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+
+        # The spy raises a sentinel error so the test asserts the spy was called and exits the
+        # invoke flow before reaching the (network-dependent) GrpcEndpoint construction.
+        sentinel = GrpcServiceError("spy-aborted")
+        spy = MagicMock(side_effect=sentinel)
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", spy)
+
+        with pytest.raises(GrpcServiceError, match="spy-aborted"):
+            await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+        spy.assert_called_once_with("host.example:50051")
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_calls_tls_validator_when_paths_set(self, service, mock_db, monkeypatch):
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "host.example:50051"
+        enabled.tls_cert_path = "/tls/cert.pem"
+        enabled.tls_key_path = "/tls/key.pem"
+        enabled.discovered_services = {}
+        enabled.tls_enabled = True
+        enabled.grpc_metadata = {}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+        # The TLS spy raises after the second call so we both assert it was invoked AND short-circuit
+        # before GrpcEndpoint construction tries to open a real channel.
+        tls_calls: list = []
+
+        def tls_spy(path, label="TLS path"):
+            tls_calls.append((path, label))
+            if len(tls_calls) == 2:
+                raise GrpcServiceError("spy-aborted")
+            return None
+
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", tls_spy)
+        with pytest.raises(GrpcServiceError, match="spy-aborted"):
+            await service.invoke_method(mock_db, "svc-1", "svc.M", {})
+        labels = {label for _path, label in tls_calls}
+        assert labels == {"TLS cert path", "TLS key path"}

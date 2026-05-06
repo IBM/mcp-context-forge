@@ -842,6 +842,9 @@ class GrpcService:
                 try:
                     _validate_reflected_tool_name(tool_name)
                     description = f"gRPC method {tool_name}"
+                    # ``properties: {}`` is intentional: gRPC argument shape is validated at the
+                    # protobuf invocation layer, not at the MCP tool-call layer. The actual proto
+                    # types are recorded in the x-grpc-* extensions for tooling/inspection.
                     input_schema = {
                         "type": "object",
                         "properties": {},

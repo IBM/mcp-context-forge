@@ -3264,7 +3264,7 @@ class Tool(Base):
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
     # Federation relationship with a gRPC service
-    grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"), nullable=True)
+    grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"))
     grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
 
     # Many-to-many relationship with Servers

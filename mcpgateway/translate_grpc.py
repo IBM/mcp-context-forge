@@ -14,7 +14,7 @@ using automatic service discovery through gRPC server reflection.
 # Standard
 import asyncio
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 try:
     # Third-Party
@@ -387,9 +387,9 @@ class GrpcEndpoint:
         """Close the gRPC channel."""
         if self._channel:
             self._channel.close()
-            logger.info(f"Closed gRPC connection to {self._target}")
+            logger.info("Closed gRPC connection to %s", self._target)
 
-    def load_file_descriptors(self, file_descriptor_protos: List[bytes]) -> None:
+    def load_file_descriptors(self, file_descriptor_protos: Sequence[bytes]) -> None:
         """Load serialized FileDescriptorProto bytes into the descriptor pool.
 
         This populates the pool with message type definitions so that
@@ -397,11 +397,16 @@ class GrpcEndpoint:
         round-trip.
 
         Args:
-            file_descriptor_protos: List of raw FileDescriptorProto bytes.
+            file_descriptor_protos: Sequence of raw FileDescriptorProto bytes.
+                Passing a single ``bytes`` object directly is rejected because
+                Python would silently iterate it byte-by-byte.
 
         Raises:
-            ValueError: If unable to parse the protobuf descriptor
+            TypeError: If a single bytes object is passed instead of a sequence.
+            ValueError: If unable to parse the protobuf descriptor.
         """
+        if isinstance(file_descriptor_protos, (bytes, bytearray)):
+            raise TypeError("file_descriptor_protos must be a sequence of bytes, not a single bytes object")
         for proto_bytes in file_descriptor_protos:
             fd = FileDescriptorProto()
             try:
@@ -410,8 +415,14 @@ class GrpcEndpoint:
                 logger.error("Failed to decode protobuf: %s", proto_bytes[:100])
                 raise ValueError("Unable to parse protobuf descriptor") from err
 
-            # NOTE: Adding a descriptor is a no-op if already added
-            self._pool.Add(fd)
+            try:
+                self._pool.Add(fd)
+            except TypeError as conflict_err:
+                # protobuf raises TypeError when a file with the same name is already registered
+                # with conflicting content. The existing descriptor stays authoritative; this is
+                # NOT a true no-op, but treating it as "skip-and-log" matches the prior intent
+                # without masking actual programming errors.
+                logger.debug("Descriptor pool conflict for %s: %s", fd.name, conflict_err)
 
     def get_services(self) -> List[str]:
         """Get list of discovered service names.
