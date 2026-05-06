@@ -15,7 +15,6 @@ retrieval, updates, activation toggling, and deletion.
 import asyncio
 import base64
 from datetime import datetime, timezone
-import ipaddress
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -34,7 +33,7 @@ except ImportError:
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, delete, desc, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -156,54 +155,17 @@ def _validate_grpc_target(target: str) -> None:
     if not host:
         raise GrpcServiceError("Empty gRPC target address")
 
-    # Check blocked hostnames
-    hostname_normalized = host.lower().rstrip(".")
-    for blocked_host in settings.ssrf_blocked_hosts:
-        if hostname_normalized == blocked_host.lower().rstrip("."):
-            raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked")
+    # Delegate the hostname/IP-network/DNS-resolution policy to the shared SecurityValidator
+    # so gRPC and HTTP follow the same SSRF rules and a hostname like ``metadata.google.internal``
+    # is resolved before being allowed through.
+    # First-Party
+    from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
 
-    # Resolve IP and apply network-level checks
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        # Hostname, not an IP literal — hostname check above is sufficient
-        if hostname_normalized == "localhost":
-            if not settings.ssrf_allow_localhost:
-                raise GrpcServiceError(f"gRPC target hostname '{host}' is blocked (localhost not allowed)")
-        return
-
-    # Always block: cloud metadata, link-local (from ssrf_blocked_networks)
-    for network_str in settings.ssrf_blocked_networks:
+    if getattr(settings, "ssrf_protection_enabled", True):
         try:
-            network = ipaddress.ip_network(network_str, strict=False)
-            if addr in network:
-                raise GrpcServiceError(f"gRPC target address '{host}' is blocked (network: {network_str})")
-        except ValueError:
-            continue
-
-    # Loopback
-    if addr.is_loopback:
-        if not settings.ssrf_allow_localhost:
-            raise GrpcServiceError(f"gRPC target address '{host}' is blocked (loopback not allowed)")
-        return
-
-    # Reserved / multicast — always block
-    if addr.is_reserved or addr.is_multicast:
-        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (reserved/multicast)")
-
-    # Private networks — consult settings
-    if addr.is_private and not addr.is_loopback:
-        if settings.ssrf_allow_private_networks:
-            return  # Explicitly allowed
-        # Check per-network allowlist
-        for network_str in settings.ssrf_allowed_networks or []:
-            try:
-                network = ipaddress.ip_network(network_str, strict=False)
-                if addr in network:
-                    return  # Allowed by specific network allowlist
-            except ValueError:
-                continue
-        raise GrpcServiceError(f"gRPC target address '{host}' is blocked (private network not allowed)")
+            SecurityValidator._validate_ssrf(host, "gRPC target")  # pylint: disable=protected-access
+        except ValueError as exc:
+            raise GrpcServiceError(str(exc)) from exc
 
 
 def _validate_tls_path(path_str: str, label: str = "TLS path") -> Path:
@@ -504,6 +466,11 @@ class GrpcService:
 
         # Update fields
         update_data = service_data.model_dump(exclude_unset=True)
+        # Layer 1 invariant: visibility/team/owner changes on the parent service must propagate
+        # to every child tool in the same transaction, or already-discovered tools will keep the
+        # old token-scoping. Snapshot the previous values before mutation so we know what changed.
+        scoping_fields = ("visibility", "team_id", "owner_email")
+        previous_scoping = {f: getattr(service, f) for f in scoping_fields}
         for field, value in update_data.items():
             setattr(service, field, value)
 
@@ -517,6 +484,11 @@ class GrpcService:
             service.modified_user_agent = metadata.get("modified_user_agent")
 
         service.version += 1
+
+        scoping_changed = {f: getattr(service, f) for f in scoping_fields if getattr(service, f) != previous_scoping[f]}
+        if scoping_changed:
+            db.execute(update(DbTool).where(DbTool.grpc_service_id == service.id).values(**scoping_changed))
+            logger.info("Propagated %s change(s) on gRPC service %s to child tools", sorted(scoping_changed), service.name)
 
         db.commit()
         db.refresh(service)
@@ -1012,7 +984,9 @@ class GrpcService:
         effective_timeout = timeout if timeout is not None else float(settings.tool_timeout)
 
         try:
-            await asyncio.wait_for(endpoint.start(), timeout=effective_timeout)
+            # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
+            # upstream cannot keep an executor thread alive after the coroutine is cancelled.
+            await asyncio.wait_for(endpoint.start(timeout=effective_timeout), timeout=effective_timeout)
 
             if has_stored_descriptors:
                 raw_descriptors = [base64.b64decode(b, validate=True) for b in stored_descriptors]
@@ -1020,7 +994,10 @@ class GrpcService:
                 # Strip metadata pseudo-keys (e.g. ``_file_descriptors``); they are not real services.
                 endpoint._services = {k: v for k, v in discovered.items() if not k.startswith("_")}  # pylint: disable=protected-access
 
-            response = await asyncio.wait_for(endpoint.invoke(service_name, method, request_data), timeout=effective_timeout)
+            response = await asyncio.wait_for(
+                endpoint.invoke(service_name, method, request_data, timeout=effective_timeout),
+                timeout=effective_timeout,
+            )
 
             return response
 

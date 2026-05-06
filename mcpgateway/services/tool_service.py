@@ -5441,6 +5441,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5624,6 +5627,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5926,6 +5932,9 @@ class ToolService(BaseService):
                         skip_pre_invoke,
                         "timeout",
                     )
+                raise
+            except asyncio.CancelledError:
+                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)

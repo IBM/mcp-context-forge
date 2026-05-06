@@ -158,7 +158,7 @@ class TestGrpcEndpoint:
         # Mock _discover_service_details to populate services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name):
+            async def populate_service(stub, service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -200,7 +200,7 @@ class TestGrpcEndpoint:
         # Mock _discover_service_details to populate only non-reflection services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name):
+            async def populate_service(stub, service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -477,11 +477,14 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object(), object(), object()]
     endpoint._factory = MagicMock()
-    endpoint._factory.GetPrototype.side_effect = [DummyRequest, DummyResponse, DummyRequest, DummyResponse]
+
+    # protobuf>=5 uses module-level message_factory.GetMessageClass(); patch it instead of MessageFactory.GetPrototype.
+    proto_classes = iter([DummyRequest, DummyResponse, DummyRequest, DummyResponse])
+    monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
         def unary_unary(self, _path, request_serializer=None, response_deserializer=None):
-            def call(_req):
+            def call(_req, timeout=None):
                 return DummyResponse()
 
             return call
@@ -583,7 +586,7 @@ async def test_discover_services_success_no_grpc(monkeypatch):
     monkeypatch.setattr(tg, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=lambda _chan: mock_stub))
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
 
-    async def _populate(_stub, service_name):
+    async def _populate(_stub, service_name, timeout=None):
         endpoint._services[service_name] = {"name": service_name, "methods": []}
 
     monkeypatch.setattr(endpoint, "_discover_service_details", AsyncMock(side_effect=_populate))
@@ -711,7 +714,8 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object()]
     endpoint._factory = MagicMock()
-    endpoint._factory.GetPrototype.side_effect = [DummyRequest, DummyResponse]
+    proto_classes = iter([DummyRequest, DummyResponse])
+    monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):

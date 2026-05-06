@@ -95,8 +95,14 @@ class GrpcEndpoint:
         self._pool = descriptor_pool.DescriptorPool()
         self._factory = message_factory.MessageFactory(pool=self._pool)
 
-    async def start(self) -> None:
-        """Initialize gRPC channel and perform reflection if enabled."""
+    async def start(self, timeout: Optional[float] = None) -> None:
+        """Initialize gRPC channel and perform reflection if enabled.
+
+        Args:
+            timeout: Per-call gRPC deadline propagated to reflection RPCs so a
+                slow upstream cannot block the executor beyond the caller's
+                asyncio cancellation.
+        """
         logger.info(f"Starting gRPC endpoint connection to {self._target}")
 
         # Create channel
@@ -114,10 +120,13 @@ class GrpcEndpoint:
 
         # Perform reflection if enabled
         if self._reflection_enabled:
-            await self._discover_services()
+            await self._discover_services(timeout=timeout)
 
-    async def _discover_services(self) -> None:
+    async def _discover_services(self, timeout: Optional[float] = None) -> None:
         """Use gRPC reflection to discover services and methods.
+
+        Args:
+            timeout: Per-call gRPC deadline applied to each reflection RPC.
 
         Raises:
             Exception: If service discovery fails
@@ -130,7 +139,7 @@ class GrpcEndpoint:
             # List all services
             request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
 
-            response = stub.ServerReflectionInfo(iter([request]))
+            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout else stub.ServerReflectionInfo(iter([request]))
 
             service_names = []
             for resp in response:
@@ -145,7 +154,7 @@ class GrpcEndpoint:
 
             # Get file descriptors for each service
             for service_name in service_names:
-                await self._discover_service_details(stub, service_name)
+                await self._discover_service_details(stub, service_name, timeout=timeout)
 
             logger.info(f"Discovered {len(self._services)} gRPC services")
 
@@ -153,18 +162,19 @@ class GrpcEndpoint:
             logger.error(f"Service discovery failed: {e}")
             raise
 
-    async def _discover_service_details(self, stub, service_name: str) -> None:
+    async def _discover_service_details(self, stub, service_name: str, timeout: Optional[float] = None) -> None:
         """Discover detailed information about a service including methods and message types.
 
         Args:
             stub: gRPC reflection stub
             service_name: Name of the service to discover
+            timeout: Per-call gRPC deadline applied to the reflection RPC.
         """
         try:  # pylint: disable=too-many-nested-blocks
             # Request file descriptor containing this service
             request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
 
-            response = stub.ServerReflectionInfo(iter([request]))
+            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout else stub.ServerReflectionInfo(iter([request]))
 
             for resp in response:
                 if resp.HasField("file_descriptor_response"):
@@ -221,6 +231,7 @@ class GrpcEndpoint:
         service: str,
         method: str,
         request_data: Dict[str, Any],
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Invoke a gRPC method with JSON request data.
 
@@ -228,6 +239,10 @@ class GrpcEndpoint:
             service: Service name
             method: Method name
             request_data: JSON request data
+            timeout: Per-RPC deadline in seconds. When set, the underlying
+                gRPC call is given a server-side deadline so a slow upstream
+                cannot tie up the executor thread even if the asyncio
+                wrapper is cancelled.
 
         Returns:
             JSON response data
@@ -264,10 +279,10 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # Create message classes
-        # pylint: disable=no-member
-        request_class = self._factory.GetPrototype(input_desc)
-        response_class = self._factory.GetPrototype(output_desc)
+        # protobuf>=5.x removed MessageFactory.GetPrototype; use the module-level helper bound
+        # to our private pool instead.
+        request_class = message_factory.GetMessageClass(input_desc)
+        response_class = message_factory.GetMessageClass(output_desc)
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
@@ -276,10 +291,14 @@ class GrpcEndpoint:
         channel = self._channel
         method_path = f"/{service}/{method}"
 
-        # Use generic_stub for dynamic invocation
-        response_msg = await asyncio.get_event_loop().run_in_executor(
-            None, channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString), request_msg
-        )
+        # Bind the per-RPC deadline (server-side timeout) so a slow upstream cannot outlive an
+        # asyncio.wait_for cancellation on the wrapping coroutine.
+        unary = channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)
+
+        def _call(req):
+            return unary(req, timeout=timeout) if timeout else unary(req)
+
+        response_msg = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
 
         # Convert protobuf response to JSON.
         # protobuf>=5 renamed `including_default_value_fields` -> `always_print_fields_with_no_presence`; do not revert.
@@ -339,10 +358,9 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # Create message classes
-        # pylint: disable=no-member
-        request_class = self._factory.GetPrototype(input_desc)
-        response_class = self._factory.GetPrototype(output_desc)
+        # protobuf>=5.x removed MessageFactory.GetPrototype; module-level helper used here too.
+        request_class = message_factory.GetMessageClass(input_desc)
+        response_class = message_factory.GetMessageClass(output_desc)
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
