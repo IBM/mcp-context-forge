@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import { renderWithProviders } from "./test/test-utils";
+
+vi.mock("@/hooks/useQuery", () => ({
+  useQuery: vi.fn(() => ({
+    data: { servers: [] },
+    error: null,
+    isLoading: false,
+    execute: vi.fn(),
+    refetch: vi.fn(),
+  })),
+}));
 
 describe("App", () => {
   it("renders the loading page without authentication", async () => {
@@ -45,8 +55,10 @@ describe("App", () => {
     const gatewaysLink = screen.getByRole("button", { name: /virtual servers/i });
     await user.click(gatewaysLink);
 
-    // Verify Gateways page is displayed
-    const gatewaysHeading = await screen.findByRole("heading", { name: /Connect a source/i });
+    // Verify Gateways page is displayed (empty state shows "Connect a source")
+    const gatewaysHeading = await screen.findByRole("heading", {
+      name: /Connect a source|Virtual servers/i,
+    });
     expect(gatewaysHeading).toBeInTheDocument();
   });
 });

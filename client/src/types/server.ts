@@ -1,26 +1,31 @@
 /**
+ * Base server interface with common fields
+ */
+export interface BaseServer {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  visibility: "private" | "team" | "public";
+  team_id?: string;
+  team?: string;
+  owner_email?: string;
+}
+
+/**
  * MCP Server types
  *
  * Note: Backend uses "Gateway" terminology and endpoints (/gateways),
  * but frontend displays these as "MCP Servers" to users.
  */
-
-export interface MCPServer {
-  id: string;
-  name: string;
+export interface MCPServer extends BaseServer {
   url: string;
-  description?: string;
   transport: "SSE" | "STREAMABLEHTTP";
-  enabled: boolean;
   reachable: boolean;
   last_seen?: string;
   tool_count: number;
   created_at: string;
   updated_at: string;
-  team_id?: string;
-  team?: string;
-  owner_email?: string;
-  visibility: "private" | "team" | "public";
 }
 
 export interface PaginationMeta {
@@ -43,3 +48,43 @@ export interface ServersResponse {
 }
 
 export type ServerStatus = "draft" | "active" | "offline" | "warning";
+
+/**
+ * Virtual Server types
+ *
+ * Represents virtual servers from the /servers endpoint
+ */
+export interface VirtualServer extends Omit<BaseServer, "team_id" | "owner_email"> {
+  description: string;
+  icon: string;
+  createdAt: string;
+  updatedAt: string;
+  associatedTools?: string[];
+  associatedToolIds?: string[];
+  associatedResources?: string[];
+  associatedPrompts?: string[];
+  associatedA2aAgents?: string[];
+  metrics: Record<string, unknown> | null;
+  tags?: string[];
+  createdBy: string;
+  createdFromIp: string;
+  createdVia: string;
+  createdUserAgent: string;
+  modifiedBy: string | null;
+  modifiedFromIp: string | null;
+  modifiedVia: string | null;
+  modifiedUserAgent: string | null;
+  importBatchId: string | null;
+  federationSource: string | null;
+  version: number;
+  teamId: string;
+  team: string;
+  ownerEmail: string;
+  oauthEnabled: boolean;
+  oauthConfig: Record<string, unknown> | null;
+}
+
+export interface VirtualServersResponse {
+  servers?: VirtualServer[];
+  nextCursor?: string | null;
+}
