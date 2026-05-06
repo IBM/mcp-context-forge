@@ -303,7 +303,7 @@ async def publish_team_binding_change(team_id: str) -> bool:
 
 def init_plugin_manager_factory(
     yaml_path: str,
-    timeout: float,
+    timeout: int,
     hook_policies: dict,
     observability: Optional[ObservabilityProvider] = None,
     db_factory: Optional[Callable] = None,

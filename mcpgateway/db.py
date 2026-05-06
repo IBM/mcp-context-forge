@@ -6810,7 +6810,7 @@ class ToolPluginBinding(Base):
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
         Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
-        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="on_error_valid"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_tool_plugin_bindings_on_error_valid"),
     )
 
     def __repr__(self) -> str:

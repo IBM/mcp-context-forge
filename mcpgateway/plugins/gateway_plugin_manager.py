@@ -40,14 +40,7 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_ID_SEPARATOR = "::"
 
-_BINDING_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
-    "enforce": (PluginMode.SEQUENTIAL, None),
-    "enforce_ignore_error": (PluginMode.SEQUENTIAL, OnError.IGNORE),
-    "permissive": (PluginMode.TRANSFORM, None),
-    "disabled": (PluginMode.DISABLED, None),
-}
-
-_GATEWAY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
+_LEGACY_MODE_TO_PLUGIN_MODE: dict[str, tuple[PluginMode, Optional[OnError]]] = {
     "enforce": (PluginMode.SEQUENTIAL, None),
     "enforce_ignore_error": (PluginMode.SEQUENTIAL, OnError.IGNORE),
     "permissive": (PluginMode.TRANSFORM, None),
@@ -272,7 +265,7 @@ class TenantPluginManagerFactory:
 
             applied = False
             for source, mode_str in candidates:
-                mapping = _GATEWAY_MODE_TO_PLUGIN_MODE.get(mode_str)
+                mapping = _LEGACY_MODE_TO_PLUGIN_MODE.get(mode_str)
                 if mapping is not None:
                     mode, on_error = mapping
                 else:
@@ -382,7 +375,7 @@ class TenantPluginManagerFactory:
         overrides: list[PluginConfigOverride] = []
         for binding in bindings:
             plugin_name = binding.plugin_id
-            mapping = _BINDING_MODE_TO_PLUGIN_MODE.get(binding.mode) if binding.mode else None
+            mapping = _LEGACY_MODE_TO_PLUGIN_MODE.get(binding.mode) if binding.mode else None
             mode: Optional[PluginMode] = mapping[0] if mapping is not None else None
             on_error: Optional[OnError] = mapping[1] if mapping is not None else None
 
