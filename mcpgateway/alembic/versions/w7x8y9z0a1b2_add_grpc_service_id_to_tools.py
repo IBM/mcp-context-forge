@@ -2,7 +2,7 @@
 """add_grpc_service_id_to_tools
 
 Revision ID: w7x8y9z0a1b2
-Revises: w6g7h8i9j0k1
+Revises: aa1b2c3d4e5f
 Create Date: 2026-02-16 13:45:00.000000
 
 """
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "w7x8y9z0a1b2"
-down_revision: Union[str, None] = "x7h8i9j0k1l2"
+down_revision: Union[str, None] = "aa1b2c3d4e5f"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
