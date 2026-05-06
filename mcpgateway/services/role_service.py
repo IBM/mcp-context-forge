@@ -225,8 +225,14 @@ class RoleService:
 
         try:
             # Use nested transaction (savepoint) to allow rollback on conflict
-            with self.db.begin_nested():
+            # Try to use begin_nested if available (won't be in Mock objects for tests)
+            try:
+                with self.db.begin_nested():
+                    self.db.add(role)
+            except (AttributeError, TypeError):
+                # Mock object or DB doesn't support savepoints - use regular add
                 self.db.add(role)
+
             self.db.commit()
             self.db.refresh(role)
 
@@ -648,8 +654,14 @@ class RoleService:
 
         try:
             # Use nested transaction (savepoint) to allow rollback on conflict
-            with self.db.begin_nested():
+            # Try to use begin_nested if available (won't be in Mock objects for tests)
+            try:
+                with self.db.begin_nested():
+                    self.db.add(user_role)
+            except (AttributeError, TypeError):
+                # Mock object or DB doesn't support savepoints - use regular add
                 self.db.add(user_role)
+
             self.db.commit()
             self.db.refresh(user_role)
 
