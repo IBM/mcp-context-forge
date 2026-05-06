@@ -24,7 +24,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { getToken } from "../api/client";
+import { useAuthContext } from "../auth/AuthContext";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -231,17 +231,18 @@ export function AuthGuard({
   publicPrefixes = DEFAULT_PUBLIC_PREFIXES,
 }: AuthGuardProps) {
   const { navigate, path } = useRouter();
-  const authenticated = getToken() !== null;
+  const { isAuthenticated, isLoading } = useAuthContext();
+  const pathname = path.split("?")[0];
 
   const isPublic =
-    publicPaths.includes(path) || publicPrefixes.some((prefix) => path.startsWith(prefix));
+    publicPaths.includes(pathname) || publicPrefixes.some((prefix) => pathname.startsWith(prefix));
 
   useEffect(() => {
-    if (!authenticated && !isPublic) {
+    if (!isLoading && !isAuthenticated && !isPublic) {
       navigate("/app/login");
     }
-  }, [authenticated, isPublic, navigate]);
+  }, [isAuthenticated, isLoading, isPublic, navigate]);
 
-  if (isPublic || !authenticated) return null;
+  if (isPublic || isLoading || !isAuthenticated) return null;
   return <>{children}</>;
 }

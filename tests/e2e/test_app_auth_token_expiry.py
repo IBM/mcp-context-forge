@@ -3,6 +3,7 @@
 Tests that CSRF and JWT tokens expire simultaneously to prevent auth/CSRF desynchronization.
 """
 
+import asyncio
 import os
 import re
 import uuid
@@ -12,8 +13,9 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from mcpgateway.main import app
-from mcpgateway.db import SessionLocal, EmailUser
+from mcpgateway import db as db_mod
+from mcpgateway.admin import rate_limit_storage
+from mcpgateway.db import EmailUser
 from mcpgateway.services.email_auth_service import EmailAuthService
 
 pytestmark = [
@@ -25,10 +27,23 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def clear_auth_rate_limits() -> Generator[None, None, None]:
+    """Keep auth rate limiting isolated between tests."""
+    rate_limit_storage.clear()
+    yield
+    rate_limit_storage.clear()
+
+
+def _set_cookie_headers(response) -> list[str]:
+    """Return separate Set-Cookie headers from an httpx response."""
+    return response.headers.get_list("set-cookie")
+
+
 @pytest.fixture
-def client() -> TestClient:
+def client(app_with_temp_db) -> TestClient:
     """Create test client."""
-    return TestClient(app)
+    return TestClient(app_with_temp_db)
 
 
 @pytest.fixture
@@ -43,7 +58,7 @@ def test_user_credentials() -> Dict[str, str]:
 @pytest.fixture
 def setup_test_user(test_user_credentials: Dict[str, str]) -> Generator[EmailUser, None, None]:
     """Create test user in database."""
-    db = SessionLocal()
+    db = db_mod.SessionLocal()
     user = None
     try:
         # Clean up any existing test user
@@ -54,9 +69,11 @@ def setup_test_user(test_user_credentials: Dict[str, str]) -> Generator[EmailUse
 
         # Create test user
         auth_service = EmailAuthService(db)
-        user = auth_service.create_user(
-            email=test_user_credentials["email"],
-            password=test_user_credentials["password"],
+        user = asyncio.run(
+            auth_service.create_user(
+                email=test_user_credentials["email"],
+                password=test_user_credentials["password"],
+            )
         )
         db.commit()
         yield user
@@ -79,7 +96,7 @@ class TestTokenExpirySynchronization:
         assert response.status_code == 200
 
         # Extract Set-Cookie headers
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
 
         # Find JWT and CSRF cookies
         jwt_cookie = next((c for c in set_cookies if "jwt_token=" in c), None)
@@ -109,7 +126,7 @@ class TestTokenExpirySynchronization:
         assert response.status_code == 200
 
         # Extract Set-Cookie headers
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
         jwt_cookie = next((c for c in set_cookies if "jwt_token=" in c), None)
 
         assert jwt_cookie is not None, "JWT cookie should be set"
@@ -130,7 +147,7 @@ class TestTokenExpirySynchronization:
         assert response.status_code == 200
 
         # Extract CSRF cookie
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
         csrf_cookie = next((c for c in set_cookies if "csrf_token=" in c), None)
 
         assert csrf_cookie is not None, "CSRF cookie should be set"
@@ -146,7 +163,7 @@ class TestTokenExpirySynchronization:
         assert response.status_code == 200
 
         # Extract JWT cookie
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
         jwt_cookie = next((c for c in set_cookies if "jwt_token=" in c), None)
 
         assert jwt_cookie is not None, "JWT cookie should be set"

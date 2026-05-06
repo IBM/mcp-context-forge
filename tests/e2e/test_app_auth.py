@@ -8,6 +8,8 @@ Tests the complete authentication flow including:
 - Cross-tab session persistence
 """
 
+import asyncio
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import time
@@ -15,12 +17,12 @@ import uuid
 from typing import Dict, Generator
 
 import pytest
-from datetime import datetime, timedelta, timezone
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from mcpgateway.main import app
-from mcpgateway.db import SessionLocal, EmailUser
+from mcpgateway import db as db_mod
+from mcpgateway.admin import rate_limit_storage
+from mcpgateway.db import EmailUser
 from mcpgateway.services.email_auth_service import EmailAuthService
 
 pytestmark = [
@@ -32,10 +34,23 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def clear_auth_rate_limits() -> Generator[None, None, None]:
+    """Keep auth rate limiting isolated between tests."""
+    rate_limit_storage.clear()
+    yield
+    rate_limit_storage.clear()
+
+
+def _set_cookie_headers(response) -> list[str]:
+    """Return separate Set-Cookie headers from an httpx response."""
+    return response.headers.get_list("set-cookie")
+
+
 @pytest.fixture
-def client() -> TestClient:
+def client(app_with_temp_db) -> TestClient:
     """Create test client."""
-    return TestClient(app)
+    return TestClient(app_with_temp_db)
 
 
 @pytest.fixture
@@ -50,7 +65,7 @@ def test_user_credentials() -> Dict[str, str]:
 @pytest.fixture
 def setup_test_user(test_user_credentials: Dict[str, str]) -> Generator[EmailUser, None, None]:
     """Create test user in database."""
-    db = SessionLocal()
+    db = db_mod.SessionLocal()
     try:
         # Clean up any existing test user
         existing = db.query(EmailUser).filter_by(email=test_user_credentials["email"]).first()
@@ -60,9 +75,11 @@ def setup_test_user(test_user_credentials: Dict[str, str]) -> Generator[EmailUse
 
         # Create test user
         auth_service = EmailAuthService(db)
-        user = auth_service.create_user(
-            email=test_user_credentials["email"],
-            password=test_user_credentials["password"],
+        user = asyncio.run(
+            auth_service.create_user(
+                email=test_user_credentials["email"],
+                password=test_user_credentials["password"],
+            )
         )
         db.commit()
         yield user
@@ -163,7 +180,7 @@ class TestFullLoginFlow:
         assert logout_response.json()["message"] == "Logged out successfully"
 
         # Verify cookies are cleared in the HTTP response
-        set_cookie_headers = [v for k, v in logout_response.headers.items() if k.lower() == "set-cookie"]
+        set_cookie_headers = _set_cookie_headers(logout_response)
         jwt_clear = next((c for c in set_cookie_headers if "jwt_token=" in c), "")
         csrf_clear = next((c for c in set_cookie_headers if "csrf_token=" in c), "")
         assert jwt_clear, "jwt_token Set-Cookie header missing from logout response"
@@ -333,7 +350,7 @@ class TestCookieSecurityFlags:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
         jwt_cookie = next((c for c in set_cookies if "jwt_token=" in c), "")
 
         assert jwt_cookie, "jwt_token cookie not found in Set-Cookie headers"
@@ -351,7 +368,7 @@ class TestCookieSecurityFlags:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        set_cookies = [v for k, v in response.headers.items() if k.lower() == "set-cookie"]
+        set_cookies = _set_cookie_headers(response)
         csrf_cookie = next((c for c in set_cookies if "csrf_token=" in c), "")
 
         assert csrf_cookie, "csrf_token cookie not found in Set-Cookie headers"
@@ -404,7 +421,7 @@ class TestLockedAccount:
 
     def test_login_with_locked_account_fails(self, client, setup_test_user, test_user_credentials):
         """Locked account login returns 401."""
-        db = SessionLocal()
+        db = db_mod.SessionLocal()
         try:
             user = db.query(EmailUser).filter_by(email=test_user_credentials["email"]).first()
             user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=30)
@@ -421,7 +438,7 @@ class TestLockedAccount:
 
     def test_login_after_lock_expires_succeeds(self, client, setup_test_user, test_user_credentials):
         """Login succeeds once lock expiry has passed."""
-        db = SessionLocal()
+        db = db_mod.SessionLocal()
         try:
             user = db.query(EmailUser).filter_by(email=test_user_credentials["email"]).first()
             user.locked_until = datetime.now(timezone.utc) - timedelta(minutes=5)
