@@ -485,7 +485,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
         }
       }
     },
-    [validateForm, getFormData, createGateway, updateGateway, resetForm, isEditMode],
+    [validateForm, getFormData, createGateway, updateGateway, resetForm, isEditMode, gatewayId],
   );
 
   const isValid = useMemo(() => {
