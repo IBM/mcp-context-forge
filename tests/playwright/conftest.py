@@ -111,7 +111,7 @@ def _goto_admin(page: Page, url: str, base_url: Optional[str] = None) -> None:
     The caller (_ensure_admin_logged_in) already waits for specific UI
     elements (e.g. [data-testid="servers-tab"]) and JS initialisation,
     so networkidle is redundant and stalls under SSE/setInterval traffic.
-    
+
     Args:
         page: Playwright page object
         url: Relative or absolute URL. If relative, base_url must be provided.
@@ -122,7 +122,7 @@ def _goto_admin(page: Page, url: str, base_url: Optional[str] = None) -> None:
         full_url = f"{base_url.rstrip('/')}{url}"
     else:
         full_url = url
-    
+
     try:
         page.goto(full_url, wait_until="domcontentloaded", timeout=60000)
     except Exception as e:

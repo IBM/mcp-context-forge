@@ -72,10 +72,7 @@ def downgrade() -> None:
 
     count = bind.execute(text("SELECT COUNT(*) FROM migration_metadata")).scalar() or 0
     if count:
-        raise RuntimeError(
-            f"Cannot drop migration_metadata — {count} snapshot row(s) remain. "
-            "Downgrade dependent migrations first (e.g., ba202ac1665f)."
-        )
+        raise RuntimeError(f"Cannot drop migration_metadata — {count} snapshot row(s) remain. " "Downgrade dependent migrations first (e.g., ba202ac1665f).")
 
     op.drop_table("migration_metadata")
     print("  ✓ Dropped migration_metadata table")
