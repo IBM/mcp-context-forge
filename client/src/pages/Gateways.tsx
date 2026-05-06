@@ -24,6 +24,7 @@ import { useQuery } from "@/hooks/useQuery";
 import type { VirtualServer, VirtualServersResponse } from "@/types/server";
 
 const DEFAULT_PAGE_SIZE = 12;
+const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_pagination=true`;
 
 interface ActionCard {
   icon: React.ComponentType<{ className?: string }>;
@@ -38,10 +39,6 @@ function formatServerTimestamp(value?: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
-}
-
-function getServerTags(server: VirtualServer) {
-  return server.tags;
 }
 
 function ConnectSourceCard({ onAction }: { onAction: () => void }) {
@@ -103,6 +100,7 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
                 <DropdownMenuItem>View details</DropdownMenuItem>
                 <DropdownMenuItem>Test connection</DropdownMenuItem>
                 <DropdownMenuItem>Edit server</DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -127,7 +125,7 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
         </div>
         <div className="flex items-center gap-2 overflow-hidden">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-            {getServerTags(server).map((tag) => (
+            {server.tags.map((tag) => (
               <Badge
                 key={tag}
                 variant="outline"
@@ -218,48 +216,46 @@ function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) {
 
 export function Gateways() {
   const { navigate } = useRouter();
-  const queryPath = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("limit", DEFAULT_PAGE_SIZE.toString());
-    params.set("include_pagination", "true");
-    return `/servers?${params.toString()}`;
-  }, []);
-  const { data, error, isLoading } = useQuery<VirtualServersResponse>(queryPath);
+  const { data, error, isLoading } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
   const servers = data?.servers ?? [];
-  const actionCards: ActionCard[] = [
-    {
-      icon: MCPIcon,
-      title: "MCP server",
-      description: "Register an endpoint implementing the Model Context Protocol",
-      buttonText: "+ Connect",
-      onAction: () => navigate("/app/servers?openForm=true"),
-    },
-    {
-      icon: Bot,
-      title: "AI agent",
-      description: "Add an agent over A2A, OpenAI, or Anthropic protocols",
-      buttonText: "+ Connect",
-      onAction: () => navigate("/app/agents"),
-    },
-    {
-      icon: Code,
-      title: "REST API",
-      description: "Wrap a HTTP endpoint as a MCP tool",
-      buttonText: "+ Connect",
-      onAction: () => {
-        console.log("REST API gateway creation not yet implemented");
+
+  const actionCards: ActionCard[] = useMemo(
+    () => [
+      {
+        icon: MCPIcon,
+        title: "MCP server",
+        description: "Register an endpoint implementing the Model Context Protocol",
+        buttonText: "+ Connect",
+        onAction: () => navigate("/app/servers?openForm=true"),
       },
-    },
-    {
-      icon: Blocks,
-      title: "gRPC",
-      description: "Translate a gRPC endpoint as a MCP tool.",
-      buttonText: "+ Connect",
-      onAction: () => {
-        console.log("gRPC gateway creation not yet implemented");
+      {
+        icon: Bot,
+        title: "AI agent",
+        description: "Add an agent over A2A, OpenAI, or Anthropic protocols",
+        buttonText: "+ Connect",
+        onAction: () => navigate("/app/agents"),
       },
-    },
-  ];
+      {
+        icon: Code,
+        title: "REST API",
+        description: "Wrap a HTTP endpoint as a MCP tool",
+        buttonText: "+ Connect",
+        onAction: () => {
+          console.log("REST API gateway creation not yet implemented");
+        },
+      },
+      {
+        icon: Blocks,
+        title: "gRPC",
+        description: "Translate a gRPC endpoint as a MCP tool.",
+        buttonText: "+ Connect",
+        onAction: () => {
+          console.log("gRPC gateway creation not yet implemented");
+        },
+      },
+    ],
+    [navigate],
+  );
 
   if (isLoading) {
     return (
