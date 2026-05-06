@@ -70,7 +70,6 @@ import orjson
 from sqlalchemy import text
 
 # First-Party
-from mcpgateway import __version__
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 from mcpgateway.db import engine
@@ -1163,6 +1162,9 @@ def _build_payload(
             application details, platform info, database and Redis status, settings,
             environment variables, and system metrics.
     """
+    # First-Party
+    from mcpgateway import __version__  # pylint: disable=import-outside-toplevel
+
     db_ver, db_ok = _database_version()
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

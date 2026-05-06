@@ -140,6 +140,54 @@ class TestSecurityHeaders:
             f"Got same nonce '{nonce1}' for both requests, indicating a security vulnerability."
         )
 
+    def test_csp_nonce_format_and_entropy(self, client: TestClient):
+        """Test that CSP nonces have proper format and sufficient entropy.
+
+        This verifies that nonces are:
+        1. Present in every response
+        2. Base64url encoded (URL-safe)
+        3. Have sufficient length (≥20 chars for 128 bits of entropy)
+        4. Contain only valid base64url characters
+        """
+        # Standard
+        import re
+
+        response = client.get("/health")
+        assert response.status_code == 200
+
+        # Extract nonce from CSP header
+        csp_header = response.headers.get("Content-Security-Policy", "")
+        assert csp_header, "CSP header must be present"
+
+        nonce_match = re.search(r"'nonce-([^']+)'", csp_header)
+        assert nonce_match, "CSP header must contain nonce directive"
+        nonce = nonce_match.group(1)
+
+        # Verify nonce format (base64url: alphanumeric, -, _)
+        assert re.match(r'^[A-Za-z0-9_-]+$', nonce), (
+            f"Nonce must be base64url encoded (alphanumeric, -, _). Got: {nonce}"
+        )
+
+        # Verify sufficient entropy (≥20 chars for 128 bits)
+        assert len(nonce) >= 20, (
+            f"Nonce must be at least 20 characters for 128 bits of entropy. Got {len(nonce)} chars: {nonce}"
+        )
+
+        # Verify no unsafe directives in script-src
+        script_src_match = re.search(r"script-src ([^;]+)", csp_header)
+        assert script_src_match, "CSP must contain script-src directive"
+        script_src = script_src_match.group(1)
+
+        assert "'unsafe-inline'" not in script_src, (
+            "script-src must not contain 'unsafe-inline' (pentesting requirement)"
+        )
+        assert "'unsafe-eval'" not in script_src, (
+            "script-src must not contain 'unsafe-eval' (pentesting requirement)"
+        )
+        assert "'unsafe-hashes'" not in script_src, (
+            "'unsafe-hashes' without accompanying hash values is a no-op and should be removed"
+        )
+
 
 class TestCORSConfiguration:
     """Test CORS configuration and behavior."""

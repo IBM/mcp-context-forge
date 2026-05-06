@@ -319,6 +319,10 @@
     </script>
     {% endif %}
     <!-- Configure HTMX to use CSP nonce for inline event handlers BEFORE bundle loads -->
+    <!-- CRITICAL LOAD-ORDER DEPENDENCY: This script MUST execute before admin.js bundle loads.
+         admin.js reads window.htmxConfig.inlineScriptNonce to configure HTMX.
+         If script tags are reordered, HTMX will silently lose the nonce and all
+         HTMX-generated inline scripts will be blocked by CSP. -->
     <script nonce="{{ csp_nonce(request) }}">
       // HTMX needs the nonce configured before it processes any elements
       // This allows hx-on:* attributes to work with strict CSP

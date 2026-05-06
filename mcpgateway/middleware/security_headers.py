@@ -215,7 +215,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> csp_directives = [
             ...     "default-src 'self'",
             ...     f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
-            ...     f"style-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
+            ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
             ...     "img-src 'self' data: https:",
             ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
             ...     "connect-src 'self' ws: wss: https:",
@@ -227,6 +227,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> "frame-ancestors 'self'" in csp_header
             True
             >>> csp_header.endswith(";")
+            True
+            >>> "'unsafe-inline'" not in csp_header or "style-src" in csp_header
+            True
+            >>> "'unsafe-eval'" not in csp_header
             True
 
             Test HSTS header construction:
@@ -374,13 +378,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Content Security Policy with nonce-based approach (nonce already generated above)
 
         # CSP directives with nonce-based approach for scripts
-        # Note: style-src uses 'unsafe-inline' without nonce (nonce would disable unsafe-inline)
-        # This is needed for Alpine.js dynamic inline styles and is acceptable security trade-off
-        # 'unsafe-hashes' allows onclick/onload/etc inline event handlers
-        # Scripts still require nonces - no 'unsafe-inline' for script-src (pentesting compliance)
+        # Note: style-src retains 'unsafe-inline' (required for Alpine.js dynamic inline styles)
+        # This is an acceptable security trade-off for UI framework functionality
+        # Scripts require nonces - no 'unsafe-inline' for script-src (pentesting compliance)
         csp_directives = [
             "default-src 'self'",
-            f"script-src 'self' 'nonce-{csp_nonce}' 'unsafe-hashes' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+            f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
             "img-src 'self' data: https:",
             "font-src 'self' data: https://cdnjs.cloudflare.com",

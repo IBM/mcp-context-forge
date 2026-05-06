@@ -496,7 +496,7 @@ import {
     setTimeout(initializeCACertUpload, 500);
 
     // Re-initialize when switching to gateways tab
-    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
+    const gatewaysTab = document.querySelector('.sidebar-link[data-tab="gateways"]');
     if (gatewaysTab) {
       gatewaysTab.addEventListener("click", function () {
         setTimeout(initializeCACertUpload, 100);
