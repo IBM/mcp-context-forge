@@ -24,7 +24,7 @@ Context: Issues #4434, #4435 - URL hardening consolidation.
 
 # Standard
 import re
-from urllib.parse import ParseResult, unquote
+from urllib.parse import unquote
 
 # Regex patterns for detecting non-standard escape sequences
 _PERCENT_U_ESCAPE_RE = re.compile(r"%[Uu][0-9a-fA-F]{4}")
