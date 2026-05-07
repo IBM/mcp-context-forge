@@ -257,7 +257,8 @@ describe("Tools", () => {
     expect(gridContainer).toHaveClass("grid");
     expect(gridContainer).toHaveClass("grid-cols-1");
     expect(gridContainer).toHaveClass("lg:grid-cols-2");
-    expect(gridContainer).toHaveClass("xl:grid-cols-3");
+    expect(gridContainer).toHaveClass("xl:grid-cols-2");
+    expect(gridContainer).toHaveClass("2xl:grid-cols-3");
   });
 
   it("handles tools without gateway slug (standalone)", async () => {
