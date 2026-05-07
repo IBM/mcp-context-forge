@@ -78,7 +78,7 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _ENV.get(key) or default
 
 
-JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 JWT_ALGORITHM = _cfg("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _cfg("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")

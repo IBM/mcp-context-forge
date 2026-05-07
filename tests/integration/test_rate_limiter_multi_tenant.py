@@ -99,8 +99,61 @@ def _set_plugin_mode(mode: str) -> None:
     resp.raise_for_status()
 
 
+def _mcp_initialize_session(server_id: str) -> str | None:
+    """Run the MCP streamable-HTTP initialize + initialized handshake.
+
+    The current gateway requires a Mcp-Session-Id header on
+    ``POST /servers/<id>/mcp`` for any non-initialize call. Returns the
+    session id from the gateway's response, or None on handshake failure.
+    """
+    sse_headers = {**_fresh_headers(), "Accept": "application/json, text/event-stream"}
+    init_body = {
+        "jsonrpc": "2.0",
+        "id": "init",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "rate-limiter-multi-tenant-test", "version": "0"},
+        },
+    }
+    try:
+        resp = requests.post(
+            f"{GATEWAY_URL}/servers/{server_id}/mcp",
+            json=init_body,
+            headers=sse_headers,
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+    sid = resp.headers.get("mcp-session-id")
+    if not sid:
+        return None
+    try:
+        requests.post(
+            f"{GATEWAY_URL}/servers/{server_id}/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers={**sse_headers, "Mcp-Session-Id": sid},
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
+    return sid
+
+
 def _invoke_tool_once(server_id: str, tool_name: str) -> int:
-    """Make a single MCP tool invocation and return its HTTP status."""
+    """Make a single MCP tool invocation and return its HTTP status.
+
+    Performs an MCP initialize + initialized handshake first to obtain a
+    session id, then issues the tools/call request with that id in the
+    ``Mcp-Session-Id`` header (required by the gateway's session-aware
+    transport).
+    """
+    sid = _mcp_initialize_session(server_id)
+    if sid is None:
+        return 0  # caller asserts == 200, so 0 surfaces as a clear handshake failure
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -110,10 +163,15 @@ def _invoke_tool_once(server_id: str, tool_name: str) -> int:
             "arguments": {"message": "multi-tenant-test"} if "echo" in tool_name else {},
         },
     }
+    headers = {
+        **_fresh_headers(),
+        "Accept": "application/json, text/event-stream",
+        "Mcp-Session-Id": sid,
+    }
     resp = requests.post(
         f"{GATEWAY_URL}/servers/{server_id}/mcp",
         json=payload,
-        headers=_fresh_headers(),
+        headers=headers,
         timeout=15,
     )
     return resp.status_code

@@ -186,19 +186,51 @@ def _auto_detect(host: str) -> None:
             logger.warning("Server auto-detect failed: %s", exc)
 
     if _server_id:
+        # The gateway's session-aware MCP transport requires an `Mcp-Session-Id`
+        # header on every non-initialize POST to /servers/<id>/mcp. Run the
+        # initialize handshake here so the auto-detect tools/list call (and any
+        # downstream call that re-uses this code path) carries a valid session.
+        sse_headers = {
+            **headers,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        sid: str | None = None
         try:
-            payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
-            resp = requests.post(
+            init_resp = requests.post(
                 f"{host}/servers/{_server_id}/mcp",
-                json=payload,
-                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "init",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "clientInfo": {"name": "rate-limiter-loadtest-detect", "version": "0"},
+                    },
+                },
+                headers=sse_headers,
                 timeout=10,
             )
-            if resp.status_code == 200:
-                result = resp.json().get("result", {})
-                _tool_names = [t["name"] for t in result.get("tools", [])]
+            if init_resp.status_code == 200:
+                sid = init_resp.headers.get("mcp-session-id")
         except Exception as exc:
-            logger.warning("Tool auto-detect failed: %s", exc)
+            logger.warning("MCP initialize for tool auto-detect failed: %s", exc)
+
+        if sid:
+            try:
+                payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+                resp = requests.post(
+                    f"{host}/servers/{_server_id}/mcp",
+                    json=payload,
+                    headers={**sse_headers, "Mcp-Session-Id": sid},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    result = resp.json().get("result", {})
+                    _tool_names = [t["name"] for t in result.get("tools", [])]
+            except Exception as exc:
+                logger.warning("Tool auto-detect failed: %s", exc)
 
     logger.info("Rate limiter test: server=%s  tools=%s", _server_id, _tool_names)
 
