@@ -1056,6 +1056,7 @@ class ToolService(BaseService):
             "custom_name_slug": tool.custom_name_slug,
             "display_name": tool.display_name,
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
+            "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
@@ -4562,6 +4563,7 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
         if tool_query_mapping is not None:
             tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
@@ -5439,6 +5441,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5622,6 +5627,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5816,6 +5824,35 @@ class ToolService(BaseService):
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                elif tool_integration_type == "gRPC" and tool_grpc_service_id:
+                    # gRPC tool invocation using the registered gRPC service
+                    try:
+                        # First-Party
+                        # NOTE: lazy import to avoid circular dependency
+                        from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
+
+                        grpc_manager = GrpcServiceManager()
+                        with fresh_db_session() as grpc_db:
+                            response = await asyncio.wait_for(
+                                grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {}, timeout=effective_timeout),
+                                timeout=effective_timeout,
+                            )
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                        # Re-raise so the LATER ``except Exception`` below cannot swallow cancellation.
+                        # Removing this clause would re-introduce the swallowed-cancellation bug from
+                        # PR #3202 review B7.
+                        raise
+                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
+                        if plugin_manager:
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
+                    except Exception as grpc_err:
+                        logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -5898,6 +5935,9 @@ class ToolService(BaseService):
                         skip_pre_invoke,
                         "timeout",
                     )
+                raise
+            except asyncio.CancelledError:
+                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)

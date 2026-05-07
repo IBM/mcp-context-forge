@@ -1518,6 +1518,7 @@ class ToolRead(BaseModelWithConfigDict):
     enabled: bool
     reachable: bool
     gateway_id: Optional[str]
+    grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
     execution_count: Optional[int] = Field(None)
     metrics: Optional[ToolMetrics] = Field(None)
     name: str
