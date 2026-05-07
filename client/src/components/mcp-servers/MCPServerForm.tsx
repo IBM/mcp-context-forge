@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { AdvancedSettings } from "@/components/mcp-servers/AdvancedSettings";
+import { AdvancedSettings, type CustomHeader } from "@/components/mcp-servers/AdvancedSettings";
 import { useRouter } from "@/router";
 
 type TransportType = "sse" | "streamable-http";
@@ -28,6 +28,20 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
   const [passthroughHeaders, setPassthroughHeaders] = useState("");
   const [basicAuthUsername, setBasicAuthUsername] = useState("");
   const [basicAuthPassword, setBasicAuthPassword] = useState("");
+  const [bearerToken, setBearerToken] = useState("");
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+  const [oauthClientId, setOAuthClientId] = useState("");
+  const [oauthClientSecret, setOAuthClientSecret] = useState("");
+  const [oauthTokenUrl, setOAuthTokenUrl] = useState("");
+  const [oauthGrantType, setOAuthGrantType] = useState("client_credentials");
+  const [oauthIssuerUrl, setOAuthIssuerUrl] = useState("");
+  const [oauthRedirectUri, setOAuthRedirectUri] = useState("");
+  const [oauthAuthorizationUrl, setOAuthAuthorizationUrl] = useState("");
+  const [oauthScopes, setOAuthScopes] = useState("");
+  const [oauthStoreTokens, setOAuthStoreTokens] = useState(true);
+  const [oauthAutoRefresh, setOAuthAutoRefresh] = useState(true);
+  const [queryParamName, setQueryParamName] = useState("");
+  const [queryParamApiKey, setQueryParamApiKey] = useState("");
 
   const resetForm = () => {
     setTransport("streamable-http");
@@ -41,6 +55,20 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
     setPassthroughHeaders("");
     setBasicAuthUsername("");
     setBasicAuthPassword("");
+    setBearerToken("");
+    setCustomHeaders([]);
+    setOAuthClientId("");
+    setOAuthClientSecret("");
+    setOAuthTokenUrl("");
+    setOAuthGrantType("client_credentials");
+    setOAuthIssuerUrl("");
+    setOAuthRedirectUri("");
+    setOAuthAuthorizationUrl("");
+    setOAuthScopes("");
+    setOAuthStoreTokens(true);
+    setOAuthAutoRefresh(true);
+    setQueryParamName("");
+    setQueryParamApiKey("");
   };
 
   const handleCancel = () => {
@@ -191,6 +219,34 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   basicAuthPassword={basicAuthPassword}
                   onBasicAuthUsernameChange={setBasicAuthUsername}
                   onBasicAuthPasswordChange={setBasicAuthPassword}
+                  bearerToken={bearerToken}
+                  onBearerTokenChange={setBearerToken}
+                  customHeaders={customHeaders}
+                  onCustomHeadersChange={setCustomHeaders}
+                  oauthClientId={oauthClientId}
+                  oauthClientSecret={oauthClientSecret}
+                  oauthTokenUrl={oauthTokenUrl}
+                  oauthGrantType={oauthGrantType}
+                  oauthIssuerUrl={oauthIssuerUrl}
+                  oauthRedirectUri={oauthRedirectUri}
+                  oauthAuthorizationUrl={oauthAuthorizationUrl}
+                  oauthScopes={oauthScopes}
+                  oauthStoreTokens={oauthStoreTokens}
+                  oauthAutoRefresh={oauthAutoRefresh}
+                  onOAuthClientIdChange={setOAuthClientId}
+                  onOAuthClientSecretChange={setOAuthClientSecret}
+                  onOAuthTokenUrlChange={setOAuthTokenUrl}
+                  onOAuthGrantTypeChange={setOAuthGrantType}
+                  onOAuthIssuerUrlChange={setOAuthIssuerUrl}
+                  onOAuthRedirectUriChange={setOAuthRedirectUri}
+                  onOAuthAuthorizationUrlChange={setOAuthAuthorizationUrl}
+                  onOAuthScopesChange={setOAuthScopes}
+                  onOAuthStoreTokensChange={setOAuthStoreTokens}
+                  onOAuthAutoRefreshChange={setOAuthAutoRefresh}
+                  queryParamName={queryParamName}
+                  queryParamApiKey={queryParamApiKey}
+                  onQueryParamNameChange={setQueryParamName}
+                  onQueryParamApiKeyChange={setQueryParamApiKey}
                   oneTimeAuth={oneTimeAuth}
                   onOneTimeAuthChange={setOneTimeAuth}
                   passthroughHeaders={passthroughHeaders}
