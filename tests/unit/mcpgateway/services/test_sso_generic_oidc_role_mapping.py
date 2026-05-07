@@ -49,6 +49,7 @@ def generic_provider():
         auto_create_users=True,
         provider_metadata={
             "groups_claim": "groups",
+            "admin_groups": ["platform-admins", "super-admins"],
             "role_mappings": {
                 "developers": "developer",
                 "team-leads": "team_admin",
