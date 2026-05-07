@@ -24,7 +24,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
     <Card size="sm">
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-[#FF5AFF]">
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-fuchsia-400">
             <Wrench className="h-3.5 w-3.5 text-black" />
           </div>
 
@@ -36,8 +36,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
               {group.tools.length} {group.tools.length === 1 ? "tool" : "tools"}
             </span>
             <span
-              className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
-              style={{ backgroundColor: group.isActive ? "#33D499" : "#6B7280" }}
+              className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-emerald-500" : "bg-gray-500"}`}
             />
           </div>
 
@@ -58,8 +57,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
           {group.tools.map((tool) => (
             <span
               key={tool.id}
-              className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-none"
-              style={{ backgroundColor: "#26262A", color: "#ffffff" }}
+              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white"
               title={tool.description}
             >
               {tool.name}
@@ -80,8 +78,8 @@ function AddToolsCard({ onAddServer }: { onAddServer: () => void }) {
     >
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-white dark:bg-white shadow-sm">
-            <Plus className="h-3.5 w-3.5 text-neutral-800" />
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-neutral-900 shadow-sm dark:bg-white">
+            <Plus className="h-3.5 w-3.5 text-white dark:text-neutral-900" />
           </div>
           <span className="text-sm font-semibold text-neutral-900 dark:text-white">Add tools</span>
         </div>
@@ -129,7 +127,7 @@ export function Tools() {
       )}
 
       {!isLoading && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
           <AddToolsCard onAddServer={() => {}} />
           {groups.map((group) => (
             <ToolGroupCard key={group.gatewaySlug} group={group} />

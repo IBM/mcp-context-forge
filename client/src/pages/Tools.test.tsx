@@ -356,5 +356,3 @@ describe("Tools", () => {
     expect(screen.getByText("Error loading tools")).toBeInTheDocument();
   });
 });
-
-// Made with Bob
