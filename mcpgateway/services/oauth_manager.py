@@ -403,6 +403,17 @@ class OAuthManager:
                 redacted[key] = value
         return redacted
 
+    @staticmethod
+    def _build_basic_auth_header(client_id: str, client_secret: str) -> str:
+        """Build an RFC 6749 Section 2.3.1 Basic Auth header value.
+
+        Client credentials are first URL-encoded per RFC 6749 Appendix B,
+        then combined as ``client_id:client_secret`` and base64-encoded.
+        """
+        credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
+        encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+        return f"Basic {encoded_credentials}"
+
     async def _client_credentials_flow(
         self,
         credentials: Dict[str, Any],
@@ -439,11 +450,7 @@ class OAuthManager:
         headers = {}
 
         if use_basic_auth:
-            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
-            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
-            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
-            headers["Authorization"] = f"Basic {encoded_credentials}"
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
         else:
             # Default: client credentials in POST body (client_secret_post)
@@ -1439,11 +1446,7 @@ class OAuthManager:
         headers = {}
 
         if use_basic_auth and client_secret:
-            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
-            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
-            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
-            headers["Authorization"] = f"Basic {encoded_credentials}"
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
         elif use_basic_auth and not client_secret:
             # Public PKCE clients can't use Basic Auth (no secret to encode)
@@ -1552,11 +1555,7 @@ class OAuthManager:
         headers = {}
 
         if use_basic_auth and client_secret:
-            # RFC 6749 Section 2.3.1: HTTP Basic Authentication
-            # URL-encode credentials per RFC 6749 Appendix B before base64 encoding
-            credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
-            encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
-            headers["Authorization"] = f"Basic {encoded_credentials}"
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
             logger.debug("Using HTTP Basic Auth for token endpoint authentication")
         elif use_basic_auth and not client_secret:
             # Misconfiguration: Basic Auth requested but no secret available
