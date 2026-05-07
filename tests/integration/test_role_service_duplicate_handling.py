@@ -156,3 +156,180 @@ async def test_migration_cleanup_removes_inactive_duplicates(test_db: Session, t
     assert len(all_after) == 1
     assert all_after[0].is_active is True
     assert all_after[0].id == active.id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_role_creation_handles_integrity_error(test_db: Session):
+    """Test that concurrent role creation handles IntegrityError gracefully.
+
+    This tests the race condition handling in create_role() lines 242-254.
+    Simulates the race by checking for the role returning None, then during commit
+    we get an IntegrityError, and refetch returns the existing role.
+    """
+    from unittest.mock import AsyncMock, patch
+    from sqlalchemy.exc import IntegrityError
+
+    role_name = f"concurrent-role-{uuid.uuid4().hex[:8]}"
+    role_service = RoleService(test_db)
+
+    # First, create a role to simulate the "winner" of the race
+    winner_role = await role_service.create_role(
+        name=role_name,
+        description="Winner role",
+        scope="global",
+        permissions=["tools.read"],
+        created_by="admin@example.com"
+    )
+    assert winner_role is not None
+
+    # Now simulate the rac scenario:
+    # - First get_role_by_name() check (lines 198-200) returns None (race window)
+    # - Commit fails with IntegrityError (line 236)
+    # - Rollback happens (line 244)
+    # - Second get_role_by_name() refetch (line 248) returns the winner
+
+    call_count = [0]
+    original_get = role_service.get_role_by_name
+
+    async def mock_get_role(name: str, scope: str):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call during duplicate check - return None (race window)
+            return None
+        # Second call after rollback - return the actual role
+        return await original_get(name, scope)
+
+    # Patch get_role_by_name and simulate IntegrityError on commit
+    with patch.object(role_service, 'get_role_by_name', side_effect=mock_get_role):
+        # Also patch begin_nested to skip savepoint logic and go straight to add
+        with patch.object(test_db, 'begin_nested', side_effect=AttributeError("Mocked")):
+            # Patch add to raise IntegrityError when called
+            original_add = test_db.add
+
+            def mock_add(instance):
+                original_add(instance)
+                # After add, when commit is called, it should raise
+                test_db.commit = lambda: (_ for _ in ()).throw(IntegrityError("UNIQUE constraint failed: roles.name, roles.scope", {}, None))
+
+            with patch.object(test_db, 'add', side_effect=mock_add):
+                result = await role_service.create_role(
+                    name=role_name,
+                    description="Loser role",
+                    scope="global",
+                    permissions=["tools.read"],
+                    created_by="other@example.com"
+                )
+
+    # Should have refetched and returned the winner's role
+    assert result is not None
+    assert result.id == winner_role.id
+    assert result.description == "Winner role"
+    assert call_count[0] == 2  # Called twice: initial check + refetch
+
+
+@pytest.mark.asyncio
+async def test_concurrent_role_assignment_handles_integrity_error(test_db: Session, test_role: Role, test_user: EmailUser):
+    """Test that concurrent role assignment handles IntegrityError gracefully.
+
+    This tests the race condition handling in assign_role_to_user() lines 671-683.
+    """
+    from unittest.mock import patch
+    from sqlalchemy.exc import IntegrityError
+
+    role_service = RoleService(test_db)
+
+    # First, create an assignment to simulate the "winner" of the race
+    winner_assignment = await role_service.assign_role_to_user(
+        user_email=test_user.email,
+        role_id=test_role.id,
+        scope="team",
+        scope_id="team-race",
+        granted_by="admin@example.com"
+    )
+    assert winner_assignment is not None
+
+    # Now simulate the race scenario similar to role creation
+    call_count = [0]
+    original_get = role_service.get_user_role_assignment
+
+    async def mock_get_assignment(user_email: str, role_id: str, scope: str, scope_id: str | None):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # First call during duplicate check - return None (race window)
+            return None
+        # Second call after rollback - return the actual assignment
+        return await original_get(user_email, role_id, scope, scope_id)
+
+    with patch.object(role_service, 'get_user_role_assignment', side_effect=mock_get_assignment):
+        with patch.object(test_db, 'begin_nested', side_effect=AttributeError("Mocked")):
+            original_add = test_db.add
+
+            def mock_add(instance):
+                original_add(instance)
+                test_db.commit = lambda: (_ for _ in ()).throw(IntegrityError("UNIQUE constraint failed", {}, None))
+
+            with patch.object(test_db, 'add', side_effect=mock_add):
+                result = await role_service.assign_role_to_user(
+                    user_email=test_user.email,
+                    role_id=test_role.id,
+                    scope="team",
+                    scope_id="team-race",
+                    granted_by="other@example.com"
+                )
+
+    # Should have refetched and returned the winner's assignment
+    assert result is not None
+    assert result.id == winner_assignment.id
+    assert result.granted_by == "admin@example.com"
+    assert call_count[0] == 2  # Called twice: initial check + refetch
+
+
+@pytest.mark.asyncio
+async def test_integrity_error_with_no_existing_role_raises_error(test_db: Session):
+    """Test that IntegrityError without finding existing role raises ValueError.
+
+    This tests the error path in create_role() lines 253-254.
+    """
+    from unittest.mock import patch, AsyncMock
+    from sqlalchemy.exc import IntegrityError
+
+    role_name = f"mystery-role-{uuid.uuid4().hex[:8]}"
+    role_service = RoleService(test_db)
+
+    # Mock db.commit to raise IntegrityError
+    with patch.object(test_db, 'commit', side_effect=IntegrityError("Unknown constraint", {}, None)):
+        # Mock get_role_by_name to return None (role mysteriously not found)
+        with patch.object(role_service, 'get_role_by_name', new=AsyncMock(return_value=None)):
+            with pytest.raises(ValueError, match="Failed to create or fetch role"):
+                await role_service.create_role(
+                    name=role_name,
+                    description="Mystery role",
+                    scope="global",
+                    permissions=["tools.read"],
+                    created_by="admin@example.com"
+                )
+
+
+@pytest.mark.asyncio
+async def test_integrity_error_with_no_existing_assignment_raises_error(test_db: Session, test_role: Role, test_user: EmailUser):
+    """Test that IntegrityError without finding existing assignment raises ValueError.
+
+    This tests the error path in assign_role_to_user() lines 682-683.
+    """
+    from unittest.mock import patch, AsyncMock
+    from sqlalchemy.exc import IntegrityError
+
+    role_service = RoleService(test_db)
+
+    # Mock db.commit to raise IntegrityError
+    with patch.object(test_db, 'commit', side_effect=IntegrityError("Unknown constraint", {}, None)):
+        # Mock get_user_role_assignment to return None (assignment mysteriously not found)
+        with patch.object(role_service, 'get_user_role_assignment', new=AsyncMock(return_value=None)):
+            with pytest.raises(ValueError, match="Failed to create or fetch role assignment"):
+                await role_service.assign_role_to_user(
+                    user_email=test_user.email,
+                    role_id=test_role.id,
+                    scope="team",
+                    scope_id="team-999",
+                    granted_by="admin@example.com"
+                )
