@@ -1749,21 +1749,17 @@ class Settings(BaseSettings):
     @classmethod
     def validate_siem_url_allowlist(cls, v: List[str]) -> List[str]:
         """Reject trivially-permissive allowlist entries and warn on empty allowlist."""
-        import re as _re
-
         validated = []
         for entry in v:
             entry = entry.strip()
             if not entry:
                 continue
             # Reject bare protocol prefixes that match everything (e.g., "https://", "http://")
-            if _re.match(r"^https?:///?$", entry):
+            if re.match(r"^https?:///?$", entry):
                 logger.warning("SIEM URL allowlist entry '%s' is a bare protocol prefix that matches all URLs — rejecting", entry)
                 continue
             # Reject entries with :// but no hostname (e.g., "https:///")
             if "://" in entry:
-                from urllib.parse import urlparse
-
                 parsed = urlparse(entry)
                 if not parsed.hostname:
                     logger.warning("SIEM URL allowlist entry '%s' has no hostname — rejecting", entry)
