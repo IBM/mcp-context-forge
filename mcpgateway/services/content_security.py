@@ -16,7 +16,6 @@ from issue #538.
 import hashlib
 import logging
 import re
-import sys
 import threading
 from typing import List, Optional, Union
 
@@ -49,10 +48,22 @@ except ImportError:
     content_size_violations_counter = NoOpCounter()
     content_type_violations_counter = NoOpCounter()
 
-# re.search() gained a `timeout` keyword in Python 3.13 that actually aborts
-# pathological regex execution. Older versions only have the thread.join
-# fallback, which is a soft timeout (see _regex_search_with_timeout).
-_HAS_NATIVE_REGEX_TIMEOUT: bool = sys.version_info >= (3, 13)
+
+# Some Python builds may expose a native ``timeout`` keyword for regex search,
+# but support is a runtime capability, not something we can safely infer from
+# ``sys.version_info``.  Python 3.13.11, for example, still raises TypeError for
+# ``re.Pattern.search(..., timeout=...)``.  Probe the actual stdlib regex engine
+# once at import time and fall back to the soft thread-join timeout when absent.
+def _supports_native_regex_timeout() -> bool:
+    """Return whether stdlib regex search accepts the ``timeout`` keyword."""
+    try:
+        re.compile("x").search("x", timeout=0.001)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
+    except TypeError:
+        return False
+    return True
+
+
+_HAS_NATIVE_REGEX_TIMEOUT: bool = _supports_native_regex_timeout()
 
 logger = logging.getLogger(__name__)
 
