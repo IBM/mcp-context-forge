@@ -357,6 +357,17 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
     if user_email == "unknown":
         user_email = None
 
+    # SECURITY: Ensure user_email is a string or None, never a dict or other object.
+    # This prevents passing entire user dicts to SQL queries.
+    if user_email is not None and not isinstance(user_email, str):
+        # Log the issue for debugging but don't expose internal details
+        # Standard
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning("get_rpc_filter_context: user_email extraction returned non-string type, setting to None")
+        user_email = None
+
     token_teams = get_token_teams_from_request(request)
 
     # SECURITY: admin bit MUST come from the token, not the DB user, so a
