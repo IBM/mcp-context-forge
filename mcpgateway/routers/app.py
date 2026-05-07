@@ -36,55 +36,38 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 logger = logging.getLogger(__name__)
 
 # Module-level constants
-APP_COOKIE_PATH = "/"
+JWT_COOKIE_PATH = "/"
 
 
-def _validate_token_expiry_sync() -> None:
-    """Validate that CSRF and JWT tokens have synchronized expiry times.
+def _validate_csrf_token_length() -> None:
+    """Validate CSRF token length at startup.
 
-    This is a critical security check performed at application startup to ensure
-    that CSRF tokens and JWT session tokens expire simultaneously. Mismatched
-    expiry times can lead to auth/CSRF desynchronization vulnerabilities.
+    This is a security check performed at application startup to ensure
+    CSRF tokens are generated with the correct length (32 bytes = 43 chars base64url).
 
-    Both token types use settings.token_expiry as their single source of truth:
-    - JWT expiry: Set via exp claim in create_access_token() (email_auth.py)
-    - CSRF expiry: Set via max_age in set_csrf_cookie() (csrf.py)
+    Token expiry synchronization between JWT and CSRF is validated by E2E tests
+    (test_app_auth_token_expiry.py) which verify that both cookies have identical
+    max_age values derived from settings.token_expiry.
 
     Raises:
-        ValueError: If token expiry configuration is invalid or mismatched.
+        ValueError: If CSRF token length is misconfigured.
             This will cause application startup to fail (intentional fail-fast).
-
-    Examples:
-        >>> # Called during application startup in main.py
-        >>> _validate_token_expiry_sync()  # Passes if config is valid
-        >>> # If TOKEN_EXPIRY is misconfigured, raises ValueError
     """
-    # Verify both modules reference the same config value
-    # This is a compile-time check - both modules import settings.token_expiry
-    # If either module hardcoded a different value, this would catch it
-    from mcpgateway.routers.email_auth import TOKEN_EXPIRY_MINUTES
     from mcpgateway.utils.csrf import CSRF_TOKEN_LENGTH
-
-    if TOKEN_EXPIRY_MINUTES != settings.token_expiry:
-        raise ValueError(
-            f"JWT token expiry mismatch: email_auth.TOKEN_EXPIRY_MINUTES={TOKEN_EXPIRY_MINUTES} "
-            f"but settings.token_expiry={settings.token_expiry}. "
-            f"Both must use the same value to prevent auth/CSRF desynchronization."
-        )
 
     # CSRF token length validation (security check)
     expected_csrf_length = 43  # 32 bytes base64url = 43 chars
     if CSRF_TOKEN_LENGTH != expected_csrf_length:
-        raise ValueError(f"CSRF token length mismatch: expected {expected_csrf_length} chars, " f"got {CSRF_TOKEN_LENGTH}. This indicates a configuration error in csrf.py")
+        raise ValueError(
+            f"CSRF token length mismatch: expected {expected_csrf_length} chars, "
+            f"got {CSRF_TOKEN_LENGTH}. This indicates a configuration error in csrf.py"
+        )
 
-    logger.debug(
-        "Token expiry validation passed: JWT and CSRF tokens synchronized at %d minutes",
-        settings.token_expiry,
-    )
+    logger.debug("CSRF token length validation passed: %d chars", CSRF_TOKEN_LENGTH)
 
 
 # Run validation at module import time (fail-fast before app startup)
-_validate_token_expiry_sync()
+_validate_csrf_token_length()
 
 # Main app router for auth endpoints
 app_router = APIRouter(prefix="/app", tags=["app"])
@@ -143,7 +126,7 @@ async def auth_login(
             raise_auth_error("authentication_failed", "Invalid email or password")
 
         token, _ = await create_access_token(user)
-        set_auth_cookie(response, token, path=APP_COOKIE_PATH)
+        set_auth_cookie(response, token, path=JWT_COOKIE_PATH)
 
         csrf_token = generate_csrf_token()
         set_csrf_cookie(response, csrf_token)
@@ -258,7 +241,7 @@ async def logout(
         else:
             logger.warning("Logout: token missing jti — server-side revocation skipped", extra={"user_id": user.id})
 
-        clear_auth_cookie(response, path=APP_COOKIE_PATH)
+        clear_auth_cookie(response, path=JWT_COOKIE_PATH)
         clear_csrf_cookie(response)
 
         logger.debug("User logged out via cookie auth")
