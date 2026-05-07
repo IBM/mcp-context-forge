@@ -158,7 +158,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.replicaCount | int | `2` |  |
 | mcpContextForge.hpa | object | `{"enabled":true,"maxReplicas":10,"minReplicas":2,"targetCPUUtilizationPercentage":90,"targetMemoryUtilizationPercentage":90}` | ------------------------------------------------------------------ |
 | mcpContextForge.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |
-| mcpContextForge.image.tag | string | `"latest"` |  |
+| mcpContextForge.image.tag | string | `""` | Defaults to chart appVersion when empty. |
 | mcpContextForge.image.pullPolicy | string | `"Always"` |  |
 | mcpContextForge.service.type | string | `"ClusterIP"` |  |
 | mcpContextForge.service.port | int | `80` |  |
@@ -923,7 +923,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | migration.backoffLimit | int | `3` |  |
 | migration.activeDeadlineSeconds | int | `600` |  |
 | migration.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |
-| migration.image.tag | string | `"latest"` |  |
+| migration.image.tag | string | `""` | Defaults to mcpContextForge.image.tag, then chart appVersion when empty. |
 | migration.image.pullPolicy | string | `"Always"` |  |
 | migration.resources.limits.cpu | string | `"500m"` |  |
 | migration.resources.limits.memory | string | `"1Gi"` |  |

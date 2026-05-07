@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                 # PRODUCTION: pin a specific immutable tag (e.g. "1.0.0")
+    tag: ""                     # Defaults to Chart.appVersion (e.g. "1.0.0"); set to override
     pullPolicy: IfNotPresent    # use Always only for dev/testing with mutable tags
 
   # Service that fronts the gateway
@@ -1015,7 +1015,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest                             # Should match mcpContextForge.image.tag
+    tag: ""                                 # Defaults to mcpContextForge.image.tag, then Chart.appVersion
     pullPolicy: IfNotPresent                # use Always only for dev/testing with mutable tags
 
   # Resource limits for the migration job

@@ -39,7 +39,7 @@ spec:
             capabilities:
               drop:
                 - ALL
-          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag | default .Values.mcpContextForge.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
 
           # Migration workflow: wait for DB → run migrations

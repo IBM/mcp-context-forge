@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [Unreleased]
 
+### Fixed
+
+* Default ContextForge gateway and migration image tags now resolve to the chart `appVersion` when no explicit tag override is set, avoiding mutable `latest` deployments.
+
 ### Changed
 
 #### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
