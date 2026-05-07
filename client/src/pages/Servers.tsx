@@ -229,7 +229,7 @@ export function Servers() {
               </div>
             </>
           ) : (
-            <div className="rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+            <div className="rounded-xl border border-neutral-200 p-8 shadow-sm dark:border-neutral-800">
               <div className="flex flex-col gap-6">
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-orange-500 text-white shadow-sm">
