@@ -11179,7 +11179,7 @@ async def admin_unified_search(
             "count": 0,
         }
 
-async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+    async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
         """Execute entity search and return empty results on auth denials.
 
         Intentional silent 401/403 suppression: unified search spans entity types

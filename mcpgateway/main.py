@@ -11573,14 +11573,17 @@ else:
     logger.info("Log search router not included - structured logging disabled")
 
 # Include SIEM admin router for destination management and health endpoints
-try:
-    # First-Party
-    from mcpgateway.routers.siem import router as siem_router
+if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.siem import router as siem_router
 
-    app.include_router(siem_router)
-    logger.info("SIEM router included")
-except ImportError as e:  # pragma: no cover - optional import guard
-    logger.warning(f"SIEM router not available: {e}")
+        app.include_router(siem_router)
+        logger.info("SIEM router included")
+    except ImportError as e:  # pragma: no cover - optional import guard
+        logger.warning(f"SIEM router not available: {e}")
+else:
+    logger.info("SIEM router not included - admin API or SIEM export disabled")
 
 # Conditionally include observability router if enabled
 if settings.observability_enabled:

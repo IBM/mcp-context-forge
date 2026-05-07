@@ -197,7 +197,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         success=True,
                         client_ip=request.client.host if request.client else "unknown",
                         user_agent=request.headers.get("user-agent"),
-                        persist=False,
+                        db=db,
+                        persist=persist_to_db,
                     )
                     # Commit immediately to persist logs even if exception occurs later in middleware chain
                     # Route handler's get_db() may commit again (no-op if no new changes)
@@ -237,6 +238,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             user_agent=request.headers.get("user-agent"),
                             failure_reason=str(e.detail),
                             db=db,
+                            persist=persist_to_db,
                         )
                         # Commit immediately to persist logs, especially for hard-deny paths (API requests)
                         # that return JSONResponse without reaching get_db()
@@ -304,7 +306,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         client_ip=request.client.host if request.client else "unknown",
                         user_agent=request.headers.get("user-agent"),
                         failure_reason=str(e),
-                        persist=False,
+                        db=db,
+                        persist=persist_to_db,
                     )
                     # Commit immediately to persist logs, especially for hard-deny paths (API requests)
                     # that return JSONResponse without reaching get_db()

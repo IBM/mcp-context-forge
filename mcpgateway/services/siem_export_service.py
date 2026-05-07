@@ -28,7 +28,7 @@ from urllib.parse import urlparse
 import uuid
 
 # Third-Party
-from jinja2 import Template
+from jinja2.sandbox import SandboxedEnvironment
 import orjson
 
 # First-Party
@@ -196,7 +196,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            logger.debug("No running event loop for SIEM event submission")
+            logger.warning("SIEM event dropped: no running event loop (source=%s)", source)
             return False
 
         loop.create_task(self.enqueue_event(event=event, source=source))
@@ -427,7 +427,8 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
                         raw_event = raw_event.decode("utf-8")
                     event = orjson.loads(raw_event)
                 except Exception:
-                    logger.warning("Dropping malformed SIEM event payload")
+                    logger.warning("Malformed SIEM event payload, moving to dead-letter queue")
+                    await self._push_dead_letter({"error": "malformed_payload", "raw": str(raw_event)[:1024], "entry_id": entry_id})
                     await self._ack_redis_entry(entry_id)
                     continue
 
@@ -506,6 +507,11 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         try:
             await asyncio.sleep(delay_seconds)
             await self._enqueue_envelope(event)
+        except asyncio.CancelledError:
+            # Shutdown in progress — preserve the event in dead-letter rather than losing it
+            logger.info("SIEM retry cancelled during shutdown, moving event to dead-letter queue")
+            await self._push_dead_letter(event)
+            raise
         except Exception as exc:  # pragma: no cover - defensive path
             logger.warning("SIEM delayed requeue failed: %s", exc)
             await self._push_dead_letter(event)
@@ -534,7 +540,11 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         """Enqueue one event to local queue with configured backpressure handling."""
         if self._local_queue.full():
             if self.backpressure_policy == "block_producer":
-                await self._local_queue.put(envelope)
+                try:
+                    await asyncio.wait_for(self._local_queue.put(envelope), timeout=30.0)
+                except asyncio.TimeoutError:
+                    logger.warning("SIEM queue put timed out after 30s, dead-lettering event")
+                    await self._push_dead_letter(envelope)
                 return
 
             # drop_oldest default behavior
@@ -921,7 +931,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
             raise ValueError("Syslog protocol must be 'udp' or 'tcp'")
 
         loop = asyncio.get_running_loop()
-        addr_info = socket.getaddrinfo(host, port, type=socket.SOCK_DGRAM)
+        addr_info = await asyncio.to_thread(socket.getaddrinfo, host, port, type=socket.SOCK_DGRAM)
         family, socktype, proto, _, sockaddr = addr_info[0]
         sock = socket.socket(family, socktype, proto)
         sock.setblocking(False)
@@ -936,8 +946,19 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         template_file = destination.get("template_file")
 
         if not template_text and template_file:
+            from pathlib import Path
+
+            template_path = Path(str(template_file)).expanduser().resolve()
+            # Prevent path traversal: only allow reading from CWD or explicitly configured template dirs
+            allowed_dirs = [Path.cwd().resolve()]
+            template_dir_setting = getattr(settings, "siem_export_template_dirs", None)
+            if template_dir_setting:
+                for d in template_dir_setting if isinstance(template_dir_setting, list) else [template_dir_setting]:
+                    allowed_dirs.append(Path(str(d)).expanduser().resolve())
+            if not any(str(template_path) == str(allowed_dir) or str(template_path).startswith(str(allowed_dir) + os.sep) for allowed_dir in allowed_dirs):
+                raise ValueError(f"Template file path escapes allowed directories: {template_file}")
             try:
-                with open(str(template_file), "r", encoding="utf-8") as file_handle:
+                with open(template_path, "r", encoding="utf-8") as file_handle:
                     template_text = file_handle.read()
             except OSError as exc:
                 raise RuntimeError(f"Failed to read webhook template file: {exc}") from exc
@@ -945,7 +966,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         if not template_text:
             return None
 
-        template = Template(str(template_text))
+        template = SandboxedEnvironment().from_string(str(template_text))
         rendered = template.render(event=event)
         return rendered
 
@@ -1155,6 +1176,10 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         if destination_type == "syslog":
             if not normalized.get("host"):
                 raise ValueError(f"Destination '{name}' (syslog) requires 'host'")
+            # Enforce outbound URL allowlist for syslog hosts too.
+            # Use the actual protocol so URL-prefix rules can match the scheme.
+            syslog_protocol = str(normalized.get("protocol") or "udp").lower()
+            self._validate_outbound_url(f"{syslog_protocol}://{normalized['host']}:{normalized.get('port', 514)}")
 
         return normalized
 
@@ -1175,7 +1200,7 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
         return None
 
     def _validate_outbound_url(self, url: str) -> None:
-        """Enforce destination outbound URL allowlist."""
+        """Enforce destination outbound URL allowlist using proper hostname matching."""
         if not self._url_allowlist:
             return
 
@@ -1187,18 +1212,31 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
             if not rule:
                 continue
 
-            if "://" in rule and url.startswith(rule):
-                return
+            # Rule is a full URL prefix like "https://siem.example.com"
+            if "://" in rule:
+                rule_parsed = urlparse(rule)
+                # Must match scheme and hostname exactly, then path is a prefix match
+                if parsed.scheme == rule_parsed.scheme and parsed.hostname == rule_parsed.hostname:
+                    rule_path = rule_parsed.path.rstrip("/") or "/"
+                    url_path = parsed.path or "/"
+                    if url_path == rule_path or url_path.startswith(rule_path + "/"):
+                        return
+                continue
 
+            # Rule is a wildcard hostname like "*.example.com"
             if rule.startswith("*."):
-                suffix = rule[1:]
-                if hostname.endswith(suffix):
+                suffix = rule[1:]  # ".example.com"
+                if hostname.endswith(suffix) or hostname == rule[2:]:
                     return
+                continue
 
+            # Rule is an exact hostname
             if hostname == rule:
                 return
 
         raise ValueError(f"Destination URL not in allowlist: {url}")
+
+    _ENV_PLACEHOLDER_MAX_ITERATIONS = 50
 
     def _resolve_env_placeholders(self, value: Any) -> Any:
         """Resolve ${ENV_VAR} placeholders recursively."""
@@ -1210,15 +1248,22 @@ class SIEMExportService:  # pragma: no cover - covered by targeted unit tests an
 
         if isinstance(value, str):
             text = value
-            start = text.find("${")
-            while start != -1:
+            for _ in range(self._ENV_PLACEHOLDER_MAX_ITERATIONS):
+                start = text.find("${")
+                if start == -1:
+                    break
                 end = text.find("}", start + 2)
                 if end == -1:
                     break
                 key = text[start + 2 : end]
                 replacement = os.getenv(key, "")
-                text = text[:start] + replacement + text[end + 1 :]
-                start = text.find("${")
+                new_text = text[:start] + replacement + text[end + 1 :]
+                if new_text == text:
+                    # No progress — either the env var is empty or self-referential
+                    break
+                text = new_text
+            else:
+                logger.warning("SIEM env placeholder resolution exceeded max iterations for value: %s...", value[:80])
             return text
 
         return value

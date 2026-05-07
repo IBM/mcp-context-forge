@@ -1745,6 +1745,35 @@ class Settings(BaseSettings):
 
         return []
 
+    @field_validator("siem_export_url_allowlist")
+    @classmethod
+    def validate_siem_url_allowlist(cls, v: List[str]) -> List[str]:
+        """Reject trivially-permissive allowlist entries and warn on empty allowlist."""
+        import re as _re
+
+        validated = []
+        for entry in v:
+            entry = entry.strip()
+            if not entry:
+                continue
+            # Reject bare protocol prefixes that match everything (e.g., "https://", "http://")
+            if _re.match(r"^https?:///?$", entry):
+                logger.warning("SIEM URL allowlist entry '%s' is a bare protocol prefix that matches all URLs — rejecting", entry)
+                continue
+            # Reject entries with :// but no hostname (e.g., "https:///")
+            if "://" in entry:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(entry)
+                if not parsed.hostname:
+                    logger.warning("SIEM URL allowlist entry '%s' has no hostname — rejecting", entry)
+                    continue
+            validated.append(entry)
+
+        if not validated:
+            logger.info("SIEM URL allowlist is empty — all outbound destination URLs are permitted")
+        return validated
+
     @model_validator(mode="after")
     def load_siem_destinations_from_file(self) -> Self:
         """Load SIEM destinations from optional JSON/YAML config file.
