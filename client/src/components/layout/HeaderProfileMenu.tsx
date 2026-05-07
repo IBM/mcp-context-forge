@@ -26,18 +26,14 @@ export function HeaderProfileMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        // TODO: User photo/avatar data does not appear to be available
-        // in the current frontend. Using fallback button for now.
+        {/* TODO: User photo/avatar data does not appear to be available in the current frontend. Using fallback button for now. */}
         <Button
           variant="ghost"
           size="sm"
           className="h-8 gap-1.5 rounded-lg px-1.5 hover:bg-muted"
           aria-label={displayName}
         >
-          <span
-            className="block size-6 overflow-hidden rounded-md bg-muted"
-            aria-hidden="true"
-          />
+          <span className="block size-6 overflow-hidden rounded-md bg-muted" aria-hidden="true" />
           <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
