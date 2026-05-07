@@ -225,8 +225,8 @@ def test_validate_tool_name_html_special_chars_even_if_regex_allows(monkeypatch)
 
 def test_validate_tool_name_too_long():
     with pytest.raises(ValueError):
-        SecurityValidator.validate_tool_name("a" * 11)
-    SecurityValidator.validate_tool_name("a" * 10)
+        SecurityValidator.validate_tool_name("a" * 129)
+    SecurityValidator.validate_tool_name("a" * 128)
 
 
 def test_validate_template_valid():

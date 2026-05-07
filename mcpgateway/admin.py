@@ -12271,7 +12271,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 "4. Return to the admin panel\n\n"
                 "Tools will not work until OAuth authorization is completed."
             )
-        skipped_tools = result.skipped_tools if result and result.skipped_tools else []
+        skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
         return ORJSONResponse(
             content={"message": message, "success": True, "skipped_tools": skipped_tools},
             status_code=200,

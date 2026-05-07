@@ -1524,7 +1524,7 @@ class TestAdminToolRoutes:
         result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert result.status_code == 500
-        assert b"Unexpected error" in result.body
+        assert b"An unexpected error occurred" in result.body
 
     async def test_admin_edit_tool_validation_error(self, mock_request, mock_db):
         """Cover ValidationError handler in admin_edit_tool (invalid requestType literal)."""
@@ -6517,7 +6517,7 @@ class TestErrorHandlingPaths:
         assert result.status_code == 500
         body = json.loads(result.body)
         assert body["success"] is False
-        assert "Unexpected error" in body["message"]
+        assert "An unexpected error occurred" in body["message"]
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_validation_error_with_context(self, mock_register_gateway, mock_request, mock_db):
