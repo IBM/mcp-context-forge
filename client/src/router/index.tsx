@@ -243,6 +243,28 @@ export function AuthGuard({
     }
   }, [isAuthenticated, isLoading, isPublic, navigate]);
 
-  if (isPublic || isLoading || !isAuthenticated) return null;
+  // Public routes: render immediately
+  if (isPublic) return <>{children}</>;
+
+  // Loading state: show loading indicator instead of blank page
+  if (isLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '100vh',
+        fontSize: '14px',
+        color: '#666'
+      }}>
+        Loading...
+      </div>
+    );
+  }
+
+  // Not authenticated: return null (redirect will happen via useEffect)
+  if (!isAuthenticated) return null;
+
+  // Authenticated: render protected content
   return <>{children}</>;
 }
