@@ -57,7 +57,10 @@ describe("AppSidebar", () => {
 
     renderSidebar();
 
-    expect(screen.getByRole("button", { name: "MCP Servers" })).toHaveAttribute("data-active", "true");
+    expect(screen.getByRole("button", { name: "MCP Servers" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute("data-active", "false");
   });
 

@@ -34,8 +34,7 @@ export function HeaderQuickNav() {
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        (target.isContentEditable ||
-          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
       ) {
         return;
       }
@@ -75,7 +74,9 @@ export function HeaderQuickNav() {
           onBlur={() => setIsExpanded(query.length > 0)}
           aria-label={intl.formatMessage({ id: "common.search" })}
           data-expanded={isExpanded || query.length > 0}
-          placeholder={isExpanded || query.length > 0 ? intl.formatMessage({ id: "common.search" }) : ""}
+          placeholder={
+            isExpanded || query.length > 0 ? intl.formatMessage({ id: "common.search" }) : ""
+          }
           className={cn(
             "h-8 rounded-lg border-border bg-muted/50 pr-2 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground/80 focus-visible:bg-background",
             isExpanded || query.length > 0
