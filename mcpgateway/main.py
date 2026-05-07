@@ -62,7 +62,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -6595,6 +6595,8 @@ async def register_gateway(
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, DataError):
+            return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=status.HTTP_400_BAD_REQUEST)
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
