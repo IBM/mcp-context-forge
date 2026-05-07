@@ -698,7 +698,7 @@ class SecurityValidator:
             >>> try:
             ...     SecurityValidator.validate_tool_name(long_tool_name)
             ... except ValueError as e:
-            ...     'exceeds maximum length' in str(e)
+            ...     'exceeds MCP spec limit' in str(e)
             True
         """
         if not value:
