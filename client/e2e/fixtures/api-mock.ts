@@ -5,7 +5,7 @@
  * shapes mirror `client/src/auth/AuthContext.tsx` (`User`, `LoginResponse`).
  */
 
-import { test as base, expect, type Page } from "@playwright/test";
+import { test as base, expect, type Page, type Route } from "@playwright/test";
 
 export interface MockUser {
   email: string;
@@ -63,7 +63,7 @@ export function createApiMock(page: Page): ApiMock {
     },
 
     async mockMe({ user = DEFAULT_TEST_USER, status = 200 } = {}) {
-      await page.route("**/app/auth/me", async (route) => {
+      const fulfillUser = async (route: Route) => {
         if (status === 200) {
           await route.fulfill({
             status,
@@ -77,7 +77,11 @@ export function createApiMock(page: Page): ApiMock {
           contentType: "application/json",
           body: JSON.stringify({ detail: "Unauthorized" }),
         });
-      });
+      };
+
+      await page.route("**/app/auth/me", fulfillUser);
+      await page.route("**/auth/email/me", fulfillUser);
+      await page.route("**/auth/me", fulfillUser);
     },
 
     async mockUnauthorized(urlPattern) {
