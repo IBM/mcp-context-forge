@@ -26,7 +26,7 @@ export function getToken(): string | null {
   return null;
 }
 
-export function setToken(_token: string): void {
+export function setToken(): void {
   // Kept for backward-compatible imports; cookie auth does not expose JWTs to JS.
 }
 
