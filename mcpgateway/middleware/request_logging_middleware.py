@@ -68,6 +68,7 @@ from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -415,9 +416,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token") or request.cookies.get("token")
 
         if not token:
-            auth_header = request.headers.get("authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.replace("Bearer ", "")
+            # Read from the configured AUTH_HEADER_NAME so identity logging keeps
+            # working when the gateway uses a customized auth header.
+            auth_header = get_auth_header_value(request.headers)
+            if auth_header:
+                scheme, _, raw_token = auth_header.partition(" ")
+                if scheme.lower() == "bearer" and raw_token:
+                    token = raw_token
 
         if not token:
             return (None, None)

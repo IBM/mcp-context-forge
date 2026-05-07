@@ -14,11 +14,15 @@ from typing import Optional
 from fastapi import HTTPException, Request
 
 # First-Party
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_bearer_token_from_request, verify_jwt_token_cached
 
 
 async def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
     """Extract token scopes from JWT in request.
+
+    Reads the JWT from the configured auth header (default ``Authorization``)
+    so that token scope enforcement stays aligned with the auth dependency
+    when ``AUTH_HEADER_NAME`` is customized.
 
     Args:
         request: FastAPI request object
@@ -53,22 +57,16 @@ async def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
         >>> asyncio.run(extract_token_scopes_from_request(mock_request)) is None
         True
     """
-    # Get authorization header
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    token = get_auth_bearer_token_from_request(request)
+    if not token:
         return None
 
-    token = auth_header.split(" ", 1)[1]
-
     try:
-        # Use the centralized verify_jwt_token_cached function for consistent JWT validation
         payload = await verify_jwt_token_cached(token, request)
         return payload.get("scopes")
     except HTTPException:
-        # Token validation failed (expired, invalid, etc.)
         return None
     except Exception:
-        # Any other error in token validation
         return None
 
 

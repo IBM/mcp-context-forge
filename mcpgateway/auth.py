@@ -73,7 +73,7 @@ import uuid
 # Third-Party
 from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -92,10 +92,20 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    security,
+    verify_jwt_token_cached,
+)
 
-# Security scheme
-security = HTTPBearer(auto_error=False)
+__all__ = [
+    "ConfigurableHTTPBearer",
+    "security",
+    "get_current_user",
+    "get_user_team_roles",
+    "normalize_token_teams",
+    "resolve_session_teams",
+]
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name

@@ -33,7 +33,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.token_catalog_service import TokenCatalogService
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
 
 logger = logging.getLogger(__name__)
 
@@ -129,14 +129,19 @@ class TokenUsageMiddleware:
             if not user_email:
                 user_email = state.get("user_email") if state else None
 
-            # If we don't have JTI or email, try to decode the token from the header
+            # If we don't have JTI or email, try to decode the token from the header.
+            # Read from the configured AUTH_HEADER_NAME so token usage logging keeps
+            # working when the gateway uses a customized auth header.
             if not jti or not user_email:
                 try:
                     headers = Headers(scope=scope)
-                    auth_header = headers.get("authorization")
-                    if not auth_header or not auth_header.startswith("Bearer "):
+                    auth_header = get_auth_header_value(headers)
+                    if not auth_header:
                         return
-                    token = auth_header.replace("Bearer ", "")
+                    scheme, _, raw_token = auth_header.partition(" ")
+                    if scheme.lower() != "bearer" or not raw_token:
+                        return
+                    token = raw_token
                     request = Request(scope, receive)
                     try:
                         payload = await verify_jwt_token_cached(token, request)
@@ -168,10 +173,12 @@ class TokenUsageMiddleware:
             # without re-verifying it (the token identity is valid even if rejected).
             try:
                 headers = Headers(scope=scope)
-                auth_header = headers.get("authorization")
-                if not auth_header or not auth_header.startswith("Bearer "):
+                auth_header = get_auth_header_value(headers)
+                if not auth_header:
                     return
-                raw_token = auth_header[7:]  # strip "Bearer "
+                scheme, _, raw_token = auth_header.partition(" ")
+                if scheme.lower() != "bearer" or not raw_token:
+                    return
 
                 # Decode without signature/expiry check — for identification only, not auth.
                 unverified = _jwt.decode(raw_token, options={"verify_signature": False})
