@@ -27,7 +27,6 @@ import socket
 import pytest
 import redis
 
-# Third-Party
 from cpex.framework import ConfigLoader
 
 # Anchor the plugins/config.yaml path to this file's location so the test
