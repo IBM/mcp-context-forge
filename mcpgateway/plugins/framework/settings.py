@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """Compatibility settings for the plugin framework package."""
 
-from types import SimpleNamespace
+# Standard
 import os
+from types import SimpleNamespace
 
 
 def get_transport_settings() -> SimpleNamespace:

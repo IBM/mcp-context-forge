@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Compatibility models for the plugin framework package."""
 
+# Third-Party
 from pydantic import BaseModel
 
 
