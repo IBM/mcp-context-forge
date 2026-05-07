@@ -15,7 +15,7 @@ Changes:
 Supports both PostgreSQL and SQLite databases.
 
 Revision ID: d21698ae4a19
-Revises: aa1b2c3d4e5f
+Revises: 9fb98535724d
 Create Date: 2026-05-06 12:35:58.142694
 
 """
@@ -28,7 +28,7 @@ from sqlalchemy import text, inspect
 
 # revision identifiers, used by Alembic.
 revision: str = 'd21698ae4a19'
-down_revision: Union[str, Sequence[str], None] = 'aa1b2c3d4e5f'
+down_revision: Union[str, Sequence[str], None] = '9fb98535724d'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
