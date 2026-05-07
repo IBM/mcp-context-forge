@@ -98,18 +98,22 @@ class TestRateLimiting:
         assert "rate limit" in response.json()["detail"].lower()
 
     def test_rate_limit_is_per_ip(self, client: TestClient, setup_test_user: EmailUser, test_user_credentials: Dict[str, str]) -> None:
-        """Test rate limit is enforced per IP address."""
+        """Test rate limit is enforced per IP address.
+        
+        Note: TestClient doesn't support changing client IP in headers, so this test
+        verifies that rate limiting is active for a single IP. In production, different
+        IPs would have separate rate limit buckets.
+        """
         # Exhaust rate limit for default IP
         for _ in range(10):
-            client.post("/app/auth/login", json=test_user_credentials)
+            response = client.post("/app/auth/login", json=test_user_credentials)
+            # First 10 requests should succeed or fail with 401 (wrong password after user creation)
+            assert response.status_code in (200, 401), f"Request should not be rate limited yet, got {response.status_code}"
 
-        # Verify rate limit is active
+        # Verify rate limit is active after 10 requests
         response = client.post("/app/auth/login", json=test_user_credentials)
-        assert response.status_code == 429
-
-        # Note: TestClient doesn't support changing client IP in headers
-        # In production, different IPs would have separate rate limit buckets
-        # This test documents the expected behavior
+        assert response.status_code == 429, f"11th request should be rate limited, got {response.status_code}"
+        assert "rate limit" in response.json()["detail"].lower(), "Error message should mention rate limit"
 
     @pytest.mark.slow
     def test_rate_limit_resets_after_window(self, client: TestClient, setup_test_user: EmailUser, test_user_credentials: Dict[str, str]) -> None:
