@@ -26,6 +26,8 @@ export function HeaderProfileMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
+        // TODO: User photo/avatar data does not appear to be available
+        // in the current frontend. Using fallback button for now.
         <Button
           variant="ghost"
           size="sm"
