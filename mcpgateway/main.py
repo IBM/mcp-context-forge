@@ -12030,6 +12030,8 @@ if settings.llmchat_enabled:
         # First-Party
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
 
+        if settings.llm_api_prefix.rstrip("/") == "/v1":
+            logger.critical("LLM_API_PREFIX='/v1' conflicts with the gateway API prefix. " "Set LLM_API_PREFIX to a different value (e.g. '/llm/v1') to avoid routing collisions.")
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
         logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
     except ImportError as e:

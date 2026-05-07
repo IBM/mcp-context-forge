@@ -178,7 +178,7 @@ def _should_trace_plugin_server_path(path: str) -> bool:
     """
 
     normalized = path.rstrip("/") or "/"
-    return normalized not in {"/health", "/metrics/prometheus", "/v1/metrics/prometheus"}
+    return normalized not in {"/health", "/metrics/prometheus"}
 
 
 class SSLCapableFastMCP(FastMCP):
@@ -346,9 +346,9 @@ class SSLCapableFastMCP(FastMCP):
         ]
         enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
         if enable_metrics:
-            routes.append(Route("/v1/metrics/prometheus", metrics_endpoint, methods=["GET"]))
+            routes.append(Route("/metrics/prometheus", metrics_endpoint, methods=["GET"]))
         else:
-            routes.append(Route("/v1/metrics/prometheus", metrics_disabled, methods=["GET"]))
+            routes.append(Route("/metrics/prometheus", metrics_disabled, methods=["GET"]))
 
         # Create a minimal Starlette app with only the health endpoint
         health_app = Starlette(routes=routes)
@@ -418,9 +418,9 @@ class SSLCapableFastMCP(FastMCP):
         # Add the metrics route to the Starlette app
         enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
         if enable_metrics:
-            starlette_app.routes.append(Route("/v1/metrics/prometheus", metrics_endpoint, methods=["GET"]))
+            starlette_app.routes.append(Route("/metrics/prometheus", metrics_endpoint, methods=["GET"]))
         else:
-            starlette_app.routes.append(Route("/v1/metrics/prometheus", metrics_disabled, methods=["GET"]))
+            starlette_app.routes.append(Route("/metrics/prometheus", metrics_disabled, methods=["GET"]))
 
         app_to_serve: Any = starlette_app
         if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "true":
