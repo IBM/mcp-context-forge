@@ -572,19 +572,31 @@ _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
 def _loopback_skip_set() -> frozenset[str]:
     """Return the full set of headers to skip in loopback forwarding.
 
-    Extends ``_LOOPBACK_SKIP_HEADERS`` with the configurable
-    ``proxy_user_header`` (default ``X-Authenticated-User``) so that
-    passthrough headers can never overwrite the gateway-internal proxy
-    user identity — even if that header name is added to the passthrough
-    allowlist by mistake.
+    Extends ``_LOOPBACK_SKIP_HEADERS`` with:
+
+    * ``proxy_user_header`` (default ``X-Authenticated-User``) — so passthrough
+      headers can never overwrite the gateway-internal proxy user identity.
+    * ``auth_header_name`` (default ``Authorization``) — so passthrough
+      headers can never overwrite the gateway-internal JWT carried under a
+      customized ``AUTH_HEADER_NAME``. The default ``authorization`` is
+      already in ``_LOOPBACK_SKIP_HEADERS``; this adds the configured name
+      when it differs.
 
     Returns:
         frozenset[str]: Header names to skip during loopback forwarding.
     """
+    extra: set[str] = set()
     proxy = settings.proxy_user_header.lower()
-    if proxy in _LOOPBACK_SKIP_HEADERS:
+    if proxy not in _LOOPBACK_SKIP_HEADERS:
+        extra.add(proxy)
+    auth_header = getattr(settings, "auth_header_name", "Authorization")
+    if isinstance(auth_header, str):
+        auth_lower = auth_header.strip().lower()
+        if auth_lower and auth_lower not in _LOOPBACK_SKIP_HEADERS:
+            extra.add(auth_lower)
+    if not extra:
         return _LOOPBACK_SKIP_HEADERS
-    return _LOOPBACK_SKIP_HEADERS | {proxy}
+    return _LOOPBACK_SKIP_HEADERS | extra
 
 
 class _LoopbackAllowlistCache:

@@ -327,6 +327,44 @@ class Settings(BaseSettings):
     )
 
     # Authentication
+    auth_header_name: str = Field(
+        default="Authorization",
+        description="HTTP header name for JWT authentication. Use 'Authorization' (default) or alternative like 'X-MCP-Gateway-Auth' to avoid header collision with downstream servers.",
+    )
+
+    @field_validator("auth_header_name")
+    @classmethod
+    def validate_auth_header_name(cls, v: str) -> str:
+        """Validate the auth header name is a syntactically valid HTTP token.
+
+        RFC 7230 limits header field names to a "token" (visible ASCII without
+        separators). We reject empty strings, whitespace-only values, and any
+        characters that could enable header smuggling (CR/LF, NUL, spaces, or
+        the HTTP separator characters), and fall back to ``Authorization`` when
+        the value is unset.
+
+        Args:
+            v: Raw configured value.
+
+        Returns:
+            The cleaned header name.
+
+        Raises:
+            ValueError: When the value is not a valid HTTP token.
+        """
+        if v is None:
+            return "Authorization"
+        cleaned = str(v).strip()
+        if not cleaned:
+            return "Authorization"
+        # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
+        # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+        if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
+            raise ValueError(
+                f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token "
+                "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~."
+            )
+        return cleaned
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"

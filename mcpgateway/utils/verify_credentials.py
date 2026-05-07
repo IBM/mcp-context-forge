@@ -74,11 +74,143 @@ from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
 basic_security = HTTPBasic(auto_error=False)
-security = HTTPBearer(auto_error=False)
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _resolve_auth_header_name(settings_obj: Any | None = None) -> str:
+    """Return the configured auth header name, defensive against mocks/misconfig.
+
+    Falls back to ``"Authorization"`` when the setting is missing, not a
+    string, or empty/whitespace-only.
+
+    Args:
+        settings_obj: Optional settings override (defaults to the global settings).
+
+    Returns:
+        Resolved auth header name (always a non-empty string).
+    """
+    s = settings_obj or settings
+    name = getattr(s, "auth_header_name", "Authorization")
+    if not isinstance(name, str):
+        return "Authorization"
+    name = name.strip()
+    return name or "Authorization"
+
+
+def get_auth_header_value(headers: Any, settings_obj: Any | None = None) -> Optional[str]:
+    """Look up the configured auth header value (case-insensitive).
+
+    Tries the lowercase form first (matches Starlette's normalized
+    ``request.headers``) and falls back to the configured casing for
+    plain dicts and ASGI scope-style mappings.
+
+    Args:
+        headers: Headers mapping supporting ``.get(name)``.
+        settings_obj: Optional settings override (defaults to the global settings).
+
+    Returns:
+        Header value when present, otherwise ``None``.
+    """
+    if headers is None or not hasattr(headers, "get"):
+        return None
+    header_name = _resolve_auth_header_name(settings_obj)
+    lower = header_name.lower()
+    val = headers.get(lower)
+    if val:
+        return val
+    if header_name != lower:
+        val = headers.get(header_name)
+        if val:
+            return val
+    return None
+
+
+def get_auth_bearer_token_from_request(request: Any) -> Optional[str]:
+    """Extract a Bearer token from the configured auth header on a request.
+
+    The Bearer scheme match is case-insensitive ("bearer" / "Bearer" / "BEARER").
+    Returns ``None`` when the header is missing, the scheme is not Bearer,
+    or the token is empty.
+
+    Args:
+        request: FastAPI/Starlette ``Request``-like object exposing ``.headers``.
+
+    Returns:
+        The bearer token string when present, otherwise ``None``.
+    """
+    if request is None or not hasattr(request, "headers"):
+        return None
+    auth_header = get_auth_header_value(request.headers)
+    if not auth_header:
+        return None
+    parts = auth_header.split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    return token or None
+
+
+class ConfigurableHTTPBearer(HTTPBearer):
+    """HTTPBearer with a configurable header name.
+
+    Reads the auth header named by ``settings.auth_header_name`` (default
+    ``Authorization``). Header lookup is case-insensitive. Bearer scheme
+    match is case-insensitive. Subclasses ``HTTPBearer`` so OpenAPI security
+    metadata is preserved.
+    """
+
+    def __init__(self, *, scheme_name: Optional[str] = None, auto_error: bool = True):
+        """Initialize the configurable bearer authentication scheme.
+
+        Args:
+            scheme_name: Optional scheme name shown in OpenAPI docs.
+            auto_error: When ``True`` (default), raise 403 on missing or
+                malformed credentials; when ``False``, return ``None``.
+        """
+        super().__init__(scheme_name=scheme_name, auto_error=auto_error)
+
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
+        """Extract bearer credentials from the configured auth header.
+
+        Args:
+            request: Incoming FastAPI/Starlette ``Request``.
+
+        Returns:
+            ``HTTPAuthorizationCredentials`` when a Bearer token is found,
+            otherwise ``None`` (or raises 403 when ``auto_error`` is set).
+
+        Raises:
+            HTTPException: 403 when ``auto_error`` is enabled and credentials
+                are missing or use an unsupported scheme.
+        """
+        authorization = get_auth_header_value(request.headers)
+
+        if not authorization:
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authenticated",
+                )
+            return None
+
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() != "bearer":
+            if self.auto_error:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid authentication credentials",
+                )
+            return None
+
+        return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
+
+
+# Default security dependency. Reads from the configured auth header so all
+# auth dependencies behave consistently when AUTH_HEADER_NAME is customized.
+security = ConfigurableHTTPBearer(auto_error=False)
 
 
 def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
@@ -106,7 +238,7 @@ def is_proxy_auth_trust_active(settings_obj: Any | None = None) -> bool:
 
 
 def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_param_warning: Optional[str] = None) -> Optional[str]:
-    """Extract bearer token from WebSocket Authorization headers.
+    """Extract bearer token from WebSocket headers using configured auth header name.
 
     Args:
         query_params: WebSocket query parameters mapping-like object.
@@ -123,10 +255,7 @@ def extract_websocket_bearer_token(query_params: Any, headers: Any, *, query_par
     if legacy_token and query_param_warning:
         logger.warning(f"{query_param_warning}; token ignored")
 
-    header_values = headers or {}
-    auth_header = header_values.get("authorization") if hasattr(header_values, "get") else None
-    if not auth_header and hasattr(header_values, "get"):
-        auth_header = header_values.get("Authorization")
+    auth_header = get_auth_header_value(headers)
     if auth_header:
         scheme, _, credentials = auth_header.partition(" ")
         if scheme.lower() == "bearer" and credentials:

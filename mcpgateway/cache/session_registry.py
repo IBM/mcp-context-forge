@@ -74,6 +74,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Initialize logging service first
@@ -2334,7 +2335,10 @@ class SessionRegistry(SessionBackend):
                 if settings.mcpgateway_session_affinity_enabled:
                     await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
 
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                # Internal /rpc auth must be sent under the configured AUTH_HEADER_NAME
+                # so that ConfigurableHTTPBearer in the loopback target reads the JWT.
+                _gw_auth = _resolve_auth_header_name(settings)
+                headers = {_gw_auth: f"Bearer {token}", "Content-Type": "application/json"}
                 if settings.mcpgateway_session_affinity_enabled:
                     headers["x-mcp-session-id"] = transport.session_id
                 # Forward passthrough headers captured at SSE connection time (see #3640).
