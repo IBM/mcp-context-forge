@@ -2706,7 +2706,7 @@ class TestToolService:
             # Verify GrpcServiceManager.invoke_method was called
             mock_grpc_manager.invoke_method.assert_awaited_once()
             call_args = mock_grpc_manager.invoke_method.call_args
-            
+
             # Verify the arguments passed to invoke_method
             # invoke_method signature: (db, service_id, method_name, request_data, timeout=None)
             assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
