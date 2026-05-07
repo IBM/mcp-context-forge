@@ -9,9 +9,9 @@ Tests for GrpcService without requiring grpc packages.
 
 # Standard
 from datetime import datetime, timezone
+import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 import uuid
 
 # Third-Party
@@ -37,6 +37,7 @@ def _skip_grpc_target_validation(monkeypatch):
 @pytest.fixture(autouse=True)
 def _skip_tls_path_validation(monkeypatch):
     """Disable TLS path validation for unit tests."""
+    # Standard
     from pathlib import Path
 
     monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda path_str, label="TLS path": Path(path_str).resolve())
@@ -534,10 +535,10 @@ async def test_invoke_method_success(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self):
+        async def start(self, timeout=None):
             return None
 
-        async def invoke(self, service_name, method, request_data):
+        async def invoke(self, service_name, method, request_data, timeout=None):
             return {"service": service_name, "method": method, "payload": request_data}
 
         async def close(self):
@@ -579,10 +580,10 @@ async def test_invoke_method_error_path(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self):
+        async def start(self, timeout=None):
             return None
 
-        async def invoke(self, _service_name, _method, _request_data):
+        async def invoke(self, _service_name, _method, _request_data, timeout=None):
             raise RuntimeError("boom")
 
         async def close(self):
@@ -628,10 +629,10 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
         def __init__(self, **_kwargs):
             self._services = None
 
-        async def start(self):
+        async def start(self, timeout=None):
             return None
 
-        async def invoke(self, _service_name, _method, _request_data):
+        async def invoke(self, _service_name, _method, _request_data, timeout=None):
             return {"ok": True}
 
         async def close(self):
@@ -655,22 +656,24 @@ def test_validate_grpc_target_enforces_ssrf_rules(monkeypatch):
     monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_networks", ["169.254.0.0/16", "invalid-network"], raising=False)
     monkeypatch.setattr("mcpgateway.config.settings.ssrf_blocked_hosts", ["blocked.example"], raising=False)
 
+    # Error messages now come from SecurityValidator._validate_ssrf via delegation, except for
+    # reserved/multicast which gRPC keeps as a local pre-check (SecurityValidator does not flag those).
     with pytest.raises(GrpcServiceError, match="Empty gRPC target address"):
         _ORIGINAL_VALIDATE_GRPC_TARGET(":50051")
-    with pytest.raises(GrpcServiceError, match="hostname 'blocked.example' is blocked"):
+    with pytest.raises(GrpcServiceError, match="blocked hostname 'blocked.example'"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("blocked.example:50051")
-    with pytest.raises(GrpcServiceError, match="localhost not allowed"):
+    with pytest.raises(GrpcServiceError, match="localhost address which is blocked"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("localhost:50051")
     with pytest.raises(GrpcServiceError, match="network: 169.254.0.0/16"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("169.254.1.10:50051")
-    with pytest.raises(GrpcServiceError, match="loopback not allowed"):
+    with pytest.raises(GrpcServiceError, match="localhost address which is blocked"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("127.0.0.1:50051")
     with pytest.raises(GrpcServiceError, match="reserved/multicast"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("224.0.0.1:50051")
-    with pytest.raises(GrpcServiceError, match="private network not allowed"):
+    with pytest.raises(GrpcServiceError, match="private network address which is blocked"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("10.2.3.4:50051")
     monkeypatch.setattr("mcpgateway.config.settings.ssrf_allowed_networks", ["bad-cidr"], raising=False)
-    with pytest.raises(GrpcServiceError, match="private network not allowed"):
+    with pytest.raises(GrpcServiceError, match="private network address which is blocked"):
         _ORIGINAL_VALIDATE_GRPC_TARGET("10.9.8.7:50051")
 
     # Public address should pass (also exercises invalid blocked-network entry skip).
@@ -702,6 +705,7 @@ def test_validate_tls_path_allows_expected_prefixes_and_blocks_other_paths():
 
 @pytest.mark.asyncio
 async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -810,6 +814,7 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
@@ -845,6 +850,7 @@ async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -903,6 +909,7 @@ async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, db):
     """TLS reflection should read both cert and key when explicit paths are configured."""
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:
@@ -961,6 +968,7 @@ async def test_perform_reflection_tls_reads_cert_and_key(monkeypatch, service, d
 
 @pytest.mark.asyncio
 async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
@@ -996,6 +1004,7 @@ async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
 
 @pytest.mark.asyncio
 async def test_perform_reflection_sets_reachable_false_on_error(monkeypatch, service, db):
+    # First-Party
     from mcpgateway.services import grpc_service as module
 
     class FakeChannel:

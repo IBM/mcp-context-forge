@@ -84,6 +84,7 @@ def _user_obj_to_dict(user: EmailUser) -> dict:
     """
 
     def _iso(v: Optional[datetime]) -> Optional[str]:
+        """Render a datetime as ISO-8601 for JSON-safe cache storage; pass through None."""
         return v.isoformat() if v is not None else None
 
     return {
@@ -114,6 +115,7 @@ def _user_dict_to_obj(d: dict) -> EmailUser:
     """
 
     def _dt(v: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO-8601 string back into a datetime; pass through None and existing datetimes."""
         if v is None:
             return None
         if isinstance(v, datetime):

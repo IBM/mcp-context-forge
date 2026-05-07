@@ -10,13 +10,13 @@ Tests for gRPC to MCP translation module.
 # Standard
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
 
 # Third-Party
 import pytest
 
 # Check if gRPC is available
 try:
+    # Third-Party
     import grpc  # noqa: F401
 
     GRPC_AVAILABLE = True
@@ -25,9 +25,9 @@ except ImportError:
 
 # First-Party
 from mcpgateway.translate_grpc import (
+    expose_grpc_via_sse,
     GrpcEndpoint,
     GrpcToMcpTranslator,
-    expose_grpc_via_sse,
 )
 
 
@@ -158,7 +158,7 @@ class TestGrpcEndpoint:
         # Mock _discover_service_details to populate services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name):
+            async def populate_service(stub, service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -200,7 +200,7 @@ class TestGrpcEndpoint:
         # Mock _discover_service_details to populate only non-reflection services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
 
-            async def populate_service(stub, service_name):
+            async def populate_service(stub, service_name, timeout=None):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
@@ -450,8 +450,11 @@ class TestExposeGrpcViaSse:
 
 @pytest.mark.asyncio
 async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
-    import mcpgateway.translate_grpc as tg
+    # Standard
     from types import SimpleNamespace
+
+    # First-Party
+    import mcpgateway.translate_grpc as tg
 
     class DummyRequest:
         def SerializeToString(self):
@@ -474,11 +477,14 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object(), object(), object()]
     endpoint._factory = MagicMock()
-    endpoint._factory.GetPrototype.side_effect = [DummyRequest, DummyResponse, DummyRequest, DummyResponse]
+
+    # protobuf>=5 uses module-level message_factory.GetMessageClass(); patch it instead of MessageFactory.GetPrototype.
+    proto_classes = iter([DummyRequest, DummyResponse, DummyRequest, DummyResponse])
+    monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
         def unary_unary(self, _path, request_serializer=None, response_deserializer=None):
-            def call(_req):
+            def call(_req, timeout=None):
                 return DummyResponse()
 
             return call
@@ -511,8 +517,8 @@ async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_endpoint_start_without_reflection(monkeypatch):
-    monkeypatch.setattr("mcpgateway.translate_grpc.descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
-    monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc.descriptor_pool", SimpleNamespace(DescriptorPool=lambda **_kw: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda *_a, **_kw: MagicMock()))
     endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False, tls_enabled=False)
     mock_grpc = MagicMock()
     mock_grpc.insecure_channel.return_value = "chan"
@@ -526,10 +532,11 @@ async def test_endpoint_start_without_reflection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
-    monkeypatch.setattr(tg, "descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
-    monkeypatch.setattr(tg, "message_factory", SimpleNamespace(MessageFactory=lambda: MagicMock()))
+    monkeypatch.setattr(tg, "descriptor_pool", SimpleNamespace(DescriptorPool=lambda **_kw: MagicMock()))
+    monkeypatch.setattr(tg, "message_factory", SimpleNamespace(MessageFactory=lambda *_a, **_kw: MagicMock()))
     endpoint = tg.GrpcEndpoint(
         target="secure.example.com:443",
         reflection_enabled=True,
@@ -554,6 +561,7 @@ async def test_endpoint_start_with_tls_and_reflection(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discover_services_success_no_grpc(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -578,7 +586,7 @@ async def test_discover_services_success_no_grpc(monkeypatch):
     monkeypatch.setattr(tg, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=lambda _chan: mock_stub))
     monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
 
-    async def _populate(_stub, service_name):
+    async def _populate(_stub, service_name, timeout=None):
         endpoint._services[service_name] = {"name": service_name, "methods": []}
 
     monkeypatch.setattr(endpoint, "_discover_service_details", AsyncMock(side_effect=_populate))
@@ -590,6 +598,7 @@ async def test_discover_services_success_no_grpc(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_discover_service_details_error_fallback(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -610,6 +619,7 @@ async def test_discover_service_details_error_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_validation_errors(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -627,6 +637,7 @@ async def test_invoke_validation_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_message_type_missing(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -640,6 +651,7 @@ async def test_invoke_message_type_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_validation_errors(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -667,6 +679,7 @@ async def test_invoke_streaming_validation_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_message_type_missing(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -681,6 +694,7 @@ async def test_invoke_streaming_message_type_missing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_streaming_rpc_error(monkeypatch):
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     class DummyRequest:
@@ -700,7 +714,8 @@ async def test_invoke_streaming_rpc_error(monkeypatch):
     endpoint._pool = MagicMock()
     endpoint._pool.FindMessageTypeByName.side_effect = [object(), object()]
     endpoint._factory = MagicMock()
-    endpoint._factory.GetPrototype.side_effect = [DummyRequest, DummyResponse]
+    proto_classes = iter([DummyRequest, DummyResponse])
+    monkeypatch.setattr(tg.message_factory, "GetMessageClass", lambda _desc: next(proto_classes))
 
     class DummyChannel:
         def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
@@ -830,6 +845,7 @@ async def test_discover_service_details_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_discover_services_ignores_non_list_services_response(monkeypatch):
     """HasField(False) responses should be ignored without attempting detail discovery."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -854,6 +870,7 @@ async def test_discover_services_ignores_non_list_services_response(monkeypatch)
 @pytest.mark.asyncio
 async def test_discover_service_details_ignores_non_descriptor_response(monkeypatch):
     """HasField(False) responses should not mutate the services map."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -878,6 +895,7 @@ async def test_discover_service_details_ignores_non_descriptor_response(monkeypa
 @pytest.mark.asyncio
 async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch):
     """pool.Add exceptions are swallowed as 'already in pool'."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -928,6 +946,7 @@ async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch)
 @pytest.mark.asyncio
 async def test_discover_service_details_skips_unrelated_service(monkeypatch):
     """Services that don't match the requested name are ignored."""
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
@@ -1009,6 +1028,7 @@ def test_import_fallback_sets_grpc_unavailable(monkeypatch):
     import builtins
     import runpy
 
+    # First-Party
     import mcpgateway.translate_grpc as tg
 
     real_import = builtins.__import__
@@ -1022,3 +1042,78 @@ def test_import_fallback_sets_grpc_unavailable(monkeypatch):
     ns = runpy.run_path(tg.__file__, run_name="__translate_grpc_import_fallback_test__")
     assert ns["GRPC_AVAILABLE"] is False
     assert ns["grpc"] is None
+
+
+@pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
+class TestGrpcEndpointLoadFileDescriptors:
+    """Tests for GrpcEndpoint.load_file_descriptors()."""
+
+    def test_load_file_descriptors_populates_pool(self):
+        """Test that valid FileDescriptorProto bytes are loaded into the pool."""
+        # Third-Party
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+
+        # Create a minimal valid FileDescriptorProto
+        fd = FileDescriptorProto()
+        fd.name = "test_load_fd.proto"
+        fd.package = "test_load_fd"
+        fd.syntax = "proto3"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        endpoint.load_file_descriptors([proto_bytes])
+
+        # The descriptor should now be findable in the pool
+        found = endpoint._pool.FindFileByName("test_load_fd.proto")
+        assert found is not None
+        assert found.package == "test_load_fd"
+
+    def test_load_file_descriptors_skips_duplicates(self):
+        """Test that loading the same descriptor twice doesn't raise."""
+        # Third-Party
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+
+        fd = FileDescriptorProto()
+        fd.name = "test_dup_fd.proto"
+        fd.package = "test_dup_fd"
+        fd.syntax = "proto3"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        # Load twice — should not raise
+        endpoint.load_file_descriptors([proto_bytes])
+        endpoint.load_file_descriptors([proto_bytes])
+
+    def test_load_file_descriptors_error_corrupt_bytes(self):
+        """Test that corrupt/invalid bytes raise an error."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        with pytest.raises(ValueError):
+            endpoint.load_file_descriptors([b"not-valid-protobuf-data"])
+
+    def test_load_file_descriptors_rejects_single_bytes(self):
+        """Passing a single bytes object (not a sequence) is the classic Python footgun: the
+        for-loop would iterate byte-by-byte. The guard must raise TypeError eagerly."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        with pytest.raises(TypeError, match="must be a sequence of bytes"):
+            endpoint.load_file_descriptors(b"\x00\x01\x02")
+        with pytest.raises(TypeError, match="must be a sequence of bytes"):
+            endpoint.load_file_descriptors(bytearray(b"\x00\x01\x02"))
+
+    def test_load_file_descriptors_skips_pool_conflict(self):
+        """A FileDescriptorProto conflict at pool.Add should be logged and skipped, not raised."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        endpoint._pool = MagicMock()
+        endpoint._pool.Add = MagicMock(side_effect=TypeError("Conflict register for file 'a.proto': type already exists"))
+
+        # Build a minimally-valid FileDescriptorProto so ParseFromString succeeds,
+        # then verify the TypeError from Add is swallowed (no exception propagates).
+        # Third-Party
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto
+
+        fd = FileDescriptorProto()
+        fd.name = "a.proto"
+        fd.package = "a"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint.load_file_descriptors([proto_bytes])
+        assert endpoint._pool.Add.call_count == 1
