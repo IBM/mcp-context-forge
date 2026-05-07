@@ -4941,6 +4941,84 @@ class TestGetRpcFilterContext:
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
 
+    def test_get_rpc_filter_context_dict_email_value_is_dict(self, caplog):
+        """Test that dict email value is caught and converted to None (defensive fix for issue #XXXX)."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        # Edge case: email key contains a dict instead of string
+        user = {"email": {"address": "nested@example.com"}, "is_admin": False}
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # Should convert dict to None and log warning
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_dict_email_value_is_list(self, caplog):
+        """Test that list email value is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": []})
+        # Edge case: email key contains a list instead of string
+        user = {"email": ["test@example.com"], "is_admin": False}
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # Should convert list to None and log warning
+        assert email is None
+        assert teams == []
+        assert is_admin is False
+        assert any("non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_dict_email_value_is_int(self, caplog):
+        """Test that integer email value is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        # Edge case: email key contains an int instead of string
+        user = {"email": 12345, "is_admin": False}
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        # Should convert int to None and log warning
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_object_email_attr_is_dict(self, caplog):
+        """Test that object with dict email attribute is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+
+        class UserObjectWithDictEmail:
+            email = {"nested": "value"}
+            is_admin = False
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, UserObjectWithDictEmail())
+
+        # Should convert dict to None and log warning
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("non-string type" in record.message for record in caplog.records)
+
 
 # --------------------------------------------------------------------------- #
 # ASGI middleware helper for injecting request.state in tests                  #
