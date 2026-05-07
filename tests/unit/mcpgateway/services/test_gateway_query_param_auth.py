@@ -172,7 +172,7 @@ class TestQueryParamAuthRegistration:
 
         async def capture_init(*args, **kwargs):
             captured_params.update(kwargs.get("auth_query_params", {}) or {})
-            return ({"tools": {"listChanged": True}}, [], [], [])
+            return ({"tools": {"listChanged": True}}, [], [], [], [])
 
         gateway_service._initialize_gateway = AsyncMock(side_effect=capture_init)
         gateway_service._notify_gateway_added = AsyncMock()
