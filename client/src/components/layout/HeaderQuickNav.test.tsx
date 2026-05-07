@@ -24,6 +24,24 @@ describe("HeaderQuickNav", () => {
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeInTheDocument();
   });
 
+  it("starts collapsed and expands on focus", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <HeaderQuickNav />
+      </I18nProvider>,
+    );
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    expect(input).toHaveAttribute("data-expanded", "false");
+    expect(screen.getByText("Ctrl K")).toBeInTheDocument();
+
+    await user.click(input);
+
+    expect(input).toHaveAttribute("data-expanded", "true");
+  });
+
   it("keeps the typed value in the input", async () => {
     const user = userEvent.setup();
 
@@ -37,6 +55,20 @@ describe("HeaderQuickNav", () => {
     await user.type(input, "servers");
 
     expect(input).toHaveValue("servers");
+  });
+
+  it("focuses the search input when the icon button is clicked", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <HeaderQuickNav />
+      </I18nProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(screen.getByRole("searchbox", { name: "Search" })).toHaveFocus();
   });
 
   it("shows the macOS shortcut symbol on Apple platforms", async () => {
@@ -65,5 +97,6 @@ describe("HeaderQuickNav", () => {
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
 
     expect(input).toHaveFocus();
+    expect(input).toHaveAttribute("data-expanded", "true");
   });
 });
