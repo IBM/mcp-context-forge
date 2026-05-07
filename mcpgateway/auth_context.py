@@ -115,6 +115,7 @@ import base64
 from functools import lru_cache
 import hashlib
 import hmac
+import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
@@ -124,6 +125,9 @@ import orjson
 # First-Party
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 # Trust-layer header names. ``INTERNAL_MCP_SESSION_VALIDATED_HEADER`` is part
 # of the module's public constant API (main.py's middleware compares against
@@ -177,13 +181,16 @@ def get_user_email(user: Any) -> str:
     """
     if user is None:
         return "unknown"
+    # Handle objects with email attribute (e.g., ORM models, dataclasses)
+    if hasattr(user, "email"):
+        email = getattr(user, "email", None)
+        if email and isinstance(email, str):
+            return email
+    # Handle dict-like objects
     if isinstance(user, dict):
         return user.get("email") or user.get("sub") or "unknown"
-    if hasattr(user, "email"):
-        return getattr(user, "email") or "unknown"
-    if not user:
-        return "unknown"
-    return str(user)
+    # Fallback to string conversion for other types
+    return str(user) if user else "unknown"
 
 
 def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
@@ -325,7 +332,7 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     return []
 
 
-def get_rpc_filter_context(request: Request, user) -> tuple:
+def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]], bool]:
     """Extract ``(user_email, token_teams, is_admin)`` for RPC filtering.
 
     Args:
@@ -336,6 +343,10 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         Tuple of ``(user_email, token_teams, is_admin)`` where ``is_admin`` is
         sourced from the verified token, not the DB user, so that scoped tokens
         (empty ``teams``) cannot inherit admin bypass.
+
+        **Type validation**: ``user_email`` is validated to be a string or None.
+        Non-string values (dict, list, int, etc.) are logged and converted to None
+        for fail-safe public-only access, preventing SQL binding errors.
 
     Examples:
         >>> from unittest.mock import MagicMock
@@ -352,20 +363,23 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         >>> is_admin
         True
     """
-    # Use canonical get_user_email for consistent email-over-sub precedence
+    # Use existing get_user_email() helper for consistent email extraction
     user_email = get_user_email(user)
+    # get_user_email() always returns a string, but may return "unknown"
+    # Convert "unknown" to None for downstream SQL queries
     if user_email == "unknown":
         user_email = None
 
-    # SECURITY: Ensure user_email is a string or None, never a dict or other object.
-    # This prevents passing entire user dicts to SQL queries.
+    # SECURITY: Defensive type validation to ensure user_email is a string or None.
+    # This prevents passing entire user dicts or other objects to SQL queries.
+    # This should never fire if get_user_email() works correctly, but provides
+    # defense-in-depth for edge cases.
     if user_email is not None and not isinstance(user_email, str):
-        # Log the issue for debugging but don't expose internal details
-        # Standard
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.warning("get_rpc_filter_context: user_email extraction returned non-string type, setting to None")
+        logger.warning(
+            "get_rpc_filter_context: non-string user_email type=%s path=%s; forcing None (public-only access)",
+            type(user_email).__name__,
+            getattr(getattr(request, "url", None), "path", "unknown"),
+        )
         user_email = None
 
     token_teams = get_token_teams_from_request(request)
@@ -376,7 +390,16 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
     internal_auth_context = get_internal_mcp_auth_context(request)
     if isinstance(internal_auth_context, dict):
         if user_email is None:
-            user_email = internal_auth_context.get("email")
+            internal_email = internal_auth_context.get("email")
+            # SECURITY: Type-check internal auth context email
+            if internal_email is not None and not isinstance(internal_email, str):
+                logger.warning(
+                    "get_rpc_filter_context: internal_auth_context email non-string type=%s path=%s; forcing None (public-only access)",
+                    type(internal_email).__name__,
+                    getattr(getattr(request, "url", None), "path", "unknown"),
+                )
+                internal_email = None
+            user_email = internal_email
         is_admin = bool(internal_auth_context.get("is_admin", False))
         if token_teams is not None and len(token_teams) == 0:
             is_admin = False
