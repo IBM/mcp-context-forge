@@ -249,14 +249,16 @@ export function AuthGuard({
   // Loading state: show loading indicator instead of blank page
   if (isLoading) {
     return (
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        fontSize: '14px',
-        color: '#666'
-      }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          fontSize: "14px",
+          color: "#666",
+        }}
+      >
         Loading...
       </div>
     );
