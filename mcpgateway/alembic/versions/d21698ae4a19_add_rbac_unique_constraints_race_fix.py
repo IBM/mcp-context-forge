@@ -22,7 +22,6 @@ Create Date: 2026-05-06 12:35:58.142694
 from typing import Sequence, Union
 
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import text, inspect
 
 
