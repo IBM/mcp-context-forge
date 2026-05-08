@@ -16,6 +16,8 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 from pydantic import SecretStr, ValidationError
 
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate
+
 # Third-party
 import pytest
 
@@ -71,9 +73,6 @@ def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
 
 def test_sso_entra_graph_timeout_and_max_groups_validation():
     """Graph fallback timeout and max_groups should enforce configured bounds."""
-    # Third-Party
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         Settings(sso_entra_graph_api_timeout=0, _env_file=None)
 
@@ -500,10 +499,6 @@ def test_parse_allowed_roots_list_passthrough():
 
 def test_gateway_create_rejects_always_blocked_ssrf_token_url():
     """Gateway creation should reject OAuth token URLs in always-blocked SSRF ranges."""
-    from pydantic import ValidationError
-
-    from mcpgateway.schemas import GatewayCreate
-
     with pytest.raises(ValidationError) as exc_info:
         GatewayCreate(
             name="blocked-oauth-gateway",
@@ -523,10 +518,7 @@ def test_gateway_create_rejects_always_blocked_ssrf_token_url():
 
 def test_gateway_create_rejects_localhost_token_url_when_disabled(monkeypatch):
     """Gateway creation should reject localhost OAuth token URLs when localhost SSRF access is disabled."""
-    from pydantic import ValidationError
-
     from mcpgateway.config import settings
-    from mcpgateway.schemas import GatewayCreate
 
     monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
 
@@ -549,10 +541,6 @@ def test_gateway_create_rejects_localhost_token_url_when_disabled(monkeypatch):
 
 def test_gateway_update_rejects_ssrf_token_url():
     """Gateway update should reject OAuth token URLs blocked by SSRF rules."""
-    from pydantic import ValidationError
-
-    from mcpgateway.schemas import GatewayUpdate
-
     with pytest.raises(ValidationError) as exc_info:
         GatewayUpdate(
             auth_type="oauth",
