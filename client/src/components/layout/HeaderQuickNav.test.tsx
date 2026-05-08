@@ -99,4 +99,53 @@ describe("HeaderQuickNav", () => {
     expect(input).toHaveFocus();
     expect(input).toHaveAttribute("data-expanded", "true");
   });
+
+  it("stays expanded after blur when the query has content", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <HeaderQuickNav />
+      </I18nProvider>,
+    );
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    await user.type(input, "servers");
+    fireEvent.blur(input);
+
+    expect(input).toHaveAttribute("data-expanded", "true");
+  });
+
+  it("collapses again on blur when the query is empty", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <I18nProvider>
+        <HeaderQuickNav />
+      </I18nProvider>,
+    );
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    await user.click(input);
+    fireEvent.blur(input);
+
+    expect(input).toHaveAttribute("data-expanded", "false");
+  });
+
+  it("prevents the form from submitting", () => {
+    render(
+      <I18nProvider>
+        <HeaderQuickNav />
+      </I18nProvider>,
+    );
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    const form = input.closest("form");
+    expect(form).not.toBeNull();
+
+    const submitEvent = new Event("submit", { bubbles: true, cancelable: true });
+    form!.dispatchEvent(submitEvent);
+
+    expect(submitEvent.defaultPrevented).toBe(true);
+  });
 });
