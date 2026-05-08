@@ -24,13 +24,13 @@ from unittest.mock import MagicMock, patch
 
 # First-Party
 import plugins.prompt_injection_guard.prompt_injection_guard as _pig_mod
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
 )
-from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload
-from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework.hooks.prompts import PromptPrehookPayload
+from cpex.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
 
 from plugins.prompt_injection_guard.prompt_injection_guard import (
     PromptInjectionGuardConfig,
