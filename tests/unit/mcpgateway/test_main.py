@@ -4987,7 +4987,7 @@ class TestGetRpcFilterContext:
 
         email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
-        # get_user_email() converts int to string, but defensive check catches non-string original
+        # get_user_email() returns the int directly from user.get("email"); defensive check catches it
         assert email is None
         assert teams == ["t1"]
         assert is_admin is False
@@ -5012,6 +5012,7 @@ class TestGetRpcFilterContext:
         assert email == str(user_obj)
         assert teams == ["t1"]
         assert is_admin is False
+
     def test_get_rpc_filter_context_internal_auth_context_dict_email(self, caplog):
         """Test that internal_auth_context with dict email is caught and converted to None (blocking issue #1 from #4624)."""
         # First-Party
