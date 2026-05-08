@@ -2100,7 +2100,6 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     db_user_is_admin = False
     if email:
         # First-Party
-        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
         from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
 
         with SessionLocal() as db:
