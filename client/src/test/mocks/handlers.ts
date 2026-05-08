@@ -85,4 +85,28 @@ export const handlers = [
       message: "Connection successful",
     });
   }),
+
+  // Mock create gateway endpoint
+  http.post("/gateways", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json(
+      {
+        id: "mock-gateway-id",
+        ...body,
+        created_at: new Date().toISOString(),
+      },
+      { status: 201 },
+    );
+  }),
+
+  // Mock update gateway endpoint
+  http.put("/gateways/:gatewayId", async ({ request, params }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const { gatewayId } = params;
+    return HttpResponse.json({
+      id: gatewayId,
+      ...body,
+      updated_at: new Date().toISOString(),
+    });
+  }),
 ];
