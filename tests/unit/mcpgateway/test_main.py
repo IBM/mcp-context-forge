@@ -176,6 +176,7 @@ MOCK_GATEWAY_READ = {
     "enabled": True,
     "reachable": True,
     "auth_type": None,
+    "skipped_tools": [],
 }
 
 MOCK_ROOT = {
@@ -2006,6 +2007,21 @@ class TestGatewayEndpoints:
         response = test_client.post("/gateways/", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_create.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.register_gateway")
+    def test_create_gateway_endpoint_skipped_tools_in_response(self, mock_create, test_client, auth_headers):
+        """POST /gateways/ must include skipped_tools in the response body when tools are skipped (issue #136 Bug C)."""
+        skipped = [
+            "too_long_name_aaaa: Tool name exceeds MCP spec limit of 128 characters (got 135)",
+            "bad&&tool: contains unsafe characters",
+        ]
+        gateway_read = GatewayRead(**{**MOCK_GATEWAY_READ, "skipped_tools": skipped})
+        mock_create.return_value = gateway_read
+        req = {"name": "test_gateway", "url": "http://example.com"}
+        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["skippedTools"] == skipped
 
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):

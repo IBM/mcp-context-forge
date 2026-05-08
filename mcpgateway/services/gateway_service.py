@@ -1046,7 +1046,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             if initialize_timeout is not None:
                 try:
-                    capabilities, tools, resources, prompts = await asyncio.wait_for(
+                    capabilities, tools, resources, prompts, validation_errors = await asyncio.wait_for(
                         self._initialize_gateway(
                             init_url,  # URL with query params if applicable
                             authentication_headers,
@@ -1064,7 +1064,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
                     raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
             else:
-                capabilities, tools, resources, prompts = await self._initialize_gateway(
+                capabilities, tools, resources, prompts, validation_errors = await self._initialize_gateway(
                     init_url,  # URL with query params if applicable
                     authentication_headers,
                     gateway.transport,
@@ -1411,7 +1411,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 },
             )
 
-            return self.convert_gateway_to_read(db_gateway)
+            gateway_read = self.convert_gateway_to_read(db_gateway)
+            gateway_read.skipped_tools = validation_errors
+            if validation_errors:
+                logger.warning(f"Gateway '{db_gateway.name}' registered successfully but {len(validation_errors)} tool(s) were " f"skipped due to validation errors: {validation_errors}")
+            return gateway_read
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -1605,10 +1609,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Use the existing connection logic with validation context for diagnostics
             if gateway.transport.upper() == "SSE":
-                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
+                capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 try:
-                    capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                    capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
                 except Exception as streamable_err:
                     # Surface diagnostic context for likely auth rejections (401/403)
                     error_str = str(streamable_err).lower()
@@ -2380,7 +2384,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             update_client_key = _enc.decrypt_secret_or_plaintext(update_client_key)
                         except Exception:
                             logger.debug("client_key decryption skipped during gateway re-init")
-                    capabilities, tools, resources, prompts = await self._initialize_gateway(
+                    capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
                         init_url,
                         gateway.auth_value,
                         gateway.transport,
@@ -2961,7 +2965,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 act_client_key = _enc.decrypt_secret_or_plaintext(act_client_key)
                             except Exception:
                                 logger.debug("client_key decryption skipped during gateway activation")
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(
+                        capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
                             init_url,
                             gateway.auth_value,
                             gateway.transport,
@@ -4035,7 +4039,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
         client_cert: Optional[str] = None,
         client_key: Optional[str] = None,
-    ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
+    ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate], List[str]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
         Connects to an MCP gateway using the specified transport protocol,
@@ -4117,7 +4121,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # Skip MCP server connection for Authorization Code flow
                         # Tools will be fetched after OAuth completion
-                        return {}, [], [], []
+                        return {}, [], [], [], []
                     # When flag is True (activation), skip token fetch but try to connect
                     # This allows activation to proceed - actual auth happens during tool invocation
                     logger.debug("OAuth Authorization Code gateway activation - skipping token fetch")
@@ -4135,18 +4139,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             tools = []
             resources = []
             prompts = []
+            validation_errors: list[str] = []
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(
+                capabilities, tools, resources, prompts, validation_errors = await self.connect_to_sse_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
                 )
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(
+                capabilities, tools, resources, prompts, validation_errors = await self.connect_to_streamablehttp_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
                 )
 
-            return capabilities, tools, resources, prompts
+            return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
 
             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5106,7 +5111,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     _refresh_key = _enc.decrypt_secret_or_plaintext(_refresh_key)
                 except Exception:
                     logger.debug("client_key decryption skipped during gateway refresh")
-            _capabilities, tools, resources, prompts = await self._initialize_gateway(
+            _capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
                 url=gateway_url,
                 authentication=gateway_auth_value,
                 transport=gateway_transport,
@@ -5456,8 +5461,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 valid_tools.append(validated_tool)
                 logger.debug(f"Tool '{tool_name}' validated successfully")
             except ValidationError as e:
-                error_msg = f"Validation failed for tool '{tool_name}': {e.errors()}"
-                logger.error(error_msg)
+                clean_msgs = "; ".join(err["msg"].removeprefix("Value error, ") for err in e.errors())
+                error_msg = f"{tool_name}: {clean_msgs}"
+                logger.error(f"Validation failed for tool '{tool_name}': {e.errors()}")
                 logger.debug(f"Failed tool schema: {tool_dict}")
                 validation_errors.append(error_msg)
             except ValueError as e:
@@ -5520,7 +5526,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     tools = response.tools
                     tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                    tools, _ = self._validate_tools(tools, context="oauth")
+                    tools, validation_errors = self._validate_tools(tools, context="oauth")
                     if tools:
                         logger.info(f"Fetched {len(tools)} tools from gateway")
                     # Fetch resources if supported
@@ -5605,7 +5611,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         except Exception as e:
                             logger.warning(f"Failed to fetch prompts: {e}")
 
-                    return capabilities, tools, resources, prompts
+                    return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
             # Note: This function is for OAuth servers only, which don't use query param auth
             # Still sanitize in case exception contains URL with static sensitive params
@@ -5698,7 +5704,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 tools = response.tools
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools, _ = self._validate_tools(tools)
+                tools, validation_errors = self._validate_tools(tools)
                 if tools:
                     logger.info(f"Fetched {len(tools)} tools from gateway")
                 # Fetch resources if supported
@@ -5784,7 +5790,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         except Exception as e:
                             logger.warning(f"Failed to fetch prompts: {e}")
 
-                return capabilities, tools, resources, prompts
+                return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
@@ -5863,7 +5869,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 tools = response.tools
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools, _ = self._validate_tools(tools)
+                tools, validation_errors = self._validate_tools(tools)
                 for tool in tools:
                     tool.request_type = "STREAMABLEHTTP"
                 if tools:
@@ -5942,7 +5948,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         except Exception as e:
                             logger.warning(f"Failed to fetch prompts: {e}")
 
-                return capabilities, tools, resources, prompts
+                return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 

@@ -54,7 +54,7 @@ import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
-from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
@@ -2989,7 +2989,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_add_server: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
@@ -3142,7 +3143,8 @@ async def admin_edit_server(
     except HTTPException:
         raise
     except Exception as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_edit_server: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/state")
@@ -11777,8 +11779,8 @@ async def admin_edit_tool(
         LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:  # Generic catch-all for unexpected errors
-        LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_edit_tool: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/generate-schemas-from-openapi")
@@ -12243,7 +12245,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
         team_id_cast = typing_cast(Optional[str], team_id)
-        await gateway_service.register_gateway(
+        result = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -12269,8 +12271,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 "4. Return to the admin panel\n\n"
                 "Tools will not work until OAuth authorization is completed."
             )
+        skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
         return ORJSONResponse(
-            content={"message": message, "success": True},
+            content={"message": message, "success": True, "skipped_tools": skipped_tools},
             status_code=200,
         )
 
@@ -12289,8 +12292,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+    except DataError as ex:
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=400)
     except Exception as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_add_gateway: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
@@ -12502,7 +12508,8 @@ async def admin_edit_gateway(
         # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_edit_gateway: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
@@ -12765,8 +12772,8 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
                 },
                 status_code=415,
             )
-        LOGGER.error(f"Error in admin_add_resource: {ex}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_add_resource: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/edit")
@@ -12894,8 +12901,8 @@ async def admin_edit_resource(
                     "allowed_types": ex.allowed_types,
                 },
             )
-        LOGGER.error(f"Error in admin_edit_resource: {ex}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_edit_resource: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/delete")
@@ -13157,8 +13164,8 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
                 },
             )
 
-        LOGGER.error(f"Error in admin_add_prompt: {ex}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_add_prompt: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
@@ -13287,8 +13294,8 @@ async def admin_edit_prompt(
                     "success": False,
                 },
             )
-        LOGGER.error(f"Error in admin_edit_prompt: {ex}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error in admin_edit_prompt: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
@@ -15619,8 +15626,8 @@ async def admin_add_a2a_agent(
     except HTTPException:
         raise
     except Exception as ex:
-        LOGGER.error(f"Error creating A2A agent: {ex}")
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        LOGGER.exception(f"Unexpected error creating A2A agent: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/edit")

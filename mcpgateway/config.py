@@ -385,11 +385,9 @@ class Settings(BaseSettings):
         # RFC 7230 token = 1*tchar; tchar = "!" / "#" / "$" / "%" / "&" / "'"
         # / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
         if not re.fullmatch(r"[A-Za-z0-9!#$%&'*+\-.^_`|~]+", cleaned):
-            raise ValueError(
-                f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token "
-                "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~."
-            )
+            raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
+
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
@@ -489,7 +487,7 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
+        default_factory=lambda: ["&&", "||", "$("],
         description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
 
@@ -2948,6 +2946,7 @@ Disallow: /
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
+    validation_max_tool_name_length: int = 128  # MCP spec SHOULD limit for tool names
     validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB

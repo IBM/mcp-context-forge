@@ -500,6 +500,7 @@ class TestGatewayServiceOAuthComprehensive:
                     [mock_tool],  # tools
                     [],  # resources
                     [],  # prompts
+                    [],  # validation_errors
                 )
             )
 
@@ -715,7 +716,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
-            mock_connect.return_value = ({}, [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [])
 
             with pytest.raises(GatewayConnectionError, match="audience"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
@@ -734,7 +735,7 @@ class TestFetchToolsAfterOauthTokenValidation:
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token-not-jwt")
-            mock_connect.return_value = ({}, [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [])
 
             await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
 

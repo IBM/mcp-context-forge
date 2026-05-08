@@ -3526,6 +3526,9 @@ class GatewayRead(BaseModelWithConfigDict):
     # Tool count (populated from the tools relationship; 0 when not loaded)
     tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
 
+    # Tools skipped during gateway import due to validation errors (transient, not persisted)
+    skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
+
     @model_validator(mode="before")
     @classmethod
     def _mask_query_param_auth(cls, data: Any) -> Any:

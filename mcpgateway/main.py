@@ -62,7 +62,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -1853,16 +1853,17 @@ def validate_security_configuration():
 
         # Warn about ephemeral storage without strict user-in-DB mode
         if not getattr(current_settings, "require_user_in_db", False):
-            is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
+            database_url = getattr(current_settings, "database_url", settings.database_url)
+            is_ephemeral = ":memory:" in database_url or database_url == "sqlite:///./mcp.db"
             if is_ephemeral:
                 logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
         # Warn about default JWT issuer/audience in non-development environments
         if current_settings.environment != "development":
             if current_settings.jwt_issuer == "mcpgateway":
-                logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
+                logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
             if current_settings.jwt_audience == "mcpgateway-api":
-                logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
+                logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
 
         # UAID Cross-Gateway Routing Security Check
         if not current_settings.uaid_allowed_domains:
@@ -6595,6 +6596,8 @@ async def register_gateway(
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, DataError):
+            return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=status.HTTP_400_BAD_REQUEST)
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
