@@ -264,7 +264,7 @@ templating = [
 # Install with: pip install mcp-contextforge-gateway[plugins]
 plugins = [
     "cpex-encoded-exfil-detection>=0.3.1",
-    "cpex-pii-filter>=0.3.1",
+    "cpex-pii-filter>=0.3.2",
     "cpex-rate-limiter>=0.1.1",
     "cpex-retry-with-backoff>=0.3.1",
     "cpex-secrets-detection>=0.3.1",
