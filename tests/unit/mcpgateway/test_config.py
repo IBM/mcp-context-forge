@@ -1463,3 +1463,80 @@ def test_hot_server_check_interval_property():
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
+
+
+def test_gateway_create_oauth_config_non_dict_raises():
+    """Test that oauth_config must be a dict object."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config="not a dict",  # Should be dict
+        )
+    assert "oauth_config must be an object" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_non_string_url_field_raises():
+    """Test that oauth_config URL fields must be strings."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "token_url": 12345,  # Should be string
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.token_url must be a string URL" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_authorization_servers_non_list_raises():
+    """Test that oauth_config.authorization_servers must be a list."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "authorization_servers": "not a list",  # Should be list
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.authorization_servers must be a list" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_authorization_servers_non_string_item_raises():
+    """Test that oauth_config.authorization_servers items must be strings."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "authorization_servers": ["https://auth.example.com", 12345],  # Second item not string
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.authorization_servers[1] must be a string URL" in str(exc_info.value)
+
+
+def test_oauth_manager_non_string_token_url_raises():
+    """Test that OAuthManager raises error for non-string token_url."""
+    from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+    manager = OAuthManager()
+    credentials = {
+        "client_id": "test-client",
+        "client_secret": "test-secret",  # pragma: allowlist secret
+        "token_url": 12345,  # Not a string
+    }
+
+    with pytest.raises(OAuthError, match="OAuth configuration missing valid token_url"):
+        import asyncio
+
+        asyncio.run(manager._client_credentials_flow(credentials))
