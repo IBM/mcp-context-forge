@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-04-28T05:34:27.289618Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -2913,6 +2913,7 @@ dependencies = [
     { name = "filelock" },
     { name = "gunicorn" },
     { name = "httpx", extra = ["http2"] },
+    { name = "idna" },
     { name = "jinja2" },
     { name = "jq" },
     { name = "jsonpath-ng" },
@@ -3112,6 +3113,7 @@ requires-dist = [
     { name = "gunicorn", specifier = ">=25.3.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
+    { name = "idna", specifier = ">=3.4" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jq", specifier = ">=1.11.0" },
     { name = "jsonpath-ng", specifier = ">=1.8.0" },

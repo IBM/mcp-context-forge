@@ -14012,22 +14012,25 @@ async def admin_test_gateway(
         'admin_test_gateway'
     """
     start_time: float = time.monotonic()
-    try:
-        validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
-    except ValueError as e:
-        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
-        latency_ms = int((time.monotonic() - start_time) * 1000)
-        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
-    # Enforce allowlist if configured
+    # Step 1: Enforce allowlist if configured (narrows scope to approved hosts)
     try:
+        # Standard
         from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-        parsed_url = urlparse(validated_base_url)
+        parsed_url = urlparse(str(request.base_url))
         if parsed_url.hostname:
             SecurityValidator.validate_host_allowlist(parsed_url.hostname, settings.gateway_test_allowed_hosts, "Gateway test URL")
     except ValueError as e:
         LOGGER.warning("Gateway test hostname not in allowlist for %s: %s", request.base_url, e)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+
+    # Step 2: Validate URL format and SSRF protection (unconditional security check)
+    try:
+        validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
+    except ValueError as e:
+        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 

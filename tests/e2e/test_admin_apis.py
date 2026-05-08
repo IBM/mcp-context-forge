@@ -873,6 +873,24 @@ class TestAdminGatewayAPIs:
             assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
             assert "error" in data["body"]
 
+    async def test_admin_test_gateway_enforces_ssrf_after_allowlist(self, client: AsyncClient, mock_settings):
+        """Test E2E: allowlist with localhost blocked by SSRF (ICACF-15 Issue #2)."""
+        from mcpgateway.config import settings
+
+        # Configure allowlist with localhost
+        with patch.object(settings, "gateway_test_allowed_hosts", ["127.0.0.1"]):
+            with patch.object(settings, "ssrf_allow_localhost", False):
+                request_data = {"base_url": "http://127.0.0.1/", "path": "/", "method": "GET", "headers": {}, "body": None}
+
+                response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+
+                # Should be blocked by SSRF protection despite allowlist
+                assert response.status_code == 200  # HTTP status always 200
+                data = response.json()
+                assert data["statusCode"] == 400  # Error in response body
+                assert "error" in data["body"]
+                assert data["body"]["error"] == "Invalid gateway URL"
+
 
 # -------------------------
 # Test Root Admin APIs

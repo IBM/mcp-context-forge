@@ -2232,10 +2232,14 @@ class TestGatewayTestEndpointSecurity:
 
         allowed_patterns = ["*.example.com"]
 
-        # Should pass - subdomains
+        # Should pass - subdomains only (per DNS conventions)
         SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
         SecurityValidator.validate_host_allowlist("test.api.example.com", allowed_patterns)
-        SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+
+        # Should fail - base domain NOT matched by wildcard
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
 
         # Should fail - different domain
         with pytest.raises(ValueError) as exc_info:
@@ -2323,6 +2327,71 @@ class TestGatewayTestEndpointSecurity:
                         SecurityValidator.validate_url(url, "Gateway test URL")
                     assert "localhost" in str(exc_info.value).lower() or "loopback" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
                     logger.debug(f"Loopback URL blocked: {url} - {exc_info.value}")
+
+    def test_allowlist_does_not_bypass_ssrf_protection(self):
+        """Test that allowlist with private IP still triggers SSRF block (ICACF-15 Issue #1)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Configure allowlist with private IP
+        with patch.object(settings, "gateway_test_allowed_hosts", ["192.168.1.1"]):
+            with patch.object(settings, "ssrf_protection_enabled", True):
+                with patch.object(settings, "ssrf_allow_private_networks", False):
+                    # Allowlist check should pass
+                    SecurityValidator.validate_host_allowlist("192.168.1.1", ["192.168.1.1"])
+                    logger.debug("Allowlist check passed for 192.168.1.1")
+
+                    # SSRF check should fail (unconditional)
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url("http://192.168.1.1/", "Test")
+                    assert "private" in str(exc_info.value).lower()
+                    logger.debug(f"SSRF correctly blocked private IP in allowlist: {exc_info.value}")
+
+    def test_allowlist_idn_normalization(self):
+        """Test that IDN/Punycode domains are normalized in allowlist (ICACF-15 Issue #3)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Allowlist contains ASCII Punycode version
+        allowed_patterns = ["xn--mnchen-3ya.de"]
+
+        # Should match IDN version (münchen.de)
+        SecurityValidator.validate_host_allowlist("münchen.de", allowed_patterns)
+        logger.debug("IDN hostname münchen.de matched Punycode allowlist xn--mnchen-3ya.de")
+
+        # Should also match ASCII version
+        SecurityValidator.validate_host_allowlist("xn--mnchen-3ya.de", allowed_patterns)
+        logger.debug("Punycode hostname matched Punycode allowlist")
+
+        # Test reverse: IDN in allowlist, ASCII in hostname
+        allowed_patterns_idn = ["münchen.de"]
+        SecurityValidator.validate_host_allowlist("xn--mnchen-3ya.de", allowed_patterns_idn)
+        logger.debug("Punycode hostname matched IDN allowlist")
+
+        # Test with wildcard and IDN
+        allowed_patterns_wildcard = ["*.münchen.de"]
+        SecurityValidator.validate_host_allowlist("api.münchen.de", allowed_patterns_wildcard)
+        logger.debug("IDN subdomain matched wildcard IDN allowlist")
+
+    def test_allowlist_wildcard_excludes_base_domain(self):
+        """Test that wildcard excludes base domain (ICACF-15 Issue #4)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Allowlist with wildcard pattern
+        allowed_patterns = ["*.example.com"]
+
+        # Should match subdomain
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        logger.debug("Subdomain api.example.com matched wildcard *.example.com")
+
+        # Should NOT match base domain (per DNS conventions)
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value).lower()
+        logger.debug(f"Base domain example.com correctly rejected by wildcard: {exc_info.value}")
+
+        # Should match nested subdomains
+        SecurityValidator.validate_host_allowlist("api.staging.example.com", allowed_patterns)
+        logger.debug("Nested subdomain api.staging.example.com matched wildcard *.example.com")
 
 
 if __name__ == "__main__":
