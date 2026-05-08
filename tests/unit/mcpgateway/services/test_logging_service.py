@@ -33,14 +33,17 @@ from mcpgateway.services.logging_service import CorrelationIdJsonFormatter, Logg
 
 @pytest.fixture(autouse=True)
 def _restore_root_logger_level():
-    """Prevent set_level() calls from leaking global root logger state into other test modules."""
+    """Prevent set_level() calls from leaking global logger state into other test modules."""
     root = logging.getLogger()
     saved_level = root.level
     saved_handler_levels = [(h, h.level) for h in root.handlers]
+    saved_logger_levels = {name: logger.level for name, logger in logging.Logger.manager.loggerDict.items() if isinstance(logger, logging.Logger)}
     yield
     root.setLevel(saved_level)
     for handler, level in saved_handler_levels:
         handler.setLevel(level)
+    for name, level in saved_logger_levels.items():
+        logging.getLogger(name).setLevel(level)
 
 
 # ---------------------------------------------------------------------------

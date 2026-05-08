@@ -348,6 +348,7 @@ class SecurityValidator:
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
+    MAX_TOOL_NAME_LENGTH = settings.validation_max_tool_name_length  # Default: 128 (MCP spec)
     MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 8192 (8KB)
     MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
     MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
@@ -697,7 +698,7 @@ class SecurityValidator:
             >>> try:
             ...     SecurityValidator.validate_tool_name(long_tool_name)
             ... except ValueError as e:
-            ...     'exceeds maximum length' in str(e)
+            ...     'exceeds MCP spec limit' in str(e)
             True
         """
         if not value:
@@ -711,8 +712,8 @@ class SecurityValidator:
         if _HTML_SPECIAL_CHARS_RE.search(value):
             raise ValueError("Tool name cannot contain HTML special characters")
 
-        if len(value) > cls.MAX_NAME_LENGTH:
-            raise ValueError(f"Tool name exceeds maximum length of {cls.MAX_NAME_LENGTH}")
+        if len(value) > cls.MAX_TOOL_NAME_LENGTH:
+            raise ValueError(f"Tool name exceeds MCP spec limit of {cls.MAX_TOOL_NAME_LENGTH} characters (got {len(value)})")
 
         return value
 
