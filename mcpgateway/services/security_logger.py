@@ -489,7 +489,7 @@ class SecurityLogger:
 
         return False
 
-    def _create_security_event(  # pylint: disable=too-many-positional-arguments
+    def _create_security_event(
         self,
         event_type: str,
         severity: SecuritySeverity,
@@ -497,6 +497,7 @@ class SecurityLogger:
         client_ip: str,
         description: str,
         threat_score: float,
+        *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         user_agent: Optional[str] = None,
