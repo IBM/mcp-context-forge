@@ -792,13 +792,96 @@ class TestRateLimiterBindingApiEnforcesLimits:
         _say("  → also gives you a window to peek at Redis Insight (still no rl:* keys)")
         time.sleep(PROPAGATION_WAIT + post_propagation_pause)
 
-        # ---- Phase 4: burst --------------------------------------------------
-        _say("Phase 4 — bursting 5 tool calls through the gateway HTTP path")
+        # ---- Phase 4: paced burst with per-call observation ----------------
         burst_size = 5
-        result = _send_tool_burst(server_id, tool_name, burst_size)
+        pace_between_calls = 3
         _say(
-            f"  result: allowed={result['allowed']} "
-            f"rate_limited={result['rate_limited']} errors={result['errors']}"
+            f"Phase 4 — pacing {burst_size} tool calls {pace_between_calls}s apart "
+            f"so the counter increments are observable in Redis Insight"
+        )
+        _say(
+            "  → watch the rl:<tenant>:user:admin@example.com:60 counter "
+            "climb with each call (refresh between calls)"
+        )
+
+        # Single MCP session for the full burst — keeps tenant_id resolution stable.
+        session_id = _mcp_initialize_session(server_id, _fresh_headers())
+        assert session_id is not None, (
+            "MCP initialize handshake failed — can't drive the burst without a session id"
+        )
+        call_headers = {
+            **_fresh_headers(),
+            "Accept": "application/json, text/event-stream",
+            "Mcp-Session-Id": session_id,
+        }
+
+        per_call_outcomes: list[str] = []
+        allowed = rate_limited = errors = 0
+        for i in range(burst_size):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": (
+                        {"message": f"inspect-{i}"} if "echo" in tool_name else {}
+                    ),
+                },
+            }
+            try:
+                resp = requests.post(
+                    f"{GATEWAY_URL}/servers/{server_id}/mcp",
+                    json=payload,
+                    headers=call_headers,
+                    timeout=15,
+                )
+                if resp.status_code == 429:
+                    outcome = "BLOCKED (HTTP 429)"
+                    rate_limited += 1
+                elif resp.status_code != 200:
+                    outcome = f"ERROR (HTTP {resp.status_code})"
+                    errors += 1
+                else:
+                    body = resp.json()
+                    err = body.get("error")
+                    result_obj = body.get("result") or {}
+                    if err:
+                        msg = str(err.get("message", "")).lower()
+                        if "rate" in msg or "limit" in msg:
+                            outcome = "BLOCKED (JSON-RPC rate-limit error)"
+                            rate_limited += 1
+                        else:
+                            outcome = f"ERROR ({err.get('message', 'unknown')})"
+                            errors += 1
+                    elif result_obj.get("isError"):
+                        content = result_obj.get("content", [])
+                        text = content[0].get("text", "") if content else ""
+                        if "rate" in text.lower() or "limit" in text.lower():
+                            outcome = "BLOCKED (MCP isError, rate-limit)"
+                            rate_limited += 1
+                        else:
+                            outcome = f"ERROR (MCP isError: {text[:50]})"
+                            errors += 1
+                    else:
+                        outcome = "ALLOWED"
+                        allowed += 1
+            except requests.RequestException as exc:
+                outcome = f"ERROR (transport: {exc})"
+                errors += 1
+            _say(f"  call {i + 1}/{burst_size}: {outcome}")
+            per_call_outcomes.append(outcome)
+            if i < burst_size - 1:
+                time.sleep(pace_between_calls)
+
+        result = {
+            "allowed": allowed,
+            "rate_limited": rate_limited,
+            "errors": errors,
+            "total": burst_size,
+        }
+        _say(
+            f"  summary: allowed={allowed} rate_limited={rate_limited} errors={errors}"
         )
 
         # ---- Phase 5: inspect Redis -----------------------------------------
@@ -822,13 +905,27 @@ class TestRateLimiterBindingApiEnforcesLimits:
         time.sleep(post_burst_pause)
 
         # ---- Phase 6: behavioural assertion ---------------------------------
-        _say("Phase 6 — asserting all three dimensions are tracked at runtime")
+        _say("Phase 6 — asserting the enforcement transition + multi-dim tracking")
         assert result["errors"] == 0, (
             f"Non-rate-limit errors indicate a setup/transport problem: {result}"
         )
-        assert result["rate_limited"] > 0, (
-            f"Expected the binding's tight per-dimension limits to block at "
-            f"least some of a {burst_size}-call burst. Got: {result}"
+        # The paced burst should produce a clean "first call(s) allow, later
+        # calls block" transition — proves enforcement is live and the
+        # transition kicks in within the burst.
+        assert result["allowed"] >= 1, (
+            f"Expected at least one call to slip through before the binding's "
+            f"tight limits kick in. With pace={pace_between_calls}s per call "
+            f"and binding by_user={binding_by_user}, the first call's "
+            f"increment typically hits before amplification fills the bucket. "
+            f"Got: {result}"
+        )
+        assert result["rate_limited"] >= 1, (
+            f"Expected at least one call to be blocked once the binding's "
+            f"tight limits are exceeded. Got: {result}"
+        )
+        _say(
+            f"  ✓ enforcement transition observed: "
+            f"{result['allowed']} allowed, {result['rate_limited']} blocked"
         )
 
         # The binding configures all three dimensions with non-null values, so
