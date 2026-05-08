@@ -351,7 +351,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
     if hasattr(user, "email"):
         user_email = getattr(user, "email", None)
     elif isinstance(user, dict):
-        user_email = user.get("sub") or user.get("email")
+        user_email = user.get("email") or user.get("sub")
     else:
         user_email = str(user) if user else None
 

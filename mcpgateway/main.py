@@ -2574,7 +2574,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 # Try JWT authentication first
                 try:
                     payload = await verify_jwt_token(jwt_token)
-                    username = payload.get("sub") or payload.get("email")
+                    username = payload.get("email") or payload.get("sub")
 
                     if not username:
                         return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})

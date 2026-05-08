@@ -146,7 +146,7 @@ class TokenUsageMiddleware:
                     try:
                         payload = await verify_jwt_token_cached(token, request)
                         jti = jti or payload.get("jti")
-                        user_email = user_email or payload.get("sub") or payload.get("email")
+                        user_email = user_email or payload.get("email") or payload.get("sub")
                     except Exception as decode_error:
                         logger.debug(f"Failed to decode token for usage logging: {decode_error}")
                         return
@@ -187,7 +187,7 @@ class TokenUsageMiddleware:
                     return  # Not an API token — nothing to log
 
                 jti = unverified.get("jti")
-                user_email = unverified.get("sub") or unverified.get("email")
+                user_email = unverified.get("email") or unverified.get("sub")
                 if not jti or not user_email:
                     return
 
