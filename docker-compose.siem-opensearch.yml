@@ -1,0 +1,27 @@
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - DISABLE_SECURITY_PLUGIN=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    networks: [mcpnet]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  gateway:
+    environment:
+      - SIEM_EXPORT_ENABLED=true
+      - 'SIEM_EXPORT_EVENT_SOURCES=["auth","security","audit"]'
+      - 'SIEM_DESTINATIONS=[{"name":"local-opensearch","type":"elasticsearch","url":"http://opensearch:9200","format":"json","index_pattern":"mcpgateway-security-%Y.%m.%d"}]'

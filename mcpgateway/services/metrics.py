@@ -45,7 +45,7 @@ import re
 
 # Third-Party
 from fastapi import Depends, Request, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, REGISTRY
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party
@@ -172,6 +172,24 @@ server_event_bus_publish_failed_counter = Counter(
     "server_event_bus_publish_failed_total",
     "Server-event-bus publish attempts that failed",
     ["reason"],
+)
+
+siem_events_exported_total = Counter(
+    "siem_events_exported_total",
+    "Total SIEM export attempts by destination and status",
+    ["destination", "status"],
+)
+
+siem_export_latency_seconds = Histogram(
+    "siem_export_latency_seconds",
+    "SIEM export latency in seconds by destination",
+    ["destination"],
+)
+
+siem_queue_depth = Gauge(
+    "siem_queue_depth",
+    "Current SIEM queue depth by destination",
+    ["destination"],
 )
 
 
