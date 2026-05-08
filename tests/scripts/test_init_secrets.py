@@ -11,12 +11,14 @@ file system interactions (creation/overwrite), and stdout output.
 
 # Standard
 import argparse
-from unittest.mock import MagicMock, patch, mock_open
+from pathlib import Path
+import stat
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
 
-# Local
+# First-Party
 from mcpgateway.scripts.init_secrets import generate_token, main
 
 
@@ -36,76 +38,84 @@ def test_token_entropy_and_length() -> None:
 
 
 @patch("os.chmod")
-@patch("os.path.exists", return_value=False)
 @patch("argparse.ArgumentParser.parse_args")
-def test_file_creation(mock_args: MagicMock, mock_exists: MagicMock, mock_chmod: MagicMock) -> None:
-
+def test_file_creation(mock_args: MagicMock, mock_chmod: MagicMock, tmp_path: Path) -> None:
     """Verify that the secrets file is created and permissions are set."""
-    mock_args.return_value = argparse.Namespace(
-        output="test.env", force=False, stdout=False
-    )
-    
-    m = mock_open()
-    with patch("mcpgateway.scripts.init_secrets.open", m, create=True):
-        main()
-        # Verify file was opened correctly
-        m.assert_called_once_with("test.env", "w", encoding="utf-8")
-        # Verify chmod was called with the right path and mode
-        mock_chmod.assert_called_once_with("test.env", 0o600)
+    output_path = tmp_path / "test.env"
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False)
+
+    main()
+
+    assert output_path.exists()
+    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
+    assert "JWT_SECRET_KEY=" in output_path.read_text(encoding="utf-8")
+    mock_chmod.assert_not_called()
 
 
-@patch("os.path.exists", return_value=True)
+@patch("os.close")
+@patch("os.fchmod", side_effect=OSError("permission update failed"))
+@patch("os.open", return_value=123)
 @patch("argparse.ArgumentParser.parse_args")
-def test_file_exists_error(mock_args: MagicMock, mock_exists: MagicMock) -> None:
+def test_write_failure_closes_fd(mock_args: MagicMock, mock_open: MagicMock, mock_fchmod: MagicMock, mock_close: MagicMock) -> None:
+    """Verify that a failed secure write closes the raw file descriptor."""
+    mock_args.return_value = argparse.Namespace(output="test.env", force=False, stdout=False)
+
+    with pytest.raises(SystemExit) as cm:
+        main()
+
+    assert cm.value.code == 1
+    mock_open.assert_called_once()
+    mock_fchmod.assert_called_once_with(123, 0o600)
+    mock_close.assert_called_once_with(123)
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_file_exists_error(mock_args: MagicMock, tmp_path: Path) -> None:
     """
     Verify that the command fails if the file already exists without --force.
 
     Expects a SystemExit with code 1.
     """
-    mock_args.return_value = argparse.Namespace(
-        output=".env.secrets", force=False, stdout=False
-    )
+    output_path = tmp_path / ".env.secrets"
+    output_path.write_text("existing=true\n", encoding="utf-8")
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=False, stdout=False)
 
     with pytest.raises(SystemExit) as cm:
         main()
     assert cm.value.code == 1
+    assert output_path.read_text(encoding="utf-8") == "existing=true\n"
 
 
-@patch("os.path.exists", return_value=True)
 @patch("argparse.ArgumentParser.parse_args")
-def test_force_behavior(mock_args: MagicMock, mock_exists: MagicMock) -> None:
+def test_force_behavior(mock_args: MagicMock, tmp_path: Path) -> None:
     """
     Verify that --force allows overwriting an existing file.
 
     Ensures the file is opened for writing even if os.path.exists is True.
     """
-    mock_args.return_value = argparse.Namespace(
-        output=".env.secrets", force=True, stdout=False
-    )
+    output_path = tmp_path / ".env.secrets"
+    output_path.write_text("existing=true\n", encoding="utf-8")
+    mock_args.return_value = argparse.Namespace(output=str(output_path), force=True, stdout=False)
 
-    m = mock_open()
-    with patch("mcpgateway.scripts.init_secrets.open", m, create=True):
-        main()
-        m.assert_called_once_with(".env.secrets", "w", encoding="utf-8")
+    main()
+
+    content = output_path.read_text(encoding="utf-8")
+    assert "existing=true" not in content
+    assert "AUTH_ENCRYPTION_SECRET=" in content
+    assert stat.S_IMODE(output_path.stat().st_mode) == 0o600
 
 
 @patch("builtins.print")
-@patch("os.path.exists", return_value=False)
 @patch("argparse.ArgumentParser.parse_args")
-def test_stdout_behavior(
-    mock_args: MagicMock, mock_exists: MagicMock, mock_print: MagicMock
-) -> None:
+def test_stdout_behavior(mock_args: MagicMock, mock_print: MagicMock) -> None:
     """
     Verify that --stdout prints to console and bypasses file writing.
 
     Checks that the built-in open is never called when stdout is True.
     """
-    mock_args.return_value = argparse.Namespace(
-        output=".env.secrets", force=False, stdout=True
-    )
+    mock_args.return_value = argparse.Namespace(output=".env.secrets", force=False, stdout=True)
 
-    with patch("mcpgateway.scripts.init_secrets.open", mock_open()) as mocked_file:
-        main()
-        mocked_file.assert_not_called()
-        # Verify that output was directed to print
-        assert mock_print.called
+    main()
+
+    mock_print.assert_called_once()
+    assert "JWT_SECRET_KEY=" in mock_print.call_args.args[0]

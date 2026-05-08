@@ -21,6 +21,45 @@ import secrets
 import sys
 
 
+def _secure_open_flags(force: bool) -> int:
+    """
+    Build secure file-open flags for writing generated secrets.
+
+    Args:
+        force: Whether an existing file may be overwritten.
+
+    Returns:
+        int: Flags suitable for os.open().
+    """
+    flags = os.O_WRONLY | os.O_CREAT
+    flags |= os.O_TRUNC if force else os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return flags
+
+
+def _write_secrets_file(output_path: str, output_content: str, force: bool) -> None:
+    """
+    Write generated secrets to a file with owner-only permissions from creation.
+
+    Args:
+        output_path: File path to write.
+        output_content: Generated environment content.
+        force: Whether an existing file may be overwritten.
+    """
+    fd = os.open(output_path, _secure_open_flags(force), 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        f = os.fdopen(fd, "w", encoding="utf-8")
+        fd = -1
+        with f:
+            f.write("# Generated via: python -m mcpgateway.scripts.init_secrets\n")
+            f.write(output_content)
+    except Exception:
+        if fd != -1:
+            os.close(fd)
+        raise
+
+
 def generate_token(nbytes: int) -> str:
     """
     Generate a cryptographically secure token.
@@ -65,20 +104,8 @@ def main() -> None:
         print(output_content, end="")
         return
 
-    # Acceptance Criteria: Prevent accidental overwrite
-    if os.path.exists(args.output) and not args.force:
-        print("Error: File already exists")
-        print("Suggest using --force to overwrite")
-        sys.exit(1)
-
-    # File Writing
     try:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write("# Generated via: python -m mcpgateway.scripts.init_secrets\n")
-            f.write(output_content)
-
-        # Set restrictive permissions (read/write only for the owner)
-        os.chmod(args.output, 0o600)
+        _write_secrets_file(args.output, output_content, args.force)
 
         print(f"Secrets written to {args.output}")
         print("\nHow to use this file:")
@@ -86,6 +113,10 @@ def main() -> None:
         print("2. Merge these into your production environment or .env file.")
         print("3. IMPORTANT: Keep this file secure and never commit it to Git.")
 
+    except FileExistsError:
+        print("Error: File already exists")
+        print("Suggest using --force to overwrite")
+        sys.exit(1)
     except OSError as e:
         print(f"Error: Could not write to file {args.output}: {e}")
         sys.exit(1)
