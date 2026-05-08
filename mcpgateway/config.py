@@ -168,14 +168,14 @@ class SecurityConfigurationError(Exception):
 
 def calculate_entropy(text: str) -> float:
     """
-        Calculate Shannon entropy to detect low-randomness secrets.
+    Calculate Shannon entropy to detect low-randomness secrets.
 
-        Args:
-            text (str): The secret string to evaluate.
+    Args:
+        text (str): The secret string to evaluate.
 
-        Returns:
-            float: The calculated entropy score.
-        """
+    Returns:
+        float: The calculated entropy score.
+    """
     if not text:
         return 0.0
     probabilities = [text.count(c) / len(text) for c in set(text)]
@@ -1361,7 +1361,7 @@ class Settings(BaseSettings):
         critical_secrets = {
             "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
             "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
-            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value(),
         }
 
         for name, value in critical_secrets.items():

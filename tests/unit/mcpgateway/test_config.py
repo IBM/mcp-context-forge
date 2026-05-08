@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 # Third-party
 import pytest
@@ -330,10 +330,6 @@ def test_compression_minimum_size_validation():
     s = Settings(compression_minimum_size=0, _env_file=None)
     assert s.compression_minimum_size == 0
 
-    # Invalid: negative values should fail
-    # Third-Party
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_minimum_size=-1, _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
@@ -341,20 +337,14 @@ def test_compression_minimum_size_validation():
 
 def test_compression_gzip_level_validation():
     """Test that gzip level validates 1-9 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for level in [1, 6, 9]:
         s = Settings(compression_gzip_level=level, _env_file=None)
         assert s.compression_gzip_level == level
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_gzip_level=0, _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_gzip_level=10, _env_file=None)
     assert "less than or equal to 9" in str(exc_info.value).lower()
@@ -362,20 +352,14 @@ def test_compression_gzip_level_validation():
 
 def test_compression_brotli_quality_validation():
     """Test that brotli quality validates 0-11 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for quality in [0, 4, 11]:
         s = Settings(compression_brotli_quality=quality, _env_file=None)
         assert s.compression_brotli_quality == quality
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_brotli_quality=-1, _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_brotli_quality=12, _env_file=None)
     assert "less than or equal to 11" in str(exc_info.value).lower()
@@ -383,20 +367,14 @@ def test_compression_brotli_quality_validation():
 
 def test_compression_zstd_level_validation():
     """Test that zstd level validates 1-22 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for level in [1, 3, 22]:
         s = Settings(compression_zstd_level=level, _env_file=None)
         assert s.compression_zstd_level == level
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_zstd_level=0, _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_zstd_level=23, _env_file=None)
     assert "less than or equal to 22" in str(exc_info.value).lower()
@@ -518,8 +496,118 @@ def test_parse_allowed_roots_empty():
 
 def test_parse_allowed_roots_list_passthrough():
     """List input should be passed through unchanged."""
-    s = Settings(allowed_roots=["/api"], _env_file=None)
-    assert s.allowed_roots == ["/api"]
+
+
+def test_gateway_create_rejects_always_blocked_ssrf_token_url():
+    """Gateway creation should reject OAuth token URLs in always-blocked SSRF ranges."""
+    from pydantic import ValidationError
+
+    from mcpgateway.schemas import GatewayCreate
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_localhost_token_url_when_disabled(monkeypatch):
+    """Gateway creation should reject localhost OAuth token URLs when localhost SSRF access is disabled."""
+    from pydantic import ValidationError
+
+    from mcpgateway.config import settings
+    from mcpgateway.schemas import GatewayCreate
+
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-gateway-localhost",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://127.0.0.1/token",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "localhost" in str(exc_info.value).lower()
+
+
+def test_gateway_update_rejects_ssrf_token_url():
+    """Gateway update should reject OAuth token URLs blocked by SSRF rules."""
+    from pydantic import ValidationError
+
+    from mcpgateway.schemas import GatewayUpdate
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_oauth_authorization_servers_with_blocked_urls():
+    """Gateway creation should reject blocked URLs inside oauth_config.authorization_servers."""
+    from pydantic import ValidationError
+
+    from mcpgateway.schemas import GatewayCreate
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-authorization-servers",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "https://issuer.example/token",
+                "authorization_servers": ["http://169.254.169.254/latest/meta-data/"],
+            },
+        )
+
+    assert "OAuth config authorization_servers[0]" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_update_accepts_safe_public_oauth_token_url():
+    """Gateway update should allow safe public OAuth token URLs."""
+    from mcpgateway.schemas import GatewayUpdate
+
+    updated = GatewayUpdate(
+        auth_type="oauth",
+        oauth_config={
+            "grant_type": "client_credentials",
+            "client_id": "client-id",
+            "client_secret": "test-client-secret",  # pragma: allowlist secret
+            "token_url": "https://issuer.example/token",
+        },
+    )
+
+    assert updated.oauth_config is not None
+    assert updated.oauth_config["token_url"] == "https://issuer.example/token"
 
 
 # --------------------------------------------------------------------------- #

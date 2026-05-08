@@ -28,7 +28,7 @@ import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
@@ -236,6 +236,9 @@ class OAuthManager:
             encryption = get_encryption_service(settings.auth_encryption_secret)
             runtime_credentials = await decrypt_oauth_config_for_runtime(credentials, encryption=encryption)
             if isinstance(runtime_credentials, dict):
+                token_url = runtime_credentials.get("token_url")
+                if isinstance(token_url, str) and token_url:
+                    runtime_credentials["token_url"] = validate_core_url(token_url, "OAuth config token_url")
                 return runtime_credentials
         except Exception as exc:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
@@ -428,6 +431,8 @@ class OAuthManager:
         client_id = runtime_credentials["client_id"]
         client_secret = runtime_credentials["client_secret"]
         token_url = runtime_credentials["token_url"]
+        if not isinstance(token_url, str):
+            raise OAuthError("OAuth configuration missing valid token_url")
         scopes = runtime_credentials.get("scopes", [])
 
         # Prepare token request data
@@ -449,7 +454,7 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
