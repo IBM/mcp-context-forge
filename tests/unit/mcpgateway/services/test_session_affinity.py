@@ -982,6 +982,7 @@ class _FakePubSub:
         return self
 
     async def __aexit__(self, *exc):
+        self.closed = True
         return False
 
     async def subscribe(self, *channels):
@@ -1094,6 +1095,7 @@ async def test_forward_to_owner_decodes_hex_body_from_response():
     assert any(chan == "mcpgw:pool_http:other-worker" for chan, _ in fake.published)
     # Forward metrics bumped.
     assert affinity._forwarded_requests == 1  # pylint: disable=protected-access
+    assert fake.last_pubsub.closed is True, "PubSub was not closed"
 
 
 @pytest.mark.asyncio
@@ -1115,6 +1117,7 @@ async def test_forward_to_owner_times_out_and_returns_none_with_metric_bump():
 
     assert result is None
     assert affinity._forwarded_request_timeouts == 1  # pylint: disable=protected-access
+    assert fake.last_pubsub.closed is True, "PubSub was not closed"
 
 
 # ---------------------------------------------------------------------------
