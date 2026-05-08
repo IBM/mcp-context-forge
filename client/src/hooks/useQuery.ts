@@ -7,6 +7,7 @@ interface QueryError {
   message: string;
   code?: string;
   status?: number;
+  body?: unknown;
 }
 
 interface UseQueryOptions<TData, TBody = unknown> {
@@ -29,11 +30,12 @@ interface UseQueryResult<TData, TBody = unknown> {
 
 function sanitizeError(err: unknown): QueryError {
   if (err instanceof Error) {
-    const errorObj = err as Error & { status?: number; code?: string };
+    const errorObj = err as Error & { status?: number; code?: string; body?: unknown };
     return {
       message: errorObj.message,
       status: errorObj.status,
       code: errorObj.code,
+      body: errorObj.body,
     };
   }
   return { message: "An unexpected error occurred" };
