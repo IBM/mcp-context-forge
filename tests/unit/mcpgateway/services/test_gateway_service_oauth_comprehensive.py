@@ -16,6 +16,7 @@ These tests specifically target OAuth functionality in gateway_service.py includ
 from __future__ import annotations
 
 # Standard
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -700,8 +701,11 @@ class TestFetchToolsAfterOauthTokenValidation:
     """Tests that token claim validation is called and warnings flow through."""
 
     @pytest.mark.asyncio
-    async def test_audience_mismatch_blocks_before_connection(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """Token with audience mismatch is blocked BEFORE the network call is made."""
+    async def test_audience_mismatch_logs_advisory_warning_and_forwards(self, gateway_service, mock_oauth_auth_code_gateway, test_db, caplog):
+        """Advisory contract: audience mismatch is surfaced as a warning log but
+        forwarding proceeds — the upstream MCP server is the authoritative
+        validator (see token_validation_service module docstring).
+        """
         # Third-Party
         import jwt as pyjwt
 
@@ -718,11 +722,20 @@ class TestFetchToolsAfterOauthTokenValidation:
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
             mock_connect.return_value = ({}, [], [], [], [])
 
-            with pytest.raises(GatewayConnectionError, match="audience"):
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.services.gateway_service"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
 
-            # Connection must NOT have been attempted — error raised before network call
-            mock_connect.assert_not_called()
+            # Forwarding proceeded — the upstream MCP server is authoritative.
+            mock_connect.assert_called_once()
+            _, connect_kwargs = mock_connect.call_args
+            # Warnings are surfaced for downstream diagnostic use.
+            assert any("audience mismatch" in w.lower() for w in connect_kwargs.get("validation_warnings", []))
+            # Operator-facing log captures the mismatch detail + remediation hint,
+            # tagged as advisory so readers know it did not block forwarding.
+            lower_log = caplog.text.lower()
+            assert "advisory" in lower_log
+            assert "audience mismatch" in lower_log
+            assert "fix oauth_config" in lower_log
 
     @pytest.mark.asyncio
     async def test_opaque_token_no_warnings(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
@@ -744,29 +757,6 @@ class TestFetchToolsAfterOauthTokenValidation:
             # No JWT-related warnings for opaque tokens
             jwt_warnings = [w for w in kwargs.get("validation_warnings", []) if "audience" in w.lower() or "scope" in w.lower() or "issuer" in w.lower()]
             assert jwt_warnings == []
-
-    @pytest.mark.asyncio
-    async def test_audience_mismatch_raises_before_connection_with_diagnostic(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """Token audience mismatch is blocked before the network call, with diagnostic detail."""
-        # Third-Party
-        import jwt as pyjwt
-
-        mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct"
-        token = pyjwt.encode({"aud": "api://wrong"}, "k", algorithm="HS256")
-        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
-
-        with (
-            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
-            patch.object(gateway_service, "_connect_to_sse_server_without_validation", new_callable=AsyncMock) as mock_connect,
-        ):
-            mock_tss_inst = MockTSS.return_value
-            mock_tss_inst.get_user_token = AsyncMock(return_value=token)
-
-            with pytest.raises(GatewayConnectionError, match="audience"):
-                await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
-
-            # Connection must NOT have been attempted — blocked before network call
-            mock_connect.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sse_connection_401_diagnostic_error(self, gateway_service):

@@ -1596,13 +1596,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             for warning in token_validation.warnings:
                 logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
 
-            # Fail fast if any claim is definitively mismatched (present but wrong).
-            # Claims that are simply absent from the token produce None (not False)
-            # and are NOT blocked — this preserves backward compat with legacy IdPs.
+            # Advisory: log mismatched claims but do not block forwarding.
+            # The upstream MCP server is the authoritative token validator
+            # (see mcpgateway.services.token_validation_service docstring).
+            # The operator-facing guidance from the previous hard-block path
+            # is preserved below as a warning so misconfiguration is still
+            # surfaced without breaking tool fetching for non-conforming
+            # IdPs (e.g. those that omit RFC 8707 resource echo or emit
+            # unusual claim shapes).
             blocking = token_validation.blocking_errors
             if blocking:
                 detail = "; ".join(blocking)
-                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': " f"{detail}. " f"Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+                logger.warning(
+                    "OAuth token claim validation flagged issues for gateway '%s' "
+                    "(advisory, forwarding anyway): %s. "
+                    "Fix oauth_config (resource/scopes/issuer) or the IdP token request if this is unintended.",
+                    gateway.name,
+                    detail,
+                )
 
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
