@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/config.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
+Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 ContextForge AI Gateway Configuration.
 This module defines configuration settings for ContextForge AI Gateway using Pydantic.
@@ -51,6 +51,7 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -159,6 +160,26 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
+
+
+class SecurityConfigurationError(Exception):
+    """Exception for critical security configuration issues."""
+
+
+def calculate_entropy(text: str) -> float:
+    """
+        Calculate Shannon entropy to detect low-randomness secrets.
+
+        Args:
+            text (str): The secret string to evaluate.
+
+        Returns:
+            float: The calculated entropy score.
+        """
+    if not text:
+        return 0.0
+    probabilities = [text.count(c) / len(text) for c in set(text)]
+    return -sum(p * math.log2(p) for p in probabilities)
 
 
 class Settings(BaseSettings):
@@ -981,7 +1002,10 @@ class Settings(BaseSettings):
     # Security validation thresholds
     min_secret_length: int = 32
     min_password_length: int = 12
-    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
+    require_strong_secrets: bool = Field(
+        default=False,
+        description="Enforces strong secret validation. Defaults to True in production, False in development for ease of testing. When enabled, secrets are checked against a list of weak values and must meet minimum length and entropy requirements.",
+    )
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
     mcpgateway_stdio_transport_enabled: bool = Field(
@@ -1005,10 +1029,37 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Values used to detect unconfigured or insecure deployment states
+    SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
+    WEAK_VALUES: ClassVar[list[str]] = [
+        "my-test-key",
+        "my-test-key-but-now-longer-than-32-bytes",
+        "my-test-salt",
+        "changeme",
+        "secret",
+        "password",
+        "test-secret",
+        "my-secret",
+        "12345678",
+    ]
+
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_environment_aware_defaults(cls, data: Any) -> Any:
+        """Apply defaults that depend on other settings values."""
+        if not isinstance(data, dict):
+            return data
+
+        values: dict[str, Any] = dict(data)
+        if "require_strong_secrets" not in values:
+            environment = str(values.get("environment", "development")).lower()
+            values["require_strong_secrets"] = environment == "production"
+        return values
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -1269,6 +1320,10 @@ class Settings(BaseSettings):
     class SecurityStatus(TypedDict):
         """TypedDict for comprehensive security status."""
 
+        status: str  # SUCCESS, FAIL, or WARN
+        code: Optional[str]  # e.g., ERR_MISSING_CONFIG
+        message: str
+        remediation: Optional[str]  # Instructions to fix the issue
         secure_secrets: bool
         auth_enabled: bool
         ssl_verification: bool
@@ -1279,18 +1334,64 @@ class Settings(BaseSettings):
         security_score: int
 
     def get_security_status(self) -> SecurityStatus:
-        """Get comprehensive security status.
+        """Get comprehensive security status and enforces fail-closed logic in production.
 
         Returns:
             SecurityStatus: Dictionary containing security status information including score and warnings.
         """
 
+        if self.client_mode:
+            return {
+                "status": "SUCCESS",
+                "code": None,
+                "message": "Security validation skipped in client mode.",
+                "remediation": None,
+                "secure_secrets": True,
+                "auth_enabled": self.auth_required,
+                "ssl_verification": not self.skip_ssl_verify,
+                "debug_disabled": not self.debug,
+                "cors_restricted": "*" not in self.allowed_origins if self.cors_enabled else True,
+                "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
+                "warnings": [],
+                "security_score": 100,
+            }
+
+        is_prod = self.environment == "production"
+        remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
+
+        # Evaluate specific critical secrets
+        critical_secrets = {
+            "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
+            "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+        }
+
+        for name, value in critical_secrets.items():
+            if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
+                continue
+            is_sentinel = value in self.SENTINEL_VALUES
+            is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
+            # Check for empty or "UNCONFIGURED" values
+            if is_sentinel:
+                error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
+                if is_prod:
+                    return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
+                logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
+
+            # Check for known weak values
+            if self.require_strong_secrets and is_weak:
+                error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
+                return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
+
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
+            "status": "SUCCESS",
+            "code": None,
+            "message": "Security validation passed.",
+            "remediation": None,
+            "secure_secrets": self.jwt_secret_key.get_secret_value() not in self.WEAK_VALUES,
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1298,6 +1399,53 @@ class Settings(BaseSettings):
             "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
             "warnings": self.get_security_warnings(),
             "security_score": security_score,
+        }
+
+    def log_critical_issues(self, status: SecurityStatus) -> None:
+        """
+        Logs critical security issues and provides remediation steps.
+
+        Args:
+            status (SecurityStatus): The security status dictionary to log.
+        """
+        if status["status"] == "FAIL":
+            # [Requirement]: Explain specific risk
+            logger.critical(f"[SECURITY FATAL] {status['message']}")
+
+            # [Requirement]: Include generation command
+            if status["remediation"]:
+                logger.info(f"REMEDIATION: {status['remediation']}")
+
+            # [Requirement]: Reference documentation
+            logger.info("REFERENCE: For full security configuration guide, see: https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/operations/config-validation.md")
+
+    def _build_security_response(self, status: str, code: str, msg: str, remediation: str) -> SecurityStatus:
+        """
+        Helper to build a failure response for get_security_status.
+
+        Args:
+            status (str): The overall security status (e.g., "FAIL").
+            code (str): The specific error code.
+            msg (str): The error description.
+            remediation (str): The suggested fix for the user.
+
+        Returns:
+            SecurityStatus: A dictionary containing the structured security response.
+        """
+        logger.error(f"[{code}] CRITICAL SECURITY ISSUE: {msg}")
+        return {
+            "status": status,
+            "code": code,
+            "message": f"{msg} (Code: {code})",
+            "remediation": remediation,
+            "secure_secrets": False,
+            "auth_enabled": self.auth_required,
+            "ssl_verification": not self.skip_ssl_verify,
+            "debug_disabled": not self.debug,
+            "cors_restricted": False,
+            "ui_protected": False,
+            "warnings": [msg],
+            "security_score": 0,
         }
 
     # Max retries for HTTP requests
@@ -3068,6 +3216,9 @@ def get_settings(**kwargs: Any) -> Settings:
     Returns:
         Settings: A cached instance of the Settings class.
 
+    Raises:
+        SecurityConfigurationError: If critical security checks fail in production.
+
     Examples:
         >>> settings = get_settings()
         >>> isinstance(settings, Settings)
@@ -3085,6 +3236,13 @@ def get_settings(**kwargs: Any) -> Settings:
     cfg.validate_transport()
     # Ensure sqlite DB directories exist if needed.
     cfg.validate_database()
+    # Get the status (SUCCESS/FAIL) based on sentinel and weak values
+    security_status = cfg.get_security_status()
+
+    if security_status["status"] == "FAIL":
+        # Log the critical issues (remediation, risk, documentation)
+        cfg.log_critical_issues(security_status)
+        raise SecurityConfigurationError(security_status["message"])
     # Return the one-and-only Settings instance (cached).
     return cfg
 

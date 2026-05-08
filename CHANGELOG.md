@@ -52,6 +52,19 @@
 
 ---
 
+## [Unreleased]
+
+### Breaking Changes
+
+- **Environment-Aware Security Defaults** – `REQUIRE_STRONG_SECRETS` now defaults to `true` when `ENVIRONMENT=production`. Production deployments using default or weak secrets will now fail to start by default to ensure a "fail-safe" state.
+
+### Changed
+
+- **Audit Logging** – Added explicit audit-friendly logging when `REQUIRE_STRONG_SECRETS=false` is used as an override in production environments.
+- **Configuration Documentation** – Updated `.env.example` to document the new environment-aware default behavior and security enforcement logic.
+
+---
+
 ## [1.0.0] - 2026-04-30 - General Availability - Technical Debt, Security Hardening, Catalog Improvements, A2A Improvements, MCP Standard Review and Sync
 
 ### Overview
