@@ -62,7 +62,6 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
         int: Total rows deleted.
     """
     effective_batch_size = batch_size or getattr(settings, "metrics_cleanup_batch_size", 10000)
-    batch_sleep_ms = getattr(settings, "metrics_cleanup_batch_sleep_ms", 50)
     total_deleted = 0
 
     while True:
@@ -76,9 +75,6 @@ def delete_metrics_in_batches(db: Session, model_class, filter_column, entity_id
 
         if batch_deleted <= 0 or batch_deleted < effective_batch_size:
             break
-
-        if batch_sleep_ms > 0:
-            time.sleep(batch_sleep_ms / 1000.0)
 
     return total_deleted
 
