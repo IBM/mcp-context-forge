@@ -5876,8 +5876,9 @@ class ToolService(BaseService):
                                 # Safely obtain structured content using .get() to avoid KeyError when
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
+                                is_error = modified_result.get("isError") if "isError" in modified_result else modified_result.get("is_error", tool_result.is_error)
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:
