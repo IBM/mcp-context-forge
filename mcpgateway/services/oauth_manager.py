@@ -241,7 +241,7 @@ class OAuthManager:
             logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
         return credentials
 
-    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> httpx.Response:
+    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[dict] = None) -> httpx.Response:
         """POST to a token endpoint, using a custom SSL context when CA certs are provided.
 
         When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
@@ -256,6 +256,7 @@ class OAuthManager:
             ca_certificate: Optional PEM-encoded CA certificate.
             client_cert: Optional client certificate for mTLS.
             client_key: Optional client private key for mTLS.
+            headers: Optional extra headers (e.g. Authorization: Basic for client_secret_basic).
 
         Returns:
             The HTTP response from the token endpoint.
@@ -263,9 +264,9 @@ class OAuthManager:
         if ca_certificate:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, timeout=self.request_timeout)
+                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
         client = await self._get_client()
-        return await client.post(url, data=data, timeout=self.request_timeout)
+        return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
@@ -1412,17 +1413,31 @@ class OAuthManager:
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
+        # Determine token endpoint authentication method (RFC 6749 Section 2.3)
+        # - "client_secret_post" (default): client_id and client_secret in POST body
+        # - "client_secret_basic": credentials in Authorization: Basic header
+        token_auth_method = credentials.get("token_endpoint_auth_method", "client_secret_post")
+        use_basic_auth = token_auth_method == "client_secret_basic" and client_secret
+
+        # Build HTTP Basic Auth header if required by the provider
+        auth_header = None
+        if use_basic_auth:
+            basic_credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            auth_header = {"Authorization": f"Basic {basic_credentials}"}
+
         # Prepare token exchange data
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": client_id,
         }
 
-        # Only include client_secret if present (public clients don't have secrets)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        # Include client credentials in POST body only when not using Basic auth
+        if not use_basic_auth:
+            token_data["client_id"] = client_id
+            # Only include client_secret if present (public clients don't have secrets)
+            if client_secret:
+                token_data["client_secret"] = client_secret
 
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
@@ -1446,7 +1461,7 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=auth_header)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -1506,16 +1521,28 @@ class OAuthManager:
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
 
+        # Determine token endpoint authentication method (RFC 6749 Section 2.3)
+        token_auth_method = credentials.get("token_endpoint_auth_method", "client_secret_post")
+        use_basic_auth = token_auth_method == "client_secret_basic" and client_secret
+
+        # Build HTTP Basic Auth header if required by the provider
+        auth_header = None
+        if use_basic_auth:
+            basic_credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+            auth_header = {"Authorization": f"Basic {basic_credentials}"}
+
         # Prepare token refresh request
         token_data = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": client_id,
         }
 
-        # Add client_secret if available (some providers require it)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        # Include client credentials in POST body only when not using Basic auth
+        if not use_basic_auth:
+            token_data["client_id"] = client_id
+            # Add client_secret if available (some providers require it)
+            if client_secret:
+                token_data["client_secret"] = client_secret
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
@@ -1535,7 +1562,7 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=auth_header)
                 if response.status_code == 200:
                     token_response = self._parse_token_response(response)
 
