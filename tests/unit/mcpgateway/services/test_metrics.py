@@ -204,3 +204,61 @@ def test_update_http_pool_metrics_function_stored():
 
     # The update function should have been stored on app.state
     assert hasattr(app.state, "update_http_pool_metrics")
+
+
+def test_update_http_pool_metrics_with_initialized_client():
+    app = MagicMock()
+    app.state = MagicMock()
+    with (
+        patch.dict("os.environ", {"ENABLE_METRICS": "true", "METRICS_CUSTOM_LABELS": "", "METRICS_EXCLUDED_HANDLERS": ""}),
+        patch("mcpgateway.services.metrics.settings") as mock_settings,
+        patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
+        patch("mcpgateway.services.http_client_service.SharedHttpClient") as mock_client,
+    ):
+        mock_settings.database_url = "sqlite:///./test.db"
+        mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_inst_cls.return_value = MagicMock()
+
+        mock_instance = MagicMock()
+        mock_instance._initialized = True
+        mock_instance.get_pool_stats.return_value = {"max_connections": 10, "max_keepalive": 5}
+        mock_client._instance = mock_instance
+
+        setup_metrics(app)
+        app.state.update_http_pool_metrics()
+
+    mock_instance.get_pool_stats.assert_called_once()
+
+
+# ---------- _get_registry_collector ----------
+
+
+def test_get_registry_collector_returns_none_when_no_dict():
+    from mcpgateway.services.metrics import _get_registry_collector
+
+    with patch("mcpgateway.services.metrics.REGISTRY") as mock_reg:
+        mock_reg._names_to_collectors = "not-a-dict"
+        assert _get_registry_collector("any_metric") is None
+
+
+# ---------- ValueError fallback (duplicate gauge registration) ----------
+
+
+def test_setup_metrics_gauge_already_registered_uses_fallback():
+    app = MagicMock()
+    app.state = MagicMock()
+    existing = MagicMock()
+    existing._labelnames = ()
+    side_effects = [None, existing] * 4  # 4 gauges × 2 calls each
+
+    with (
+        patch.dict("os.environ", {"ENABLE_METRICS": "true", "METRICS_CUSTOM_LABELS": "", "METRICS_EXCLUDED_HANDLERS": ""}),
+        patch("mcpgateway.services.metrics.settings") as mock_settings,
+        patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
+        patch("mcpgateway.services.metrics.Gauge", side_effect=ValueError("duplicate")),
+        patch("mcpgateway.services.metrics._get_registry_collector", side_effect=side_effects),
+    ):
+        mock_settings.database_url = "sqlite:///./test.db"
+        mock_settings.METRICS_EXCLUDED_HANDLERS = ""
+        mock_inst_cls.return_value = MagicMock()
+        setup_metrics(app)  # must not raise
