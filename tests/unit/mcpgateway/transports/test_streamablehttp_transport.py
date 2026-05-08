@@ -58,6 +58,15 @@ InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
 SessionManagerWrapper = tr.SessionManagerWrapper
 
+
+def test_truthy_is_error_recognizes_snake_and_camel_case_flags():
+    """``_truthy_is_error`` must support gateway and MCP SDK result shapes."""
+    assert tr._truthy_is_error(SimpleNamespace(is_error=True)) is True
+    assert tr._truthy_is_error(SimpleNamespace(isError=True)) is True
+    assert tr._truthy_is_error(SimpleNamespace(is_error=False, isError=False)) is False
+    assert tr._truthy_is_error(SimpleNamespace(is_error=1, isError="true")) is False
+
+
 # ---------------------------------------------------------------------------
 # InMemoryEventStore tests
 # ---------------------------------------------------------------------------
@@ -652,6 +661,40 @@ async def test_call_tool_preserves_is_error_for_direct_proxy_egress(monkeypatch)
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=coerced_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    assert result.structuredContent is None
+    assert result.content[0].text == "You cannot send more than 200 points"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_mcp_sdk_is_error_for_egress(monkeypatch):
+    """Regression guard for #4202 when invoke_tool returns MCP SDK camelCase output.
+
+    The live gateway path can receive an MCP SDK ``CallToolResult`` from an
+    upstream MCP server. That object exposes the error flag as ``isError``
+    rather than the gateway model's ``is_error``. The egress helper must
+    recognize the camelCase flag and wrap the response as ``CallToolResult``
+    so downstream outputSchema validation is skipped for error responses.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    upstream_error = types.CallToolResult(
+        content=[types.TextContent(type="text", text="You cannot send more than 200 points")],
+        isError=True,
+    )
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=upstream_error))
 
     result = await call_tool("mytool", {"foo": "bar"})
 
@@ -6863,6 +6906,30 @@ async def test_handle_streamable_http_get_returns_405_when_no_session_id(monkeyp
     assert b"Mcp-Session-Id" in body["body"]
     assert counter._value.get() == before + 1
     assert "no session id presented" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_unknown_method_without_session_returns_32601(monkeypatch):
+    """Unknown JSON-RPC methods report -32601 before SDK missing-session validation."""
+    sdk = _CountingSessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    send, messages = _make_send_collector()
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "definitely/not/a/real/method", "params": {}}).encode()
+
+    await wrapper.handle_streamable_http(_make_scope("/mcp", method="POST"), _make_receive(body), send)
+    await wrapper.shutdown()
+
+    assert not sdk.called
+    starts = [m for m in messages if m["type"] == "http.response.start"]
+    assert starts and starts[0]["status"] == 200
+    response_body = next(m for m in messages if m["type"] == "http.response.body")
+    payload = json.loads(response_body["body"])
+    assert payload["error"]["code"] == -32601
+    assert payload["id"] == 1
 
 
 @pytest.mark.asyncio
@@ -13896,7 +13963,7 @@ async def test_check_streamable_permission_exception_returns_false(monkeypatch):
     @asynccontextmanager
     async def exploding_db():
         raise RuntimeError("DB gone")
-        yield  # noqa: unreachable — required for generator syntax
+        yield  # required for generator syntax
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", exploding_db)
 
@@ -15895,9 +15962,9 @@ async def test_dispatch_peek_outcome_body_none_on_fallthrough_raises_runtime_err
     async def dummy_receive():
         return {"type": "http.disconnect"}
 
-    # Build a valid disconnected result, then bypass __post_init__ with
-    # object.__setattr__ to craft the impossible "body=None on fall-through"
-    # shape that the invariant guard must reject.
+    # Build a valid disconnected result, then mutate it to craft the
+    # impossible "body=None on fall-through" shape that the invariant
+    # guard must reject.
     peek = _BodyPeekResult(body=None, intercepted=False, disconnected=True)
     object.__setattr__(peek, "disconnected", False)
     with pytest.raises(RuntimeError, match="_BodyPeekResult invariant violation"):

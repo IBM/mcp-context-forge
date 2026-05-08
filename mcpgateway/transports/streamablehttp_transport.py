@@ -1560,9 +1560,10 @@ def _truthy_is_error(result: Any) -> bool:
     lives in one place. Semantics:
 
     - A real ``mcpgateway.common.models.ToolResult`` has ``is_error`` as a
-      typed ``bool`` with default ``False`` — ``result.is_error is True``
-      and ``bool(result.is_error)`` agree, so either form is correct in
-      production.
+      typed ``bool`` with default ``False``. MCP SDK ``CallToolResult``
+      instances expose the same flag as camelCase ``isError``. Both must
+      be recognised so error responses with declared output schemas bypass
+      server-side structured-output validation.
     - A ``unittest.mock.MagicMock`` auto-materialises attributes as truthy
       ``MagicMock`` objects. ``bool(mock.is_error)`` reports ``True``
       even when the test author didn't explicitly set the attribute,
@@ -1580,9 +1581,10 @@ def _truthy_is_error(result: Any) -> bool:
             MagicMock, or any duck-typed carrier).
 
     Returns:
-        ``True`` only when ``result.is_error`` is literally ``True``.
+        ``True`` only when ``result.is_error`` or ``result.isError`` is
+        literally ``True``.
     """
-    return getattr(result, "is_error", False) is True
+    return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
 @mcp_app.call_tool(validate_input=False)
@@ -3113,6 +3115,40 @@ async def _maybe_short_circuit_notification(receive: Receive) -> _BodyPeekResult
     return _BodyPeekResult(body=body, intercepted=True)
 
 
+_MCP_KNOWN_REQUEST_METHODS = frozenset(
+    {
+        "initialize",
+        "tools/list",
+        "list_tools",
+        "list_gateways",
+        "list_roots",
+        "resources/list",
+        "resources/read",
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "resources/templates/list",
+        "prompts/list",
+        "prompts/get",
+        "ping",
+        "tools/call",
+        "roots/list",
+        "notifications/initialized",
+        "notifications/cancelled",
+        "notifications/message",
+        "sampling/createMessage",
+        "elicitation/create",
+        "completion/complete",
+        "logging/setLevel",
+    }
+)
+_MCP_KNOWN_REQUEST_PREFIXES = ("roots/", "notifications/", "sampling/", "elicitation/", "completion/", "logging/")
+
+
+def _is_known_mcp_request_method(method: str) -> bool:
+    """Return whether ``method`` is handled by the gateway's MCP JSON-RPC dispatcher."""
+    return method in _MCP_KNOWN_REQUEST_METHODS or method.startswith(_MCP_KNOWN_REQUEST_PREFIXES)
+
+
 def _make_replay_receive(
     body: bytes,
     downstream_receive: Receive,
@@ -4424,6 +4460,7 @@ class SessionManagerWrapper:
         # Only triggered when there's at least one pending request — the
         # common case (zero pending) takes the streaming-receive fast path.
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
+        is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -4462,6 +4499,45 @@ class SessionManagerWrapper:
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
+        # JSON-RPC method dispatch should still be able to report a true
+        # "method not found" error when a client probes an unknown method
+        # without a usable Streamable HTTP session. The SDK validates the
+        # missing Mcp-Session-Id before method dispatch and would otherwise
+        # collapse this case to -32600 "Missing session ID". Peek only small,
+        # single-message JSON-RPC requests; known methods and malformed/large
+        # bodies fall through to the SDK's normal transport/session checks.
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+            peek = await _drain_request_body(receive)
+            if peek.disconnected:
+                logger.debug("POST %s aborted by client mid-body (unknown-method peek); not replaying", path)
+                return
+            if peek.body is None:  # type-narrow for mypy; invariant rules this out unless disconnected
+                return
+            if not peek.too_large:
+                try:
+                    payload = orjson.loads(peek.body)
+                except orjson.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, dict):
+                    rpc_method = payload.get("method")
+                    if isinstance(rpc_method, str) and "id" in payload and "/" in rpc_method and not _is_known_mcp_request_method(rpc_method):
+                        await _send_streamable_http_json_response(
+                            send,
+                            status_code=200,
+                            payload={
+                                "jsonrpc": "2.0",
+                                "error": {"code": -32601, "message": f"Method not found: {rpc_method}"},
+                                "id": payload.get("id"),
+                            },
+                        )
+                        return
+            receive = _make_replay_receive(
+                peek.body,
+                receive,
+                replay_tail=peek.replay_tail,
+                replay_tail_more_body=peek.replay_tail_more_body,
+            )
+
         # Spec-mandated notification short-circuit. JSON-RPC 2.0 + MCP
         # Streamable HTTP: a notification (a request without an ``id``) is
         # fire-and-forget — the server MUST NOT respond to it, and the spec
@@ -4475,7 +4551,6 @@ class SessionManagerWrapper:
         # (and may legitimately have no body / non-JSON body). Single-message
         # bodies only; batches fall through to the SDK in case it ever grows
         # proper batch handling.
-        is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         # Skip when the affinity-forwarded path has already consumed the
         # receive (it reads the body itself for the /rpc forward and
         # falls through to the SDK on failure). Re-reading would observe
