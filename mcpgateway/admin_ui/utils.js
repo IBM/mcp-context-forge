@@ -311,8 +311,14 @@ export function showSkippedToolsWarning(skippedTools) {
       const reason = colonIdx !== -1 ? entry.slice(colonIdx + 2) : "Unknown error";
       const tr = document.createElement("tr");
       tr.className = "border-b border-gray-100 last:border-0";
-      tr.innerHTML = `<td class="px-3 py-2 font-mono text-xs text-gray-800 align-top break-all">${toolName}</td>
-        <td class="px-3 py-2 text-gray-700 align-top">${reason}</td>`;
+      const toolNameCell = document.createElement("td");
+      toolNameCell.className = "px-3 py-2 font-mono text-xs text-gray-800 align-top break-all";
+      toolNameCell.textContent = toolName;
+      const reasonCell = document.createElement("td");
+      reasonCell.className = "px-3 py-2 text-gray-700 align-top";
+      reasonCell.textContent = reason;
+      tr.appendChild(toolNameCell);
+      tr.appendChild(reasonCell);
       tbody.appendChild(tr);
     }
 
