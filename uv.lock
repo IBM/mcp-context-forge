@@ -16,7 +16,7 @@ mako = "2026-04-22T23:59:59Z"
 langchain-core = "2026-04-22T23:59:59Z"
 cpex = "2026-05-07T23:59:59Z"
 cpex-retry-with-backoff = "2026-05-07T23:59:59Z"
-cpex-pii-filter = "2026-05-07T23:59:59Z"
+cpex-pii-filter = "2026-05-08T23:59:59Z"
 cpex-url-reputation = "2026-05-07T23:59:59Z"
 cpex-rate-limiter = "2026-05-31T23:59:59Z"
 cryptography = "2026-04-11T23:59:59Z"
@@ -951,19 +951,19 @@ wheels = [
 
 [[package]]
 name = "cpex-pii-filter"
-version = "0.3.0"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cpex" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/b1/2249e03a37ce2f177d6ffe9e773b3930261253e308a54a96c7f034ba7c65/cpex_pii_filter-0.3.0.tar.gz", hash = "sha256:81806f253303ce79ad7ec8944b717c2a504fe36807ec104d17935f615fcd93b4", size = 115938, upload-time = "2026-05-05T16:46:06.936Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/64/761efbbdf6c7ba53542e2c242c93650dd04a4c8100c0948512511f2d8c7a/cpex_pii_filter-0.3.2.tar.gz", hash = "sha256:9df3593fe3919db4af4936dc757ae65658f2f34076a6dcbd8fd2730e7b6e3d9f", size = 116261, upload-time = "2026-05-08T15:23:10.752Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/7d/9c118895e4d27c1b09ee9e22d36f03a0906a113a6fb4ebc31f9157e91f2c/cpex_pii_filter-0.3.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:cd7003dfe1cf8a2e68aa7c4bd5a261e05829d299558cfa2739df1779080241ee", size = 812513, upload-time = "2026-05-05T16:45:57.833Z" },
-    { url = "https://files.pythonhosted.org/packages/67/13/4710f9d05a14c6b568ee7174f811bebab3147a5a3177004bb1c847049573/cpex_pii_filter-0.3.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:7df41ce2feb6b9e9263c3df28019cd5af515d20efa96f9986712b9b737a16e18", size = 851742, upload-time = "2026-05-05T16:45:59.528Z" },
-    { url = "https://files.pythonhosted.org/packages/a8/f8/43576da2b2d7e58c75e0da26bbcb47656a6c456035467b3c7c0dab93a1ba/cpex_pii_filter-0.3.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:42cd4c97c05bc9605cbc601b6e8fd1c48951161cd91dc860d8ce4eb85b67915b", size = 950040, upload-time = "2026-05-05T16:46:00.956Z" },
-    { url = "https://files.pythonhosted.org/packages/2c/ce/b0390f2696511fca4e5c1802a3387337f9ec6716dcbad43939d1b5dc0db7/cpex_pii_filter-0.3.0-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:1250f16bc1b82d6926dfefc1795d454f7bb30e8f51b03413b99c02f075df80c0", size = 961541, upload-time = "2026-05-05T16:46:02.665Z" },
-    { url = "https://files.pythonhosted.org/packages/2f/5f/4c2c59bf297295cf2a72edf1ee165fa4f44bbd77471964b9d71f71ed0d09/cpex_pii_filter-0.3.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:ed4be744534679e5d56ef67079ff99057d8e74fe345a5768b8b90227b3eebc79", size = 917800, upload-time = "2026-05-05T16:46:04.065Z" },
-    { url = "https://files.pythonhosted.org/packages/43/13/95ee2da4be361dc27313f72136047ee08dfce3b64494a6b598917a3d59fa/cpex_pii_filter-0.3.0-cp311-abi3-win_amd64.whl", hash = "sha256:9558f2d1cedc3aaee6058d02e02fe5ddf8bbf2dfc4ed275d7a90e4a9ad41ceb1", size = 845847, upload-time = "2026-05-05T16:46:05.33Z" },
+    { url = "https://files.pythonhosted.org/packages/26/9d/1851c603f5e23400c48394160f7ba551bb5d2e26274d95c4da0875e4210d/cpex_pii_filter-0.3.2-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:6352f7aa67edb96b22d13d2ad3a66b67b943919317b1b6972b235fef3cd8debd", size = 814925, upload-time = "2026-05-08T15:23:01.044Z" },
+    { url = "https://files.pythonhosted.org/packages/22/d7/5c13f8aed12b721e58d6c416fdbf6a4a44ed1ec337fed984f969200ccefe/cpex_pii_filter-0.3.2-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:963672a70a314b622d9702d86c32cf2359b5eb4cc945866ac076dca19b04dd55", size = 852820, upload-time = "2026-05-08T15:23:02.856Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/a2/c5c1566ace3c0d67b8d7f50be28e858b5a4db2f0e9578fa53690bcfe9662/cpex_pii_filter-0.3.2-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:06417e923302746c935b93bbb52480dbd3c7cda6211c19c281b5dc3953c075a3", size = 950743, upload-time = "2026-05-08T15:23:04.509Z" },
+    { url = "https://files.pythonhosted.org/packages/72/8c/9b43328d7213168c395055d0b19c8c903fae71e783881c7de6ee3462ef74/cpex_pii_filter-0.3.2-cp311-abi3-manylinux_2_34_s390x.whl", hash = "sha256:fb3fcd2997e16070155b3c7196c1d6108f65870d9d76e413d854a3b57a51783a", size = 961952, upload-time = "2026-05-08T15:23:06.022Z" },
+    { url = "https://files.pythonhosted.org/packages/54/71/2ff3898543470d6d154f35813d897422150cdaa1f953dcbb4ff37d046b53/cpex_pii_filter-0.3.2-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:45d18dab988ef265453afc9ddc95fcad17440b531fc6f6ce77de646138da03b6", size = 918333, upload-time = "2026-05-08T15:23:07.816Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/d4/712edc6b783cc8c46783aedabe13e850bef67ad6b6b0a6975ea1216bfb34/cpex_pii_filter-0.3.2-cp311-abi3-win_amd64.whl", hash = "sha256:7139686cb8d09986c049da45c6f7e09453f43360f3a50755129142ffcd77e8e4", size = 846861, upload-time = "2026-05-08T15:23:09.296Z" },
 ]
 
 [[package]]
@@ -3097,7 +3097,7 @@ requires-dist = [
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = ">=0.1.0,<0.2" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
-    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
+    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.2" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.0.6" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.0" },
