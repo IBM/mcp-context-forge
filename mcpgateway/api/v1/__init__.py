@@ -270,10 +270,12 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
             target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 
-            # First-Party
-            from mcpgateway.routers.well_known import router as well_known_router  # pylint: disable=import-outside-toplevel
+            # Import only the admin status handler — the three /.well-known/** routes are
+            # mounted directly on app in main.py and must not appear under a versioned prefix
+            # (RFC 8615 forbids /.well-known/ paths under path prefixes).
+            from mcpgateway.routers.well_known import get_well_known_status  # pylint: disable=import-outside-toplevel
 
-            target_router.include_router(well_known_router)
+            target_router.add_api_route("/admin/well-known", get_well_known_status, methods=["GET"], response_model=dict, tags=["Well-Known"])
         except ImportError as e:
             logger.error(f"Admin router not available: {e}")
     else:

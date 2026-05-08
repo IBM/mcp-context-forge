@@ -388,6 +388,35 @@ class Settings(BaseSettings):
             raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
 
+    @field_validator("app_root_path")
+    @classmethod
+    def validate_app_root_path(cls, v: str) -> str:
+        """Validate app_root_path is a path-only value (no scheme or host).
+
+        rbac.py constructs Location redirect headers as
+        ``f"{settings.app_root_path}/v1/admin/login"``.  If a reverse proxy
+        sets ``X-Forwarded-Prefix`` to an attacker-controlled value containing
+        a URL scheme or host, an open redirect (CWE-601) becomes possible.
+        This validator rejects any value that is not path-only at startup so
+        the misconfiguration is caught immediately rather than exploited at
+        runtime.
+
+        Args:
+            v: Raw configured value.
+
+        Returns:
+            The stripped path prefix (may be empty string).
+
+        Raises:
+            ValueError: When the value contains a URL scheme or host component.
+        """
+        if not v:
+            return ""
+        cleaned = str(v).strip()
+        if "://" in cleaned or cleaned.startswith("//"):
+            raise ValueError(f"APP_ROOT_PATH '{v}' must be a path-only value (no scheme or host). " "Example: '/mygateway' not 'https://example.com/mygateway'.")
+        return cleaned.rstrip("/")
+
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"

@@ -516,6 +516,7 @@ class TestBuildV1RouterGroupF:
 
         well_known_mod = ModuleType("_mock_well_known")
         well_known_mod.router = _sentinel_router("/sentinel-well-known")
+        well_known_mod.get_well_known_status = MagicMock(return_value={})
 
         return {
             "mcpgateway.admin": admin_mod,
@@ -539,7 +540,9 @@ class TestBuildV1RouterGroupF:
         settings = _settings(mcpgateway_admin_api_enabled=True)
         with patch.dict(sys.modules, self._admin_modules()):
             v1 = build_v1_router(settings, **_required_kwargs())
-        assert "/v1/sentinel-well-known" in _route_paths(v1)
+        # Only the admin status handler is registered under the versioned prefix;
+        # /.well-known/** routes live on the root app mount (RFC 8615).
+        assert "/v1/admin/well-known" in _route_paths(v1)
 
     def test_admin_router_excluded_when_admin_api_disabled(self):
         settings = _settings(mcpgateway_admin_api_enabled=False)
