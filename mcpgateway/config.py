@@ -162,17 +162,6 @@ UI_HIDE_SECTION_ALIASES = {
 }
 
 
-def get_default_require_strong_secrets() -> bool:
-    """
-    Dynamically determine the default for REQUIRE_STRONG_SECRETS.
-    Returns True if ENVIRONMENT is 'production', otherwise False.
-
-    Returns:
-        bool: True if ENVIRONMENT is 'production', otherwise False.
-    """
-    return os.getenv("ENVIRONMENT", "development").lower() == "production"
-
-
 class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
     pass
@@ -1015,7 +1004,7 @@ class Settings(BaseSettings):
     min_secret_length: int = 32
     min_password_length: int = 12
     require_strong_secrets: bool = Field(
-        default_factory=get_default_require_strong_secrets,
+        default=False,
         description="Enforces strong secret validation. Defaults to True in production, False in development for ease of testing. When enabled, secrets are checked against a list of weak values and must meet minimum length and entropy requirements.",
     )
 
@@ -1044,14 +1033,34 @@ class Settings(BaseSettings):
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
     WEAK_VALUES: ClassVar[list[str]] = [
-        "my-test-key", "my-test-salt", "changeme", "secret", "password",
-        "test-secret", "my-secret", "12345678"
+        "my-test-key",
+        "my-test-key-but-now-longer-than-32-bytes",
+        "my-test-salt",
+        "changeme",
+        "secret",
+        "password",
+        "test-secret",
+        "my-secret",
+        "12345678",
     ]
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
     backoff_factor: float = Field(default=1.5, description="Multiplier used to gradually increase the polling interval during inactivity")
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_environment_aware_defaults(cls, data: Any) -> Any:
+        """Apply defaults that depend on other settings values."""
+        if not isinstance(data, dict):
+            return data
+
+        values: dict[str, Any] = dict(data)
+        if "require_strong_secrets" not in values:
+            environment = str(values.get("environment", "development")).lower()
+            values["require_strong_secrets"] = environment == "production"
+        return values
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -1332,6 +1341,22 @@ class Settings(BaseSettings):
             SecurityStatus: Dictionary containing security status information including score and warnings.
         """
 
+        if self.client_mode:
+            return {
+                "status": "SUCCESS",
+                "code": None,
+                "message": "Security validation skipped in client mode.",
+                "remediation": None,
+                "secure_secrets": True,
+                "auth_enabled": self.auth_required,
+                "ssl_verification": not self.skip_ssl_verify,
+                "debug_disabled": not self.debug,
+                "cors_restricted": "*" not in self.allowed_origins if self.cors_enabled else True,
+                "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
+                "warnings": [],
+                "security_score": 100,
+            }
+
         is_prod = self.environment == "production"
         remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
 
@@ -1343,7 +1368,7 @@ class Settings(BaseSettings):
         }
 
         for name, value in critical_secrets.items():
-            if name == "BASIC_AUTH_PASSWORD" and not self.mcpgateway_ui_enabled:
+            if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
             is_sentinel = value in self.SENTINEL_VALUES
             is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
@@ -1358,10 +1383,7 @@ class Settings(BaseSettings):
             # Check for known weak values
             if self.require_strong_secrets and is_weak:
                 error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
-                if is_prod:
-                    return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
-                else:
-                    logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
+                return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
 
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
