@@ -440,10 +440,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
             onSuccess();
           }
 
-          // Reset form after successful submission (only for create mode)
-          if (!isEditMode) {
-            resetForm();
-          }
+          // Reset form after successful submission
+          resetForm();
         } catch (error) {
           // Handle API errors from useQuery
           const action = isEditMode ? "update" : "create";
