@@ -1891,9 +1891,6 @@ def validate_security_configuration():
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:
         logger.critical(f"FAIL-CLOSED: {e}")
-        # Standard
-        import sys
-
         sys.exit(1)
 
 

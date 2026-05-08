@@ -13,7 +13,7 @@ unconfigured or weak in production environments.
 import pytest
 
 # First-Party
-from mcpgateway.config import get_settings, SecurityConfigurationError
+from mcpgateway.config import Settings, get_settings, SecurityConfigurationError
 
 
 @pytest.fixture(autouse=True)
@@ -115,3 +115,11 @@ def test_client_mode_skips_fail_closed_secret_enforcement():
     status = cfg.get_security_status()
     assert status["status"] == "SUCCESS"
     assert status["message"] == "Security validation skipped in client mode."
+
+
+def test_apply_environment_aware_defaults_non_dict_passthrough():
+    """Verify non-dict inputs pass through unchanged in the model validator."""
+    sentinel = ("not", "a", "dict")
+
+    apply_defaults = getattr(Settings, "apply_environment_aware_defaults")
+    assert apply_defaults(sentinel) is sentinel

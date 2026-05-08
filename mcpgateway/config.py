@@ -164,7 +164,6 @@ UI_HIDE_SECTION_ALIASES = {
 
 class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
-    pass
 
 
 def calculate_entropy(text: str) -> float:
@@ -1377,8 +1376,7 @@ class Settings(BaseSettings):
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
                 if is_prod:
                     return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
-                else:
-                    logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
+                logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
 
             # Check for known weak values
             if self.require_strong_secrets and is_weak:
