@@ -55,6 +55,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
+from alembic.migration import MigrationContext
 
 # Migration lock to prevent concurrent migrations from multiple workers
 _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
@@ -726,9 +727,6 @@ async def main() -> None:
 
                 # Pass the LOCKED connection to Alembic config
                 cfg.attributes["connection"] = conn
-
-                # Escape '%' characters in URL to avoid configparser interpolation errors
-                # (e.g., URL-encoded passwords like %40 for '@')
                 escaped_url = settings.database_url.replace("%", "%%")
                 cfg.set_main_option("sqlalchemy.url", escaped_url)
 
@@ -772,13 +770,12 @@ async def main() -> None:
                 conn.commit()  # Ensure all migration changes are permanently committed
 
     except Exception as e:
-        logger.error(f"Migration/Bootstrap failed: {e}")
+        logger.error(f"Database migration failed: {e}")
         # Allow retry logic or container restart to handle transient issues
         raise
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()
-
     logger.info("Database ready")
 
 
