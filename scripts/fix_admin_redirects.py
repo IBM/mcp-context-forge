@@ -1,4 +1,9 @@
-"""Fix hardcoded /admin/login redirects to /v1/admin/login in source files."""
+"""Fix hardcoded /admin/login redirects to /v1/admin/login in source files.
+
+ONE-TIME USE: Run once during the API_v1 migration (PR #4403). Re-running on an
+already-migrated codebase will silently no-op (regex guards against double-prefixing),
+but this script has no further purpose after the migration is complete.
+"""
 import re
 from pathlib import Path
 

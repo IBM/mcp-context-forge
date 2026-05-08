@@ -269,6 +269,11 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
             target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+
+            # First-Party
+            from mcpgateway.routers.well_known import router as well_known_router  # pylint: disable=import-outside-toplevel
+
+            target_router.include_router(well_known_router)
         except ImportError as e:
             logger.error(f"Admin router not available: {e}")
     else:

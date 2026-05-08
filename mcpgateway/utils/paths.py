@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Characters that must never appear in a root path — control chars, URL
 # scheme markers, query/fragment delimiters, and whitespace other than
 # leading/trailing (which is stripped before this check).
-_UNSAFE_ROOT_PATH_RE: re.Pattern[str] = re.compile(r"[\x00-\x1f\x7f?#]|://|(?:^|/)\.\.(?:/|$)")
+_UNSAFE_ROOT_PATH_RE: re.Pattern[str] = re.compile(r"[\x00-\x1f\x7f?#]|://")
 
 
 def _validate_root_path(value: str) -> str:

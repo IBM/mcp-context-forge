@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Update Python test file paths to use /v1/ prefix after Phase 1 migration.
 
+ONE-TIME USE: Run once during the API_v1 migration (PR #4403). Re-running is safe
+(idempotent — already-prefixed paths are skipped), but this script has no further
+purpose after the migration is complete.
+
 Routes now under /v1/ (inside v1_router):
   tools, servers (CRUD), gateways, prompts, resources, protocol,
   roots, tags, a2a, export, import, teams, tokens, rbac, llm,

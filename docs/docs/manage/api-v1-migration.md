@@ -2,7 +2,7 @@
 
 ## Overview
 
-ContextForge has implemented API versioning with all backend routes now available under the `/v1` prefix. Legacy unversioned routes remain available for backward compatibility until **May 13, 2026**.
+ContextForge has implemented API versioning with all backend routes now available under the `/v1` prefix. Legacy unversioned routes remain available for backward compatibility until **August 4, 2026** (configurable via `LEGACY_API_SUNSET_DATE`).
 
 ## Quick Migration
 
@@ -39,6 +39,7 @@ All backend API routes are now available under `/v1`:
 | **Reverse Proxy** | `/reverse-proxy/*` | `/v1/reverse-proxy/*` |
 | **Tool Cancellation** | `/cancellation/*` | `/v1/cancellation/*` |
 | **Tool Operations** | `/toolops/*` | `/v1/toolops/*` |
+| **JSON-RPC (REST)** | `/rpc` | `/v1/rpc` |
 
 ## Permanently Unversioned Routes
 
@@ -78,21 +79,21 @@ These routes remain at the root level and **do not** require migration:
 Legacy routes return the following deprecation headers:
 
 ```http
-Sunset: Wed, 13 May 2026 00:00:00 GMT
+Sunset: Wed, 04 Aug 2026 00:00:00 GMT
 Deprecation: true
 Link: </v1/path>; rel="successor-version"
-X-Deprecated-Endpoint: This endpoint is deprecated. Please use /v1/path instead. This endpoint will be removed on Wed, 13 May 2026 00:00:00 GMT.
+X-Deprecated-Endpoint: This endpoint is deprecated. Please use /v1/path instead. This endpoint will be removed on Wed, 04 Aug 2026 00:00:00 GMT.
 ```
 
 ## Migration Timeline
 
-### Phase 1: Dual Operation (Current - May 13, 2026)
+### Phase 1: Dual Operation (Current - August 4, 2026)
 - Both `/v1/*` and legacy routes are active
 - Legacy routes return deprecation headers
 - Clients can migrate at their own pace
 - **Action Required**: Update your clients to use `/v1` prefix
 
-### Phase 2: Legacy Deprecation (May 13, 2026)
+### Phase 2: Legacy Deprecation (August 4, 2026)
 - Legacy routes will be disabled via `LEGACY_API_ENABLED=false`
 - Legacy routes will return `404 Not Found`
 - Only `/v1/*` routes will remain active
@@ -113,8 +114,8 @@ LEGACY_API_ENABLED=false
 ### Customize Sunset Date
 
 ```bash
-# RFC 8594 format
-LEGACY_API_SUNSET_DATE="Wed, 13 May 2026 00:00:00 GMT"
+# RFC 8594 format (default: 90 days from v1.0.0 release)
+LEGACY_API_SUNSET_DATE="Wed, 04 Aug 2026 00:00:00 GMT"
 ```
 
 ## Client Examples
@@ -170,7 +171,7 @@ Legacy routes are not included in the OpenAPI schema by design.
 ```bash
 curl -I http://localhost:4444/tools
 # Should include:
-# Sunset: Wed, 13 May 2026 00:00:00 GMT
+# Sunset: Wed, 04 Aug 2026 00:00:00 GMT
 # Deprecation: true
 # Link: </v1/tools>; rel="successor-version"
 ```
@@ -229,7 +230,7 @@ curl http://localhost:4444/v1/tools
 
 ### Q: Can I use both legacy and v1 routes during migration?
 
-**A**: Yes, both routes are active until May 13, 2026. This allows gradual migration.
+**A**: Yes, both routes are active until August 4, 2026. This allows gradual migration.
 
 ### Q: Will the OpenAPI schema include legacy routes?
 
@@ -237,7 +238,7 @@ curl http://localhost:4444/v1/tools
 
 ### Q: What if I can't migrate by May 13, 2026?
 
-**A**: Contact the ContextForge team to discuss extension options. However, we strongly recommend migrating as soon as possible.
+**A**: Set `LEGACY_API_SUNSET_DATE` to a later RFC 8594 date. Contact the ContextForge team to discuss support options.
 
 ## Support
 
