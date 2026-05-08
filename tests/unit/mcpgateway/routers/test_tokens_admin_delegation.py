@@ -79,6 +79,19 @@ def mock_narrowed_admin_user(mock_db):
 
 
 @pytest.fixture
+def mock_unauthenticated_user(mock_db):
+    """Create a mock unauthenticated user."""
+    return {
+        "email": None,
+        "is_admin": False,
+        "permissions": [],
+        "db": mock_db,
+        "auth_method": None,
+        "token_teams": [],
+    }
+
+
+@pytest.fixture
 def mock_token_record():
     """Create a mock token record."""
     token = MagicMock()
@@ -245,3 +258,19 @@ class TestAdminDelegatedTokenCreation:
             assert "Admin" in log_call
             assert mock_admin_user["email"] in str(mock_logger.info.call_args)
             assert target_email in str(mock_logger.info.call_args)
+
+    @pytest.mark.asyncio
+    async def test_unauthenticated_cannot_create_delegated_token(self, mock_db, mock_unauthenticated_user):
+        """Unauthenticated user cannot create delegated token (403 Forbidden)."""
+        request = TokenCreateRequest(
+            name="Unauthorized Delegated Token",
+            description="Unauthenticated trying to create for someone else",
+            user_email="target@example.com",
+            expires_in_days=30,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_token(request, current_user=mock_unauthenticated_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Token management requires authentication" in exc_info.value.detail
