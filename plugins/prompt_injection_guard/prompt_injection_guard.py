@@ -120,7 +120,7 @@ def _try_load_llm_guard() -> bool:
     Returns:
         True if the scanner was loaded successfully, False otherwise.
     """
-    global _llm_guard_loaded, _llm_guard_scanner  # noqa: PLW0603
+    global _llm_guard_loaded, _llm_guard_scanner  # noqa: PLW0603  # pylint: disable=global-statement
     if _llm_guard_loaded:
         return _llm_guard_scanner is not None
     _llm_guard_loaded = True
@@ -252,7 +252,7 @@ def _scan_llm_guard(text: str) -> Optional[Tuple[str, float]]:
     if _llm_guard_scanner is None:
         return None
     try:
-        sanitized, is_valid, risk_score = _llm_guard_scanner.scan("", text)
+        sanitized, is_valid, risk_score = _llm_guard_scanner.scan(text)
         if not is_valid:
             return sanitized, float(risk_score)
     except Exception as exc:
