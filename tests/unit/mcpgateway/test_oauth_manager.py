@@ -348,7 +348,7 @@ class TestOAuthManager:
 
         with patch.object(manager, "_get_client", return_value=mock_client):
             # This should raise an error because access_token won't be parsed from raw response
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
                 await manager._client_credentials_flow(credentials)
 
     @pytest.mark.asyncio
@@ -371,7 +371,7 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch.object(manager, "_get_client", return_value=mock_client):
-            with pytest.raises(OAuthError, match="No access_token in response"):
+            with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
                 await manager._client_credentials_flow(credentials)
 
     @pytest.mark.asyncio

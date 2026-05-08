@@ -296,7 +296,7 @@ async def test_client_credentials_flow_no_access_token(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
@@ -320,7 +320,7 @@ async def test_client_credentials_flow_json_parse_failure(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
@@ -1385,11 +1385,7 @@ async def test_exchange_code_for_tokens_basic_auth_without_client_secret(oauth_m
             "token_endpoint_auth_method": "client_secret_basic",  # Request Basic Auth
         }
 
-        result = await oauth_manager._exchange_code_for_tokens(
-            credentials=credentials,
-            code="auth_code_123",
-            code_verifier="test_verifier"
-        )
+        result = await oauth_manager._exchange_code_for_tokens(credentials=credentials, code="auth_code_123", code_verifier="test_verifier")
 
     assert result["access_token"] == "test-token"
 
@@ -1429,10 +1425,7 @@ async def test_exchange_code_for_tokens_basic_auth_without_client_secret_logs_wa
         }
 
         with caplog.at_level("WARNING"):
-            await oauth_manager._exchange_code_for_tokens(
-                credentials=credentials,
-                code="auth_code_123"
-            )
+            await oauth_manager._exchange_code_for_tokens(credentials=credentials, code="auth_code_123")
 
     # Verify warning was logged
     assert any("Basic Auth requested but client_secret is missing" in record.message for record in caplog.records)
@@ -1452,11 +1445,7 @@ async def test_refresh_token_basic_auth_without_client_secret(oauth_manager):
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_response.headers = {"content-type": "application/json"}
-    mock_response.json.return_value = {
-        "access_token": "refreshed-token",
-        "token_type": "Bearer",
-        "expires_in": 3600
-    }
+    mock_response.json.return_value = {"access_token": "refreshed-token", "token_type": "Bearer", "expires_in": 3600}
 
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
@@ -1469,10 +1458,7 @@ async def test_refresh_token_basic_auth_without_client_secret(oauth_manager):
             "token_endpoint_auth_method": "client_secret_basic",  # Request Basic Auth
         }
 
-        result = await oauth_manager.refresh_token(
-            credentials=credentials,
-            refresh_token="old-refresh-token"
-        )
+        result = await oauth_manager.refresh_token(credentials=credentials, refresh_token="old-refresh-token")
 
     assert result["access_token"] == "refreshed-token"
 
@@ -1511,10 +1497,7 @@ async def test_refresh_token_basic_auth_without_client_secret_logs_warning(oauth
         }
 
         with caplog.at_level("WARNING"):
-            await oauth_manager.refresh_token(
-                credentials=credentials,
-                refresh_token="old-refresh-token"
-            )
+            await oauth_manager.refresh_token(credentials=credentials, refresh_token="old-refresh-token")
 
     # Verify warning was logged
     assert any("Basic Auth requested but client_secret is missing" in record.message for record in caplog.records)
