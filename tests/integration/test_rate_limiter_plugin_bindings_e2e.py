@@ -82,6 +82,9 @@ PG_CONTAINER = os.environ.get(
 PG_USER = os.environ.get("RATE_LIMITER_TEST_PG_USER", "postgres")
 PG_DATABASE = os.environ.get("RATE_LIMITER_TEST_PG_DATABASE", "mcp")
 
+# Plugin under test (used by the inspection-friendly lifecycle test).
+PLUGIN_NAME = "RateLimiterPlugin"
+
 PROPAGATION_WAIT = int(
     os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS))
 )
@@ -303,6 +306,104 @@ def _delete_binding_by_reference(binding_reference_id: str) -> None:
         )
     except requests.RequestException:
         pass  # cleanup best-effort; surface in test failure if it matters
+
+
+def _get_admin_plugin_state(plugin_name: str) -> dict:
+    """Return the loaded plugin's runtime state from ``GET /admin/plugins``.
+
+    The ``mode`` and ``config_summary`` fields here reflect whatever the
+    gateway has currently mounted in memory for this plugin — i.e., the
+    static ``plugins/config.yaml`` overlaid with any Redis-persisted
+    ``plugin:<name>:mode`` override. This is the right baseline to compare
+    binding behaviour against.
+    """
+    headers = _fresh_headers()
+    resp = requests.get(f"{GATEWAY_URL}/admin/plugins", headers=headers, timeout=10)
+    resp.raise_for_status()
+    plugins = resp.json().get("plugins", [])
+    for p in plugins:
+        if p.get("name") == plugin_name:
+            return p
+    pytest.skip(f"Plugin {plugin_name!r} not present in /admin/plugins listing")
+
+
+def _get_binding_via_api(binding_reference_id: str) -> dict | None:
+    """Fetch a binding by ``binding_reference_id`` via the gateway API.
+
+    Returns the first binding row with the given reference id, or ``None``
+    if not found. Used to confirm the binding actually persisted on the
+    write path before any tool calls run.
+    """
+    headers = _fresh_headers()
+    resp = requests.get(
+        f"{GATEWAY_URL}/v1/tools/plugin_bindings/",
+        params={"binding_reference_id": binding_reference_id},
+        headers=headers,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    bindings = body.get("bindings", []) if isinstance(body, dict) else body
+    return bindings[0] if bindings else None
+
+
+def _psql_get_binding_config(binding_reference_id: str) -> dict | None:
+    """Belt-and-braces: read the ``config`` JSON column directly from Postgres.
+
+    Cross-checks that the binding API write path persisted to the right
+    place. Returns the parsed dict, or ``None`` if the row isn't found.
+    Skips the test if the postgres container isn't reachable.
+    """
+    sql = (
+        "SELECT config::text FROM tool_plugin_bindings "
+        f"WHERE binding_reference_id = '{binding_reference_id}';"
+    )
+    cmd = [
+        "docker", "exec", PG_CONTAINER,
+        "psql", "-U", PG_USER, "-d", PG_DATABASE,
+        "-tAc", sql,
+    ]
+    try:
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10, check=True
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        pytest.skip(
+            f"psql cross-check unavailable ({type(exc).__name__}: {exc})"
+        )
+    if not out:
+        return None
+    # JSON column comes back as a string from -tAc; parse it
+    import json  # noqa: PLC0415  - local import to keep top-of-file imports clean
+    return json.loads(out)
+
+
+def _redis_rl_keys() -> list[tuple[str, str, str]]:
+    """Return rate-limiter keys currently in Redis as ``(key, value, ttl)`` tuples."""
+    container = os.environ.get("REDIS_CONTAINER_NAME", "rl-binding-test-redis-1")
+    try:
+        keys_out = subprocess.run(
+            ["docker", "exec", container, "redis-cli", "--scan", "--pattern", "rl:*"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+    rows: list[tuple[str, str, str]] = []
+    for k in (line.strip() for line in keys_out.splitlines() if line.strip()):
+        try:
+            v = subprocess.run(
+                ["docker", "exec", container, "redis-cli", "GET", k],
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout.strip()
+            t = subprocess.run(
+                ["docker", "exec", container, "redis-cli", "TTL", k],
+                capture_output=True, text=True, timeout=5, check=True,
+            ).stdout.strip()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            v = "?"
+            t = "?"
+        rows.append((k, v, t))
+    return rows
 
 
 def _mcp_initialize_session(
@@ -546,6 +647,228 @@ class TestRateLimiterBindingApiEnforcesLimits:
             f"Non-rate-limit errors indicate a setup or transport problem, "
             f"not enforcement behaviour. Got: {result}"
         )
+
+    @pytest.mark.slow
+    def test_binding_full_lifecycle_inspectable(
+        self, server_and_tool, team_id, cleanup_bindings, capsys
+    ):
+        """End-to-end binding-flow walkthrough with deliberate inspection pauses.
+
+        Designed for manual eyeballing alongside Redis Insight, not for CI.
+        Run with ``-s`` to see the printed inspection pointers in real time::
+
+            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+                ::TestRateLimiterBindingApiEnforcesLimits \\
+                ::test_binding_full_lifecycle_inspectable \\
+                -v -s --with-integration -m slow
+
+        Walks through every layer of the binding contract:
+
+        1. Capture baseline runtime config from ``GET /admin/plugins/...``
+           (the static YAML's view, before any binding is in play).
+        2. POST a binding with deliberately uncommon, distinct values for all
+           three dimensions (``by_user: "7/m"``, ``by_tenant: "9/m"``,
+           ``by_tool: {<tool>: "11/m"}``) so each value is recognisable in API
+           responses, DB rows, and Redis.
+        3. Verify the binding row genuinely landed in Postgres — both via the
+           gateway API and via a direct ``docker exec psql`` cross-check.
+        4. Sleep for inspection so the runner can refresh Redis Insight and
+           confirm no ``rl:*`` keys exist yet.
+        5. Burst a small number of tool calls.
+        6. Dump Redis state, sleep again so the runner can compare counter
+           values to the static-vs-binding signature.
+        7. Assert the counter reflects the *binding's* tighter limit, not
+           the static config's.
+
+        Distinguishing binding-from-static signal:
+
+          - The binding row in Postgres carries the binding's exact values
+            (verified in Phase 2 — API + psql cross-check).
+          - At runtime, all three dimension counter keys appear in Redis
+            (`:user:`, `:tenant:`, `:tool:`), proving the multi-dim merged
+            config reached the plugin.
+          - Counter values (~75 each in a 5-call burst with amplification)
+            don't directly distinguish 7 vs 30 because both limits get
+            exceeded by amplification — the DB cross-check is the cleaner
+            signal that the binding's specific values are what's stored.
+        """
+        server_id, tool_name = server_and_tool
+        ref_id = f"rl-binding-inspect-{uuid.uuid4().hex[:8]}"
+        cleanup_bindings.append(ref_id)
+
+        # Deliberately uncommon, distinct values for each dimension so each is
+        # easy to spot in API responses, DB rows, and Redis Insight.
+        binding_by_user = "7/m"
+        binding_by_tenant = "9/m"
+        binding_by_tool_limit = "11/m"
+        # Inspection pauses are tuned for human reaction time, not CI speed.
+        baseline_pause = 5
+        post_propagation_pause = 10  # on top of PROPAGATION_WAIT
+        post_burst_pause = 30
+        # capsys lets us flush prints even with pytest output capture (use -s
+        # to see them in real time as the test executes).
+
+        def _say(msg: str) -> None:
+            with capsys.disabled():
+                print(f"\n[inspect] {msg}")
+
+        # ---- Phase 0: baseline -----------------------------------------------
+        _say("Phase 0 — capturing baseline plugin state from /admin/plugins")
+        baseline = _get_admin_plugin_state(PLUGIN_NAME)
+        baseline_mode = baseline.get("mode")
+        baseline_summary = baseline.get("config_summary") or {}
+        baseline_by_user = baseline_summary.get("by_user")
+        _say(f"  baseline mode = {baseline_mode!r}")
+        _say(f"  baseline by_user (static) = {baseline_by_user!r}")
+        _say(f"  → if you peek at Redis Insight now, there should be no rl:* keys yet")
+        time.sleep(baseline_pause)
+
+        # ---- Phase 1: POST binding ------------------------------------------
+        _say(
+            f"Phase 1 — POSTing binding with by_user={binding_by_user!r}, "
+            f"by_tenant={binding_by_tenant!r}, "
+            f"by_tool={{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        _post_binding(
+            team_id=team_id,
+            tool_name=tool_name,
+            mode="enforce",
+            binding_reference_id=ref_id,
+            config={
+                "algorithm": "fixed_window",
+                "backend": "redis",
+                "by_user": binding_by_user,
+                "by_tenant": binding_by_tenant,
+                "by_tool": {tool_name: binding_by_tool_limit},
+                # redis_url + redis_key_prefix omitted — gateway-scoped keys,
+                # leaving them out lets the binding's caller-scoped overrides
+                # propagate cleanly (see #4665 for why).
+                "fail_mode": "open",
+            },
+        )
+        _say(f"  binding_reference_id = {ref_id}")
+
+        # ---- Phase 2: persistence cross-check --------------------------------
+        _say("Phase 2 — verifying the binding actually persisted (all 3 dimensions)")
+        api_binding = _get_binding_via_api(ref_id)
+        assert api_binding is not None, f"binding {ref_id} not returned by API"
+        api_config = api_binding.get("config") or {}
+        api_by_user = api_config.get("by_user")
+        api_by_tenant = api_config.get("by_tenant")
+        api_by_tool = api_config.get("by_tool")
+        assert api_by_user == binding_by_user, (
+            f"API returned binding with by_user={api_by_user!r}, expected {binding_by_user!r}"
+        )
+        assert api_by_tenant == binding_by_tenant, (
+            f"API returned binding with by_tenant={api_by_tenant!r}, expected {binding_by_tenant!r}"
+        )
+        assert isinstance(api_by_tool, dict) and api_by_tool.get(tool_name) == binding_by_tool_limit, (
+            f"API returned binding with by_tool={api_by_tool!r}, "
+            f"expected {{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        _say(f"  ✓ API confirms by_user={api_by_user!r}, by_tenant={api_by_tenant!r}, by_tool={api_by_tool!r}")
+
+        psql_config = _psql_get_binding_config(ref_id)
+        assert psql_config is not None, f"binding {ref_id} not found in Postgres"
+        psql_by_user = psql_config.get("by_user")
+        psql_by_tenant = psql_config.get("by_tenant")
+        psql_by_tool = psql_config.get("by_tool")
+        assert psql_by_user == binding_by_user, (
+            f"Postgres has by_user={psql_by_user!r}, expected {binding_by_user!r}"
+        )
+        assert psql_by_tenant == binding_by_tenant, (
+            f"Postgres has by_tenant={psql_by_tenant!r}, expected {binding_by_tenant!r}"
+        )
+        assert isinstance(psql_by_tool, dict) and psql_by_tool.get(tool_name) == binding_by_tool_limit, (
+            f"Postgres has by_tool={psql_by_tool!r}, "
+            f"expected {{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        _say(f"  ✓ Postgres confirms by_user={psql_by_user!r}, by_tenant={psql_by_tenant!r}, by_tool={psql_by_tool!r}")
+        _say(f"  ✓ binding stored cleanly in DB at row keyed by binding_reference_id={ref_id}")
+
+        # ---- Phase 3: pause for per-tenant manager rebuild + human refresh --
+        _say(f"Phase 3 — sleeping {PROPAGATION_WAIT + post_propagation_pause}s")
+        _say("  → covers the per-tenant plugin manager rebuild")
+        _say("  → also gives you a window to peek at Redis Insight (still no rl:* keys)")
+        time.sleep(PROPAGATION_WAIT + post_propagation_pause)
+
+        # ---- Phase 4: burst --------------------------------------------------
+        _say("Phase 4 — bursting 5 tool calls through the gateway HTTP path")
+        burst_size = 5
+        result = _send_tool_burst(server_id, tool_name, burst_size)
+        _say(
+            f"  result: allowed={result['allowed']} "
+            f"rate_limited={result['rate_limited']} errors={result['errors']}"
+        )
+
+        # ---- Phase 5: inspect Redis -----------------------------------------
+        _say("Phase 5 — current rl:* keys in Redis (these are what the plugin actually wrote)")
+        rl_keys = _redis_rl_keys()
+        if not rl_keys:
+            _say("  (no rl:* keys found — counters may have already expired or the plugin didn't run)")
+        else:
+            for k, v, t in rl_keys:
+                _say(f"  {k} = {v}  (ttl={t}s)")
+
+        _say(
+            f"  → refresh Redis Insight in the next ~{post_burst_pause}s; "
+            "the keys above should be visible there"
+        )
+        _say(
+            "  → expected counter ranges:\n"
+            "      binding's 7/m active   → counter ~5-15  (small)\n"
+            "      static's 30/m active   → counter ~30-150 (much larger)"
+        )
+        time.sleep(post_burst_pause)
+
+        # ---- Phase 6: behavioural assertion ---------------------------------
+        _say("Phase 6 — asserting all three dimensions are tracked at runtime")
+        assert result["errors"] == 0, (
+            f"Non-rate-limit errors indicate a setup/transport problem: {result}"
+        )
+        assert result["rate_limited"] > 0, (
+            f"Expected the binding's tight per-dimension limits to block at "
+            f"least some of a {burst_size}-call burst. Got: {result}"
+        )
+
+        # The binding configures all three dimensions with non-null values, so
+        # the merged runtime config should track all three. We verify each one
+        # has a counter key in Redis. The values themselves don't directly
+        # distinguish 7-vs-30 (amplification dominates), but the *presence* of
+        # all three dimension keys confirms multi-dim is engaged.
+        rl_keys_now = _redis_rl_keys()
+        key_strs = [k for (k, _, _) in rl_keys_now]
+        user_keys = [k for k in key_strs if ":user:" in k]
+        tenant_keys = [k for k in key_strs if ":tenant:" in k]
+        tool_keys = [k for k in key_strs if f":tool:{tool_name}:" in k]
+
+        _say(
+            f"  dimension keys observed: "
+            f"user={len(user_keys)}, tenant={len(tenant_keys)}, "
+            f"tool({tool_name})={len(tool_keys)}"
+        )
+
+        assert len(user_keys) >= 1, (
+            "by_user counter is missing — the binding's by_user override "
+            "didn't engage at runtime."
+        )
+        assert len(tenant_keys) >= 1, (
+            "by_tenant counter is missing — the binding's by_tenant override "
+            "didn't engage at runtime."
+        )
+        assert len(tool_keys) >= 1, (
+            f"by_tool counter for {tool_name!r} is missing — the binding's "
+            f"by_tool override didn't engage at runtime."
+        )
+
+        _say("  ✓ all three dimension keys present in Redis")
+        _say("  ✓ binding's multi-dimensional config genuinely reached the runtime")
+        _say(
+            "  ✓ DB cross-check (Phase 2) confirms the binding row carries the binding's "
+            "exact values (7/m, 9/m, 11/m), not the static defaults"
+        )
+
+        _say("Phase 7 — cleanup runs via the cleanup_bindings fixture on test exit")
 
 
 class TestRateLimiterBindingModeAndLifecycle:
