@@ -86,4 +86,25 @@ describe("HeaderProfileMenu", () => {
 
     expect(localStorage.getItem("theme-preference")).toBe("dark");
   });
+
+  it("supports switching back to light mode", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("theme-preference", "dark");
+    renderMenu();
+
+    await user.click(screen.getByRole("button", { name: "Bobo Example" }));
+    await user.click(screen.getByRole("button", { name: "Light mode" }));
+
+    expect(localStorage.getItem("theme-preference")).toBe("light");
+  });
+
+  it("supports switching to system theme", async () => {
+    const user = userEvent.setup();
+    renderMenu();
+
+    await user.click(screen.getByRole("button", { name: "Bobo Example" }));
+    await user.click(screen.getByRole("button", { name: "System theme" }));
+
+    expect(localStorage.getItem("theme-preference")).toBe("system");
+  });
 });
