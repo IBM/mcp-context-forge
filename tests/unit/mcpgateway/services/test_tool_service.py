@@ -4436,7 +4436,7 @@ class TestToolService:
 
         # Mock plugin manager and post-invoke hook with modified payload
         mock_modified_payload = Mock()
-        mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}]}
+        mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}], "isError": True}
 
         mock_post_result = Mock()
         mock_post_result.continue_processing = True
@@ -4469,6 +4469,7 @@ class TestToolService:
 
         # Verify result was modified by plugin
         assert result.content[0].text == "Modified by plugin"
+        assert result.is_error is True
 
     async def test_invoke_tool_with_plugin_post_invoke_invalid_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook providing invalid modified payload."""

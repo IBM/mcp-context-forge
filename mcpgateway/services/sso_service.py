@@ -2173,6 +2173,15 @@ class SSOService:
             if any(group.lower() in entra_admin_groups for group in user_groups):
                 return True
 
+        # Check Generic OIDC admin groups
+        provider_metadata = provider.provider_metadata or {}
+        generic_admin_groups = provider_metadata.get("admin_groups", [])
+        if generic_admin_groups:
+            generic_admin_groups_lower = {str(group).lower() for group in generic_admin_groups}
+            user_groups = user_info.get("groups", [])
+            if any(group.lower() in generic_admin_groups_lower for group in user_groups):
+                return True
+
         return False
 
     async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProviderContext) -> List[Dict[str, Any]]:
@@ -2196,11 +2205,13 @@ class SSOService:
         metadata = provider.provider_metadata or {}
         role_mappings = metadata.get("role_mappings", {})
         provider_default_role: Optional[str] = metadata.get("default_role")
+        provider_admin_groups = metadata.get("admin_groups", [])
         resolve_team_scope_to_personal_team = bool(metadata.get("resolve_team_scope_to_personal_team", False))
         has_provider_default_role = isinstance(provider_default_role, str) and bool(provider_default_role.strip())
 
         # Merge with legacy Entra specific settings if applicable
         has_entra_admin_groups = provider.id == "entra" and settings.sso_entra_admin_groups
+        has_generic_admin_groups = bool(provider_admin_groups)
 
         if provider.id == "entra":
             # Use generic role_mappings fallback to legacy setting
@@ -2212,7 +2223,7 @@ class SSOService:
                 has_provider_default_role = True
 
         # Early exit: Skip role mapping if no configuration exists
-        if not role_mappings and not has_entra_admin_groups and not has_provider_default_role:
+        if not role_mappings and not has_entra_admin_groups and not has_generic_admin_groups and not has_provider_default_role:
             logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
             return role_assignments
 
@@ -2258,6 +2269,15 @@ class SSOService:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
                     logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
+                    break  # Only need one admin assignment
+
+        # Handle Generic OIDC admin groups -> admin role
+        if has_generic_admin_groups:
+            admin_groups_lower = {str(group).lower() for group in provider_admin_groups}
+            for group in user_groups:
+                if group.lower() in admin_groups_lower:
+                    role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped Generic OIDC admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
