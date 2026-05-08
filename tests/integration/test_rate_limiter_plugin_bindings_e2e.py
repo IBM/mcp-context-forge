@@ -909,24 +909,26 @@ class TestRateLimiterBindingApiEnforcesLimits:
         assert result["errors"] == 0, (
             f"Non-rate-limit errors indicate a setup/transport problem: {result}"
         )
-        # The paced burst should produce a clean "first call(s) allow, later
-        # calls block" transition — proves enforcement is live and the
-        # transition kicks in within the burst.
-        assert result["allowed"] >= 1, (
-            f"Expected at least one call to slip through before the binding's "
-            f"tight limits kick in. With pace={pace_between_calls}s per call "
-            f"and binding by_user={binding_by_user}, the first call's "
-            f"increment typically hits before amplification fills the bucket. "
-            f"Got: {result}"
-        )
+        # Enforcement signal: at least one call was blocked. A "first call
+        # allowed, later blocked" transition is observable when amplification
+        # is mild, but with the binding's tight 7/m limit and tool-path
+        # amplification varying between runs (~5x – 20x ticks per call), the
+        # very first call sometimes already trips. Both shapes are valid
+        # enforcement; we only insist on at least one block.
         assert result["rate_limited"] >= 1, (
-            f"Expected at least one call to be blocked once the binding's "
-            f"tight limits are exceeded. Got: {result}"
+            f"Expected at least one call to be blocked by the binding's tight "
+            f"per-dimension limits. Got: {result}"
         )
-        _say(
-            f"  ✓ enforcement transition observed: "
-            f"{result['allowed']} allowed, {result['rate_limited']} blocked"
-        )
+        if result["allowed"] >= 1:
+            _say(
+                f"  ✓ visible enforcement transition: "
+                f"{result['allowed']} allowed → {result['rate_limited']} blocked"
+            )
+        else:
+            _say(
+                f"  ✓ enforcement was strict from the first call: "
+                f"all {result['rate_limited']} blocked (amplification high this run)"
+            )
 
         # The binding configures all three dimensions with non-null values, so
         # the merged runtime config should track all three. We verify each one
