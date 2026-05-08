@@ -3954,9 +3954,9 @@ class TestAdminGatewayTestRoute:
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_class.return_value = mock_client
 
-            # DB query fails but should fall back to configured hosts
+            # DB query fails and validation fails closed (no fallback to configured hosts in registered-only mode)
             result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
-            # Will fail validation since configured_hosts is empty after exception
+            # Validation fails with 400 since allowlist is empty after DB exception
             assert result.status_code == 400
 
     async def test_admin_test_gateway_registered_mode_with_team_id(self, monkeypatch):

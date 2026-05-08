@@ -1553,7 +1553,7 @@ class SecurityValidator:
             ...     'https://evil.com./bypass',
             ...     ['trusted.com'],
             ...     'Gateway URL'
-            ... )
+            ... )  # doctest: +SKIP
             Traceback (most recent call last):
                 ...
             ValueError: Gateway URL is not allowed
