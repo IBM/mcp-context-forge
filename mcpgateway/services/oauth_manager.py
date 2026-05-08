@@ -49,18 +49,6 @@ _state_lock = asyncio.Lock()
 # State TTL in seconds (5 minutes)
 STATE_TTL_SECONDS = 300
 
-# RFC 8693 token type constants
-ACCESS_TOKEN_TYPE_URN = ":".join(
-    (
-        "urn",
-        "ietf",
-        "params",
-        "oauth",
-        "token-type",
-        "access_token",
-    )
-)
-
 # Redis client for distributed state storage (uses shared factory)
 _redis_client: Optional[Any] = None
 _REDIS_INITIALIZED = False
