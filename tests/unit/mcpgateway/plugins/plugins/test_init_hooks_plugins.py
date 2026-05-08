@@ -12,6 +12,7 @@ and their hooks without repetitive code.
 """
 
 # Standard
+import importlib.util
 from typing import Any
 
 # Third-Party
@@ -131,6 +132,19 @@ def get_plugin_names() -> list[str]:
     return [p["name"] for p in plugins]
 
 
+def get_expected_loadable_plugin_count() -> int:
+    """Return count of enabled plugins whose modules are importable in this environment."""
+    count = 0
+    for plugin in load_plugin_configs(include_disabled=False):
+        kind = plugin.get("kind", "")
+        module_name = kind.rsplit(".", 1)[0] if "." in kind else kind
+        if not module_name:
+            continue
+        if importlib.util.find_spec(module_name) is not None:
+            count += 1
+    return count
+
+
 # Generate test parameters
 PLUGIN_HOOK_PARAMS = get_plugin_test_params()
 PLUGIN_NAMES = get_plugin_names()
@@ -243,7 +257,8 @@ class TestAllPluginsTogether:
         await manager.initialize()
 
         assert manager.initialized, "Plugin manager failed to initialize"
-        assert manager.plugin_count == len(PLUGIN_NAMES), f"Expected {len(PLUGIN_NAMES)} plugins, got {manager.plugin_count}"
+        expected_count = get_expected_loadable_plugin_count()
+        assert manager.plugin_count == expected_count, f"Expected {expected_count} plugins, got {manager.plugin_count}"
 
         await manager.shutdown()
 

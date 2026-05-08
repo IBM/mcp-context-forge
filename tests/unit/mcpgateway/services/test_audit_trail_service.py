@@ -8,6 +8,8 @@ Tests for audit_trail_service.
 """
 
 # Standard
+import sys
+import types
 from unittest.mock import MagicMock
 
 # First-Party

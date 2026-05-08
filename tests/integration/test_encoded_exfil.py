@@ -13,6 +13,8 @@ import base64
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_encoded_exfil_detection.encoded_exfil_detection")
+
 # First-Party
 from cpex.framework import (
     GlobalContext,

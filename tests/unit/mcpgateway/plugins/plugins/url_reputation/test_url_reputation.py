@@ -10,6 +10,8 @@ Tests for URLReputationPlugin.
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_url_reputation.url_reputation")
+
 # First-Party
 from cpex.framework import PluginConfig, ResourceHookType, ResourcePreFetchPayload
 from cpex_url_reputation.url_reputation import URLReputationConfig, URLReputationPlugin
