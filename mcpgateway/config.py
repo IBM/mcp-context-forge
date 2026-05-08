@@ -92,6 +92,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GITHUB_ADMIN_ORGS",
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
+        "SSO_GENERIC_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
         "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
         "SIEM_EXPORT_EVENT_SOURCES",
@@ -506,7 +507,14 @@ class Settings(BaseSettings):
     sso_generic_userinfo_url: Optional[str] = Field(default=None, description="Userinfo endpoint URL")
     sso_generic_issuer: Optional[str] = Field(default=None, description="OIDC issuer URL")
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
+
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+
+    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
+    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
+    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Generic OIDC groups to ContextForge roles (JSON: {group_id: role_name})")
+    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for Generic OIDC users without group mapping (None = no role assigned)")
+    sso_generic_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login for Generic OIDC")
 
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
@@ -2474,6 +2482,7 @@ Disallow: /
     # -------------------------------
     @field_validator(
         "sso_entra_admin_groups",
+        "sso_generic_admin_groups",
         "sso_trusted_domains",
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
