@@ -976,12 +976,22 @@ class _FakePubSub:
         self._response = response_payload
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
 
     async def subscribe(self, *channels):
         self.subscribed.extend(channels)
 
     async def unsubscribe(self, *channels):
         self.unsubscribed.extend(channels)
+
+    async def close(self):
+        self.closed = True
 
     async def get_message(self, ignore_subscribe_messages=True, timeout=0.1):  # pylint: disable=unused-argument
         if self._response is not None:
@@ -1251,16 +1261,26 @@ async def test_register_session_mapping_logs_existing_owner_when_set_nx_returns_
 class _FakePubSubListenStream:
     """Async-iterable pubsub stand-in for the ``async for msg in pubsub.listen()`` loop."""
 
-    def __init__(self, response_data: bytes | None):
-        self._response = response_data
+    def __init__(self, response_: bytes | None):
+        self._response = response_
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
 
     async def subscribe(self, *channels):
         self.subscribed.extend(channels)
 
     async def unsubscribe(self, *channels):
         self.unsubscribed.extend(channels)
+
+    async def close(self):
+        self.closed = True
 
     def listen(self):
         payload = self._response
@@ -1695,12 +1715,23 @@ class _ListenerPubSub:
         self._messages = list(messages)
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
+        return False
 
     async def subscribe(self, *channels):
         self.subscribed.extend(channels)
 
     async def unsubscribe(self, *channels):
         self.unsubscribed.extend(channels)
+
+    async def close(self):
+        self.closed = True
 
     async def get_message(self, ignore_subscribe_messages=True, timeout=1.0):  # pylint: disable=unused-argument
         if self._messages:
