@@ -246,5 +246,10 @@ export function initializeEventDelegation() {
   document.addEventListener('focus', handleDelegatedFocus, options);
   document.addEventListener('blur', handleDelegatedBlur, options);
 
+  // Set flag for Playwright tests to wait for initialization
+  if (window.Admin) {
+    window.Admin.eventDelegationInitialized = true;
+  }
+
   console.log('Event delegation system initialized for CSP compliance');
 }
