@@ -299,3 +299,283 @@ describe("events.js - Error handlers", () => {
     consoleSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// HTMX configRequest — show-inactive-toggle parameter injection
+// Replaces hx-vals="js:{...}" (required unsafe-eval) with a configRequest
+// handler that reads data-hx-vals-* attributes without eval.
+// ---------------------------------------------------------------------------
+describe("events.js - HTMX configRequest show-inactive-toggle", () => {
+  beforeEach(async () => {
+    await import("../../../mcpgateway/admin_ui/events.js");
+  });
+
+  function fireConfigRequest(elt, params = {}) {
+    document.dispatchEvent(
+      new CustomEvent("htmx:configRequest", { detail: { elt, parameters: params } })
+    );
+    return params;
+  }
+
+  test("injects include_inactive=true when checkbox is checked", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = true;
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.include_inactive).toBe("true");
+  });
+
+  test("injects include_inactive=false when checkbox is unchecked", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.include_inactive).toBe("false");
+  });
+
+  test("ignores elements without the show-inactive-toggle class", () => {
+    const btn = document.createElement("button");
+    document.body.appendChild(btn);
+
+    const params = fireConfigRequest(btn);
+    expect(params.include_inactive).toBeUndefined();
+  });
+
+  test("ignores null elt", () => {
+    const params = {};
+    document.dispatchEvent(
+      new CustomEvent("htmx:configRequest", { detail: { elt: null, parameters: params } })
+    );
+    expect(params.include_inactive).toBeUndefined();
+  });
+
+  test("injects per_page from selector when data-hx-vals-per-page is set", () => {
+    const select = document.createElement("select");
+    select.id = "tools-per-page-sel";
+    const opt = document.createElement("option");
+    opt.value = "25";
+    opt.selected = true;
+    select.appendChild(opt);
+    document.body.appendChild(select);
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-per-page", "#tools-per-page-sel");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.per_page).toBe("25");
+  });
+
+  test("defaults per_page to '50' when the selector element is not found", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-per-page", "#does-not-exist");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.per_page).toBe("50");
+  });
+
+  test("injects q from search input when data-hx-vals-search is set", () => {
+    const searchInput = document.createElement("input");
+    searchInput.id = "csr-search-box";
+    searchInput.value = "hello world";
+    document.body.appendChild(searchInput);
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-search", "csr-search-box");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.q).toBe("hello world");
+  });
+
+  test("injects q='' when search element is not found", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-search", "nonexistent-search");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.q).toBe("");
+  });
+
+  test("injects tags from tag input when data-hx-vals-tags is set", () => {
+    const tagsInput = document.createElement("input");
+    tagsInput.id = "csr-tag-filter";
+    tagsInput.value = "production,staging";
+    document.body.appendChild(tagsInput);
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-tags", "csr-tag-filter");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.tags).toBe("production,staging");
+  });
+
+  test("injects tags='' when tags element is not found", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.classList.add("show-inactive-toggle");
+    cb.checked = false;
+    cb.setAttribute("data-hx-vals-tags", "nonexistent-tags");
+    document.body.appendChild(cb);
+
+    const params = fireConfigRequest(cb);
+    expect(params.tags).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTMX beforeRequest — CSP-safe alternatives to hx-on:htmx:before-request
+// ---------------------------------------------------------------------------
+describe("events.js - HTMX beforeRequest handlers", () => {
+  beforeEach(async () => {
+    await import("../../../mcpgateway/admin_ui/events.js");
+  });
+
+  test("shows user-edit-modal when edit-user-btn fires beforeRequest", () => {
+    const modal = document.createElement("div");
+    modal.id = "user-edit-modal";
+    modal.classList.add("hidden");
+    modal.style.display = "none";
+    document.body.appendChild(modal);
+
+    const btn = document.createElement("button");
+    btn.classList.add("edit-user-btn");
+    document.body.appendChild(btn);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:beforeRequest", { detail: { elt: btn } })
+    );
+
+    expect(modal.style.display).toBe("block");
+    expect(modal.classList.contains("hidden")).toBe(false);
+  });
+
+  test("does nothing when user-edit-modal is absent", () => {
+    const btn = document.createElement("button");
+    btn.classList.add("edit-user-btn");
+    document.body.appendChild(btn);
+
+    expect(() =>
+      document.dispatchEvent(
+        new CustomEvent("htmx:beforeRequest", { detail: { elt: btn } })
+      )
+    ).not.toThrow();
+  });
+
+  test("updates mcp-register-btn to loading state during beforeRequest", () => {
+    const btn = document.createElement("button");
+    btn.classList.add("mcp-register-btn");
+    btn.innerHTML = "Register";
+    document.body.appendChild(btn);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:beforeRequest", { detail: { elt: btn } })
+    );
+
+    expect(btn.innerHTML).toContain("Registering...");
+    expect(btn.innerHTML).toContain("animate-spin");
+  });
+
+  test("ignores elements with neither class on beforeRequest", () => {
+    const div = document.createElement("div");
+    div.innerHTML = "original";
+    document.body.appendChild(div);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:beforeRequest", { detail: { elt: div } })
+    );
+
+    expect(div.innerHTML).toBe("original");
+  });
+
+  test("handles null elt on beforeRequest without throwing", () => {
+    expect(() =>
+      document.dispatchEvent(
+        new CustomEvent("htmx:beforeRequest", { detail: { elt: null } })
+      )
+    ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HTMX responseError — CSP-safe alternative to hx-on:htmx:response-error
+// ---------------------------------------------------------------------------
+describe("events.js - HTMX responseError handler", () => {
+  beforeEach(async () => {
+    await import("../../../mcpgateway/admin_ui/events.js");
+  });
+
+  test("updates mcp-register-btn to error state and re-enables it", () => {
+    const btn = document.createElement("button");
+    btn.classList.add("mcp-register-btn");
+    btn.disabled = true;
+    btn.innerHTML = "Registering...";
+    document.body.appendChild(btn);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:responseError", { detail: { elt: btn } })
+    );
+
+    expect(btn.innerHTML).toContain("Request Failed - Click to Retry");
+    expect(btn.disabled).toBe(false);
+    expect(btn.className).toContain("bg-orange-600");
+  });
+
+  test("sets the full error class string on mcp-register-btn", () => {
+    const btn = document.createElement("button");
+    btn.classList.add("mcp-register-btn");
+    document.body.appendChild(btn);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:responseError", { detail: { elt: btn } })
+    );
+
+    expect(btn.className).toContain("bg-orange-600");
+    expect(btn.className).toContain("text-white");
+  });
+
+  test("ignores elements without mcp-register-btn class", () => {
+    const btn = document.createElement("button");
+    btn.innerHTML = "Other button";
+    btn.disabled = true;
+    document.body.appendChild(btn);
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:responseError", { detail: { elt: btn } })
+    );
+
+    expect(btn.innerHTML).toBe("Other button");
+    expect(btn.disabled).toBe(true);
+  });
+
+  test("handles null elt on responseError without throwing", () => {
+    expect(() =>
+      document.dispatchEvent(
+        new CustomEvent("htmx:responseError", { detail: { elt: null } })
+      )
+    ).not.toThrow();
+  });
+});
