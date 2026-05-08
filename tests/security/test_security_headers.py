@@ -330,13 +330,27 @@ class TestCacheControlHardening:
         SecurityHeadersMiddleware would let a shared cache replay an authenticated
         docs/schema response to unauthenticated viewers — Web Cache Deception.
 
-        This is a unit test of the classifier rather than a request-flow test
-        because DocsAuthMiddleware wraps SecurityHeadersMiddleware and short-
-        circuits unauthenticated requests before they reach the response path.
+        This guards the path classifier used by request-flow tests below.
         """
         middleware = SecurityHeadersMiddleware(app=None)
         for path in ("/docs", "/redoc", "/openapi.json"):
             assert middleware._is_protected_path(path), f"{path} must be treated as protected"  # pylint: disable=protected-access
+
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json", "/admin/tools"])
+    def test_auth_short_circuit_responses_have_security_headers(self, client: TestClient, monkeypatch, path: str):
+        """Auth middleware 401 responses must still receive global security headers."""
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = client.get(path, headers={"Accept": "application/json"}, follow_redirects=False)
+
+        assert response.status_code == 401
+        assert response.headers["Cache-Control"] == "no-store, private"
+        assert response.headers["Pragma"] == "no-cache"
+        assert response.headers["Expires"] == "0"
+        assert "Authorization" in response.headers["Vary"]
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "Content-Security-Policy" in response.headers
 
     def test_protected_endpoints_have_vary_authorization(self, client: TestClient):
         """Test that protected endpoints include Vary: Authorization header."""
