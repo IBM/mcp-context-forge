@@ -68,8 +68,65 @@ def test_validate_security_configuration(monkeypatch: pytest.MonkeyPatch):
     main.validate_security_configuration()
 
 
+def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    fake_settings = SimpleNamespace(
+        get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
+        require_user_in_db=False,
+        require_strong_secrets=False,
+        jwt_issuer="mcpgateway",
+        jwt_audience="mcpgateway-api",
+        environment="production",
+        uaid_allowed_domains=["trusted.example.com"],
+        auth_required=True,
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+
+    caplog.set_level("WARNING")
+
+    main.validate_security_configuration()
+
+    assert any("Using default JWT_ISSUER" in record.message for record in caplog.records)
+    assert any("Using default JWT_AUDIENCE" in record.message for record in caplog.records)
+
+
+def test_validate_security_configuration_logs_insecure_uaid_config(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    fake_settings = SimpleNamespace(
+        get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
+        require_user_in_db=False,
+        require_strong_secrets=False,
+        jwt_issuer="custom-issuer",
+        jwt_audience="custom-audience",
+        environment="production",
+        uaid_allowed_domains=[],
+        auth_required=False,
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+
+    caplog.set_level("ERROR")
+
+    main.validate_security_configuration()
+
+    assert any("UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false" in record.message for record in caplog.records)
+
+
 def test_log_critical_issues_enforced(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main.settings, "require_strong_secrets", True)
 
     with pytest.raises(SystemExit):
         main.log_critical_issues(["issue"])
+
+
+def test_validate_security_configuration_security_error_exits(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    def _raise_security_error():
+        raise main.SecurityConfigurationError("boom")
+
+    monkeypatch.setattr(main, "get_settings", _raise_security_error)
+    monkeypatch.setattr(main.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+
+    caplog.set_level("CRITICAL")
+
+    with pytest.raises(SystemExit) as excinfo:
+        main.validate_security_configuration()
+
+    assert excinfo.value.code == 1
+    assert any("FAIL-CLOSED: boom" in record.message for record in caplog.records)

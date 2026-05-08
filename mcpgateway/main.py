@@ -3,7 +3,7 @@
 """Location: ./mcpgateway/main.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Eleni Kechrioti
 
 ContextForge AI Gateway - Main FastAPI Application.
 
@@ -90,7 +90,7 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
+from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
@@ -1843,55 +1843,55 @@ def validate_security_configuration():
      Raises: Passthrough Errors/Exceptions but doesn't raise any of its own.
     """
     logger.info("🔒 Validating security configuration...")
+    try:
+        current_settings = get_settings()
+        # Get security status
+        security_status: settings.SecurityStatus = current_settings.get_security_status()
+        security_warnings = security_status["warnings"]
 
-    # Get security status
-    security_status: settings.SecurityStatus = settings.get_security_status()
-    security_warnings = security_status["warnings"]
+        log_security_warnings(security_warnings)
 
-    log_security_warnings(security_warnings)
+        # Warn about ephemeral storage without strict user-in-DB mode
+        if not getattr(current_settings, "require_user_in_db", False):
+            is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
+            if is_ephemeral:
+                logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
-    # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
-    critical_issues = []
+        # Warn about default JWT issuer/audience in non-development environments
+        if current_settings.environment != "development":
+            if current_settings.jwt_issuer == "mcpgateway":
+                logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
+            if current_settings.jwt_audience == "mcpgateway-api":
+                logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
 
-    if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes") and not settings.dev_mode:  # nosec B105 - checking for default values
-        critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
+        # UAID Cross-Gateway Routing Security Check
+        if not current_settings.uaid_allowed_domains:
+            if not current_settings.auth_required:
+                logger.error(
+                    "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                    "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                    "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                    "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+                )
+            else:
+                logger.warning(
+                    "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                    "Any UAID-based agent can route to any remote gateway endpoint. "
+                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                )
 
-    if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
-        critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
-
-    log_critical_issues(critical_issues)
-
-    # UAID Cross-Gateway Routing Security Check
-    if not settings.uaid_allowed_domains:
-        if not settings.auth_required:
-            logger.error(
-                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
-                "Cross-gateway routing is enabled without domain restrictions or authentication. "
-                "This allows UAID-based agents to route to ANY remote gateway without validation. "
-                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
-            )
-        else:
+        # Audit logging for explicit security overrides in production
+        if current_settings.environment == "production" and not current_settings.require_strong_secrets:
             logger.warning(
-                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                "Any UAID-based agent can route to any remote gateway endpoint. "
-                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
+                "This override is being logged for audit purposes as per US-1 requirements."
             )
 
-    # Warn about ephemeral storage without strict user-in-DB mode
-    if not getattr(settings, "require_user_in_db", False):
-        is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
-        if is_ephemeral:
-            logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
-
-    # Warn about default JWT issuer/audience in non-development environments
-    if settings.environment != "development":
-        if settings.jwt_issuer == "mcpgateway":
-            logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
-        if settings.jwt_audience == "mcpgateway-api":
-            logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
-
-    log_security_recommendations(security_status)
+        log_security_recommendations(security_status)
+    except SecurityConfigurationError as e:
+        logger.critical(f"FAIL-CLOSED: {e}")
+        sys.exit(1)
 
 
 def log_security_warnings(security_warnings: list[str]):
