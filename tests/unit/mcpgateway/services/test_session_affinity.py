@@ -9,7 +9,7 @@ After the #4205 refactor hollowed the pool-era machinery, ``SessionAffinity``
 is the Redis-backed ownership + routing layer that keeps a downstream MCP
 session pinned to one worker. No per-worker upstream-session state lives here
 anymore — ``UpstreamSessionRegistry`` owns that. These tests focus on the
-pure helpers, the Redis-mocked state machine, and the lifecycle hooks. 
+pure helpers, the Redis-mocked state machine, and the lifecycle hooks.
 """
 
 # Future
