@@ -31,7 +31,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Pattern, Tuple
 from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
