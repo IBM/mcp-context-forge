@@ -3103,7 +3103,7 @@ requires-dist = [
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
     { name = "cpex", specifier = ">=0.1.0" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
-    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
+    { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.2" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.1" },
     { name = "cpex-retry-with-backoff", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
     { name = "cpex-secrets-detection", marker = "extra == 'plugins'", specifier = ">=0.3.1" },
