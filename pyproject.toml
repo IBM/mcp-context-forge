@@ -108,6 +108,7 @@ dependencies = [
     "typer>=0.24.1",
     "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.44.0",
+    "llm-guard>=0.3.15",
 ]
 
 # ----------------------------------------------------------------
