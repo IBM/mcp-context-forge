@@ -250,15 +250,6 @@ class Settings(BaseSettings):
             "(See Issue #1535 for details)"
         ),
     )
-    skip_migration: bool = Field(
-        default=False,
-        description=(
-            "Skip alembic upgrade head on startup. Use when migrations are managed externally "
-            "(e.g., a dedicated init container or CI pipeline step). "
-            "The idempotent bootstrap helpers (admin user, RBAC roles, resource assignments) still run."
-        ),
-    )
-
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
     static_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "static")))
@@ -1050,6 +1041,25 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+
+    # Migration runner ownership.
+    # When True, the gateway lifespan does NOT call bootstrap_db.main();
+    # the deployment is expected to run migrations as a separate step
+    # (Helm pre-install Job, init container, CI step, etc.). The library
+    # default is False so `docker run mcpgateway:latest` continues to
+    # bootstrap its own schema without operator action. The Helm chart
+    # ships this as True when the migration Job is enabled, so the
+    # contract "Job runs migrations, app pods skip" is enforced at the
+    # chart layer.
+    mcpgateway_skip_migrations: bool = Field(
+        default=False,
+        description=(
+            "When True, gateway pods skip the in-pod bootstrap_db call. "
+            "Pair with a dedicated migration runner (Helm pre-install Job, "
+            "init container, etc.) that ensures the schema is at head before "
+            "pods start."
+        ),
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
