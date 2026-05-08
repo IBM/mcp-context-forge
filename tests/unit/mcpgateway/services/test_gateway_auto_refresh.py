@@ -170,7 +170,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response from auth_code gateway
-            mock_init.return_value = ({}, [], [], [])
+            mock_init.return_value = ({}, [], [], [], [])
 
             result = await gateway_service._refresh_gateway_tools_resources_prompts("gw-123")
 
@@ -199,7 +199,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response from client_credentials gateway
-            mock_init.return_value = ({}, [], [], [])
+            mock_init.return_value = ({}, [], [], [], [])
             mock_cache.return_value = AsyncMock()
             mock_tool_cache.return_value = AsyncMock()
 
@@ -234,7 +234,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
             # Empty response - should only remove MCP-discovered tools
-            mock_init.return_value = ({}, [], [], [])
+            mock_init.return_value = ({}, [], [], [], [])
             mock_cache.return_value = AsyncMock()
             mock_tool_cache.return_value = AsyncMock()
 
@@ -258,7 +258,7 @@ class TestAutoRefreshGatewayToolsResourcesPrompts:
             patch.object(gateway_service, "_initialize_gateway", new_callable=AsyncMock) as mock_init,
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
-            mock_init.return_value = ({}, [], [], [])
+            mock_init.return_value = ({}, [], [], [], [])
 
             await gateway_service._refresh_gateway_tools_resources_prompts("gw-123", pre_auth_headers=pre_auth_headers)
 
@@ -277,7 +277,7 @@ class TestInitializeGatewayPreAuthHeaders:
         pre_auth_headers = {"Authorization": "Bearer pre-fetched-token"}
 
         with (patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,):
-            mock_connect.return_value = ({}, [], [], [])
+            mock_connect.return_value = ({}, [], [], [], [])
 
             await gateway_service._initialize_gateway(
                 url="http://test:8000",
@@ -327,7 +327,7 @@ class TestCacheInvalidationPerType:
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as get_tool_cache,
         ):
             mock_fresh.return_value.__enter__.return_value = mock_session
-            mock_init.return_value = ({}, [mock_tool_schema], [], [])
+            mock_init.return_value = ({}, [mock_tool_schema], [], [], [])
             get_cache.return_value = mock_cache
             get_tool_cache.return_value = mock_tool_lookup_cache
 

@@ -826,7 +826,7 @@ class TestToolAPIs:
         long_name = "a" * 300
         response = await client.post("/tools", json={"tool": {"name": long_name, "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
-        assert "exceeds maximum length" in str(response.json())
+        assert "exceeds MCP spec limit" in str(response.json())
 
     async def test_get_tool(self, client: AsyncClient, mock_auth):
         """Test GET /tools/{tool_id}."""

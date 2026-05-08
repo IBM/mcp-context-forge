@@ -539,12 +539,12 @@ def test_validate_tool_name_valid_with_leading_underscore_or_number():
 def test_validate_tool_name_length():
     """Test tool name length validation."""
     # At limit
-    valid_name = "t" + "o" * 99  # 100 chars total, starts with letter
+    valid_name = "t" + "o" * 127  # 128 chars total, starts with letter
     assert SecurityValidator.validate_tool_name(valid_name) == valid_name
 
     # Over limit
-    with pytest.raises(ValueError, match="exceeds maximum length"):
-        SecurityValidator.validate_tool_name("t" + "o" * 100)  # 101 chars
+    with pytest.raises(ValueError, match="exceeds MCP spec limit"):
+        SecurityValidator.validate_tool_name("t" + "o" * 128)  # 129 chars
 
 
 # =============================================================================

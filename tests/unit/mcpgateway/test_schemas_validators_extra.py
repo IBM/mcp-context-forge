@@ -155,7 +155,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -177,10 +177,8 @@ class TestToolUpdateDescriptionValidationStrict:
             "run cmd1 && cmd2",
             "try this || that",
             "expand $(cmd)",
-            "Search docs > results",
-            "read < file",
         ],
-        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -217,7 +215,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_patterns_match_tool_create(self, monkeypatch):
         """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        forbidden_patterns = ["&&", "||", "$(", "> ", "< "]
+        forbidden_patterns = ["&&", "||", "$("]
         for pat in forbidden_patterns:
             payload = f"test {pat} injection"
             with pytest.raises(ValueError, match="unsafe characters"):
@@ -887,11 +885,26 @@ class TestToolDescriptionForbiddenPatterns:
     def test_default_patterns_block_forbidden_chars(self, monkeypatch):
         """Default forbidden patterns reject known unsafe substrings in strict mode."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
-        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "> ", "< "])
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$("])
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
+        for pat in ["&&", ";", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"description with {pat} inside")
+
+    def test_redirect_operators_allowed_by_default(self, monkeypatch):
+        """'> ' and '< ' are NOT in the default forbidden list (issue #136 fix).
+
+        These appear in legitimate tool descriptions:
+          - comparison operators: "returns a if a > b"
+          - Markdown blockquotes: "> See also: ..."
+          - generic type signatures: "List<str>"
+        """
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", "||", "$("])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        assert ToolCreate.validate_description("Returns a if a > b else c") is not None
+        assert ToolCreate.validate_description("read < file.txt") is not None
+        assert ToolCreate.validate_description("> blockquote style description") is not None
 
     def test_non_strict_mode_warns_instead_of_rejecting(self, monkeypatch):
         """When VALIDATION_STRICT=false, forbidden patterns produce a warning, not an error."""
@@ -1101,7 +1114,7 @@ class TestToolCreateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$("]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -1123,10 +1136,8 @@ class TestToolCreateDescriptionValidationStrict:
             "run cmd1 && cmd2",
             "try this || that",
             "expand $(cmd)",
-            "Search docs > results",
-            "read < file",
         ],
-        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -1507,3 +1518,20 @@ def test_read_schemas_have_visibility_coercion_wired():
     """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
     for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
         assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"
+
+
+class TestToolNameLengthValidation:
+    """Tests for MCP spec tool name length limit (issue #136 Bug B)."""
+
+    def test_tool_name_exactly_128_chars_accepted(self):
+        """Tool name at the MCP spec limit (128 chars) should be accepted."""
+        name = "a" * 128
+        tool = ToolCreate(name=name, inputSchema={})
+        assert tool.name == name
+
+    def test_tool_name_over_128_chars_rejected(self):
+        """Tool name over the MCP spec limit should be rejected with a clear message."""
+        name = "a" * 129
+        with pytest.raises(ValidationError) as exc_info:
+            ToolCreate(name=name, inputSchema={})
+        assert "Tool name exceeds MCP spec limit of 128 characters (got 129)" in str(exc_info.value)

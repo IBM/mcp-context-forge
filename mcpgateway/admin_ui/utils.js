@@ -274,6 +274,77 @@ export function showSuccessMessage(message) {
   }, 3000);
 }
 
+// Show a persistent modal warning listing tools that were skipped during gateway import.
+// Returns a Promise that resolves when the user dismisses the modal.
+export function showSkippedToolsWarning(skippedTools) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+
+    const modal = document.createElement("div");
+    modal.className = "bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4";
+
+    const title = document.createElement("h2");
+    title.className = "text-lg font-semibold text-yellow-700 mb-3";
+    title.textContent = "Some tools were skipped";
+
+    const intro = document.createElement("p");
+    intro.className = "text-sm text-gray-600 mb-3";
+    intro.textContent = "The following tools could not be imported due to validation errors:";
+
+    const tableWrapper = document.createElement("div");
+    tableWrapper.className = "overflow-auto max-h-64 mb-4 border border-gray-200 rounded";
+
+    const table = document.createElement("table");
+    table.className = "w-full text-sm border-collapse";
+
+    const thead = document.createElement("thead");
+    thead.innerHTML = `<tr class="bg-gray-100 text-left">
+      <th class="px-3 py-2 font-semibold text-gray-700 border-b border-gray-200 w-1/2">Tool name</th>
+      <th class="px-3 py-2 font-semibold text-gray-700 border-b border-gray-200">Reason</th>
+    </tr>`;
+
+    const tbody = document.createElement("tbody");
+    for (const entry of skippedTools) {
+      const colonIdx = entry.indexOf(": ");
+      const toolName = colonIdx !== -1 ? entry.slice(0, colonIdx) : entry;
+      const reason = colonIdx !== -1 ? entry.slice(colonIdx + 2) : "Unknown error";
+      const tr = document.createElement("tr");
+      tr.className = "border-b border-gray-100 last:border-0";
+      const toolNameCell = document.createElement("td");
+      toolNameCell.className = "px-3 py-2 font-mono text-xs text-gray-800 align-top break-all";
+      toolNameCell.textContent = toolName;
+      const reasonCell = document.createElement("td");
+      reasonCell.className = "px-3 py-2 text-gray-700 align-top";
+      reasonCell.textContent = reason;
+      tr.appendChild(toolNameCell);
+      tr.appendChild(reasonCell);
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    tableWrapper.appendChild(table);
+
+    const dismissBtn = document.createElement("button");
+    dismissBtn.className = "bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded text-sm font-medium";
+    dismissBtn.textContent = "Dismiss";
+    dismissBtn.addEventListener("click", () => {
+      if (overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+      resolve();
+    });
+
+    modal.appendChild(title);
+    modal.appendChild(intro);
+    modal.appendChild(tableWrapper);
+    modal.appendChild(dismissBtn);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  });
+}
+
 // Handle HTMX after-request for user delete — extracts plain text from the
 // HTML error response and surfaces it via the toast notification system.
 // Exposed on window so inline hx-on::after-request handlers can call it.
