@@ -276,6 +276,13 @@ plugins = [
     "cpex-url-reputation>=0.3.1",
 ]
 
+# LLM Guard (optional) - Tier-2 prompt injection scoring via DeBERTa classifier
+# Required only when use_llm_guard=true in the prompt_injection_guard plugin config
+# Install with: pip install mcp-contextforge-gateway[llm-guard]
+llm-guard = [
+    "llm-guard>=0.3.15",
+]
+
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
