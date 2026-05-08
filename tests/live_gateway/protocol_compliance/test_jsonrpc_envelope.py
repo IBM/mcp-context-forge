@@ -221,9 +221,23 @@ def test_parse_error_returns_32700(gateway_http_client: httpx.Client) -> None:
 
 
 def test_method_not_found_returns_32601(gateway_http_client: httpx.Client) -> None:
-    """Unknown method → JSON-RPC code -32601 (Method not found)."""
+    """Unknown method → JSON-RPC code -32601 (Method not found).
+
+    MCP Streamable HTTP requires ``Mcp-Session-Id`` on requests after
+    initialization. Without a session header, transport/session validation
+    correctly fails first with a Bad Request, so establish a session before
+    probing JSON-RPC method dispatch semantics.
+    """
+    init_resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=_initialize_body())
+    assert init_resp.status_code == 200, f"initialize failed: {init_resp.status_code}: {init_resp.text[:200]}"
+    session_id = init_resp.headers.get("mcp-session-id")
+
+    call_headers = dict(_MCP_HEADERS)
+    if session_id:
+        call_headers["mcp-session-id"] = session_id
+
     body = {"jsonrpc": "2.0", "id": 1, "method": "definitely/not/a/real/method", "params": {}}
-    resp = gateway_http_client.post("/mcp/", headers=_MCP_HEADERS, json=body)
+    resp = gateway_http_client.post("/mcp/", headers=call_headers, json=body)
     assert resp.status_code < 500, f"unknown method produced 5xx (server crash, not clean rejection): " f"{resp.status_code} {resp.text[:200]}"
     if 400 <= resp.status_code < 500 and not _unwrap_error(resp):
         return
