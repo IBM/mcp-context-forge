@@ -15,6 +15,7 @@ from __future__ import annotations
 
 # Standard
 from contextlib import suppress
+import time
 from urllib.parse import urlparse
 import uuid
 
@@ -176,3 +177,104 @@ class TestMCPTransportAuthMatrix:
 
         assert isinstance(response, str)
         assert "Parse error" in response or "jsonrpc" in response
+
+
+@pytest.fixture
+def api_token_info(admin_api: APIRequestContext) -> dict:
+    """Create an API token and return its access_token and token_id, then clean up."""
+    resp = admin_api.post("/tokens", data={"name": f"last-used-test-{uuid.uuid4().hex[:8]}", "expires_in_days": 1})
+    if resp.status == 404:
+        pytest.skip("/tokens endpoint unavailable")
+    assert resp.status in (200, 201), f"Failed to create token: {resp.status} {resp.text()}"
+    payload = resp.json()
+    token_obj = payload.get("token", payload)
+    info = {
+        "access_token": payload["access_token"],
+        "token_id": token_obj.get("id") or token_obj.get("token_id"),
+    }
+    yield info
+    with suppress(Exception):
+        admin_api.delete(f"/tokens/{info['token_id']}")
+
+
+class TestApiTokenLastUsedViaMCP:
+    """Verify API token last_used is updated when accessing virtual servers via MCP Streamable HTTP."""
+
+    def test_mcp_streamable_http_updates_last_used(self, admin_api: APIRequestContext, playwright: Playwright, public_server_id: str, api_token_info: dict):
+        """Accessing /servers/{id}/mcp with an API token should update last_used."""
+        token_id = api_token_info["token_id"]
+
+        # 1. Check initial last_used (should be None for new token)
+        detail = admin_api.get(f"/tokens/{token_id}")
+        if detail.status == 404:
+            pytest.skip("Token detail endpoint unavailable")
+        initial_last_used = detail.json().get("last_used")
+
+        # 2. Make MCP Streamable HTTP request with the API token
+        token_ctx = _api_context(playwright, api_token_info["access_token"])
+        try:
+            mcp_resp = token_ctx.post(
+                f"/servers/{public_server_id}/mcp",
+                data={"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "e2e-test", "version": "1.0.0"}}},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            )
+        finally:
+            token_ctx.dispose()
+
+        if mcp_resp.status == 404:
+            pytest.skip("Streamable HTTP endpoint unavailable")
+        assert mcp_resp.status != 401, f"API token auth rejected: {mcp_resp.text()}"
+
+        # 3. Verify last_used was updated
+        time.sleep(1)  # Allow propagation across multi-gateway setup
+        detail2 = admin_api.get(f"/tokens/{token_id}")
+        updated_last_used = detail2.json().get("last_used")
+
+        assert updated_last_used is not None, f"last_used not updated after MCP access. Initial: {initial_last_used}, After: {updated_last_used}"
+
+    def test_mcp_requests_accumulate_in_token_usage_stats(self, admin_api: APIRequestContext, playwright: Playwright, public_server_id: str, api_token_info: dict):
+        """Multiple MCP requests with an API token should be accurately reflected in usage statistics.
+
+        Uses a fresh per-test token (api_token_info fixture) so stats are isolated — no other
+        requests can contribute to this token's usage counters.
+        """
+        token_id = api_token_info["token_id"]
+        num_requests = 5
+
+        # 1. Verify fresh token has zero usage
+        usage_resp = admin_api.get(f"/tokens/{token_id}/usage")
+        if usage_resp.status == 404:
+            pytest.skip("Token usage endpoint unavailable")
+        baseline = usage_resp.json()
+        assert baseline.get("total_requests", 0) == 0, "Fresh token should have zero usage"
+
+        # 2. Make exactly N MCP requests
+        token_ctx = _api_context(playwright, api_token_info["access_token"])
+        try:
+            for i in range(num_requests):
+                token_ctx.post(
+                    f"/servers/{public_server_id}/mcp",
+                    data={"jsonrpc": "2.0", "id": str(i + 1), "method": "ping", "params": {}},
+                    headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                )
+        finally:
+            token_ctx.dispose()
+
+        # 3. Allow async logging to complete
+        time.sleep(1)
+
+        # 4. Verify usage stats with strict equality (isolated per-test token)
+        usage_resp2 = admin_api.get(f"/tokens/{token_id}/usage")
+        assert usage_resp2.status == 200
+        stats = usage_resp2.json()
+
+        assert stats["total_requests"] == num_requests, f"Expected exactly {num_requests} total requests, got {stats['total_requests']}"
+        assert stats["successful_requests"] == num_requests, f"Expected exactly {num_requests} successful requests, got {stats['successful_requests']}"
+        assert stats["blocked_requests"] == 0, f"Expected 0 blocked requests, got {stats['blocked_requests']}"
+        assert stats["success_rate"] == 1.0, f"Expected 100% success rate, got {stats['success_rate']}"
+        assert stats["average_response_time_ms"] > 0, f"Expected positive average response time, got {stats['average_response_time_ms']}ms"
+
+        # Top endpoints should include the MCP server path
+        endpoint_paths = [ep[0] if isinstance(ep, (list, tuple)) else ep for ep in stats.get("top_endpoints", [])]
+        has_mcp_endpoint = any("/mcp" in path for path in endpoint_paths)
+        assert has_mcp_endpoint, f"Expected /mcp in top_endpoints, got {endpoint_paths}"

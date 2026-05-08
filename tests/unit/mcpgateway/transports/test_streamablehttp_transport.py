@@ -15502,6 +15502,277 @@ async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
     clear_trace_context()
 
 
+# ---------------------------------------------------------------------------
+# _auth_jwt — API token last_used tracking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_updates_last_used_for_api_token(monkeypatch):
+    """_auth_jwt should call _update_api_token_last_used_sync for API tokens."""
+    jwt_payload = {
+        "sub": "user@example.com",
+        "jti": "jti-api-token-123",
+        "is_admin": False,
+        "token_use": "api",
+        "user": {"auth_provider": "api_token"},
+        "scopes": {"permissions": ["tools.read"]},
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    mock_update = MagicMock()
+    user_record = SimpleNamespace(is_admin=False, is_active=True)
+
+    scope = {"type": "http", "path": "/servers/srv-1/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.normalize_token_teams", return_value=None),
+        patch("mcpgateway.auth._update_api_token_last_used_sync", mock_update),
+    ):
+        result = await handler._auth_jwt(token="fake-api-token")
+
+    assert result is True
+    mock_update.assert_called_once_with("jti-api-token-123")
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_sets_api_token_auth_method_in_context_and_scope(monkeypatch):
+    """_auth_jwt should set auth_method='api_token' in user_context_var and ASGI scope state."""
+    jwt_payload = {
+        "sub": "user@example.com",
+        "jti": "jti-api-token-456",
+        "is_admin": True,
+        "token_use": "api",
+        "user": {"auth_provider": "api_token"},
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    user_record = SimpleNamespace(is_admin=True, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.normalize_token_teams", return_value=None),
+        patch("mcpgateway.auth._update_api_token_last_used_sync", MagicMock()),
+    ):
+        result = await handler._auth_jwt(token="fake-api-token")
+
+    assert result is True
+
+    # Verify user_context_var
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "api_token"
+    assert ctx["email"] == "user@example.com"
+
+    # Verify ASGI scope state propagation
+    assert scope["state"]["auth_method"] == "api_token"
+    assert scope["state"]["jti"] == "jti-api-token-456"
+    assert scope["state"]["user_email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_does_not_update_last_used_for_session_token(monkeypatch):
+    """_auth_jwt should NOT call _update_api_token_last_used_sync for session tokens."""
+    jwt_payload = {
+        "sub": "user@example.com",
+        "jti": "jti-session-789",
+        "is_admin": False,
+        "token_use": "session",
+        "user": {"auth_provider": "email"},
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    mock_update = MagicMock()
+    user_record = SimpleNamespace(is_admin=False, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-1"])),
+    ):
+        result = await handler._auth_jwt(token="fake-session-token")
+
+    assert result is True
+    mock_update.assert_not_called()
+
+    # Verify auth_method is "jwt", not "api_token"
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "jwt"
+    assert scope["state"]["auth_method"] == "jwt"
+    assert "jti" not in scope.get("state", {})
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_continues_when_last_used_update_fails(monkeypatch):
+    """_auth_jwt should continue authentication even if last_used update raises an exception."""
+    jwt_payload = {
+        "sub": "user@example.com",
+        "jti": "jti-api-token-fail",
+        "is_admin": True,
+        "token_use": "api",
+        "user": {"auth_provider": "api_token"},
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    user_record = SimpleNamespace(is_admin=True, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    def raise_db_error(jti):
+        raise RuntimeError("Database connection failed")
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.normalize_token_teams", return_value=None),
+        patch("mcpgateway.auth._update_api_token_last_used_sync", raise_db_error),
+    ):
+        result = await handler._auth_jwt(token="fake-api-token")
+
+    # Authentication should succeed despite last_used update failure
+    assert result is True
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "api_token"
+    assert ctx["is_authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_detects_legacy_api_token_via_db_lookup(monkeypatch):
+    """_auth_jwt should detect legacy API tokens (no auth_provider) via DB JTI lookup."""
+    jwt_payload = {
+        "sub": "legacy@example.com",
+        "jti": "jti-legacy-token",
+        "is_admin": True,
+        "token_use": "api",
+        # No "user" key — legacy token format
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    mock_update = MagicMock()
+    user_record = SimpleNamespace(is_admin=True, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.normalize_token_teams", return_value=None),
+        patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+        patch("mcpgateway.auth._update_api_token_last_used_sync", mock_update),
+    ):
+        result = await handler._auth_jwt(token="fake-legacy-token")
+
+    assert result is True
+    mock_update.assert_called_once_with("jti-legacy-token")
+
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "api_token"
+    assert scope["state"]["auth_method"] == "api_token"
+    assert scope["state"]["jti"] == "jti-legacy-token"
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_legacy_detection_failure_defaults_to_jwt(monkeypatch):
+    """_auth_jwt should default to auth_method='jwt' when legacy DB lookup fails."""
+    jwt_payload = {
+        "sub": "user@example.com",
+        "jti": "jti-unknown-token",
+        "is_admin": True,
+        "token_use": "api",
+        # No "user" key — triggers legacy fallback
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    user_record = SimpleNamespace(is_admin=True, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    def raise_error(jti):
+        raise RuntimeError("DB unavailable")
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.normalize_token_teams", return_value=None),
+        patch("mcpgateway.auth._is_api_token_jti_sync", raise_error),
+    ):
+        result = await handler._auth_jwt(token="fake-token")
+
+    assert result is True
+
+    # Should default to "jwt" auth_method when legacy detection fails
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "jwt"
+    assert scope["state"]["auth_method"] == "jwt"
+    # jti should NOT be in scope state since it's not detected as API token
+    assert "jti" not in scope.get("state", {})
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_non_api_token_no_jti_in_scope_state(monkeypatch):
+    """_auth_jwt should not set jti in scope state for non-API tokens (e.g. OAuth, SAML)."""
+    jwt_payload = {
+        "sub": "oauth@example.com",
+        "jti": "jti-oauth-token",
+        "is_admin": False,
+        "token_use": "session",
+        "user": {"auth_provider": "oauth"},
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    user_record = SimpleNamespace(is_admin=False, is_active=True)
+    scope = {"type": "http", "path": "/mcp", "headers": []}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=jwt_payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-oauth"])),
+    ):
+        result = await handler._auth_jwt(token="fake-oauth-token")
+
+    assert result is True
+    ctx = user_context_var.get()
+    assert ctx["auth_method"] == "jwt"
+    assert "jti" not in scope.get("state", {})
+    assert scope["state"]["user_email"] == "oauth@example.com"
+
+
 def test_maybe_open_initialize_span_returns_none_for_non_initialize():
     """Non-initialize JSON-RPC payloads should not create transport spans."""
     body = tr.orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})

@@ -5198,12 +5198,51 @@ class _StreamableHttpAuthHandler:
                 else:
                     _record_mcp_auth_cache_event("team_membership_cache_hit")
 
+            # Detect API token auth and update last_used timestamp.
+            # API tokens carry user.auth_provider == "api_token" in their JWT payload.
+            # Legacy tokens (created before auth_provider was added) are detected via DB lookup.
+            _nested_user = user_payload.get("user", {})
+            _auth_provider = _nested_user.get("auth_provider") if isinstance(_nested_user, dict) else None
+            _is_api_token = _auth_provider == "api_token"
+
+            if not _is_api_token and jti and _auth_provider is None:
+                # Legacy API token fallback: only when auth_provider is absent (pre-auth_provider tokens).
+                # Tokens with an explicit auth_provider (email, oauth, saml, etc.) are never legacy API tokens.
+                try:
+                    # First-Party
+                    from mcpgateway.auth import _is_api_token_jti_sync  # pylint: disable=import-outside-toplevel
+
+                    _is_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti)
+                except Exception:
+                    pass  # Best-effort detection; default to "jwt" auth_method
+
+            resolved_auth_method = "api_token" if _is_api_token else "jwt"
+
+            # Update last_used timestamp for API tokens (rate-limited internally)
+            if _is_api_token and jti:
+                try:
+                    # First-Party
+                    from mcpgateway.auth import _update_api_token_last_used_sync  # pylint: disable=import-outside-toplevel
+
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti)
+                except Exception:
+                    logger.debug("Failed to update API token last_used in MCP auth for jti=...%s", jti[-8:] if jti else "")
+
+            # Propagate auth_method and jti into ASGI scope state so that
+            # TokenUsageMiddleware can recognise API token requests and log usage.
+            state = self.scope.setdefault("state", {})
+            state["auth_method"] = resolved_auth_method
+            if _is_api_token and jti:
+                state["jti"] = jti
+            if user_email:
+                state["user_email"] = user_email
+
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
-                "auth_method": "jwt",
+                "auth_method": resolved_auth_method,
                 "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
@@ -5224,7 +5263,7 @@ class _StreamableHttpAuthHandler:
                 final_teams,
                 user_email=user_email,
                 is_admin=bool(db_user_is_admin or is_admin),
-                auth_method="jwt",
+                auth_method=resolved_auth_method,
                 team_name=trace_team_name,
             )
         except HTTPException:
