@@ -287,6 +287,31 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     return True
 
 
+def _is_jwt_token(token: str) -> bool:
+    """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
+
+    Rejects local opaque tokens (cf_sess_*, cf_pat_*) that remote gateways
+    cannot validate.
+    """
+    if not token:
+        return False
+    if token.startswith(("cf_sess_", "cf_pat_")):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+
+    for part in parts:
+        if not part:
+            return False
+        try:
+            padded = part + "=" * (-len(part) % 4)
+            base64.urlsafe_b64decode(padded)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+    return True
+
+
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
 
@@ -1401,6 +1426,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
+        # Validate UAID security configuration
+        validate_uaid_security_config()
+
         # Initialize the plugin manager factory whenever the YAML config is
         # available. We used to gate this on ``settings.plugins.enabled`` but
         # that broke runtime enable-from-disabled: a node that boots with the
@@ -1972,6 +2000,45 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
             logger.info("  • Enable SSL verification: SKIP_SSL_VERIFY=false")
 
         logger.info("=" * 60)
+
+
+def validate_uaid_security_config() -> None:
+    """Validate UAID security configuration at startup.
+
+    Behavior:
+    - Logs ERROR if A2A enabled but UAID allowlist not configured
+    - Fails startup if UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true (strict mode)
+
+    Design Decision (Issue #4236, Task #5):
+    Default behavior is ERROR logging (non-blocking) to maintain backward compatibility
+    and avoid breaking existing deployments. Operators can opt into fail-fast behavior
+    via UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true for stricter security posture.
+
+    Rationale:
+    - ERROR logging: Visible in logs, doesn't break deployments
+    - Fail-fast (opt-in): Best for production, catches misconfig early
+    - Not implemented: Admin UI banner (requires UI work, not always enabled)
+
+    Raises:
+        RuntimeError: If allowlist misconfigured and strict mode enabled
+    """
+    if settings.mcpgateway_a2a_enabled:
+        if not settings.uaid_allowed_domains and not settings.uaid_allow_all_domains:
+            error_msg = (
+                "🚨 SECURITY: UAID cross-gateway routing is DISABLED. "
+                "Configure UAID_ALLOWED_DOMAINS with trusted domains or set UAID_ALLOW_ALL_DOMAINS=true (unsafe for production). "
+                "Cross-gateway UAID calls will fail until allowlist is configured."
+            )
+
+            logger.error(error_msg)
+
+            # Check for strict mode (fail-fast on misconfiguration)
+            if settings.uaid_require_allowlist_on_startup:
+                raise RuntimeError(
+                    f"{error_msg}\n\n"
+                    "Gateway startup aborted due to UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true. "
+                    "Fix configuration or set UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false to allow startup with ERROR log only."
+                )
 
     logger.info("✅ Security validation completed")
 
@@ -4817,6 +4884,30 @@ async def invoke_a2a_agent(
         # and self-referential `endpoint_url` loops.
         hop_count = uaid_utils.read_hop_count(request.headers)
 
+        # Extract bearer token for cross-gateway forwarding
+        # Prefer token extracted by auth middleware (validated and normalized)
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        # (e.g., when auth middleware is disabled or skipped for certain paths)
+        #
+        # Security Note: This fallback extracts the token without local validation,
+        # but security is preserved because:
+        # 1. Remote gateway MUST validate the token (AUTH_REQUIRED enforcement)
+        # 2. Invalid/expired tokens will be rejected by remote gateway's auth middleware
+        # 3. This enables token forwarding even when local auth is disabled for A2A endpoints
+        #
+        # If the token is invalid, remote gateway returns 401, and we propagate error to caller.
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4826,6 +4917,93 @@ async def invoke_a2a_agent(
             user_email=user_email,
             token_teams=token_teams,
             hop_count=hop_count,
+            bearer_token=bearer_token,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/invoke", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_by_id(
+    request: Request,
+    agent_id: str = Body(..., description="Agent UUID or UAID"),
+    parameters: Dict[str, Any] = Body(default_factory=dict),
+    interaction_type: str = Body(default="query"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Invokes an A2A agent by UUID or UAID (passed in body to support forward slashes in UAID).
+
+    This endpoint accepts the agent identifier in the request body instead of the URL path,
+    which allows invoking agents by UAID even when the UAID contains forward slashes
+    (e.g., in the nativeId component).
+
+    Args:
+        request (Request): The FastAPI request object for team_id retrieval.
+        agent_id (str): The UUID or UAID of the agent to invoke.
+        parameters (Dict[str, Any]): Parameters for the agent interaction.
+        interaction_type (str): Type of interaction (query, execute, etc.).
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The response from the A2A agent.
+
+    Raises:
+        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+    """
+    try:
+        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Get filtering context from token (respects token scope)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+        # Admin bypass - only when token has NO team restrictions
+        if is_admin and token_teams is None:
+            token_teams = None  # Admin unrestricted
+        elif token_teams is None:
+            token_teams = []  # Non-admin without teams = public-only
+
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        # Read the federation hop counter from the request header
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
+        # Extract bearer token for cross-gateway forwarding
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
+        return await a2a_service.invoke_agent(
+            db,
+            agent_name=None,  # Not using name lookup
+            parameters=parameters,
+            interaction_type=interaction_type,
+            agent_id=agent_id,  # Pass agent_id for UUID/UAID lookup
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

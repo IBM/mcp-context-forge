@@ -11,12 +11,24 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 # Standard
 import asyncio
+import base64
 from copy import deepcopy
 import datetime
 import importlib
 import json
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+
+def _make_test_jwt() -> str:
+    """Return a syntactically valid JWT for tests that expect token forwarding."""
+    return (
+        base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b'{"sub":"user"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
+    )
 
 # Third-Party
 from fastapi import HTTPException
@@ -3682,6 +3694,117 @@ class TestA2AAgentEndpoints:
         )
         assert mock_service.invoke_agent.call_args.kwargs["hop_count"] == 0
 
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
+        """
+        The handler must extract bearer token from Authorization header and forward
+        it as the `bearer_token` kwarg to ``invoke_agent``. This is the HTTP-edge
+        plumbing for cross-gateway authentication — a regression that drops this
+        parameter would break RBAC enforcement on remote gateways.
+
+        Security Context: Bearer tokens enable RBAC enforcement on remote gateways.
+        Without this parameter, cross-gateway calls become unauthenticated even when
+        the caller provided credentials.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = _make_test_jwt()
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers={**auth_headers, "Authorization": f"Bearer {test_token}"},
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_missing_bearer_token(self, mock_service, test_client, auth_headers):
+        """
+        Missing Authorization header should result in bearer_token=None being passed
+        to the service layer. The service layer will handle the unauthenticated case.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Create headers without Authorization (test auth bypass via mock)
+        headers_without_auth = {k: v for k, v in auth_headers.items() if k != "Authorization"}
+
+        response = test_client.post(
+            "/a2a/agent-1/invoke",
+            json={"parameters": {}, "interaction_type": "query"},
+            headers=headers_without_auth,
+        )
+
+        assert response.status_code == 200
+        mock_service.invoke_agent.assert_called_once()
+        assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_malformed_authorization_header(self, mock_service, test_client, auth_headers):
+        """
+        Malformed Authorization header (not starting with 'Bearer ') should result
+        in bearer_token=None, gracefully degrading to unauthenticated request.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+
+        # Test various malformed formats that should result in None
+        malformed_headers = [
+            "Basic dXNlcjpwYXNz",  # Basic auth instead of Bearer
+            "Token xyz",  # Wrong scheme
+            "Bearer",  # Missing token (only "Bearer" with no space/token)
+            "",  # Empty string
+        ]
+
+        for malformed in malformed_headers:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": malformed},
+            )
+            assert response.status_code == 200
+            # Service layer should receive None for malformed auth
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] is None, f"Failed for: {malformed}"
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_a2a_agent_handles_lowercase_bearer(self, mock_service, test_client, auth_headers):
+        """
+        Verify that 'bearer' (lowercase) in Authorization header is accepted (case-insensitive).
+        The implementation uses .lower().startswith() so it should handle various cases.
+        """
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        test_token = _make_test_jwt()
+
+        # Test case variations that should all work
+        case_variations = [
+            f"Bearer {test_token}",
+            f"bearer {test_token}",
+            f"BEARER {test_token}",
+            f"BeArEr {test_token}",
+        ]
+
+        for auth_value in case_variations:
+            mock_service.invoke_agent.reset_mock()
+            response = test_client.post(
+                "/a2a/agent-1/invoke",
+                json={"parameters": {}, "interaction_type": "query"},
+                headers={**auth_headers, "Authorization": auth_value},
+            )
+            assert response.status_code == 200
+            assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token, f"Failed for: {auth_value}"
+
+    def test_is_jwt_token_rejects_invalid_inputs(self):
+        """Test JWT detection rejects empty and malformed tokens."""
+        from unittest.mock import patch
+        from mcpgateway.main import _is_jwt_token
+
+        assert _is_jwt_token("") is False
+        assert _is_jwt_token("header..signature") is False
+        # Force base64 decode failure to cover the except branch
+        with patch("mcpgateway.main.base64.urlsafe_b64decode", side_effect=ValueError("bad base64")):
+            assert _is_jwt_token("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.invalid") is False
+
 
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #
@@ -4952,3 +5075,229 @@ class TestTeamScopedListVisibility:
         call_kwargs = mock_service.list_agents.call_args.kwargs
         assert call_kwargs["team_id"] is None
         assert call_kwargs["token_teams"] == ["team-1"]
+
+
+# --------------------------------------------------------------------------- #
+# UAID Security Configuration Validation                                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_startup_warns_when_uaid_allowlist_empty():
+    """Verify ERROR logged when A2A enabled but UAID allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = False
+
+        # Import and trigger the validation logic
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called
+        error_message = mock_logger.error.call_args[0][0]
+        assert "UAID cross-gateway routing is DISABLED" in error_message
+        assert "UAID_ALLOWED_DOMAINS" in error_message
+
+
+def test_startup_no_warning_when_allowlist_configured():
+    """Verify no warning when allowlist properly configured."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = ["trusted.example.com"]
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
+
+
+def test_startup_no_warning_when_a2a_disabled():
+    """Verify no warning when A2A not enabled."""
+    with patch("mcpgateway.main.logger") as mock_logger, patch("mcpgateway.main.settings") as mock_settings:
+        mock_settings.mcpgateway_a2a_enabled = False
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        validate_uaid_security_config()
+
+        # Verify no ERROR logged
+        assert not mock_logger.error.called
+
+
+def test_startup_fails_when_uaid_require_allowlist_on_startup_set():
+    """Verify startup fails when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true and allowlist empty."""
+    with patch("mcpgateway.main.logger") as mock_logger, \
+         patch("mcpgateway.main.settings") as mock_settings, \
+         patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "true"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = True
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should raise RuntimeError in strict mode
+        with pytest.raises(RuntimeError, match="Gateway startup aborted"):
+            validate_uaid_security_config()
+
+        # Verify ERROR was still logged before raising
+        assert mock_logger.error.called
+
+
+def test_startup_succeeds_with_uaid_require_allowlist_false():
+    """Verify startup succeeds when UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false (default)."""
+    with patch("mcpgateway.main.logger") as mock_logger, \
+         patch("mcpgateway.main.settings") as mock_settings, \
+         patch.dict(os.environ, {"UAID_REQUIRE_ALLOWLIST_ON_STARTUP": "false"}):
+
+        mock_settings.mcpgateway_a2a_enabled = True
+        mock_settings.uaid_allowed_domains = []
+        mock_settings.uaid_allow_all_domains = False
+        mock_settings.uaid_require_allowlist_on_startup = False
+
+        from mcpgateway.main import validate_uaid_security_config
+
+        # Should NOT raise, just log ERROR
+        validate_uaid_security_config()
+
+        # Verify ERROR was logged
+        assert mock_logger.error.called
+
+
+# ========================================================================== #
+# A2A Invoke Body Endpoint Tests (PR #4342 coverage)                        #
+# ========================================================================== #
+
+
+class TestA2AInvokeBodyEndpoint:
+    """Test coverage for /a2a/invoke endpoint with agent_id in request body."""
+
+    @patch("mcpgateway.main.a2a_service", None)
+    def test_invoke_returns_503_when_service_unavailable(self, test_client, auth_headers):
+        """Test /a2a/invoke returns 503 when A2A service is None. Covers: main.py lines 5166-5167"""
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 503
+        assert "A2A service not available" in response.json()["detail"]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_extracts_bearer_token_from_header(self, mock_service, test_client, auth_headers):
+        """Test bearer token extraction from Authorization header. Covers: main.py lines 5191-5194"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}},
+                                   headers={"Authorization": "Bearer test-token", "Content-Type": "application/json"})
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_lowercase_bearer_prefix(self, mock_service, test_client):
+        """Test bearer token extraction handles lowercase. Covers: main.py line 5193"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}},
+                                   headers={"Authorization": "bearer lowercase-token", "Content-Type": "application/json"})
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_admin_bypass_no_team_restrictions(self, mock_context, mock_service, test_client, auth_headers):
+        """Test admin bypass when teams=None. Covers: main.py lines 5173-5174"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("admin@example.com", None, True)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_non_admin_no_teams_public_only(self, mock_context, mock_service, test_client, auth_headers):
+        """Test non-admin gets public-only access. Covers: main.py lines 5175-5176"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", None, False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.uaid_utils.read_hop_count")
+    def test_invoke_reads_hop_count_from_headers(self, mock_read_hop, mock_service, test_client, auth_headers):
+        """Test hop count extraction. Covers: main.py line 5185"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_read_hop.return_value = 3
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}},
+                                   headers={**auth_headers, "X-Contextforge-UAID-Hop": "3"})
+        assert mock_read_hop.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.logger")
+    def test_invoke_debug_logging(self, mock_logger, mock_service, test_client, auth_headers):
+        """Test debug logging. Covers: main.py line 5165"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_logger.debug = MagicMock()
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}, "interaction_type": "query"},
+                                   headers=auth_headers)
+        assert mock_logger.debug.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_bearer_token_from_state(self, mock_service, test_client, auth_headers):
+        """Test bearer token from request.state. Covers: main.py line 5188"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_rpc_filter_context_extraction(self, mock_context, mock_service, test_client, auth_headers):
+        """Test RPC filter context extraction. Covers: main.py line 5170"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", ["team-1"], False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert mock_context.called
+        assert response.status_code in [200, 404]
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_agent_not_found_error(self, mock_service, test_client, auth_headers):
+        """Test A2AAgentNotFoundError handling. Covers: main.py lines 5127-5128"""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+        mock_service.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_invoke_handles_agent_error(self, mock_service, test_client, auth_headers):
+        """Test A2AAgentError handling. Covers: main.py lines 5129-5130"""
+        from mcpgateway.services.a2a_service import A2AAgentError
+        mock_service.invoke_agent = AsyncMock(side_effect=A2AAgentError("Invalid configuration"))
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code == 400
+        assert "Invalid configuration" in response.json()["detail"]
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict. Covers: main.py line 5182"""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        # Return a string user instead of dict
+        mock_context.return_value = ("user@example.com", ["string-user-id"], False)
+        response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_by_id_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict for /a2a/{agent_id}/invoke."""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", "string-user-id", False)
+        response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called

@@ -149,6 +149,34 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
 
+        # UAIDs have their own validation rules and should not be subject to
+        # generic dangerous pattern matching (UAIDs contain semicolons as field separators)
+        if value.startswith("uaid:"):
+            # Validate UAID format using the official UAID validator
+            try:
+                # First-Party
+                from mcpgateway.utils.uaid import validate_uaid  # pylint: disable=import-outside-toplevel
+
+                is_valid, error_msg = validate_uaid(value)
+                if is_valid:
+                    return  # Valid UAID, skip dangerous pattern check
+                # Invalid UAID: log warning and raise in strict mode, otherwise fall through to dangerous pattern check
+                logger.warning(f"Invalid UAID format for {key}: {error_msg}")
+                if settings.environment not in ("development", "staging") and self.strict:
+                    raise HTTPException(status_code=422, detail=f"Invalid UAID format: {error_msg}")
+                # Non-strict mode: fall through to dangerous pattern check below
+            except ImportError:
+                # Fallback if UAID utilities not available - allow UAIDs through
+                logger.debug("UAID validator not available, skipping UAID validation")
+                return
+
+        # Special handling for identifier fields (_id suffix or 'id')
+        if key.endswith("_id") or key == "id":
+            # UUID validation: standard UUID format (8-4-4-4-12 hex digits with hyphens)
+            if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", value, re.IGNORECASE):
+                return  # Valid UUID, skip dangerous pattern check
+
+        # Apply dangerous pattern validation to non-identifier fields or non-UAID/UUID identifiers
         for pattern in self.dangerous_patterns:
             if pattern.search(value):
                 if settings.environment in ("development", "staging"):

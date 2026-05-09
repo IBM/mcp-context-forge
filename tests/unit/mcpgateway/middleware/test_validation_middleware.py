@@ -596,3 +596,192 @@ class TestValidationMiddleware:
             response = await middleware.dispatch(request, call_next)
 
             assert b"\x00" not in response.body
+
+    def test_validate_parameter_valid_uaid(self):
+        """Test UAID validation with valid UAID format.
+
+        Covers: validation_middleware.py lines 160, 162, 164-165, 169
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r";"]  # Semicolons would normally be dangerous
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Valid UAID with semicolons (which are allowed in UAIDs)
+            valid_uaid = "uaid:aid:abc123;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+
+            # Should not raise even though it contains semicolons
+            middleware._validate_parameter("agent_id", valid_uaid)
+
+    def test_validate_parameter_invalid_uaid_strict_mode(self):
+        """Test UAID validation with invalid UAID in strict mode.
+
+        Covers: validation_middleware.py lines 160, 162, 164-168
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"  # Production + strict = raise
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Invalid UAID format (missing uid parameter)
+            invalid_uaid = "uaid:aid:abc123;registry=context-forge"
+
+            with pytest.raises(HTTPException) as exc_info:
+                middleware._validate_parameter("agent_id", invalid_uaid)
+
+            assert exc_info.value.status_code == 422
+            assert "Invalid UAID format" in exc_info.value.detail
+
+    def test_validate_parameter_invalid_uaid_development_mode(self):
+        """Test UAID validation with invalid UAID in development mode.
+
+        Covers: validation_middleware.py lines 160, 162, 164-167
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "development"  # Development = log warning only
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Invalid UAID format
+            invalid_uaid = "uaid:aid:abc123;registry=context-forge"
+
+            # Should not raise in development mode, just log warning
+            middleware._validate_parameter("agent_id", invalid_uaid)
+
+    def test_validate_parameter_uaid_import_error_fallback(self):
+        """Test UAID validation fallback when validator import fails.
+
+        Covers: validation_middleware.py lines 160, 162, 170, 172-173
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Patch the import to raise ImportError - need to patch it during _validate_parameter call
+            import builtins
+            real_import = builtins.__import__
+            def mock_import(name, *args, **kwargs):
+                if name == "mcpgateway.utils.uaid":
+                    raise ImportError("UAID validator not available")
+                return real_import(name, *args, **kwargs)
+
+            with patch("builtins.__import__", side_effect=mock_import):
+                # Should not raise, just log debug and return
+                middleware._validate_parameter("agent_id", "uaid:aid:abc123")
+
+    def test_validate_parameter_uuid_format(self):
+        """Test UUID validation bypasses dangerous pattern check.
+
+        Covers: validation_middleware.py lines 176-177
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"-"]  # Hyphens would normally be dangerous
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Valid UUID format with hyphens
+            valid_uuid = "550e8400-e29b-41d4-a716-446655440000"
+
+            # Should not raise even though it contains hyphens
+            middleware._validate_parameter("user_id", valid_uuid)
+
+    def test_validate_parameter_non_id_field_with_dangerous_pattern(self):
+        """Test that non-ID fields still get dangerous pattern validation."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Non-ID field should still be validated for dangerous patterns
+            with pytest.raises(HTTPException) as exc_info:
+                middleware._validate_parameter("user_input", "<script>alert('xss')</script>")
+
+            assert exc_info.value.status_code == 422
+            assert "dangerous characters" in exc_info.value.detail
+
+    def test_validate_parameter_uaid_in_non_id_field(self):
+        """Test that UAID values bypass dangerous pattern check regardless of key name.
+
+        UAIDs contain semicolons which may match dangerous patterns.
+        The exemption should apply to any value starting with 'uaid:', not just '_id' keys.
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            # Semicolons are commonly in dangerous patterns
+            mock_settings.dangerous_patterns = [r";"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Valid UAID with semicolons passed in a non-id field (e.g., agent_name)
+            valid_uaid = "uaid:aid:abc123;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+
+            # Should NOT raise even though key is not '_id' and value contains semicolons
+            middleware._validate_parameter("agent_name", valid_uaid)
+
+    def test_validate_parameter_invalid_uaid_falls_through_to_dangerous_pattern(self):
+        """Test that invalid UAIDs fall through to dangerous pattern check.
+
+        An attacker should not be able to bypass pattern matching by prefixing
+        any payload with 'uaid:' in non-strict environments.
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Invalid UAID containing a dangerous pattern
+            invalid_uaid_with_script = "uaid:aid:abc123;<script>alert('xss')</script>"
+
+            # Should raise because it contains <script even though it starts with uaid:
+            with pytest.raises(HTTPException) as exc_info:
+                middleware._validate_parameter("agent_name", invalid_uaid_with_script)
+            assert exc_info.value.status_code == 422
+            assert "dangerous characters" in exc_info.value.detail

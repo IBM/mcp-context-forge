@@ -163,6 +163,10 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if not token:
             return await call_next(request)
 
+        # Store bearer token in request.state for downstream use (e.g., cross-gateway auth forwarding)
+        # This prevents duplicate token extraction and ensures consistent token handling
+        request.state.bearer_token = token
+
         # Check logging settings once upfront to avoid DB session when not needed
         log_success = _should_log_auth_success()
         log_failure = _should_log_auth_failure()

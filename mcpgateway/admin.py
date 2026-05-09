@@ -15686,6 +15686,7 @@ async def admin_add_a2a_agent(
         generate_uaid = form.get("generate_uaid") == "true"  # Checkbox sends "true" string
         uaid_registry = str(form.get("uaid_registry", "context-forge"))
         uaid_protocol = str(form.get("uaid_protocol", "a2a"))
+        uaid_native_id_override = form.get("uaid_native_id_override") or None
 
         agent_data = A2AAgentCreate(
             name=form["name"],
@@ -15712,6 +15713,7 @@ async def admin_add_a2a_agent(
             generate_uaid=generate_uaid,
             uaid_registry=uaid_registry if generate_uaid else None,
             uaid_protocol=uaid_protocol if generate_uaid else None,
+            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -15943,6 +15945,7 @@ async def admin_edit_a2a_agent(
         generate_uaid = form.get("generate_uaid") == "true"
         uaid_registry = str(form.get("uaid_registry", "")) if generate_uaid else None
         uaid_protocol = str(form.get("uaid_protocol", "")) if generate_uaid else None
+        uaid_native_id_override = form.get("uaid_native_id_override") or None
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
@@ -15977,6 +15980,7 @@ async def admin_edit_a2a_agent(
             generate_uaid=generate_uaid,
             uaid_registry=uaid_registry,
             uaid_protocol=uaid_protocol,
+            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)

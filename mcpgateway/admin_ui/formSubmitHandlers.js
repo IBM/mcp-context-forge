@@ -560,8 +560,12 @@ export const handleA2AFormSubmit = async function (e) {
     teamId && formData.append("team_id", teamId);
 
     // Submit to backend
-    // specifically log agentType only
-    console.log("agentType:", formData.get("agentType"));
+    // Debug: Log all form data being sent
+    console.log("=== A2A Form Data Being Sent ===");
+    for (const [key, value] of formData.entries()) {
+      console.log(`${key}:`, value);
+    }
+    console.log("=================================");
 
     const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
       method: "POST",
