@@ -617,7 +617,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return raw_oauth_config
 
         # First-Party
-        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
 
         try:

@@ -12044,7 +12044,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def admin_discover_oauth(
     request: Request,
-    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> JSONResponse:
     """Discover OAuth/OIDC endpoints from an issuer URL (RFC 8414 / OIDC discovery).
 
@@ -12060,7 +12060,6 @@ async def admin_discover_oauth(
         True
     """
     # First-Party
-    from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
     from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
     from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
 
