@@ -22,12 +22,12 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import AuditTrail, EmailUser, SessionLocal, UserRole
+from mcpgateway.db import AuditTrail, EmailUser, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -291,9 +291,14 @@ class ComplianceService:
     Collects evidence from audit logs, user/role inventory, and configuration
     snapshots, then assembles structured reports for FedRAMP, HIPAA, and SOC2.
     Reports are stored in-memory (class-level) since they are ephemeral artifacts.
+
+    Note:
+        Evidence collection is platform-wide. Access is restricted to admin
+        users via RBAC. Team-scoped filtering is not yet implemented.
     """
 
     _reports: Dict[str, ComplianceReport] = {}
+    _MAX_REPORTS: int = 100
 
     def __init__(self) -> None:
         """Initialize compliance service."""
@@ -317,18 +322,18 @@ class ComplianceService:
             Dict containing user count, active users, admin users, role assignments
         """
         try:
-            users = list(db.execute(select(EmailUser)).scalars().all())
-            active_count = sum(1 for u in users if getattr(u, "is_active", False))
-            admin_count = sum(1 for u in users if getattr(u, "is_admin", False))
+            total_users = db.execute(select(func.count()).select_from(EmailUser)).scalar() or 0  # pylint: disable=not-callable
+            active_count = db.execute(select(func.count()).select_from(EmailUser).where(EmailUser.is_active.is_(True))).scalar() or 0  # pylint: disable=not-callable
+            admin_count = db.execute(select(func.count()).select_from(EmailUser).where(EmailUser.is_admin.is_(True))).scalar() or 0  # pylint: disable=not-callable
 
-            role_assignments = list(db.execute(select(UserRole)).scalars().all())
-            active_roles = sum(1 for r in role_assignments if getattr(r, "is_active", False))
+            total_roles = db.execute(select(func.count()).select_from(UserRole)).scalar() or 0  # pylint: disable=not-callable
+            active_roles = db.execute(select(func.count()).select_from(UserRole).where(UserRole.is_active.is_(True))).scalar() or 0  # pylint: disable=not-callable
 
             return {
-                "total_users": len(users),
+                "total_users": total_users,
                 "active_users": active_count,
                 "admin_users": admin_count,
-                "total_role_assignments": len(role_assignments),
+                "total_role_assignments": total_roles,
                 "active_role_assignments": active_roles,
                 "control_id": control_id,
                 "framework": framework.value,
@@ -353,17 +358,25 @@ class ComplianceService:
             Dict with event counts, coverage indicators, and sample events
         """
         try:
-            query = select(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end)
-            entries = list(db.execute(query).scalars().all())
+            total_events = db.execute(
+                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end)  # pylint: disable=not-callable
+            ).scalar() or 0
+            success_count = db.execute(
+                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.success.is_(True))  # pylint: disable=not-callable
+            ).scalar() or 0
+            failure_count = total_events - success_count
+            review_count = db.execute(
+                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.requires_review.is_(True))  # pylint: disable=not-callable
+            ).scalar() or 0
 
-            success_count = sum(1 for e in entries if getattr(e, "success", True))
-            failure_count = len(entries) - success_count
-            review_count = sum(1 for e in entries if getattr(e, "requires_review", False))
-
-            resource_types = list({getattr(e, "resource_type", "unknown") for e in entries})
+            # Sample resource types (limit to first 20 to avoid memory issues)
+            resource_types_result = db.execute(
+                select(AuditTrail.resource_type).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end).distinct().limit(20)
+            ).scalars().all()
+            resource_types = [rt or "unknown" for rt in resource_types_result]
 
             return {
-                "total_events": len(entries),
+                "total_events": total_events,
                 "success_events": success_count,
                 "failure_events": failure_count,
                 "review_required_events": review_count,
@@ -452,7 +465,7 @@ class ComplianceService:
             return ControlStatus.IMPLEMENTED, findings, recommendations
         if len(findings) >= 2 or not audit_enabled:
             return ControlStatus.PARTIAL, findings, recommendations
-        return ControlStatus.PARTIAL, findings, recommendations
+        return ControlStatus.NOT_IMPLEMENTED, findings, recommendations
 
     # ------------------------------------------------------------------
     # Report generation
@@ -526,7 +539,11 @@ class ComplianceService:
             summary=summary,
         )
 
-        # Store in-memory
+        # Store in-memory (bounded FIFO eviction for ephemeral reports)
+        if len(ComplianceService._reports) >= ComplianceService._MAX_REPORTS:
+            # Remove oldest report by insertion order (FIFO)
+            oldest_key = next(iter(ComplianceService._reports))
+            del ComplianceService._reports[oldest_key]
         ComplianceService._reports[report.id] = report
         logger.info("Generated compliance report %s for framework %s", report.id, framework.value)
         return report
@@ -592,7 +609,7 @@ class ComplianceService:
     # Storage helpers
     # ------------------------------------------------------------------
 
-    def list_reports(self, db: Optional[Session] = None) -> List[ComplianceReport]:
+    def list_reports(self, db: Optional[Session] = None) -> List[ComplianceReport]:  # pylint: disable=unused-argument
         """List all stored compliance reports.
 
         Args:
@@ -603,7 +620,7 @@ class ComplianceService:
         """
         return list(ComplianceService._reports.values())
 
-    def get_report(self, db: Optional[Session] = None, report_id: str = "") -> Optional[ComplianceReport]:
+    def get_report(self, db: Optional[Session] = None, report_id: str = "") -> Optional[ComplianceReport]:  # pylint: disable=unused-argument
         """Retrieve a stored compliance report by ID.
 
         Args:
@@ -620,7 +637,7 @@ class ComplianceService:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_compliance_service: Optional[ComplianceService] = None
+_COMPLIANCE_SERVICE: Optional[ComplianceService] = None
 
 
 def get_compliance_service() -> ComplianceService:
@@ -629,7 +646,7 @@ def get_compliance_service() -> ComplianceService:
     Returns:
         ComplianceService singleton
     """
-    global _compliance_service  # pylint: disable=global-statement
-    if _compliance_service is None:
-        _compliance_service = ComplianceService()
-    return _compliance_service
+    global _COMPLIANCE_SERVICE  # pylint: disable=global-statement
+    if _COMPLIANCE_SERVICE is None:
+        _COMPLIANCE_SERVICE = ComplianceService()
+    return _COMPLIANCE_SERVICE
