@@ -27,6 +27,10 @@ class ToolPluginBindingNotFoundError(Exception):
     """Raised when a binding with the given ID does not exist."""
 
 
+class ToolPluginBindingForbiddenError(Exception):
+    """Raised when the caller is not authorized to modify a binding from another team."""
+
+
 def get_bindings_for_tool(
     db: Session,
     team_id: str,
@@ -295,7 +299,7 @@ class ToolPluginBindingService:
     # Delete
     # ------------------------------------------------------------------
 
-    def delete_binding(self, db: Session, binding_id: str) -> ToolPluginBindingResponse:
+    def delete_binding(self, db: Session, binding_id: str, allowed_teams: Optional[set[str]] = None) -> ToolPluginBindingResponse:
         """Delete a binding by its primary key and return its details.
 
         The response is captured before the row is removed so the caller
@@ -304,16 +308,25 @@ class ToolPluginBindingService:
         Args:
             db: SQLAlchemy session.
             binding_id: UUID of the binding to delete.
+            allowed_teams: When non-None, the binding's ``team_id`` must be in
+                this set or ``ToolPluginBindingForbiddenError`` is raised.
+                Pass ``None`` for admin callers (unrestricted).
 
         Returns:
             ToolPluginBindingResponse: Details of the deleted binding.
 
         Raises:
             ToolPluginBindingNotFoundError: If no binding with the given ID exists.
+            ToolPluginBindingForbiddenError: If ``allowed_teams`` is set and the
+                binding belongs to a team the caller is not a member of.
         """
         binding = db.query(ToolPluginBinding).filter(ToolPluginBinding.id == binding_id).first()
         if not binding:
             raise ToolPluginBindingNotFoundError(f"Tool plugin binding '{binding_id}' not found")
+        if allowed_teams is not None and binding.team_id not in allowed_teams:
+            raise ToolPluginBindingForbiddenError(
+                f"Not authorized to delete binding '{binding_id}' for team '{binding.team_id}'"
+            )
         response = self._to_response(binding)
         db.delete(binding)
         db.flush()  # flush so the DELETE is sent before the caller's commit
@@ -324,6 +337,7 @@ class ToolPluginBindingService:
         self,
         db: Session,
         binding_reference_id: str,
+        allowed_teams: Optional[set[str]] = None,
     ) -> List[ToolPluginBindingResponse]:
         """Delete all bindings tagged with a given external reference ID.
 
@@ -334,12 +348,20 @@ class ToolPluginBindingService:
         Args:
             db: SQLAlchemy session.
             binding_reference_id: The external reference ID to match.
+            allowed_teams: When non-None, only bindings whose ``team_id`` is in
+                this set are deleted.  Bindings for other teams are silently
+                skipped (defence-in-depth; the router derives the constraint and
+                the service enforces it).
+                Pass ``None`` for admin callers (unrestricted).
 
         Returns:
             List[ToolPluginBindingResponse]: All deleted binding records.
                 Returns an empty list (not an error) if no bindings matched.
         """
-        rows = db.query(ToolPluginBinding).filter(ToolPluginBinding.binding_reference_id == binding_reference_id).all()
+        query = db.query(ToolPluginBinding).filter(ToolPluginBinding.binding_reference_id == binding_reference_id)
+        if allowed_teams is not None:
+            query = query.filter(ToolPluginBinding.team_id.in_(allowed_teams))
+        rows = query.all()
         responses = [self._to_response(r) for r in rows]
         for row in rows:
             logger.debug("Deleted tool plugin binding id=%s ref=%s", row.id, binding_reference_id)
