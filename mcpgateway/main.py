@@ -186,6 +186,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -3095,9 +3096,6 @@ def tojson_attr(value: object) -> str:
 
 jinja_env.filters["tojson_attr"] = tojson_attr
 
-
-# First-Party
-from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 
 jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
 
