@@ -21,8 +21,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete global.window.htmx;
   delete global.window.ROOT_PATH;
-  delete global.fetch;
-  delete global.alert;
+  // Provide safe defaults so tests that spyOn(global.fetch) or assert on
+  // global.alert do not fail when a previous test deleted the property.
+  global.fetch = vi.fn().mockResolvedValue({ ok: true });
+  global.alert = vi.fn();
   vi.mocked(navigateAdmin).mockClear();
 });
 
