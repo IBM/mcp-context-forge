@@ -302,7 +302,7 @@ install-dev: venv
 	fi
 	@$(MAKE) build-ui
 
-# help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
+# help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
 build-ui:
 	@if [ "$(SKIP_UI_BUILD)" = "1" ]; then \
@@ -315,6 +315,7 @@ build-ui:
 			echo "ℹ️  package-lock.json not found — falling back to 'npm install'"; \
 			npm install --no-audit --no-fund; \
 		fi && \
+		npm run build:css && \
 		npm run vite:build; \
 	else \
 		echo "❌ npm not found — install Node.js (https://nodejs.org) to build the Admin UI."; \
@@ -375,9 +376,9 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
         js-build
 
 ## --- JS build ----------------------------------------------------------------
-js-build:                        ## Install npm dependencies and build JS bundle with Vite
+js-build:                        ## Install npm dependencies and build CSS and JS bundles
 	@if command -v npm >/dev/null 2>&1; then \
-		npm install --no-audit --no-fund && npm run vite:build; \
+		npm install --no-audit --no-fund && npm run build:css && npm run vite:build; \
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
@@ -398,8 +399,12 @@ serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
 serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
-dev: js-build
-	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+dev:
+	@echo "🚀 Starting development server with CSS watch..."
+	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
+	$(MAKE) js-build watch-css & \
+	WATCH_CSS_PID=$$!; \
+	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo
 dev-echo: js-build               ## Run dev server with SQL query logging enabled
@@ -420,16 +425,41 @@ stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
 	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
-	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
-	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@echo "Done."
+# -----------------------------------------------------------------------------
+# 🎨 CSS BUILD TARGETS
+# -----------------------------------------------------------------------------
+# help: 🎨 CSS BUILD TARGETS
+# help: build-css            - Build Tailwind CSS (pre-compiled, no JIT)
+# help: watch-css            - Watch and rebuild Tailwind CSS on changes
+# help: dev-css              - Run dev server with CSS watching in parallel
+
+.PHONY: build-css
+build-css:                       ## Build pre-compiled Tailwind CSS
+	@echo "🎨 Building Tailwind CSS..."
+	@npm run build:css
+	@echo "✅ Tailwind CSS built successfully"
+
+.PHONY: watch-css
+watch-css:                       ## Watch and rebuild Tailwind CSS on changes
+	@echo "👀 Watching Tailwind CSS for changes..."
+	@npm run watch:css
+
+.PHONY: dev-css
+dev-css:                         ## Alias for 'make dev' (kept for backward compatibility)
+	@echo "ℹ️  Note: 'make dev' now includes CSS watching by default"
+	@echo "ℹ️  Use 'make dev-no-css' if you don't want CSS watching"
+	@$(MAKE) dev
+
 
 stop-dev:                        ## Stop uvicorn dev server (port 8000)
-	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 
 stop-serve:                      ## Stop gunicorn production server (port 4444)
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
-	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 
 run: js-build
 	./run.sh
@@ -8491,12 +8521,12 @@ migration-cleanup:                         ## Clean up migration test containers
 	@echo "🧹 Cleaning up migration test environment..."
 	@if command -v docker >/dev/null 2>&1; then \
 		echo "🛑 Stopping migration test containers..."; \
-		docker ps -a --filter "name=migration-test-" -q | xargs -r docker stop; \
-		docker ps -a --filter "name=migration-test-" -q | xargs -r docker rm; \
+		docker ps -a --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker stop; \
+		docker ps -a --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker rm; \
 		echo "🗑️  Removing migration test volumes..."; \
-		docker volume ls --filter "name=migration-test-" -q | xargs -r docker volume rm; \
+		docker volume ls --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker volume rm; \
 		echo "🧼 Pruning migration test networks..."; \
-		docker network ls --filter "name=migration-test-" -q | xargs -r docker network rm; \
+		docker network ls --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker network rm; \
 	fi
 	@echo "🗂️  Cleaning up temporary files..."
 	@rm -rf /tmp/migration_test_*
