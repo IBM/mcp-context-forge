@@ -342,6 +342,7 @@ mcpgateway = [
   "tools/builder/templates/kubernetes/*.yaml.j2",
   "py.typed",
   "static/*.css",
+  "static/css/*.css",
   "static/*.js",
   "templates/*.html",
   "*.json",

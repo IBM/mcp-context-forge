@@ -48,7 +48,7 @@ response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 # Content Security Policy (Admin UI compatible)
 csp_directives = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
