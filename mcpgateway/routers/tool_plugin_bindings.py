@@ -39,6 +39,17 @@ router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindin
 _service = ToolPluginBindingService()
 
 
+def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
+    """Derive the set of teams a caller is allowed to mutate.
+
+    Returns ``None`` for unrestricted admins (full bypass).
+    Returns an empty set for public-only callers (nothing allowed).
+    """
+    is_admin: bool = ctx.get("is_admin", False)
+    token_teams = ctx.get("token_teams")
+    return None if (is_admin and token_teams is None) else set(token_teams or [])
+
+
 async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -> None:
     """Evict local caches and broadcast pub/sub frames for a batch of bindings.
 
@@ -101,10 +112,10 @@ async def upsert_tool_plugin_bindings(
     """
     try:
         caller_email: str = current_user_ctx["email"]
-        is_admin: bool = current_user_ctx.get("is_admin", False)
-        user_teams: list = current_user_ctx.get("teams", []) or []
+        allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
+        user_teams: set = set() if allowed_teams is None else allowed_teams
 
-        if not is_admin:
+        if allowed_teams is not None:
             unauthorized = [tid for tid in request.teams if tid not in user_teams]
             if unauthorized:
                 raise HTTPException(
@@ -224,9 +235,7 @@ async def delete_tool_plugin_bindings_by_reference(
         >>> asyncio.iscoroutinefunction(delete_tool_plugin_bindings_by_reference)
         True
     """
-    is_admin: bool = current_user_ctx.get("is_admin", False)
-    user_teams: list = current_user_ctx.get("teams", []) or []
-    allowed_teams = None if is_admin else set(user_teams)
+    allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
     deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id, allowed_teams=allowed_teams)
     db.commit()
     await _invalidate_and_broadcast(deleted)
@@ -268,9 +277,7 @@ async def delete_tool_plugin_binding(
         True
     """
     try:
-        is_admin: bool = current_user_ctx.get("is_admin", False)
-        user_teams: list = current_user_ctx.get("teams", []) or []
-        allowed_teams = None if is_admin else set(user_teams)
+        allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
         deleted = _service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
         db.commit()
         await _invalidate_and_broadcast([deleted])

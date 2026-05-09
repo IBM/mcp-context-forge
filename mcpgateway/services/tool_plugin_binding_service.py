@@ -28,7 +28,7 @@ class ToolPluginBindingNotFoundError(Exception):
 
 
 class ToolPluginBindingForbiddenError(Exception):
-    """Raised when the caller is not authorised to modify a binding from another team."""
+    """Raised when the caller is not authorized to modify a binding from another team."""
 
 
 def get_bindings_for_tool(
@@ -299,7 +299,7 @@ class ToolPluginBindingService:
     # Delete
     # ------------------------------------------------------------------
 
-    def delete_binding(self, db: Session, binding_id: str, allowed_teams: Optional[set] = None) -> ToolPluginBindingResponse:
+    def delete_binding(self, db: Session, binding_id: str, allowed_teams: Optional[set[str]] = None) -> ToolPluginBindingResponse:
         """Delete a binding by its primary key and return its details.
 
         The response is captured before the row is removed so the caller
@@ -337,7 +337,7 @@ class ToolPluginBindingService:
         self,
         db: Session,
         binding_reference_id: str,
-        allowed_teams: Optional[set] = None,
+        allowed_teams: Optional[set[str]] = None,
     ) -> List[ToolPluginBindingResponse]:
         """Delete all bindings tagged with a given external reference ID.
 
@@ -350,7 +350,8 @@ class ToolPluginBindingService:
             binding_reference_id: The external reference ID to match.
             allowed_teams: When non-None, only bindings whose ``team_id`` is in
                 this set are deleted.  Bindings for other teams are silently
-                skipped (defence-in-depth; the router also enforces this).
+                skipped (defence-in-depth; the router derives the constraint and
+                the service enforces it).
                 Pass ``None`` for admin callers (unrestricted).
 
         Returns:

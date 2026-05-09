@@ -552,6 +552,20 @@ class TestDeleteBinding:
         assert len(remaining) == 1
         assert remaining[0].team_id == "team-b"
 
+    def test_delete_binding_empty_allowed_teams_blocks_own_team(self, service, db_session):
+        """allowed_teams=set() (public-only / empty token) blocks deletion even for the binding's own team."""
+        r = ToolPluginBindingRequest(
+            teams={"team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL))])}
+        )
+        inserted = service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+        binding_id = inserted[0].id
+
+        with pytest.raises(ToolPluginBindingForbiddenError, match="team-a"):
+            service.delete_binding(db_session, binding_id, allowed_teams=set())
+
+        # Row must still exist
+        assert db_session.query(ToolPluginBinding).filter_by(id=binding_id).first() is not None
+
 
 # ---------------------------------------------------------------------------
 # Schema validation tests — PluginPolicyItem cross-validation
