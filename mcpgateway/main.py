@@ -3096,25 +3096,8 @@ def tojson_attr(value: object) -> str:
 jinja_env.filters["tojson_attr"] = tojson_attr
 
 
-def get_csp_nonce_from_request(request: Request) -> str:
-    """
-    Retrieve the CSP nonce from the request state.
-    Used in templates to add nonce attributes to inline scripts.
-
-    Args:
-        request: The FastAPI Request object. Can be None in test contexts.
-
-    Returns:
-        The CSP nonce string, or empty string if not available.
-    """
-    if request is None:
-        logger.debug("CSP nonce requested with None request")
-        return ""
-    nonce = getattr(request.state, "csp_nonce", "")
-    if not nonce:
-        logger.warning("CSP nonce missing from request.state — inline scripts may be blocked by CSP")
-    return nonce
-
+# First-Party
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 
 jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
 

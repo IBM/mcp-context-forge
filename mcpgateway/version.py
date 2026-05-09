@@ -1536,7 +1536,7 @@ async def version_endpoint(
         templates = getattr(request.app.state, "templates", None)
         if templates is None:
             # First-Party
-            from mcpgateway.main import get_csp_nonce_from_request
+            from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 
             jinja_env = Environment(
                 loader=FileSystemLoader(str(settings.templates_dir)),
