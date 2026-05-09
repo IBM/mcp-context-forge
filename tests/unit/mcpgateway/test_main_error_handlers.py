@@ -1010,3 +1010,126 @@ class TestInternalMcpPluginExceptions:
 
                 content = response.json()
                 assert content["id"] == test_id, f"Expected id {test_id}, got {content.get('id')}"
+
+    def test_resolve_defaults_when_violation_has_no_codes(self, test_client, mock_internal_auth):
+        """Resolve endpoint uses default JSON-RPC code/status when violation lacks them."""
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
+
+        # Violation with no mcp_error_code or http_status_code
+        violation = PluginViolation(reason="Bad input", description="Missing field", code="VALIDATION_ERROR")
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("Validation failed", violation=violation)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 10},
+            )
+
+            assert response.status_code == 422  # Default status
+            content = response.json()
+            assert content["error"]["code"] == -32602  # Default JSON-RPC code
+            assert content["id"] == 10
+
+    def test_resolve_rejects_invalid_http_status_code(self, test_client, mock_internal_auth):
+        """Resolve endpoint falls back to 422 when plugin provides invalid HTTP status."""
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Blocked",
+            description="Blocked by policy",
+            code="BLOCKED",
+            http_status_code=999,  # Invalid status
+        )
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("Blocked", violation=violation)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 11},
+            )
+
+            assert response.status_code == 422  # Falls back to default
+            content = response.json()
+            assert content["error"]["code"] == -32602
+            assert content["id"] == 11
+
+    def test_call_defaults_when_plugin_error_has_no_code(self, test_client, mock_internal_auth):
+        """Tools/call endpoint uses default JSON-RPC code when PluginError lacks mcp_error_code."""
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
+
+        error = PluginErrorModel(message="Generic failure", plugin_name="test_plugin")
+        error.mcp_error_code = None  # Force handler fallback branch
+
+        with patch("mcpgateway.main.tool_service.invoke_tool") as mock_invoke:
+            mock_invoke.side_effect = PluginError(error=error)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 12},
+            )
+
+            content = response.json()
+            assert content["error"]["code"] == -32603  # Default internal error
+            assert content["id"] == 12
+
+    def test_resolve_forwards_validated_violation_headers(self, test_client, mock_internal_auth):
+        """Resolve endpoint forwards validated HTTP headers from plugin violations."""
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Rate limited",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            mcp_error_code=-32000,
+            http_status_code=429,
+            http_headers={"Retry-After": "60", "X-RateLimit-Limit": "100"},
+        )
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("Rate limited", violation=violation)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 13},
+            )
+
+            assert response.status_code == 429
+            assert response.headers.get("Retry-After") == "60"
+            assert response.headers.get("X-RateLimit-Limit") == "100"
+            content = response.json()
+            assert content["error"]["code"] == -32000
+            assert content["id"] == 13
+
+    def test_resolve_drops_invalid_violation_headers(self, test_client, mock_internal_auth):
+        """Resolve endpoint drops malformed HTTP headers from plugin violations."""
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
+
+        violation = PluginViolation(
+            reason="Blocked",
+            description="Blocked",
+            code="BLOCKED",
+            http_status_code=403,
+            http_headers={"Bad Header\x00Name": "value", "Valid-Header": "ok"},
+        )
+
+        with patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution") as mock_prepare:
+            mock_prepare.side_effect = PluginViolationError("Blocked", violation=violation)
+
+            response = test_client.post(
+                "/_internal/mcp/tools/call/resolve",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "test_tool"}, "id": 14},
+            )
+
+            assert response.status_code == 403
+            # Invalid header with null byte should be dropped, valid one kept
+            assert response.headers.get("Valid-Header") == "ok"
+            assert "Bad Header" not in dict(response.headers)  # Null byte header was dropped
+            content = response.json()
+            assert content["id"] == 14
