@@ -219,7 +219,8 @@ async def test_delete_role_value_error(monkeypatch):
     with pytest.raises(rbac_router.HTTPException) as excinfo:
         await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
     assert excinfo.value.status_code == 400
-    assert "Cannot delete system role" in excinfo.value.detail
+    # Security fix: generic error message in production (debug=False by default)
+    assert "Invalid request" in excinfo.value.detail
 
 
 @pytest.mark.asyncio
@@ -299,6 +300,70 @@ async def test_check_permission_and_user_permissions(monkeypatch):
 
     perms = await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com"}, db=MagicMock())
     assert sorted(perms) == ["p1", "p2"]
+
+
+@pytest.mark.asyncio
+async def test_create_role_public_validation_error(monkeypatch):
+    """Test that PublicValidationError messages are exposed even in production mode."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    service = MagicMock()
+    service.create_role = AsyncMock(side_effect=PublicValidationError("Cannot create role with reserved name"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    request = RoleCreateRequest(name="admin", description="desc", scope="global", permissions=["p1"])
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.create_role(request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+    # PublicValidationError message should be exposed
+    assert "Cannot create role with reserved name" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_update_role_public_validation_error(monkeypatch):
+    """Test that PublicValidationError messages are exposed in update_role."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    service = MagicMock()
+    service.update_role = AsyncMock(side_effect=PublicValidationError("Cannot modify system role permissions"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    request = RoleUpdateRequest(description="updated", permissions=["p1"])
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.update_role("r1", request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+    assert "Cannot modify system role permissions" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_delete_role_public_validation_error(monkeypatch):
+    """Test that PublicValidationError messages are exposed in delete_role."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    service = MagicMock()
+    service.delete_role = AsyncMock(side_effect=PublicValidationError("Cannot delete system roles"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.delete_role("platform_admin", user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+    assert "Cannot delete system roles" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_assign_role_public_validation_error(monkeypatch):
+    """Test that PublicValidationError messages are exposed in assign_role_to_user."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    service = MagicMock()
+    service.assign_role_to_user = AsyncMock(side_effect=PublicValidationError("Role assignment limit exceeded"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+    assert "Role assignment limit exceeded" in excinfo.value.detail
 
 
 @pytest.mark.asyncio

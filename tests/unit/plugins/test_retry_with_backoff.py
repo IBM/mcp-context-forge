@@ -22,6 +22,8 @@ import uuid
 import pytest
 from unittest.mock import MagicMock, patch
 
+pytest.importorskip("cpex_retry_with_backoff", reason="cpex-retry-with-backoff plugin not installed")
+
 from cpex_retry_with_backoff.retry_with_backoff import (
     RetryWithBackoffPlugin,
     RetryConfig,
