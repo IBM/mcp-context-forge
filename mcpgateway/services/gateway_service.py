@@ -567,6 +567,37 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
 
+        # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
+        self._refresh_locks: Dict[str, asyncio.Lock] = {}
+
+        # For health checks, we determine the leader instance.
+        self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
+
+        # Initialize optional Redis client holder (set in initialize())
+        self._redis_client: Optional[Any] = None
+
+        # Leader election settings from config
+        if self.redis_url and REDIS_AVAILABLE:
+            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
+            self._leader_key = settings.redis_leader_key
+            self._leader_ttl = settings.redis_leader_ttl
+            self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
+            self._leader_heartbeat_task: Optional[asyncio.Task] = None
+            self._follower_election_task: Optional[asyncio.Task] = None
+
+            # Log instance mapping for debugging
+            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
+
+        # Always initialize file lock as fallback (used if Redis connection fails at runtime)
+        if settings.cache_type != "none":
+            temp_dir = tempfile.gettempdir()
+            user_path = os.path.normpath(settings.filelock_name)
+            if os.path.isabs(user_path):
+                user_path = os.path.relpath(user_path, start=os.path.splitdrive(user_path)[0] + os.sep)
+            full_path = os.path.join(temp_dir, user_path)
+            self._lock_path = full_path.replace("\\", "/")
+            self._file_lock = FileLock(self._lock_path)
+
     @staticmethod
     async def _auto_discover_oauth_endpoints(raw_oauth_config: dict) -> dict:
         """Auto-discover OAuth endpoints from issuer metadata if needed.
@@ -610,37 +641,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except Exception as _e:  # pylint: disable=broad-except
             logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
         return raw_oauth_config
-
-        # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
-        self._refresh_locks: Dict[str, asyncio.Lock] = {}
-
-        # For health checks, we determine the leader instance.
-        self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
-
-        # Initialize optional Redis client holder (set in initialize())
-        self._redis_client: Optional[Any] = None
-
-        # Leader election settings from config
-        if self.redis_url and REDIS_AVAILABLE:
-            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
-            self._leader_key = settings.redis_leader_key
-            self._leader_ttl = settings.redis_leader_ttl
-            self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
-            self._leader_heartbeat_task: Optional[asyncio.Task] = None
-            self._follower_election_task: Optional[asyncio.Task] = None
-
-            # Log instance mapping for debugging
-            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
-
-        # Always initialize file lock as fallback (used if Redis connection fails at runtime)
-        if settings.cache_type != "none":
-            temp_dir = tempfile.gettempdir()
-            user_path = os.path.normpath(settings.filelock_name)
-            if os.path.isabs(user_path):
-                user_path = os.path.relpath(user_path, start=os.path.splitdrive(user_path)[0] + os.sep)
-            full_path = os.path.join(temp_dir, user_path)
-            self._lock_path = full_path.replace("\\", "/")
-            self._file_lock = FileLock(self._lock_path)
 
     @staticmethod
     def normalize_url(url: str) -> str:

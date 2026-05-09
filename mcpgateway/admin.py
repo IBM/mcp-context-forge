@@ -12073,6 +12073,12 @@ async def admin_discover_oauth(
             status_code=400,
         )
 
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"success": False, "error": "Request body must be a JSON object"},
+            status_code=400,
+        )
+
     issuer = body.get("issuer", "").strip()
     if not issuer:
         return JSONResponse(
