@@ -303,7 +303,7 @@ class TestCSPConfiguration:
             csp = response.headers["Content-Security-Policy"]
 
             # Check all required CDN domains are allowed
-            required_domains = ["https://cdnjs.cloudflare.com", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net"]
+            required_domains = ["https://cdnjs.cloudflare.com", "https://cdn.jsdelivr.net"]
 
             for domain in required_domains:
                 assert domain in csp, f"{domain} missing from CSP"
