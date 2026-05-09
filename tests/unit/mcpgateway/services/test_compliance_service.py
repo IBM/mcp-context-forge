@@ -2,11 +2,10 @@
 """Tests for compliance_service."""
 
 # Standard
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.services import compliance_service as svc
@@ -34,6 +33,12 @@ class DummyResult:
     def all(self):
         """Return items."""
         return self._items
+
+    def scalar(self):
+        """Return first item or None."""
+        if self._items:
+            return self._items[0]
+        return None
 
 
 class DummySession:
@@ -63,11 +68,34 @@ class DummySession:
             DummyResult with appropriate data
         """
         query_str = str(query)
-        if "email_users" in query_str:
+        lower_q = query_str.lower()
+
+        if "email_users" in lower_q:
+            if "count" in lower_q:
+                if "is_active" in lower_q:
+                    return DummyResult([sum(1 for u in self._users if getattr(u, "is_active", False))])
+                if "is_admin" in lower_q:
+                    return DummyResult([sum(1 for u in self._users if getattr(u, "is_admin", False))])
+                return DummyResult([len(self._users)])
             return DummyResult(self._users)
-        if "user_roles" in query_str:
+
+        if "user_roles" in lower_q:
+            if "count" in lower_q:
+                if "is_active" in lower_q:
+                    return DummyResult([sum(1 for r in self._role_assignments if getattr(r, "is_active", False))])
+                return DummyResult([len(self._role_assignments)])
             return DummyResult(self._role_assignments)
-        if "audit_trails" in query_str:
+
+        if "audit_trails" in lower_q:
+            if "count" in lower_q:
+                if "success" in lower_q:
+                    return DummyResult([sum(1 for e in self._audit_entries if getattr(e, "success", True))])
+                if "requires_review" in lower_q:
+                    return DummyResult([sum(1 for e in self._audit_entries if getattr(e, "requires_review", False))])
+                return DummyResult([len(self._audit_entries)])
+            if "distinct" in lower_q:
+                types = list({getattr(e, "resource_type", "unknown") for e in self._audit_entries})
+                return DummyResult(types)
             return DummyResult(self._audit_entries)
         return DummyResult([])
 
@@ -305,6 +333,44 @@ def test_generate_report_stored_in_memory():
     assert fetched.id == report.id
 
 
+def test_generate_report_storage_bounded_fifo(monkeypatch):
+    """Should evict oldest report when max storage is reached."""
+    monkeypatch.setattr(svc.ComplianceService, "_reports", {})
+    monkeypatch.setattr(svc.ComplianceService, "_MAX_REPORTS", 3)
+
+    db = DummySession()
+    service = svc.ComplianceService()
+
+    r1 = service.generate_report(db, svc.ComplianceFramework.HIPAA, START, END)
+    r2 = service.generate_report(db, svc.ComplianceFramework.SOC2_TYPE2, START, END)
+    r3 = service.generate_report(db, svc.ComplianceFramework.FEDRAMP_MODERATE, START, END)
+    r4 = service.generate_report(db, svc.ComplianceFramework.HIPAA, START, END)
+
+    # r1 should have been evicted
+    assert service.get_report(report_id=r1.id) is None
+    assert service.get_report(report_id=r2.id) is not None
+    assert service.get_report(report_id=r3.id) is not None
+    assert service.get_report(report_id=r4.id) is not None
+
+
+def test_determine_status_not_implemented():  # pylint: disable=protected-access
+    """Should return NOT_IMPLEMENTED for single finding with audit enabled."""
+    service = svc.ComplianceService()
+    control = svc.ComplianceControl(
+        id="TEST-1",
+        title="Test Control",
+        description="Test",
+        framework=svc.ComplianceFramework.FEDRAMP_MODERATE,
+        evidence_sources=["user_inventory"],
+    )
+    artifacts = [{"total_users": 0, "admin_users": 0, "audit_enabled": True}]
+    status, findings, _recommendations = service._determine_status(control, artifacts)  # pylint: disable=protected-access
+    assert status == svc.ControlStatus.NOT_IMPLEMENTED
+    assert len(findings) == 1
+
+
+
+
 # ---------------------------------------------------------------------------
 # export_json
 # ---------------------------------------------------------------------------
@@ -412,7 +478,7 @@ def test_get_report_with_no_report_id():
 
 def test_get_compliance_service_returns_singleton(monkeypatch):
     """get_compliance_service should return the same instance on repeated calls."""
-    monkeypatch.setattr(svc, "_compliance_service", None)
+    monkeypatch.setattr(svc, "_COMPLIANCE_SERVICE", None)
 
     s1 = svc.get_compliance_service()
     s2 = svc.get_compliance_service()
@@ -421,10 +487,13 @@ def test_get_compliance_service_returns_singleton(monkeypatch):
     assert isinstance(s1, svc.ComplianceService)
 
 
+
+
+
 def test_get_compliance_service_reuses_existing(monkeypatch):
     """get_compliance_service should not create a new instance if one exists."""
     existing = svc.ComplianceService()
-    monkeypatch.setattr(svc, "_compliance_service", existing)
+    monkeypatch.setattr(svc, "_COMPLIANCE_SERVICE", existing)
 
     result = svc.get_compliance_service()
     assert result is existing

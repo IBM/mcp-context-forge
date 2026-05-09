@@ -3,7 +3,7 @@
 
 # Standard
 from datetime import datetime, timezone
-from types import SimpleNamespace
+import sys
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -14,8 +14,8 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 
 _originals = patch_rbac_decorators()
 # First-Party
-from mcpgateway.routers import compliance_router as router_mod  # noqa: E402
-from mcpgateway.services.compliance_service import ComplianceFramework, ComplianceReport, ControlEvidence, ControlStatus  # noqa: E402
+from mcpgateway.routers import compliance_router as router_mod  # noqa: E402  # pylint: disable=wrong-import-position
+from mcpgateway.services.compliance_service import ComplianceFramework, ComplianceReport, ControlEvidence, ControlStatus  # noqa: E402  # pylint: disable=wrong-import-position
 
 restore_rbac_decorators(_originals)
 
@@ -60,42 +60,6 @@ def _mock_user():
 
 
 # ---------------------------------------------------------------------------
-# get_db
-# ---------------------------------------------------------------------------
-
-
-def test_get_db_yields_session_and_commits(monkeypatch):
-    """get_db should yield a session, commit, and close on success."""
-    db = MagicMock()
-    monkeypatch.setattr(router_mod, "SessionLocal", lambda: db)
-
-    gen = router_mod.get_db()
-    yielded = next(gen)
-    assert yielded is db
-
-    with pytest.raises(StopIteration):
-        gen.send(None)
-
-    db.commit.assert_called_once()
-    db.close.assert_called_once()
-
-
-def test_get_db_rolls_back_on_exception(monkeypatch):
-    """get_db should rollback and re-raise on exception."""
-    db = MagicMock()
-    monkeypatch.setattr(router_mod, "SessionLocal", lambda: db)
-
-    gen = router_mod.get_db()
-    next(gen)
-
-    with pytest.raises(ValueError):
-        gen.throw(ValueError("boom"))
-
-    db.rollback.assert_called_once()
-    db.close.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
 # list_frameworks
 # ---------------------------------------------------------------------------
 
@@ -136,28 +100,74 @@ async def test_generate_report_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generate_report_invalid_period():
-    """Should raise 400 when period_start >= period_end."""
-    from fastapi import HTTPException
+    """Should raise validation error when period_start >= period_end."""
+    from pydantic import ValidationError
 
-    body = router_mod.GenerateReportRequest(framework=ComplianceFramework.HIPAA, period_start=END, period_end=START)
+    with pytest.raises(ValidationError) as exc_info:
+        router_mod.GenerateReportRequest(framework=ComplianceFramework.HIPAA, period_start=END, period_end=START)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await router_mod.generate_report(body, user=_mock_user(), db=MagicMock())
-
-    assert exc_info.value.status_code == 400
+    assert "period_end must be after period_start" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
 async def test_generate_report_equal_dates_raises():
-    """Should raise 400 when period_start equals period_end."""
-    from fastapi import HTTPException
+    """Should raise validation error when period_start equals period_end."""
+    from pydantic import ValidationError
 
-    body = router_mod.GenerateReportRequest(framework=ComplianceFramework.SOC2_TYPE2, period_start=START, period_end=START)
+    with pytest.raises(ValidationError) as exc_info:
+        router_mod.GenerateReportRequest(framework=ComplianceFramework.SOC2_TYPE2, period_start=START, period_end=START)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await router_mod.generate_report(body, user=_mock_user(), db=MagicMock())
+    assert "period_end must be after period_start" in str(exc_info.value)
 
-    assert exc_info.value.status_code == 400
+
+@pytest.mark.asyncio
+async def test_generate_report_naive_datetime_rejected():
+    """Should reject naive (non-timezone-aware) datetimes."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        router_mod.GenerateReportRequest(
+            framework=ComplianceFramework.HIPAA,
+            period_start=datetime(2025, 1, 1),
+            period_end=datetime(2025, 3, 31),
+        )
+    assert "timezone-aware" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_generate_report_future_period_end_rejected():
+    """Should reject period_end in the future."""
+    from datetime import timedelta
+    from pydantic import ValidationError
+
+    future = datetime.now(timezone.utc) + timedelta(days=1)
+    past = datetime.now(timezone.utc) - timedelta(days=30)
+
+    with pytest.raises(ValidationError) as exc_info:
+        router_mod.GenerateReportRequest(
+            framework=ComplianceFramework.HIPAA,
+            period_start=past,
+            period_end=future,
+        )
+    assert "future" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_report_period_too_long_rejected():
+    """Should reject assessment period exceeding 365 days."""
+    from datetime import timedelta
+    from pydantic import ValidationError
+
+    start = datetime.now(timezone.utc) - timedelta(days=400)
+    end = datetime.now(timezone.utc) - timedelta(days=10)
+
+    with pytest.raises(ValidationError) as exc_info:
+        router_mod.GenerateReportRequest(
+            framework=ComplianceFramework.HIPAA,
+            period_start=start,
+            period_end=end,
+        )
+    assert "365" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -230,32 +240,32 @@ async def test_get_report_not_found(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_export_report_json(monkeypatch):
-    """Should return JSON content when format=json."""
+    """Should return JSON content when export_format=json."""
     report = _make_report("rpt-e1")
     mock_service = MagicMock()
     mock_service.get_report.return_value = report
     mock_service.export_json.return_value = '{"id": "rpt-e1"}'
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.export_report("rpt-e1", user=_mock_user(), db=MagicMock(), format="json")
+    result = await router_mod.export_report("rpt-e1", user=_mock_user(), db=MagicMock(), export_format="json")
 
-    assert result["content_type"] == "application/json"
-    assert "rpt-e1" in result["data"]
+    assert result.media_type == "application/json"
+    assert "rpt-e1" in result.body.decode()
 
 
 @pytest.mark.asyncio
 async def test_export_report_csv(monkeypatch):
-    """Should return CSV content when format=csv."""
+    """Should return CSV content when export_format=csv."""
     report = _make_report("rpt-e2")
     mock_service = MagicMock()
     mock_service.get_report.return_value = report
     mock_service.export_csv.return_value = "report_id,framework\nrpt-e2,fedramp_moderate\n"
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
-    result = await router_mod.export_report("rpt-e2", user=_mock_user(), db=MagicMock(), format="csv")
+    result = await router_mod.export_report("rpt-e2", user=_mock_user(), db=MagicMock(), export_format="csv")
 
-    assert result["content_type"] == "text/csv"
-    assert "rpt-e2" in result["data"]
+    assert result.media_type == "text/csv"
+    assert "rpt-e2" in result.body.decode()
 
 
 @pytest.mark.asyncio
@@ -269,7 +279,7 @@ async def test_export_report_unsupported_format(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await router_mod.export_report("rpt-e3", user=_mock_user(), db=MagicMock(), format="xml")
+        await router_mod.export_report("rpt-e3", user=_mock_user(), db=MagicMock(), export_format="xml")
 
     assert exc_info.value.status_code == 400
 
@@ -284,6 +294,64 @@ async def test_export_report_not_found(monkeypatch):
     monkeypatch.setattr(router_mod, "get_compliance_service", lambda: mock_service)
 
     with pytest.raises(HTTPException) as exc_info:
-        await router_mod.export_report("ghost", user=_mock_user(), db=MagicMock(), format="json")
+        await router_mod.export_report("ghost", user=_mock_user(), db=MagicMock(), export_format="json")
 
     assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Integration / deny-path tests
+# ---------------------------------------------------------------------------
+
+
+def test_compliance_unauthenticated():
+    """Should return 401 when no auth context is provided."""
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.routers.compliance_router import router as compliance_router
+
+    app = FastAPI()
+    app.include_router(compliance_router)
+
+    async def no_auth():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    app.dependency_overrides[get_current_user_with_permissions] = no_auth
+    client = TestClient(app)
+    response = client.get("/compliance/frameworks")
+    assert response.status_code == 401
+
+
+def test_compliance_non_admin_forbidden():
+    """Should return 403 for non-admin authenticated user."""
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+    # Restore original decorator, reload router module with real decorator
+    restore_rbac_decorators(_originals)
+    if "mcpgateway.routers.compliance_router" in sys.modules:
+        del sys.modules["mcpgateway.routers.compliance_router"]
+    from mcpgateway.routers.compliance_router import router as real_compliance_router
+
+    app = FastAPI()
+    app.include_router(real_compliance_router)
+
+    async def non_admin_user():
+        return {"email": "user@example.com", "is_admin": False}
+
+    app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
+
+    # Patch PermissionService to deny admin access
+    with patch("mcpgateway.middleware.rbac.PermissionService") as mock_ps:
+        instance = mock_ps.return_value
+        instance.check_admin_permission = AsyncMock(return_value=False)
+        client = TestClient(app)
+        response = client.get("/compliance/frameworks")
+        assert response.status_code == 403
+
+    # Re-patch decorators for remaining tests
+    patch_rbac_decorators()
