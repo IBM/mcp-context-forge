@@ -122,6 +122,16 @@ ContextForge implements a **two-layer security model**:
 - Never trust client-provided ownership fields (`owner_email`, `team_id`, session owner); derive authorization from authenticated identity and server-side state.
 - Security-sensitive changes must include deny-path regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled).
 
+#### UAID Cross-Gateway Security
+
+- UAID cross-gateway routing requires explicit domain allowlist (fail-closed default)
+- Empty `UAID_ALLOWED_DOMAINS` blocks all cross-gateway routing unless `UAID_ALLOW_ALL_DOMAINS=true`
+- Cross-gateway calls forward bearer tokens for RBAC enforcement on remote gateways
+- Both gateways must trust the same JWT issuer (shared `JWT_SECRET_KEY` or federated SSO)
+- `UAID_ALLOW_ALL_DOMAINS=true` is unsafe for production (bypasses allowlist validation)
+- Startup validation logs ERROR if A2A enabled but allowlist not configured
+- Remote gateway 401/403 responses raise `A2AAgentError` with troubleshooting guidance
+
 ### Built-in Roles
 
 | Role | Scope | Key Permissions |

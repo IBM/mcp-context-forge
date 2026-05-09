@@ -13,11 +13,12 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import base64
 import binascii
 from datetime import datetime, timezone
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -100,6 +101,180 @@ def _get_tool_lookup_cache():
 
         _TOOL_LOOKUP_CACHE = tool_lookup_cache
     return _TOOL_LOOKUP_CACHE
+
+
+def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "operation") -> None:
+    """Validate that an endpoint URL's domain is allowed for UAID operations.
+
+    This enforces fail-closed domain allowlist security for UAID-enabled agents.
+    Empty allowlist blocks all external routing unless UAID_ALLOW_ALL_DOMAINS=true.
+
+    Args:
+        endpoint_url: The endpoint URL to validate (e.g., "https://agent.example.com/api")
+        operation_context: Description of operation for error messages (e.g., "registration", "invocation")
+
+    Raises:
+        ValueError: If domain is not in UAID_ALLOWED_DOMAINS or allowlist is empty
+
+    Security Note:
+        This validation prevents SSRF and unauthorized cross-gateway routing by requiring
+        explicit domain authorization. Bypassing this check via UAID_ALLOW_ALL_DOMAINS=true
+        is unsafe for production and should only be used in development/testing.
+    """
+    # Check if bypass flag is set (unsafe for production)
+    if getattr(settings, "uaid_allow_all_domains", False):
+        return  # Bypass validation (development/testing only)
+
+    # Get domain allowlist (fail-closed: empty list means no domains allowed)
+    allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+    if not allowed_domains:
+        raise ValueError(
+            f"UAID {operation_context} blocked for security: UAID_ALLOWED_DOMAINS is empty. "
+            f"Cannot use endpoint {endpoint_url!r} without explicit domain allowlist. "
+            f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains, "
+            f"or set UAID_ALLOW_ALL_DOMAINS=true for development (unsafe for production)."
+        )
+
+    # Extract domain from URL for validation
+    # Handle URLs with or without scheme
+    url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
+    parsed = urlparse(url_to_parse)
+
+    # Extract hostname:port (netloc) for validation to support port-specific allowlisting
+    # Examples:
+    #   - "https://127.0.0.1:4444/api" → "127.0.0.1:4444"
+    #   - "https://example.com/api" → "example.com" (no port)
+    #   - "[::1]:8080" → "[::1]:8080"
+    if parsed.netloc:
+        endpoint_domain = parsed.netloc
+    elif parsed.hostname:  # pragma: no cover
+        # Fallback: just hostname if netloc is empty
+        endpoint_domain = parsed.hostname
+    elif endpoint_url.startswith("[") and "]" in endpoint_url:  # pragma: no cover
+        # IPv6 with brackets: [::1]:8080 -> [::1]:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
+    else:  # pragma: no cover
+        # Regular hostname or IPv4: example.com:8080 -> example.com:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
+
+    # Validate against allowlist with subdomain matching
+    # Matching logic:
+    #   - Exact match: "127.0.0.1:4444" == "127.0.0.1:4444"
+    #   - Subdomain match: "api.example.com:8080" matches "example.com:8080" (same port)
+    #   - Subdomain match: "api.example.com" matches "example.com" (no port required)
+    #   - No match: "api.example.com:8080" does NOT match "example.com:9090" (different port)
+    #   - IPv6 match: "[::1]:8080" matches "::1" (brackets stripped for comparison)
+    def domain_matches(endpoint: str, allowed: str) -> bool:
+        """Check if endpoint domain matches allowed domain (with subdomain support)."""
+        # Exact match
+        if endpoint == allowed:
+            return True
+
+        # Helper to parse hostname and port from domain string
+        def parse_host_port(domain: str) -> tuple[str, str | None]:
+            """Parse domain into (hostname, port).
+
+            Returns:
+                (hostname, port) where port is None if not present
+
+            Examples:
+                "example.com:8080" → ("example.com", "8080")
+                "example.com" → ("example.com", None)
+                "[::1]:8080" → ("::1", "8080")
+                "[::1]" → ("::1", None)
+                "::1" → ("::1", None)
+                "2001:db8::1" → ("2001:db8::1", None)
+                "2001:0db8:0000:0000:0000:0000:0000:0001" → ("2001:0db8:0000:0000:0000:0000:0000:0001", None)
+            """
+            # Handle IPv6 with brackets: [::1]:8080 or [::1]
+            if domain.startswith("["):
+                if "]:" in domain:
+                    # [::1]:8080 → ::1, 8080
+                    host, port = domain.split("]:", 1)
+                    return (host[1:], port)  # Remove leading [
+                if domain.endswith("]"):
+                    # [::1] → ::1, None
+                    return (domain[1:-1], None)
+                # Malformed, treat as-is  # pragma: no cover
+                return (domain, None)  # pragma: no cover
+
+            # Count colons to distinguish IPv6 from hostname:port
+            # IPv6 addresses have multiple colons (::1 has 2, 2001:db8::1 has 3+)
+            # hostname:port has exactly one colon
+            colon_count = domain.count(":")
+
+            if colon_count == 0:
+                # No colons, just a hostname
+                return (domain, None)
+            if colon_count == 1:
+                # Exactly one colon, likely hostname:port
+                parts = domain.split(":", 1)
+                # Verify the second part is a valid port number
+                if parts[1].isdigit():
+                    return (parts[0], parts[1])
+                # Not a port, treat whole thing as hostname  # pragma: no cover
+                return (domain, None)  # pragma: no cover
+            # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
+            return (domain, None)
+
+        endpoint_host, endpoint_port = parse_host_port(endpoint)
+        allowed_host, allowed_port = parse_host_port(allowed)
+
+        # If both have ports, they must match
+        if endpoint_port is not None and allowed_port is not None:
+            if endpoint_port != allowed_port:
+                return False
+            # Ports match, now check hostname (subdomain matching)
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+
+        # If only one has a port, check if hostnames match (ignore port mismatch)
+        # This allows "example.com" in allowlist to match "example.com:8080" in endpoint
+        # But "example.com:8080" in allowlist requires exact port match
+        if allowed_port is None:
+            # Allowed domain has no port, so port-agnostic matching
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+        # Allowed domain has a port, but endpoint doesn't - no match
+        return False
+
+    if not any(domain_matches(endpoint_domain, d) for d in allowed_domains):
+        raise ValueError(
+            f"UAID {operation_context} blocked: endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS. "
+            f"Endpoint: {endpoint_url!r}. "
+            f"Allowed domains: {allowed_domains!r}. "
+            f"Add the domain to UAID_ALLOWED_DOMAINS or set UAID_ALLOW_ALL_DOMAINS=true for development."
+        )
+
+
+def _is_jwt_token(token: str) -> bool:
+    """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
+
+    Rejects local opaque tokens (cf_sess_*, cf_pat_*) that remote gateways
+    cannot validate.
+
+    Args:
+        token: The token string to check.
+
+    Returns:
+        True if the token appears to be a JWT, False otherwise.
+    """
+    if not token:
+        return False
+    # Reject local opaque tokens - remote gateways cannot validate these
+    if token.startswith(("cf_sess_", "cf_pat_")):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    # Lightweight check: each part should be base64url-decodable and non-empty
+    for part in parts:
+        if not part:
+            return False
+        try:
+            padded = part + "=" * (-len(part) % 4)
+            base64.urlsafe_b64decode(padded)
+        except Exception:
+            return False
+    return True
 
 
 # Initialize logging service first
@@ -542,22 +717,51 @@ class A2AAgentService(BaseService):
                     # First-Party
                     from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
 
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # SECURITY: Validate endpoint domain and native_id BEFORE generating UAID
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # All validation runs OUTSIDE the try block so ValueError propagates
+                    # (security rejections must not be silently swallowed).
+                    _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="registration")
+
+                    # Determine native_id for UAID:
+                    # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                    # 2. Otherwise use endpoint_url (standard case)
+                    native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent_data.endpoint_url
+
+                    # Parse native_id consistently regardless of scheme presence
+                    # Reject paths, query strings, and fragments in native_id to prevent SSRF
+                    url_to_parse = native_id_source if native_id_source.startswith(("http://", "https://")) else f"https://{native_id_source}"
+                    parsed = urlparse(url_to_parse)
+                    native_id = parsed.netloc
+                    if parsed.path and parsed.path != "/":
+                        raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                    if parsed.query:
+                        raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                    if parsed.fragment:
+                        raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+
+                    # Validate the native_id against allowlist (if it's different from endpoint_url)
+                    if native_id_source != agent_data.endpoint_url:
+                        _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override")
+
                     try:
                         uaid = generate_uaid(
                             registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                             name=agent_data.name,
                             version=getattr(agent_data, "version", None) or "1.0.0",
                             protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            native_id=agent_data.endpoint_url,
+                            native_id=native_id,
                             skills=getattr(agent_data, "uaid_skills", None) or [],
                         )
 
                         # Store UAID in separate field, keep UUID for id (optimal indexing and URL routing)
+                        # Note: uaid_native_id stores the original endpoint_url (with protocol) for display
                         uaid_metadata = {
                             "uaid": uaid,
                             "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
                             "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            "uaid_native_id": agent_data.endpoint_url,
+                            "uaid_native_id": native_id_source,  # Store the routing address (may differ from endpoint_url)
                         }
                         logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
                     except Exception as uaid_error:
@@ -1390,10 +1594,41 @@ class A2AAgentService(BaseService):
                     agent.auth_type = "query_param"
                     agent.auth_value = None  # Query param auth doesn't use auth_value
 
+            # SECURITY: Re-validate allowlist when endpoint_url changes for existing UAID agents
+            # This prevents SSRF via updating a UAID agent to point to a disallowed domain
+            if getattr(agent, "uaid", None) and is_url_changing:
+                _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="UAID agent endpoint_url update")
+
             # Generate UAID if requested and agent doesn't already have one (UAID is immutable)
             if getattr(agent_data, "generate_uaid", False) and not agent.uaid:
                 # First-Party
                 from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                # SECURITY: Validate endpoint domain and native_id BEFORE generating UAID
+                # All validation runs OUTSIDE the try block so ValueError propagates
+                # (security rejections must not be silently swallowed).
+                _validate_uaid_endpoint_domain(agent.endpoint_url, operation_context="UAID generation during edit")
+
+                # Determine native_id for UAID:
+                # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                # 2. Otherwise use endpoint_url (standard case)
+                native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent.endpoint_url
+
+                # Parse native_id consistently regardless of scheme presence
+                # Reject paths, query strings, and fragments in native_id to prevent SSRF
+                url_to_parse = native_id_source if native_id_source.startswith(("http://", "https://")) else f"https://{native_id_source}"
+                parsed = urlparse(url_to_parse)
+                native_id = parsed.netloc
+                if parsed.path and parsed.path != "/":
+                    raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                if parsed.query:
+                    raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                if parsed.fragment:
+                    raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+
+                # Validate the native_id against allowlist (if it's different from endpoint_url)
+                if native_id_source != agent.endpoint_url:
+                    _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override during edit")
 
                 try:
                     uaid = generate_uaid(
@@ -1401,7 +1636,7 @@ class A2AAgentService(BaseService):
                         name=agent.name,  # Use current agent name
                         version=getattr(agent_data, "version", None) or "1.0.0",
                         protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                        native_id=agent.endpoint_url,  # Use current endpoint_url
+                        native_id=native_id,  # Use native_id without protocol
                         skills=[],  # Empty skills list for now
                     )
 
@@ -1409,7 +1644,7 @@ class A2AAgentService(BaseService):
                     agent.uaid = uaid
                     agent.uaid_registry = getattr(agent_data, "uaid_registry", None) or "context-forge"
                     agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
-                    agent.uaid_native_id = agent.endpoint_url
+                    agent.uaid_native_id = native_id_source  # Store the routing address
 
                     logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
                 except Exception as uaid_error:
@@ -1686,6 +1921,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent by name or ID (UUID/UAID).
 
@@ -1704,6 +1940,7 @@ class A2AAgentService(BaseService):
                 `settings.uaid_max_federation_hops` are rejected to break
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
+            bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
 
         Returns:
             Agent response.
@@ -1763,6 +2000,7 @@ class A2AAgentService(BaseService):
                     user_email=user_email,
                     token_teams=token_teams,
                     hop_count=hop_count,
+                    bearer_token=bearer_token,
                 )
 
             # Found locally - continue with normal invocation
@@ -1814,6 +2052,31 @@ class A2AAgentService(BaseService):
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
         agent_auth_query_params = agent.auth_query_params
+        agent_uaid = getattr(agent, "uaid", None)
+        agent_uaid_native_id = getattr(agent, "uaid_native_id", None)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Validate UAID endpoint domain before invocation
+        # ═══════════════════════════════════════════════════════════════════════════
+        # For locally-registered agents with UAID (cross-gateway capable agents),
+        # validate that the endpoint domain is in the allowlist BEFORE making the
+        # HTTP call. This prevents SSRF via locally-registered agents pointing to
+        # unauthorized external/internal endpoints.
+        #
+        # We validate BOTH uaid_native_id (the canonical endpoint from UAID) AND
+        # endpoint_url (the actual HTTP target). If they diverge (e.g., attacker
+        # updates endpoint_url after creation), both must be authorized.
+        if agent_uaid:
+            try:
+                if agent_uaid_native_id:
+                    _validate_uaid_endpoint_domain(agent_uaid_native_id, operation_context="invocation")
+                # Always validate the actual HTTP target (endpoint_url) for UAID agents
+                # to prevent endpoint_url divergence attacks
+                if agent_endpoint_url:
+                    _validate_uaid_endpoint_domain(agent_endpoint_url, operation_context="invocation")
+            except ValueError as e:
+                # Convert validation error to A2AAgentError for consistent error handling
+                raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {e}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -2119,6 +2382,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Invoke agent on remote gateway via UAID cross-gateway routing.
 
@@ -2133,6 +2397,7 @@ class A2AAgentService(BaseService):
                 `X-Contextforge-UAID-Hop` header). The outbound request
                 stamps `hop_count + 1` so the receiving gateway can
                 enforce `uaid_max_federation_hops`.
+            bearer_token: Bearer token to forward for RBAC enforcement on remote gateway
 
         Returns:
             Agent response from remote gateway
@@ -2153,17 +2418,18 @@ class A2AAgentService(BaseService):
             logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY WARNING: Log authentication gap on first cross-gateway call
+            # SECURITY WARNING: Log cross-gateway authentication model on first call
             # ═══════════════════════════════════════════════════════════════════════════
             global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
             if not _cross_gateway_auth_warning_logged:
                 logger.warning(
                     "⚠️  SECURITY: First cross-gateway UAID call detected. "
-                    "Cross-gateway routing does NOT forward authentication credentials. "
-                    "Remote gateways receive unauthenticated requests. "
+                    "Cross-gateway routing forwards bearer tokens when available for RBAC enforcement on remote gateways. "
+                    "Both gateways must trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
+                    "Calls without bearer tokens will be unauthenticated on the remote gateway. "
                     "Ensure target gateways enforce AUTH_REQUIRED=true and configure UAID_ALLOWED_DOMAINS "
                     "to restrict routing to trusted domains only. "
-                    "See documentation: .env.example lines 85-125 for security implications and mitigations."
+                    "See documentation: docs/security/uaid-cross-gateway-auth.md for security model details."
                 )
                 _cross_gateway_auth_warning_logged = True
 
@@ -2202,27 +2468,12 @@ class A2AAgentService(BaseService):
             except Exception as parse_error:
                 raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
 
-            # Security: Validate endpoint against domain allowlist
-            # Use proper subdomain matching: require exact match OR proper subdomain prefix
-            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
-            if allowed_domains:
-                # Extract just the domain part (without port) for allowlist checking
-                # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
-                # If endpoint doesn't start with scheme, add https:// for parsing
-                url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
-                parsed = urlparse(url_to_parse)
-                endpoint_domain = parsed.hostname or endpoint.split(":")[0]
-
-                # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
-                if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
-                    raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
-            else:
-                # WARNING: Empty allowlist permits arbitrary cross-gateway routing
-                # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
-                logger.warning(
-                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint!r} without domain validation. "
-                    "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
-                )
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Fail-closed domain allowlist enforcement
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Validate endpoint against UAID_ALLOWED_DOMAINS using centralized validation
+            # This enforces fail-closed security and respects UAID_ALLOW_ALL_DOMAINS bypass flag
+            _validate_uaid_endpoint_domain(endpoint, operation_context="cross-gateway routing")
 
             # Construct URL based on protocol (endpoint is now validated).
             # ContextForge-to-ContextForge federation: target the receiving
@@ -2233,17 +2484,28 @@ class A2AAgentService(BaseService):
             # malformed identifier containing `/`, `?`, or `#` cannot
             # smuggle extra path segments or query/fragment data. The
             # parser already validates structure; this is defence in depth.
+            #
+            # Use HTTP for localhost/127.0.0.1 endpoints (development/testing),
+            # HTTPS for all other endpoints (production security default).
+            # Extract host for scheme selection, handling bracketed IPv6
+            if endpoint.startswith("["):
+                scheme_host = endpoint.split("]:")[0] + "]" if "]:" in endpoint else endpoint
+            else:
+                scheme_host = endpoint.split(":")[0]
+            scheme = "http" if scheme_host in ("localhost", "127.0.0.1", "::1", "[::1]") else "https"
+
             if protocol == "a2a":
-                url = f"https://{endpoint}/a2a/{quote(uaid, safe='')}/invoke"
+                # Use the body-based /a2a/invoke endpoint to avoid path parameter issues with UAIDs containing forward slashes
+                url = f"{scheme}://{endpoint}/a2a/invoke"
             elif protocol == "mcp":
-                url = f"https://{endpoint}/mcp/tools/call"
+                url = f"{scheme}://{endpoint}/mcp/tools/call"
             else:
                 raise ValueError(f"Unsupported protocol in UAID: {protocol}")
 
-            # Prepare request payload — matches the receiving gateway's
-            # `/a2a/{agent_name}/invoke` body signature. The UAID is carried
-            # in the URL path; no need to duplicate it in the body.
+            # Prepare request payload — for A2A, pass agent_id in body instead of URL path
+            # to support UAIDs containing forward slashes (e.g., in nativeId component)
             request_data = {
+                "agent_id": uaid,
                 "parameters": parameters,
                 "interaction_type": interaction_type,
             }
@@ -2266,39 +2528,58 @@ class A2AAgentService(BaseService):
             uaid_utils.stamp_hop(headers, hop_count)
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
-            #
-            # Current Behavior:
-            #   Cross-gateway HTTP calls (UAID-based routing) do NOT forward authentication
-            #   credentials. Remote gateways receive unauthenticated requests with no bearer
-            #   token or session context.
-            #
-            # Security Implications:
-            #   1. Remote Gateway MUST Authenticate: The target gateway MUST enforce its own
-            #      authentication layer (AUTH_REQUIRED=true). If disabled, public agents
-            #      are accessible without any authentication.
-            #
-            #   2. No Authorization Context: Remote gateway cannot enforce RBAC based on
-            #      originating user. All cross-gateway calls execute with target gateway's
-            #      public access level.
-            #
-            #   3. Trust Boundary: This gateway trusts the remote gateway's access control.
-            #      If remote gateway is compromised or misconfigured, this becomes a
-            #      security vector.
-            #
-            # Future Work (Roadmap):
-            #   - Bearer token forwarding (requires gateway-to-gateway trust establishment)
-            #   - Mutual TLS authentication (gateway certificates)
-            #   - Trusted gateway registry with signature verification
-            #   - Per-UAID access policies (allowlist/denylist)
-            #
-            # Current Mitigations:
-            #   - UAID_ALLOWED_DOMAINS: Restricts outbound calls to trusted domains
-            #   - Correlation ID logging: Enables cross-gateway request tracing
-            #   - Operator guidance: Documentation warns about unauthenticated cross-gateway calls
-            #
-            # Operators: Set UAID_ALLOWED_DOMAINS to a restrictive allowlist of trusted domains only.
+            # SECURITY: Bearer token forwarding for cross-gateway RBAC enforcement
             # ═══════════════════════════════════════════════════════════════════════════
+            # Forward JWT bearer tokens to remote gateway for RBAC enforcement.
+            # Local opaque tokens (cf_sess_*, cf_pat_*) are NOT forwarded because
+            # remote gateways cannot validate them.
+            # If no token is available, request proceeds without Authorization header
+            # (remote gateway's AUTH_REQUIRED setting determines whether to accept).
+            #
+            # Security Considerations:
+            #   1. Token Trust: Forwarding assumes mutual trust between gateways.
+            #      Only route to domains in UAID_ALLOWED_DOMAINS.
+            #
+            #   2. Token Validation: Remote gateway MUST validate token signature
+            #      using shared JWT_SECRET_KEY or via JWKS endpoint.
+            #
+            #   3. Audit Trail: X-Contextforge-Source-* headers enable tracing
+            #      cross-gateway call chains for security investigations.
+            #
+            #   4. Token Lifecycle: Forwarded token retains original expiry.
+            #      If token expires mid-flight, remote gateway should reject.
+            #
+            # Future Enhancements:
+            #   - Mutual TLS authentication (gateway certificates)
+            #   - Token exchange protocol (gateway-specific tokens)
+            #   - Trusted gateway registry with signature verification
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Only forward JWT-shaped tokens; reject local opaque tokens
+            if bearer_token and not _is_jwt_token(bearer_token):
+                logger.info(
+                    "Non-JWT token detected for cross-gateway call to %s. Not forwarding local opaque token. Remote gateway will receive unauthenticated request.",
+                    uaid,
+                )
+                bearer_token = None
+
+            if bearer_token and settings.uaid_forward_auth:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+                # Add audit headers for tracing cross-gateway calls
+                gateway_id = getattr(settings, "gateway_id", "unknown")
+                headers["X-Contextforge-Source-Gateway"] = gateway_id
+                # Include user email for audit trail (never include token in non-auth headers)
+                if user_email:
+                    headers["X-Contextforge-Source-User"] = user_email
+            elif bearer_token and not settings.uaid_forward_auth:
+                logger.info(
+                    "UAID_FORWARD_AUTH disabled: not forwarding bearer token for cross-gateway call to %s. Remote gateway will receive unauthenticated request.",
+                    uaid,
+                )
+            else:
+                logger.warning(
+                    "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
+                    uaid,
+                )
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()
@@ -2418,6 +2699,59 @@ class A2AAgentService(BaseService):
                 )
 
                 return response
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Authentication and authorization error handling
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Provide clear diagnostics for authentication/authorization failures
+            # to help operators debug cross-gateway JWT trust issues.
+            if http_response.status_code == 401:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authentication failed: HTTP 401 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authentication failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthenticationError", "error_message": f"HTTP 401: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 401,
+                    },
+                )
+                raise A2AAgentError(
+                    "Cross-gateway routing failed: Remote gateway rejected authentication (HTTP 401). "
+                    "Ensure both gateways trust the same JWT signing key (JWT_SECRET_KEY) "
+                    "or configure JWKS endpoint for token validation."
+                )
+
+            if http_response.status_code == 403:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authorization failed: HTTP 403 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authorization failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthorizationError", "error_message": f"HTTP 403: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 403,
+                    },
+                )
+                raise A2AAgentError(
+                    "Cross-gateway routing failed: Remote gateway rejected authorization (HTTP 403). Verify token has required team memberships or roles for the target agent/resource."
+                )
 
             # Capture the remote body for operator-side structured logging
             # (so failures can be diagnosed) but keep the body out of the

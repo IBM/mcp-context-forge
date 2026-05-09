@@ -733,7 +733,34 @@ class Settings(BaseSettings):
         default_factory=list,
         description=(
             "Domain allowlist for UAID cross-gateway routing. When not empty, only UAIDs with endpoints "
-            "ending in these domains will be allowed for cross-gateway routing. Empty list = allow all domains."
+            "ending in these domains will be allowed for cross-gateway routing. "
+            "Empty list = DENY all cross-gateway routing (fail-closed, secure default)."
+        ),
+    )
+
+    uaid_allow_all_domains: bool = Field(
+        default=False,
+        description=(
+            "DANGEROUS: Allow UAID cross-gateway routing to any domain. " "This bypasses domain allowlist validation and should NEVER be used in production. " "Only enable for development/testing."
+        ),
+    )
+
+    uaid_forward_auth: bool = Field(
+        default=True,
+        description=(
+            "Forward bearer tokens in cross-gateway UAID calls for RBAC enforcement on remote gateways. "
+            "Requires both gateways to trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
+            "Disable only if you have an alternative cross-gateway authentication mechanism "
+            "(e.g., mutual TLS, gateway trust tokens, or pre-authenticated service accounts). "
+            "Default: True (recommended for most deployments)."
+        ),
+    )
+
+    uaid_require_allowlist_on_startup: bool = Field(
+        default=False,
+        description=(
+            "Fail-fast mode: abort gateway startup if A2A enabled but UAID allowlist not configured. "
+            "Default false = ERROR log only (non-blocking). Set true for stricter security posture in production."
         ),
     )
 
@@ -762,6 +789,80 @@ class Settings(BaseSettings):
             "while still terminating loops quickly (a ping-pong trips in 4 hops)."
         ),
     )
+
+    @field_validator("uaid_allowed_domains")
+    @classmethod
+    def validate_uaid_allowed_domains(cls, v: List[str]) -> List[str]:
+        """Validate UAID domain allowlist for security.
+
+        Rejects:
+        - localhost, 127.0.0.1 (loopback addresses)
+        - 169.254.x.x (link-local addresses)
+        - Internal IP ranges that should not be in production allowlists
+
+        Args:
+            v: List of allowed domain names
+
+        Returns:
+            Validated domain list
+
+        Raises:
+            ValueError: If any domain is obviously internal/unsafe
+        """
+        if not v:
+            # Empty list is valid (fail-closed default)
+            return v
+
+        invalid_domains = []
+        for domain in v:
+            domain_lower = domain.lower()
+            # Extract host for loopback/link-local checks (strip ports)
+            host_for_check = domain_lower
+            if host_for_check.startswith("[") and "]:" in host_for_check:
+                host_for_check = host_for_check.split("]:")[0] + "]"
+            elif not host_for_check.startswith("[") and ":" in host_for_check and host_for_check.count(":") == 1:
+                # hostname:port (not IPv6) - strip port
+                host_for_check = host_for_check.split(":")[0]
+
+            # Check for localhost variants (including IPv6 bracket notation)
+            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
+                invalid_domains.append((domain, "loopback address"))
+            # Check for link-local
+            elif host_for_check.startswith("169.254."):
+                invalid_domains.append((domain, "link-local address"))
+            # Check for private IP ranges (commonly misconfigured)
+            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.")):
+                invalid_domains.append((domain, "private IP range"))
+            # Check for obviously invalid patterns
+            elif " " in domain or "\t" in domain or "\n" in domain:
+                invalid_domains.append((domain, "contains whitespace"))
+
+        if invalid_domains:
+            error_msgs = [f"'{d}' ({reason})" for d, reason in invalid_domains]
+            raise ValueError(f"Invalid domains in UAID_ALLOWED_DOMAINS: {', '.join(error_msgs)}. Use public DNS names only.")
+
+        return v
+
+    @model_validator(mode="after")
+    def validate_uaid_config_consistency(self) -> Self:
+        """Validate UAID configuration for contradictory settings.
+
+        Warns about:
+        - uaid_allow_all_domains=True AND non-empty allowlist (contradictory)
+
+        Returns:
+            Self for chaining
+
+        Note:
+            Uses logger.warning instead of raising to avoid breaking existing configs
+        """
+        if self.uaid_allow_all_domains and self.uaid_allowed_domains:
+            logger.warning(
+                "⚠️  Configuration conflict: UAID_ALLOW_ALL_DOMAINS=true bypasses the configured UAID_ALLOWED_DOMAINS list. "
+                "The allowlist will be ignored. Either disable UAID_ALLOW_ALL_DOMAINS or remove UAID_ALLOWED_DOMAINS."
+            )
+
+        return self
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
