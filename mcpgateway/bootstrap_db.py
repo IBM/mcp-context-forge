@@ -45,6 +45,7 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
 from filelock import FileLock
 from sqlalchemy import create_engine, inspect, or_, text
 from sqlalchemy.engine import Connection
@@ -55,7 +56,6 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
-from alembic.migration import MigrationContext
 
 # Migration lock to prevent concurrent migrations from multiple workers
 _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
