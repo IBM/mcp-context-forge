@@ -105,8 +105,8 @@ class TestEmailAuthBasic:
     def test_validate_password_basic_success(self, service):
         """Test basic password validation success."""
         # Should not raise any exception with default settings
-        service.validate_password("Password123!")
-        service.validate_password("Simple123!")  # 8+ chars with requirements
+        service.validate_password("SecurePass4$x")
+        service.validate_password("SimplePass4$")  # 8+ chars with requirements
         service.validate_password("VerylongPasswordString1!")
 
     def test_validate_password_empty(self, service):
@@ -120,30 +120,23 @@ class TestEmailAuthBasic:
             service.validate_password(None)
 
     def test_validate_password_with_requirements(self, service):
-        """Test password validation with specific requirements."""
-        # Test with settings patch to simulate strict requirements
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
-            mock_settings.password_min_length = 8
-            mock_settings.password_require_uppercase = True
-            mock_settings.password_require_lowercase = True
-            mock_settings.password_require_numbers = True
-            mock_settings.password_require_special = True
+        """Test password validation with comprehensive policy requirements."""
+        # Valid password meeting all requirements (12+ chars, 3 of 4 types, no sequential)
+        service.validate_password("SecurePass4$x!")
 
-            # Valid password meeting all requirements
-            service.validate_password("SecurePass123!")
+        # Invalid passwords - test complexity requirements (need 3 of 4 types)
+        with pytest.raises(PasswordValidationError, match="at least 3"):
+            service.validate_password("lowercaseonly!")  # only lowercase + special (2 types)
 
-            # Invalid passwords - test one at a time
-            with pytest.raises(PasswordValidationError, match="uppercase"):
-                service.validate_password("lowercase123!")
+        with pytest.raises(PasswordValidationError, match="at least 3"):
+            service.validate_password("UPPERCASEONLY!")  # only uppercase + special (2 types)
 
-            with pytest.raises(PasswordValidationError, match="lowercase"):
-                service.validate_password("UPPERCASE123!")
+        with pytest.raises(PasswordValidationError, match="at least 3"):
+            service.validate_password("PasswordOnly")  # only upper + lower (2 types)
 
-            with pytest.raises(PasswordValidationError, match="number"):
-                service.validate_password("PasswordOnly!")
-
-            with pytest.raises(PasswordValidationError, match="special"):
-                service.validate_password("Password123")
+        # Test minimum length requirement
+        with pytest.raises(PasswordValidationError, match="12 characters"):
+            service.validate_password("Short4$x")  # only 8 chars
 
     # =========================================================================
     # Service Initialization Tests
@@ -338,48 +331,19 @@ class TestEmailAuthBasic:
 
     def test_validate_password_min_length(self, service):
         """Test password validation with minimum length requirement."""
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
-            mock_settings.password_min_length = 12
-            mock_settings.password_require_uppercase = False
-            mock_settings.password_require_lowercase = False
-            mock_settings.password_require_numbers = False
-            mock_settings.password_require_special = False
+        # New policy requires 12+ chars AND 3 of 4 complexity types
+        # Should pass with 12+ chars and complexity
+        service.validate_password("passwordLong4$")  # 14 chars, has lower+upper+number+special
 
-            # Should pass with 12+ chars
-            service.validate_password("passwordlongenough")
-
-            # Should fail with less than 12 chars
-            with pytest.raises(PasswordValidationError, match="12 characters"):
-                service.validate_password("short")
+        # Should fail with less than 12 chars
+        with pytest.raises(PasswordValidationError, match="12 characters"):
+            service.validate_password("Short4$x")  # only 8 chars
 
     def test_validate_password_complex_requirements(self, service):
-        """Test password validation with complex requirements."""
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
-            mock_settings.password_min_length = 10
-            mock_settings.password_require_uppercase = True
-            mock_settings.password_require_lowercase = True
-            mock_settings.password_require_numbers = True
-            mock_settings.password_require_special = True
-
-            # Valid complex password
-            service.validate_password("Complex123!Pass")
-            service.validate_password("AnotherGood@Pass99")
-
-            # Missing uppercase
-            with pytest.raises(PasswordValidationError, match="uppercase"):
-                service.validate_password("nouppcase123!")
-
-            # Missing lowercase
-            with pytest.raises(PasswordValidationError, match="lowercase"):
-                service.validate_password("NOLOWERCASE123!")
-
-            # Missing numbers
-            with pytest.raises(PasswordValidationError, match="number"):
-                service.validate_password("NoNumbers!Here")
-
-            # Missing special characters
-            with pytest.raises(PasswordValidationError, match="special"):
-                service.validate_password("NoSpecialChar123")
+        """Test password validation with comprehensive policy complexity requirements."""
+        # Valid complex passwords (12+ chars, 3 of 4 types, no sequential)
+        service.validate_password("ComplexPass4$xy")  # has all 4 types, no "123"
+        service.validate_password("AnotherGood@Pass")  # 16 chars, has upper+lower+special (3 types)
 
     def test_validate_password_policy_disabled_returns_true(self, service):
         """Test password validation returns True when global password policy is disabled."""
@@ -454,7 +418,7 @@ class TestEmailAuthServiceUserManagement:
             # Need to also patch where validate_password imports settings
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 # Create user
-                result = await service.create_user(email="newuser@example.com", password="SecurePass123", full_name="New User", is_admin=False, auth_provider="local")
+                result = await service.create_user(email="newuser@example.com", password="SecurePass4$x", full_name="New User", is_admin=False, auth_provider="local")
 
                 # Verify user was added to database
                 mock_db.add.assert_called()
@@ -462,7 +426,7 @@ class TestEmailAuthServiceUserManagement:
                 mock_db.refresh.assert_called()
 
                 # Verify password was hashed (async version is called via asyncio.to_thread)
-                mock_password_service.hash_password_async.assert_called_once_with("SecurePass123")
+                mock_password_service.hash_password_async.assert_called_once_with("SecurePass4$x")
 
     @pytest.mark.asyncio
     async def test_create_user_hashes_password_before_first_db_lookup(self, service, mock_db):
@@ -493,7 +457,7 @@ class TestEmailAuthServiceUserManagement:
                 mock_settings.password_require_numbers = False
                 mock_settings.password_require_special = False
 
-                await service.create_user(email="ordered@example.com", password="SecurePass123")
+                await service.create_user(email="ordered@example.com", password="SecurePass4$x")
 
         assert call_order[:2] == ["hash", "lookup"]
         assert isinstance(mock_db.add.call_args_list[0][0][0], EmailUser)
@@ -508,7 +472,7 @@ class TestEmailAuthServiceUserManagement:
 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
-            mock_settings.password_min_length = 7  # Pass123 is 7 chars
+            mock_settings.password_min_length = 7  # SecurePass4$ is 7 chars
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -520,7 +484,7 @@ class TestEmailAuthServiceUserManagement:
                 mock_team.name = "Personal Team"
                 mock_personal_team_service.create_personal_team = AsyncMock(return_value=mock_team)
 
-                result = await service.create_user(email="user@example.com", password="Pass123", full_name="User Name")
+                result = await service.create_user(email="user@example.com", password="SecurePass4$", full_name="User Name")
 
                 # Verify personal team service was called
                 MockPersonalTeamService.assert_called_once_with(mock_db)
@@ -547,7 +511,7 @@ class TestEmailAuthServiceUserManagement:
                 mock_personal_team_service.create_personal_team = AsyncMock(side_effect=Exception("Team creation failed"))
 
                 # User creation should still succeed
-                result = await service.create_user(email="user@example.com", password="Pass123")
+                result = await service.create_user(email="user@example.com", password="SecurePass4$")
 
                 # User should have been created despite team failure
                 mock_db.add.assert_called()
@@ -560,7 +524,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(UserExistsError, match="already exists"):
-            await service.create_user(email="test@example.com", password="Password123!")
+            await service.create_user(email="test@example.com", password="SecurePass4$x")
 
     @pytest.mark.asyncio
     async def test_create_user_database_integrity_error(self, service, mock_db, mock_password_service):
@@ -580,7 +544,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with pytest.raises(UserExistsError):
-                await service.create_user(email="duplicate@example.com", password="Pass123")
+                await service.create_user(email="duplicate@example.com", password="SecurePass4$")
 
             # Verify rollback was called
             mock_db.rollback.assert_called()
@@ -603,7 +567,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with pytest.raises(Exception, match="Database connection lost"):
-                await service.create_user(email="user@example.com", password="Pass123")
+                await service.create_user(email="user@example.com", password="SecurePass4$")
 
             # Verify rollback was called
             mock_db.rollback.assert_called()
@@ -623,7 +587,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
-                result = await service.create_user(email="active@example.com", password="SecurePass123", full_name="Active User", is_admin=False, is_active=True, auth_provider="local")
+                result = await service.create_user(email="active@example.com", password="SecurePass4$x", full_name="Active User", is_admin=False, is_active=True, auth_provider="local")
 
                 # Verify user was added with is_active=True
                 mock_db.add.assert_called()
@@ -647,7 +611,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
-                result = await service.create_user(email="inactive@example.com", password="SecurePass123", full_name="Inactive User", is_admin=False, is_active=False, auth_provider="local")
+                result = await service.create_user(email="inactive@example.com", password="SecurePass4$x", full_name="Inactive User", is_admin=False, is_active=False, auth_provider="local")
 
                 # Verify user was added with is_active=False
                 mock_db.add.assert_called()
@@ -672,7 +636,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="pwchange@example.com", password="TempPass123", full_name="Password Change User", is_admin=False, password_change_required=True, auth_provider="local"
+                    email="pwchange@example.com", password="TempSecurePass4$", full_name="Password Change User", is_admin=False, password_change_required=True, auth_provider="local"
                 )
 
                 # Verify user was added with password_change_required=True
@@ -698,7 +662,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="nopwchange@example.com", password="SecurePass123", full_name="No Password Change User", is_admin=False, password_change_required=False, auth_provider="local"
+                    email="nopwchange@example.com", password="SecurePass4$x", full_name="No Password Change User", is_admin=False, password_change_required=False, auth_provider="local"
                 )
 
                 # Verify user was added with password_change_required=False
@@ -724,7 +688,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="combined@example.com", password="TempPass123", full_name="Combined Fields User", is_admin=False, is_active=False, password_change_required=True, auth_provider="local"
+                    email="combined@example.com", password="TempSecurePass4$", full_name="Combined Fields User", is_admin=False, is_active=False, password_change_required=True, auth_provider="local"
                 )
 
                 # Verify user was added with both fields set correctly
@@ -751,7 +715,7 @@ class TestEmailAuthServiceUserManagement:
 
             await service.create_user(
                 email="  User@EXAMPLE.Com  ",  # Mixed case with whitespace
-                password="Pass123",
+                password="SecurePass4$",
             )
 
             # Verify the email was normalized when checking for existing user
@@ -1236,7 +1200,7 @@ class TestEmailAuthServiceUserManagement:
                 with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock(return_value=None)):
                         with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(return_value=True)):
-                            result = await service.reset_password_with_token(token="token", new_password="NewPassword123!")
+                            result = await service.reset_password_with_token(token="token", new_password="NewSecurePass4$x")
 
         assert result is True
         assert user.password_hash == "new_hashed_password"
@@ -1255,7 +1219,7 @@ class TestEmailAuthServiceUserManagement:
         with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
             with patch.object(service, "_fetch_user_from_db", return_value=None):
                 with pytest.raises(AuthenticationError, match="invalid"):
-                    await service.reset_password_with_token(token="token", new_password="NewPassword123!")
+                    await service.reset_password_with_token(token="token", new_password="NewSecurePass4$x")
 
     @pytest.mark.asyncio
     async def test_reset_password_with_token_reused_password_rejected(self, service, mock_password_service):
@@ -1278,6 +1242,31 @@ class TestEmailAuthServiceUserManagement:
                 with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with pytest.raises(PasswordValidationError, match="different"):
                         await service.reset_password_with_token(token="token", new_password="same-password")
+
+    @pytest.mark.asyncio
+    async def test_reset_password_with_token_history_fail_closed_on_exception(self, service, mock_password_service):
+        """Reset password fails closed when history check raises unexpected exception."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        reset_token = MagicMock(spec=PasswordResetToken)
+        reset_token.user_email = "user@example.com"
+
+        user = MagicMock(spec=EmailUser)
+        user.email = "user@example.com"
+        user.is_active = True
+        user.password_hash = "old_hash"
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            mock_policy_service.check_password_history = AsyncMock(side_effect=RuntimeError("Database connection failed"))
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
+                with patch.object(service, "_fetch_user_from_db", return_value=user):
+                    with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
+                        await service.reset_password_with_token(token="token", new_password="NewSecurePass4$x!")
 
     @pytest.mark.asyncio
     async def test_reset_password_with_token_confirmation_email_failure_non_fatal_and_outstanding_tokens_invalidated(self, service, mock_db, mock_password_service):
@@ -1311,7 +1300,7 @@ class TestEmailAuthServiceUserManagement:
             with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
                 with patch.object(service, "_fetch_user_from_db", return_value=user):
                     with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(side_effect=RuntimeError("smtp"))):
-                        result = await service.reset_password_with_token(token="token", new_password="NewPassword123!")
+                        result = await service.reset_password_with_token(token="token", new_password="NewSecurePass4$x")
 
         assert result is True
         assert outstanding.used_at is not None
@@ -1348,7 +1337,7 @@ class TestEmailAuthServiceUserManagement:
     async def test_change_password_requires_old_password(self, service):
         """Test change_password raises when old_password is missing."""
         with pytest.raises(AuthenticationError, match="Current password is required"):
-            await service.change_password(email="test@example.com", old_password=None, new_password="NewSecurePass123!")
+            await service.change_password(email="test@example.com", old_password=None, new_password="NewSecurePass4$x!")
 
     @pytest.mark.asyncio
     async def test_change_password_success(self, service, mock_db, mock_user, mock_password_service):
@@ -1362,7 +1351,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.hash_password.return_value = "new_hashed_password"
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
-        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
+        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!", ip_address="192.168.1.1")
 
         assert result is True
         assert mock_user.password_hash == "new_hashed_password"
@@ -1391,7 +1380,7 @@ class TestEmailAuthServiceUserManagement:
                         mock_settings.password_require_special = False
                         mock_settings.password_prevent_reuse = True
 
-                        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!")
+                        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!")
 
         assert result is True
         assert mock_user.password_hash == "new_hashed_password"
@@ -1426,7 +1415,7 @@ class TestEmailAuthServiceUserManagement:
                         mock_settings.password_require_special = False
                         mock_settings.password_prevent_reuse = True
 
-                        assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!") is True
+                        assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!") is True
 
     @pytest.mark.asyncio
     async def test_change_password_auth_cache_invalidation_exception_is_non_fatal(self, service, mock_user, mock_password_service):
@@ -1449,7 +1438,7 @@ class TestEmailAuthServiceUserManagement:
                     mock_settings.password_require_special = False
                     mock_settings.password_prevent_reuse = True
 
-                    assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!") is True
+                    assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!") is True
 
     @pytest.mark.asyncio
     async def test_change_password_outer_cache_invalidation_exception_is_non_fatal(self, service, mock_user, mock_password_service):
@@ -1469,7 +1458,7 @@ class TestEmailAuthServiceUserManagement:
                     mock_settings.password_require_special = False
                     mock_settings.password_prevent_reuse = True
 
-                    assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!") is True
+                    assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!") is True
 
     @pytest.mark.asyncio
     async def test_change_password_clears_password_change_required_flag(self, service, mock_db, mock_user, mock_password_service):
@@ -1486,7 +1475,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.hash_password.return_value = "new_hashed_password"
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
-        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
+        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!", ip_address="192.168.1.1")
 
         assert result is True
         # Verify the flag was cleared - this is the key assertion for #1842
@@ -1510,11 +1499,29 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
+        # Set a password hash on the user
+        mock_user.password_hash = "hashed_password"
+
         # Both old and new passwords verify as True (same password)
         mock_password_service.verify_password.return_value = True
+        mock_password_service.verify_password_async = AsyncMock(return_value=True)
 
-        with pytest.raises(PasswordValidationError, match="must be different"):
-            await service.change_password(email="test@example.com", old_password="Password123!", new_password="Password123!")
+        # Mock PasswordPolicyService to raise the error
+        # First-Party
+        from mcpgateway.services.password_policy_service import PasswordPolicyError
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            mock_policy_service.check_password_history = AsyncMock(
+                side_effect=PasswordPolicyError("New password must be different from current password")
+            )
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_prevent_reuse = True
+
+                with pytest.raises(PasswordValidationError, match="must be different"):
+                    await service.change_password(email="test@example.com", old_password="SecurePass4$x", new_password="SecurePass4$x")
 
     @pytest.mark.skip(reason="Complex mock interaction with finally block - core functionality covered by other tests")
     @pytest.mark.asyncio
@@ -1554,15 +1561,25 @@ class TestEmailAuthServiceUserManagement:
     async def test_change_password_rolls_back_on_commit_error(self, service, mock_db, mock_user, mock_password_service):
         """Test change_password rolls back and re-raises when DB commit fails."""
         service.password_service = mock_password_service
+
+        # Set password hash on user
+        mock_user.password_hash = "old_hashed_password"
+
         mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
+        # There are 2 commits in change_password:
+        # 1. Main password change commit - this is what we want to fail
+        # 2. Auth event commit in finally block
         commit_calls = {"count": 0}
 
         def commit_side_effect():
             commit_calls["count"] += 1
+            # First commit (main password change) fails - should raise
             if commit_calls["count"] == 1:
                 raise Exception("Database error")
+            # Second commit (auth event in finally block) succeeds
+            return None
 
         mock_db.commit.side_effect = commit_side_effect
 
@@ -1577,9 +1594,12 @@ class TestEmailAuthServiceUserManagement:
                 mock_settings.password_prevent_reuse = True
 
                 with pytest.raises(Exception, match="Database error"):
-                    await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!")
+                    await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x!")
 
+        # Verify rollback was called after the first commit failed
         mock_db.rollback.assert_called_once()
+        # Verify two commits were attempted (main + finally block)
+        assert commit_calls["count"] == 2
 
     # =========================================================================
     # Platform Admin Tests
@@ -1599,7 +1619,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            result = await service.create_platform_admin(email="admin@example.com", password="AdminPass123!", full_name="Platform Admin")
+            result = await service.create_platform_admin(email="admin@example.com", password="AdminSecurePass4$!", full_name="Platform Admin")
 
             mock_db.add.assert_called()
             mock_db.commit.assert_called()
@@ -1620,7 +1640,7 @@ class TestEmailAuthServiceUserManagement:
 
         result = await service.create_platform_admin(
             email="test@example.com",
-            password="NewAdminPass123!",
+            password="NewAdminSecurePass4$!",
             full_name="Admin",  # Same name
         )
 
@@ -1641,7 +1661,7 @@ class TestEmailAuthServiceUserManagement:
             mock_password_service.hash_password_async = AsyncMock(return_value="new_admin_hash")
 
             with patch("mcpgateway.services.email_auth_service.utc_now", side_effect=Exception("utc-now-failure")):
-                result = await service.create_platform_admin(email="test@example.com", password="NewAdminPass123!", full_name="Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="NewAdminSecurePass4$!", full_name="Admin")
 
         assert result == mock_user
         assert mock_user.password_hash == "new_admin_hash"
@@ -2170,14 +2190,15 @@ class TestEmailAuthServiceUserUpdates:
         """Test updating user's password."""
         service.password_service = mock_password_service
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(email="test@example.com", password="NewSecurePass123!")
+        result = await service.update_user(email="test@example.com", password="NewSecurePass4$x!")
 
         assert mock_user.password_hash == "new_hashed_password"
-        mock_password_service.hash_password_async.assert_called_once_with("NewSecurePass123!")
+        mock_password_service.hash_password_async.assert_called_once_with("NewSecurePass4$x!")
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
@@ -2255,11 +2276,12 @@ class TestEmailAuthServiceUserUpdates:
         """Test updating multiple fields including is_active and password_change_required."""
         service.password_service = mock_password_service
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(email="test@example.com", full_name="Updated Name", is_admin=True, is_active=False, password_change_required=True, password="NewPassword123!")
+        result = await service.update_user(email="test@example.com", full_name="Updated Name", is_admin=True, is_active=False, password_change_required=True, password="NewSecurePass4$xVeryLongForAdmin22!")
 
         assert mock_user.full_name == "Updated Name"
         assert mock_user.is_admin is True
@@ -2350,6 +2372,24 @@ class TestEmailAuthServiceUserUpdates:
         with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
             with pytest.raises(ValueError, match="last remaining active admin"):
                 await service.update_user(email="admin@example.com", is_admin=False)
+
+    @pytest.mark.asyncio
+    async def test_update_user_password_history_fail_closed_on_exception(self, service, mock_db, mock_user, mock_password_service):
+        """Update user password fails closed when history check raises unexpected exception."""
+        service.password_service = mock_password_service
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            mock_policy_service.check_password_history = AsyncMock(side_effect=RuntimeError("Database connection failed"))
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
+                await service.update_user(email="test@example.com", password="NewSecurePass4$xVeryLongForAdmin22!")
 
     @pytest.mark.asyncio
     async def test_activate_user_success(self, service, mock_db, mock_user):
@@ -2948,4 +2988,235 @@ class TestEmailAuthServiceAdminCounting:
         mock_db.execute.side_effect = [user_result, count_result]
 
         result = await service.is_last_active_admin("admin@test.com")
-        assert result is True
+
+    # =========================================================================
+    # Password Policy Fallback Tests (Coverage for lines 294-320, 1145-1146, 1152-1154)
+    # =========================================================================
+
+    def test_validate_password_legacy_fallback_on_import_error(self, service, mock_db):
+        """Test legacy password validation when PasswordPolicyService import fails."""
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_min_length = 10
+                mock_settings.password_require_uppercase = True
+                mock_settings.password_require_lowercase = True
+                mock_settings.password_require_numbers = True
+                mock_settings.password_require_special = True
+
+                # Test password too short
+                with pytest.raises(PasswordValidationError, match="at least 10 characters"):
+                    service.validate_password("Short1!", "user@example.com")
+
+                # Test missing uppercase
+                with pytest.raises(PasswordValidationError, match="uppercase letter"):
+                    service.validate_password("lowercase123!", "user@example.com")
+
+                # Test missing lowercase
+                with pytest.raises(PasswordValidationError, match="lowercase letter"):
+                    service.validate_password("UPPERCASE123!", "user@example.com")
+
+                # Test missing numbers
+                with pytest.raises(PasswordValidationError, match="number"):
+                    service.validate_password("NoNumbers!", "user@example.com")
+
+                # Test missing special characters
+                with pytest.raises(PasswordValidationError, match="special character"):
+                    service.validate_password("NoSpecial123", "user@example.com")
+
+                # Test valid password passes all checks
+                result = service.validate_password("ValidPass123!", "user@example.com")
+                assert result is True
+
+    def test_validate_password_legacy_fallback_minimal_requirements(self, service, mock_db):
+        """Test legacy validation with minimal requirements (all checks disabled)."""
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_min_length = 8
+                mock_settings.password_require_uppercase = False
+                mock_settings.password_require_lowercase = False
+                mock_settings.password_require_numbers = False
+                mock_settings.password_require_special = False
+
+                # Simple 8-char password should pass
+                result = service.validate_password("simple12", "user@example.com")
+                assert result is True
+
+    @pytest.mark.asyncio
+    async def test_change_password_history_fallback_on_import_error(self, service, mock_db):
+        """Test password history fallback when PasswordPolicyService import fails."""
+        # Create mock password service
+        mock_password_service = MagicMock(spec=Argon2PasswordService)
+        mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+        service.password_service = mock_password_service
+
+        # Create mock user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "old_hashed_password"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                # Configure all settings needed for legacy validation
+                mock_settings.password_prevent_reuse = True
+                mock_settings.password_policy_enabled = True
+                mock_settings.password_min_length = 8
+                mock_settings.password_require_uppercase = False
+                mock_settings.password_require_lowercase = False
+                mock_settings.password_require_numbers = False
+                mock_settings.password_require_special = False
+
+                result = await service.change_password(
+                    email="test@example.com",
+                    old_password="OldSecurePass4$x!",
+                    new_password="NewSecurePass4$x!"
+                )
+
+                assert result is True
+                mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_change_password_history_fallback_rejects_same_password(self, service, mock_db):
+        """Test password history fallback rejects same password when PasswordPolicyService import fails."""
+        # Create mock password service
+        mock_password_service = MagicMock(spec=Argon2PasswordService)
+        mock_password_service.verify_password.return_value = True
+        mock_password_service.verify_password_async = AsyncMock(return_value=True)
+        service.password_service = mock_password_service
+
+        # Create mock user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "hashed_password"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                # Configure all settings needed for legacy validation
+                mock_settings.password_prevent_reuse = True
+                mock_settings.password_policy_enabled = True
+                mock_settings.password_min_length = 8
+                mock_settings.password_require_uppercase = False
+                mock_settings.password_require_lowercase = False
+                mock_settings.password_require_numbers = False
+                mock_settings.password_require_special = False
+
+                with pytest.raises(PasswordValidationError, match="must be different from current password"):
+                    await service.change_password(
+                        email="test@example.com",
+                        old_password="SameSecurePass4$x!",
+                        new_password="SameSecurePass4$x!"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_change_password_history_fail_closed_on_exception(self, service, mock_db):
+        """Test password history fails closed when PasswordPolicyService check raises non-policy exception."""
+        # Create mock password service
+        mock_password_service = MagicMock(spec=Argon2PasswordService)
+        mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+        service.password_service = mock_password_service
+
+        # Create mock user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "old_hashed_password"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            # Simulate a non-PasswordPolicyError exception (e.g., database error)
+            mock_policy_service.check_password_history = AsyncMock(side_effect=RuntimeError("Database connection failed"))
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_prevent_reuse = True
+
+                # Should fail closed and reject the password change
+                with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
+                    await service.change_password(
+                        email="test@example.com",
+                        old_password="OldSecurePass4$x!",
+                        new_password="NewSecurePass4$x!"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_change_password_history_fail_closed_rejects_same_on_exception(self, service, mock_db):
+        """Test password history fails closed even when new password matches current."""
+        # Create mock password service
+        mock_password_service = MagicMock(spec=Argon2PasswordService)
+        mock_password_service.verify_password.side_effect = [True, True]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, True])
+        service.password_service = mock_password_service
+
+        # Create mock user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "old_hashed_password"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            # Simulate a non-PasswordPolicyError exception (e.g., database error)
+            mock_policy_service.check_password_history = AsyncMock(side_effect=RuntimeError("Database connection failed"))
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_prevent_reuse = True
+
+                # Should fail closed and reject the password change
+                with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
+                    await service.change_password(
+                        email="test@example.com",
+                        old_password="OldSecurePass4$x!",
+                        new_password="OldSecurePass4$x!"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_change_password_history_fallback_rejects_same_on_exception(self, service, mock_db):
+        """Test password history fallback rejects same password when PasswordPolicyService check raises exception."""
+        # Create mock password service
+        mock_password_service = MagicMock(spec=Argon2PasswordService)
+        mock_password_service.verify_password.return_value = True
+        mock_password_service.verify_password_async = AsyncMock(return_value=True)
+        service.password_service = mock_password_service
+
+        # Create mock user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "test@example.com"
+        mock_user.password_hash = "hashed_password"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as mock_policy_service_cls:
+            mock_policy_service = AsyncMock()
+            # Simulate a non-PasswordPolicyError exception
+            mock_policy_service.check_password_history = AsyncMock(side_effect=RuntimeError("Database error"))
+            mock_policy_service_cls.return_value = mock_policy_service
+
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_prevent_reuse = True
+
+                with pytest.raises(PasswordValidationError, match="Unable to verify password history"):
+                    await service.change_password(
+                        email="test@example.com",
+                        old_password="SameSecurePass4$x!",
+                        new_password="SameSecurePass4$x!"
+                    )

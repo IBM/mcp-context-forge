@@ -78,7 +78,7 @@ async def test_create_user_personal_team_creation_fails(email_auth_service, mock
                     # Should not raise exception, just log warning
                     user = await email_auth_service.create_user(
                         email="test@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedUserPass4$xy!",
                         is_admin=False,
                     )
 
@@ -113,7 +113,7 @@ async def test_create_user_admin_platform_admin_role_assignment_fails(email_auth
                 # Should not raise exception, just log warning
                 user = await email_auth_service.create_user(
                     email="admin@example.com",
-                    password="ValidPass123!",
+                    password="ValidPrivilegedUserPass4$xy!",
                     is_admin=True,
                 )
 
@@ -156,7 +156,7 @@ async def test_create_user_admin_team_admin_role_assignment(email_auth_service, 
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                     user = await email_auth_service.create_user(
                         email="admin@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedUserPass4$xy!",
                         is_admin=True,
                     )
 
@@ -198,7 +198,7 @@ async def test_create_user_admin_team_admin_role_not_found(email_auth_service, m
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                     user = await email_auth_service.create_user(
                         email="admin@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedUserPass4$xy!",
                         is_admin=True,
                     )
 
@@ -232,7 +232,7 @@ async def test_create_user_non_admin_platform_viewer_role_assignment_fails(email
                 # Should not raise exception, just log warning
                 user = await email_auth_service.create_user(
                     email="user@example.com",
-                    password="ValidPass123!",
+                    password="ValidPrivilegedAcct4$xy!",
                     is_admin=False,
                 )
 
@@ -275,7 +275,7 @@ async def test_create_user_non_admin_team_admin_role_assignment(email_auth_servi
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                     user = await email_auth_service.create_user(
                         email="user@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedAcct4$xy!",
                         is_admin=False,
                     )
 
@@ -317,7 +317,7 @@ async def test_create_user_non_admin_team_admin_role_not_found(email_auth_servic
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                     user = await email_auth_service.create_user(
                         email="user@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedAcct4$xy!",
                         is_admin=False,
                     )
 
@@ -363,7 +363,7 @@ async def test_create_user_admin_team_owner_role_assignment_fails(email_auth_ser
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                     user = await email_auth_service.create_user(
                         email="admin@example.com",
-                        password="ValidPass123!",
+                        password="ValidPrivilegedUserPass4$xy!",
                         is_admin=True,
                     )
 
@@ -392,7 +392,7 @@ async def test_create_user_role_assignment_exception(email_auth_service, mock_db
                 # Should not raise exception, just log error
                 user = await email_auth_service.create_user(
                     email="user@example.com",
-                    password="ValidPass123!",
+                    password="ValidPrivilegedAcct4$xy!",
                     is_admin=False,
                 )
 

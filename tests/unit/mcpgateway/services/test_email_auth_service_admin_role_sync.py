@@ -47,7 +47,7 @@ async def test_create_user_admin_role_not_found(mock_db):
                 mock_role_service.assign_role_to_user = AsyncMock()
 
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
-                    user = await service.create_user(email="test@example.com", password="TestPass123!", is_admin=True)
+                    user = await service.create_user(email="test@example.com", password="ValidPrivilegedUserPass4$xy!", is_admin=True)
 
                     # User created despite role not found
                     assert user.is_admin is True
@@ -277,12 +277,12 @@ async def test_create_platform_admin_new_user_assigns_role(mock_db):
 
         with patch.object(service, "create_user", new=AsyncMock(return_value=new_admin)) as mock_create_user:
             # Call create_platform_admin
-            result = await service.create_platform_admin(email="newadmin@example.com", password="newpass", full_name="New Admin")
+            result = await service.create_platform_admin(email="newadmin@example.com", password="NewAdminPass4$x!", full_name="New Admin")
 
             # Verify create_user was called with is_admin=True
             mock_create_user.assert_called_once_with(
                 email="newadmin@example.com",
-                password="newpass",
+                password="NewAdminPass4$x!",
                 full_name="New Admin",
                 is_admin=True,
                 auth_provider="local",
@@ -318,7 +318,7 @@ async def test_create_platform_admin_existing_user_assigns_role(mock_db):
                     mock_role_service_cls.return_value = mock_role_service
 
                     # Call create_platform_admin
-                    result = await service.create_platform_admin(email="test@example.com", password="newpass", full_name="Test Admin")
+                    result = await service.create_platform_admin(email="test@example.com", password="NewAdminPass4$x!", full_name="Test Admin")
 
                     # Verify user was updated
                     assert result.is_admin is True
@@ -362,7 +362,7 @@ async def test_create_platform_admin_existing_user_role_already_assigned(mock_db
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Call create_platform_admin
-                result = await service.create_platform_admin(email="test@example.com", password="samepass", full_name="Test Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="SameAdminPass4$!", full_name="Test Admin")
 
                 # Verify user was updated
                 assert result.is_admin is True
@@ -398,7 +398,7 @@ async def test_create_platform_admin_existing_user_role_not_found(mock_db):
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Call create_platform_admin - should succeed despite role not found
-                result = await service.create_platform_admin(email="test@example.com", password="pass", full_name="Test Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="AdminTestPass4$!", full_name="Test Admin")
 
                 # Verify user was updated with is_admin=True
                 assert result.is_admin is True
@@ -435,7 +435,7 @@ async def test_create_platform_admin_existing_user_inactive_assignment(mock_db):
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Call create_platform_admin
-                result = await service.create_platform_admin(email="test@example.com", password="pass", full_name="Test Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="AdminTestPass4$!", full_name="Test Admin")
 
                 # Verify user was updated
                 assert result.is_admin is True
@@ -465,7 +465,7 @@ async def test_create_platform_admin_existing_user_role_assignment_exception(moc
                 mock_role_service_cls.return_value = mock_role_service
 
                 # Call create_platform_admin - should succeed despite exception
-                result = await service.create_platform_admin(email="test@example.com", password="pass", full_name="Test Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="AdminTestPass4$!", full_name="Test Admin")
 
                 # Verify user was still updated with is_admin=True
                 assert result.is_admin is True
@@ -490,7 +490,7 @@ async def test_create_platform_admin_role_sync_rollback_also_fails(mock_db):
                 mock_role_service.get_role_by_name = AsyncMock(side_effect=Exception("DB error"))
                 mock_role_service_cls.return_value = mock_role_service
 
-                result = await service.create_platform_admin(email="test@example.com", password="pass", full_name="Test Admin")
+                result = await service.create_platform_admin(email="test@example.com", password="AdminTestPass4$!", full_name="Test Admin")
 
                 assert result.is_admin is True
                 assert result.is_active is True

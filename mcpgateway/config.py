@@ -931,12 +931,16 @@ class Settings(BaseSettings):
     argon2id_memory_cost: int = Field(default=65536, description="Argon2id memory cost in KiB")
     argon2id_parallelism: int = Field(default=1, description="Argon2id parallelism (number of threads)")
 
-    # Password Policy Configuration
-    password_min_length: int = Field(default=8, description="Minimum password length")
+    # Password Policy Configuration (Enhanced per pentesting recommendations)
+    password_min_length: int = Field(default=8, description="Minimum password length (legacy - use password_min_length_user)")
+    password_min_length_user: int = Field(default=12, description="Minimum password length for user accounts (OWASP recommendation)")
+    password_min_length_privileged: int = Field(default=22, description="Minimum password length for privileged accounts (12 + 10 chars)")
+    password_min_length_service: int = Field(default=20, description="Minimum password length for service accounts (64-128 bit entropy)")
     password_require_uppercase: bool = Field(default=True, description="Require uppercase letters in passwords")
     password_require_lowercase: bool = Field(default=True, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
     password_require_special: bool = Field(default=True, description="Require special characters in passwords")
+    password_history_count: int = Field(default=5, description="Number of previous passwords to prevent reuse")
 
     # Password change enforcement and policy toggles
     password_change_enforcement_enabled: bool = Field(default=True, description="Master switch for password change enforcement checks")

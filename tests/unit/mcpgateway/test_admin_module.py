@@ -273,35 +273,25 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
     assert admin.validate_password_strength("short") == (True, "")
 
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 8)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", True)
-    monkeypatch.setattr(admin.settings, "password_require_special", True)
+    # PasswordPolicyService uses password_min_length_user=12 and 3-of-4 complexity
 
-    ok, msg = admin.validate_password_strength("Abcdef1!")
+    ok, msg = admin.validate_password_strength("AzxWq1!MnbvC2@")
     assert ok is True and msg == ""
 
     ok, msg = admin.validate_password_strength("abcdef1!")
-    assert ok is False and "uppercase" in msg
+    assert ok is False and "at least 12" in msg
 
 
 @pytest.mark.parametrize(
-    ("required_attr", "password", "expected_fragment"),
+    ("password", "expected_fragment"),
     [
-        ("password_require_lowercase", "ABCDEFGH", "lowercase"),
-        ("password_require_numbers", "Abcdefgh", "number"),
-        ("password_require_special", "Abcdefg1", "special character"),
+        ("ABCDEFGH", "at least 12"),       # Too short, no lowercase/numbers/special
+        ("Abcdefgh", "at least 12"),       # Too short, no numbers/special
+        ("Abcdefg1", "at least 12"),       # Too short, no special
     ],
 )
-def test_validate_password_strength_requirement_failures(monkeypatch, required_attr, password, expected_fragment):
+def test_validate_password_strength_requirement_failures(monkeypatch, password, expected_fragment):
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 1)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", False)
-    monkeypatch.setattr(admin.settings, "password_require_special", False)
-    monkeypatch.setattr(admin.settings, required_attr, True)
 
     ok, msg = admin.validate_password_strength(password)
     assert ok is False
