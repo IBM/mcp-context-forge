@@ -496,7 +496,7 @@ import {
     setTimeout(initializeCACertUpload, 500);
 
     // Re-initialize when switching to gateways tab
-    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
+    const gatewaysTab = document.querySelector('.sidebar-link[data-tab="gateways"]');
     if (gatewaysTab) {
       gatewaysTab.addEventListener("click", function () {
         setTimeout(initializeCACertUpload, 100);
@@ -594,8 +594,8 @@ import {
     // Initialize search when switching tabs
     document.addEventListener("click", function (event) {
       if (
-        event.target.matches('[onclick*="Admin.showTab"]') ||
-        event.target.closest('[onclick*="Admin.showTab"]')
+        event.target.matches('.sidebar-link') ||
+        event.target.closest('.sidebar-link')
       ) {
         console.log("🔄 Tab switch detected, resetting search state");
         resetSearchInputsState();

@@ -1,6 +1,6 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
 <!-- Advanced Metrics Dashboard -->
-<script defer>
+<script defer nonce="{{ csp_nonce(request) }}">
 // Metrics Dashboard Controller Factory
 window.createMetricsController = function() {
   return {
