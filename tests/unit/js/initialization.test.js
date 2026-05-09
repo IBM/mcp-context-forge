@@ -365,7 +365,7 @@ describe("initializeToolSelects", () => {
 // setupTabNavigation
 // ===========================================================================
 describe("setupTabNavigation", () => {
-  test("skips tab element with onclick attribute", () => {
+  test("adds click listener even when onclick attribute is present", () => {
     getVisibleSidebarTabs.mockReturnValue(["tools"]);
     isTabHidden.mockReturnValue(false);
     isAdminOnlyTab.mockReturnValue(false);
@@ -378,9 +378,10 @@ describe("setupTabNavigation", () => {
 
     setupTabNavigation();
 
-    // If onclick is present we should NOT add a click listener, so showTab won't be called
+    // After CSP changes, onclick attributes are removed from HTML
+    // so we always add click listeners now (no more onclick guard)
     tabEl.click();
-    expect(showTab).not.toHaveBeenCalled();
+    expect(showTab).toHaveBeenCalledWith("tools");
   });
 
   test("skips tab element with data-tab-bound='true'", () => {

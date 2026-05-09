@@ -19,9 +19,21 @@
       href="{{ root_path }}/static/favicon.ico"
     />
     <!-- Tailwind CSS -->
-    <link rel="stylesheet" href="{{ root_path }}/static/css/tailwind.min.css" />
-    <!-- HTMX is bundled in the main JS bundle -->
-    <script>
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
+    {% else %}
+    <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    {% endif %}
+    <script nonce="{{ csp_nonce(request) }}">
+      if (window.tailwind && typeof window.tailwind === "object") {
+        window.tailwind.config = {
+          darkMode: "class",
+        };
+      }
+    </script>
+    <!-- HTMX is now bundled in the main JS bundle -->
+    <script nonce="{{ csp_nonce(request) }}">
       // Configure HTMX to swap content on 4xx responses (for inline error display)
       document.addEventListener("htmx:beforeSwap", function (evt) {
         const xhr = evt.detail.xhr;
@@ -306,6 +318,17 @@
       crossorigin="anonymous">
     </script>
     {% endif %}
+    <!-- Configure HTMX to use CSP nonce for inline event handlers BEFORE bundle loads -->
+    <!-- CRITICAL LOAD-ORDER DEPENDENCY: This script MUST execute before admin.js bundle loads.
+         admin.js reads window.htmxConfig.inlineScriptNonce to configure HTMX.
+         If script tags are reordered, HTMX will silently lose the nonce and all
+         HTMX-generated inline scripts will be blocked by CSP. -->
+    <script nonce="{{ csp_nonce(request) }}">
+      // HTMX needs the nonce configured before it processes any elements
+      // This allows hx-on:* attributes to work with strict CSP
+      window.htmxConfig = window.htmxConfig || {};
+      window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
+    </script>
     <script src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
@@ -447,7 +470,7 @@
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('overview')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
@@ -463,7 +486,7 @@
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('gateways')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
@@ -472,7 +495,7 @@
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('catalog')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
@@ -481,7 +504,7 @@
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tools')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛠️</span>
               <span x-show="!sidebarCollapsed">Tools</span>
             </a>
@@ -489,7 +512,7 @@
             <a href="#tool-ops" id="tab-tool-ops" data-testid="tool-ops-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tool-ops')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
@@ -499,7 +522,7 @@
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('prompts')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
@@ -508,7 +531,7 @@
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('resources')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
@@ -517,7 +540,7 @@
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('roots')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
@@ -526,7 +549,7 @@
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('mcp-registry')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
@@ -543,7 +566,7 @@
             <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('a2a-agents')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🤖</span>
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
@@ -552,7 +575,7 @@
             <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('grpc-services')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
               <span x-show="!sidebarCollapsed">gRPC Services</span>
             </a>
@@ -570,7 +593,7 @@
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('llm-chat')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
@@ -579,7 +602,7 @@
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('llm-settings')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
@@ -597,7 +620,7 @@
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('metrics')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
@@ -606,7 +629,7 @@
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('performance')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚡</span>
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
@@ -615,7 +638,7 @@
             <a href="#observability" id="tab-observability" data-testid="observability-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('observability')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔍</span>
               <span x-show="!sidebarCollapsed">Observability</span>
             </a>
@@ -633,7 +656,7 @@
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('plugins')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
@@ -651,7 +674,7 @@
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('teams')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
@@ -660,7 +683,7 @@
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('users')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
@@ -669,7 +692,7 @@
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tokens')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
@@ -687,7 +710,7 @@
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('export-import')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
@@ -696,7 +719,7 @@
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('logs')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
@@ -705,7 +728,7 @@
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('version-info')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
@@ -714,7 +737,7 @@
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('maintenance')">
+               >
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
@@ -6284,7 +6307,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                   </div>
                 </div>
-                <script>
+                <script nonce="{{ csp_nonce(request) }}">
                   // Validate the Create User password box and update requirement icons
                   (function(){
                     const minLen = {{ password_min_length | tojson }} || 8;
@@ -12017,7 +12040,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     <!-- Scripts -->
-    <script defer>
+    <script defer nonce="{{ csp_nonce(request) }}">
       // User creation form event handler
       document.addEventListener('DOMContentLoaded', function() {
         const createUserForm = document.getElementById('create-user-form');
@@ -12424,7 +12447,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       // Add search functionality for filtering tools
     </script>
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       function handleEditIntegrationTypeChange() {
         const typeSel = document.getElementById("edit-tool-type");
         const reqSel = document.getElementById("edit-tool-request-type");
@@ -14540,7 +14563,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
     {% endif %}
 
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       // Safely inject teams data for Alpine.js
       window.USER_TEAMS_DATA = {{ user_teams | default([]) | tojson }};
 

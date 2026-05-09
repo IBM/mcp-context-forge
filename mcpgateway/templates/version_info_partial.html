@@ -663,7 +663,7 @@
   </div> -->
 </div>
 
-<script>
+<script nonce="{{ csp_nonce(request) }}">
   /**
    * Copy the innerText of the element with id sourceId to the clipboard.
    * Uses the existing global function if available, otherwise defines a local one.

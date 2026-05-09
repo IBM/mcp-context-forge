@@ -1,6 +1,6 @@
 <!-- htmlhint doctype-first:false -->
 <!-- Observability Dashboard Partial -->
-<script>
+<script nonce="{{ csp_nonce(request) }}">
 // Dark mode aware Chart.js defaults - shared across all observability charts
 if (!window.getChartDefaults) {
   window.getChartDefaults = function() {
@@ -32,6 +32,11 @@ window.__obsExecAndStrip = function(html) {
       try {
         var s = document.createElement('script');
         s.text = code;
+        // Inherit nonce from parent document's HTMX config for CSP compliance
+        var nonce = window.htmxConfig && window.htmxConfig.inlineScriptNonce;
+        if (nonce) {
+          s.setAttribute('nonce', nonce);
+        }
         document.head.appendChild(s);
         s.remove();
       } catch (e) {
