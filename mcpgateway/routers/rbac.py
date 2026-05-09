@@ -32,6 +32,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.role_service import RoleService
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +117,12 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         db.close()
         return RoleResponse.model_validate(role)
 
-    except ValueError as e:
-        logger.error(f"Role creation validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role creation failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create role")
@@ -240,9 +244,12 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
     except HTTPException:
         raise
-    except ValueError as e:
-        logger.error(f"Role update validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role update failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update role")
@@ -283,8 +290,12 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
     except HTTPException:
         raise
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role deletion failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete role")
@@ -326,9 +337,12 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         db.close()
         return UserRoleResponse.model_validate(user_role)
 
-    except ValueError as e:
-        logger.error(f"Role assignment validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role assignment failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to assign role")

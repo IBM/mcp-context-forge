@@ -174,27 +174,27 @@ def make_mock_integrity_error(msg):
         ("FOREIGN KEY constraint failed", "Referenced item not found"),
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
-        # Token name uniqueness – new per-team constraint name
+        # Token name uniqueness – new per-team constraint name (sanitized in production)
         (
             "uq_email_api_tokens_user_name_team",
-            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            "A token with this name already exists. Please choose a different name.",
         ),
-        # Token name uniqueness – legacy ORM constraint name (kept for backwards compat)
-        ("uq_email_api_tokens_user_name", "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."),
-        # Token name uniqueness – Alembic migration constraint name
+        # Token name uniqueness – legacy ORM constraint name (sanitized in production)
+        ("uq_email_api_tokens_user_name", "A token with this name already exists. Please choose a different name."),
+        # Token name uniqueness – Alembic migration constraint name (sanitized in production)
         (
             "uq_email_api_tokens_user_email_name",
-            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            "A token with this name already exists. Please choose a different name.",
         ),
-        # Token name uniqueness – SQLite column-path variant
+        # Token name uniqueness – SQLite column-path variant (sanitized in production)
         (
             "UNIQUE constraint failed: email_api_tokens.user_email, email_api_tokens.name",
-            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            "A token with this name already exists. Please choose a different name.",
         ),
-        # Token name uniqueness – partial unique index for global-scope tokens (team_id IS NULL)
+        # Token name uniqueness – partial unique index for global-scope tokens (sanitized in production)
         (
             "uq_email_api_tokens_user_name_global",
-            "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+            "A token with this name already exists. Please choose a different name.",
         ),
     ],
 )
@@ -236,4 +236,116 @@ def test_format_database_error_no_orig():
     dummy = DummyError("fail")
     result = ErrorFormatter.format_database_error(dummy)
     assert result["message"].startswith("Unable to complete")
+    assert result["success"] is False
+
+
+def test_should_expose_error_details_expose_flag_true(monkeypatch):
+    """Test that EXPOSE_ERROR_DETAILS=true enables verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = True
+    mock_settings.debug = False
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is True
+
+
+def test_should_expose_error_details_debug_and_dev_mode(monkeypatch):
+    """Test that DEBUG=true AND DEV_MODE=true enables verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = True
+    mock_settings.dev_mode = True
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is True
+
+
+def test_should_expose_error_details_debug_only_false(monkeypatch):
+    """Test that DEBUG=true alone does NOT enable verbose errors."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = True
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is False
+
+
+def test_should_expose_error_details_all_false(monkeypatch):
+    """Test that all flags false returns False."""
+    from mcpgateway.utils.error_formatter import should_expose_error_details
+    from unittest.mock import MagicMock
+
+    mock_settings = MagicMock()
+    mock_settings.expose_error_details = False
+    mock_settings.debug = False
+    mock_settings.dev_mode = False
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.get_settings", lambda: mock_settings)
+
+    assert should_expose_error_details() is False
+
+
+def test_safe_error_detail_verbose_mode(monkeypatch):
+    """Test safe_error_detail returns exception text in verbose mode."""
+    from mcpgateway.utils.error_formatter import safe_error_detail
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+
+    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
+    assert result == "Detailed error message"
+
+
+def test_safe_error_detail_production_mode(monkeypatch):
+    """Test safe_error_detail returns fallback in production mode."""
+    from mcpgateway.utils.error_formatter import safe_error_detail
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
+
+    result = safe_error_detail(ValueError("Detailed error message"), "Generic fallback")
+    assert result == "Generic fallback"
+
+
+def test_public_validation_error_is_value_error():
+    """Test that PublicValidationError is a subclass of ValueError."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    err = PublicValidationError("Token expiration cannot exceed 365 days")
+    assert isinstance(err, ValueError)
+    assert str(err) == "Token expiration cannot exceed 365 days"
+
+
+def test_format_database_error_token_uniqueness_verbose(monkeypatch):
+    """Test that token uniqueness errors expose detail in verbose mode."""
+    from sqlalchemy.exc import IntegrityError
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: True)
+
+    orig = Exception("uq_email_api_tokens_user_name_team")
+    err = IntegrityError("INSERT", {}, orig)
+    result = ErrorFormatter.format_database_error(err)
+    assert "unique per user per team" in result["message"]
+    assert result["success"] is False
+
+
+def test_format_database_error_token_uniqueness_production(monkeypatch):
+    """Test that token uniqueness errors are sanitized in production mode."""
+    from sqlalchemy.exc import IntegrityError
+
+    monkeypatch.setattr("mcpgateway.utils.error_formatter.should_expose_error_details", lambda: False)
+
+    orig = Exception("uq_email_api_tokens_user_name_team")
+    err = IntegrityError("INSERT", {}, orig)
+    result = ErrorFormatter.format_database_error(err)
+    assert "already exists" in result["message"]
+    assert "unique per user per team" not in result["message"]
     assert result["success"] is False

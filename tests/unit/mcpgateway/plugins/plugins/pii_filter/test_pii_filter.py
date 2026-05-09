@@ -7,6 +7,8 @@ import logging
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_pii_filter", reason="cpex-pii-filter plugin not installed")
+
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from cpex.framework import GlobalContext, PluginConfig, PluginContext, PluginMode, PromptHookType, PromptPosthookPayload, PromptPrehookPayload

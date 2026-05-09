@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import yaml
 
+pytest.importorskip("cpex_secrets_detection", reason="cpex-secrets-detection plugin not installed")
+
 # First-Party
 from mcpgateway.common.models import ResourceContent
 from cpex.framework import PluginConfig, PluginManager, PluginMode, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePostFetchPayload, ToolHookType, ToolPostInvokePayload

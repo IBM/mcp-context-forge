@@ -15,6 +15,8 @@ import logging
 from pydantic import ValidationError
 import pytest
 
+pytest.importorskip("cpex_encoded_exfil_detection", reason="cpex-encoded-exfil-detection plugin not installed")
+
 # First-Party
 from cpex.framework import (
     GlobalContext,

@@ -2418,6 +2418,7 @@ class Settings(BaseSettings):
     dev_mode: bool = False
     reload: bool = False
     debug: bool = False
+    expose_error_details: bool = False
 
     # Observability (OpenTelemetry)
     deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
