@@ -30,6 +30,7 @@ class TestRateLimitMiddleware:
         with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
             mock_settings.rate_limiting_enabled = True
             mock_settings.rate_limiting_redis_enabled = False
+            mock_settings.trust_proxy_auth = True
             mock_settings.rate_limit_critical_rpm = 10
             mock_settings.rate_limit_critical_burst = 0
             mock_settings.rate_limit_high_rpm = 30
@@ -44,7 +45,7 @@ class TestRateLimitMiddleware:
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
-            return RateLimitMiddleware(mock_app)
+            yield RateLimitMiddleware(mock_app)
 
     @pytest.fixture
     def mock_request(self):
@@ -54,6 +55,7 @@ class TestRateLimitMiddleware:
         request.client.host = "192.168.1.100"
         request.url.path = "/api/test"
         request.state = MagicMock()
+        request.scope = {"client": ("192.168.1.100", 12345)}
         return request
 
     def test_endpoint_tier_critical(self, middleware):
@@ -94,7 +96,7 @@ class TestRateLimitMiddleware:
         assert ip == "10.0.0.2"
 
     def test_get_client_ip_fallback(self, middleware, mock_request):
-        """Test IP fallback to request.client.host."""
+        """Test IP fallback to request.scope client."""
         mock_request.headers = {}
 
         ip = middleware._get_client_ip(mock_request)
@@ -105,6 +107,7 @@ class TestRateLimitMiddleware:
         """Test dimensions for unauthenticated request."""
         mock_request.state = MagicMock()
         mock_request.state.user_email = None
+        mock_request.state.user = None
         mock_request.state.team_id = None
 
         dims = middleware._get_client_dimensions(mock_request)
@@ -199,7 +202,7 @@ class TestRateLimitMiddleware:
         mock_response.headers = {}
         mock_call_next = AsyncMock(return_value=mock_response)
 
-        response = await middleware.dispatch(mock_request, mock_call_next)
+        await middleware.dispatch(mock_request, mock_call_next)
 
         mock_call_next.assert_called_once()
 
@@ -209,6 +212,7 @@ class TestRateLimitMiddleware:
         mock_request.url.path = "/health"
         mock_request.state = MagicMock()
         mock_request.state.user_email = None
+        mock_request.state.user = None
         mock_request.state.team_id = None
         now = time.time()
         key = "ratelimit:ip:192.168.1.100:LOW"
@@ -232,6 +236,7 @@ class TestRateLimitMiddleware:
         mock_request.url.path = "/health"
         mock_request.state = MagicMock()
         mock_request.state.user_email = None
+        mock_request.state.user = None
         mock_request.state.team_id = None
         if not hasattr(middleware, "_violation_counts"):
             middleware._violation_counts = {}
@@ -251,6 +256,42 @@ class TestRateLimitMiddleware:
         assert response.status_code == 429
         assert "Account locked" in response.body.decode()
         assert response.headers.get("X-Lockout-Remaining") is not None
+
+    @pytest.mark.asyncio
+    async def test_lockout_does_not_increment_violations(self, middleware, mock_request):
+        """Test lockout responses do not increment violation counters."""
+        mock_request.url.path = "/health"
+        mock_request.state = MagicMock()
+        mock_request.state.user_email = None
+        mock_request.state.user = None
+        mock_request.state.team_id = None
+        middleware._violation_counts = {"ip:192.168.1.100": 5}
+        middleware._violation_expiry = {"ip:192.168.1.100": float("inf")}
+
+        original_increment = middleware._increment_violation
+        middleware._increment_violation = AsyncMock()
+
+        async def mock_call_next(req):
+            return MagicMock(headers={})
+
+        try:
+            response = await middleware.dispatch(mock_request, mock_call_next)
+            assert response.status_code == 429
+            middleware._increment_violation.assert_not_called()
+        finally:
+            middleware._increment_violation = original_increment
+
+    def test_should_lockout_memory_expires_stale_entries(self, middleware):
+        """Test memory lockout clears expired violation entries."""
+        dim = "ip:192.168.1.100"
+        middleware._violation_counts = {dim: 5}
+        middleware._violation_expiry = {dim: time.time() - 1}
+
+        result = middleware._should_lockout_memory(dim, "LOW")
+
+        assert result is False
+        assert dim not in middleware._violation_counts
+        assert dim not in middleware._violation_expiry
 
     def test_compiled_tiers_not_empty(self, middleware):
         """Test tier patterns are compiled."""
@@ -273,6 +314,7 @@ class TestRateLimitMiddleware:
     def test_get_client_dimensions_team_only(self, middleware, mock_request):
         """Test dimensions when only team available."""
         mock_request.state.user_email = None
+        mock_request.state.user = None
         mock_request.state.team_id = "team-acme"
 
         dims = middleware._get_client_dimensions(mock_request)
@@ -286,6 +328,7 @@ class TestRateLimitMiddleware:
         with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
             mock_settings.rate_limiting_enabled = False
             mock_settings.rate_limiting_redis_enabled = True
+            mock_settings.trust_proxy_auth = True
             mock_settings.rate_limit_critical_rpm = 10
             mock_settings.rate_limit_high_rpm = 30
             mock_settings.rate_limit_medium_rpm = 100
@@ -371,13 +414,13 @@ class TestRateLimitMiddleware:
 
         import asyncio
 
-        result = asyncio.run(middleware.dispatch(mock_request, mock_call_next))
+        asyncio.run(middleware.dispatch(mock_request, mock_call_next))
 
         mock_call_next.assert_called_once()
 
     def test_lockout_sync_uses_memory_when_no_redis(self, middleware):
         """Test lockout sync uses memory fallback."""
-        result = middleware._should_lockout_sync("test:dimension", "CRITICAL")
+        result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
         assert result is False
 
     def test_lockout_sync_returns_true_at_threshold(self, middleware):
@@ -386,7 +429,7 @@ class TestRateLimitMiddleware:
             middleware._violation_counts = {}
         middleware._violation_counts["test:dimension"] = 5
 
-        result = middleware._should_lockout_sync("test:dimension", "CRITICAL")
+        result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
 
         assert result is True
 
@@ -414,7 +457,7 @@ class TestRateLimitMiddleware:
     def test_get_client_ip_empty_headers(self, middleware, mock_request):
         """Test IP extraction with empty headers."""
         mock_request.headers = {}
-        mock_request.client.host = "192.168.1.1"
+        mock_request.scope = {"client": ("192.168.1.1", 12345)}
 
         ip = middleware._get_client_ip(mock_request)
 
@@ -423,9 +466,6 @@ class TestRateLimitMiddleware:
     def test_create_rate_limit_response_structure(self, middleware):
         """Test rate limit response has correct structure."""
         from unittest.mock import MagicMock
-        import time
-
-        now = time.time()
         mock_request = MagicMock()
         mock_request.url.path = "/api/test"
 
@@ -504,7 +544,7 @@ class TestRateLimitMiddleware:
         mock_response.headers = {}
         mock_call_next = AsyncMock(return_value=mock_response)
 
-        response = await middleware.dispatch(mock_request, mock_call_next)
+        await middleware.dispatch(mock_request, mock_call_next)
 
         mock_call_next.assert_called_once()
 
@@ -571,16 +611,18 @@ class TestRateLimitMiddleware:
 
     def test_should_lockout_when_disabled(self, middleware):
         """Test lockout returns false when disabled."""
+        import asyncio
+
         middleware.lockout_enabled = False
 
-        result = middleware._should_lockout("test:dimension", "CRITICAL")
+        result = asyncio.run(middleware._should_lockout("test:dimension", "CRITICAL"))
 
         assert result is False
         middleware.lockout_enabled = True
 
     def test_violation_key_format(self, middleware):
         """Test violation key format."""
-        key = f"ratelimit:violations:ip:192.168.1.100"
+        key = "ratelimit:violations:ip:192.168.1.100"
         assert "violations" in key
 
     @pytest.mark.asyncio
@@ -647,35 +689,42 @@ class TestRateLimitMiddleware:
         """Test Redis path when Redis is available."""
         original_use_redis = middleware.use_redis
         original_client = middleware.redis_client
+        original_script = middleware._sliding_window_script
 
         try:
             middleware.use_redis = True
             mock_client = MagicMock()
-            mock_client.zremrangebyscore.return_value = None
             mock_client.zcard.return_value = 5
-            mock_client.zadd.return_value = 1
-            mock_client.expire.return_value = True
             middleware.redis_client = mock_client
+
+            mock_script = MagicMock(return_value=1)
+            middleware._sliding_window_script = mock_script
 
             allowed, remaining = middleware._check_rate_limit_sync(
                 "ratelimit:test:LOW", 10, 60
             )
 
             assert allowed is True
+            assert remaining == 5
+            mock_script.assert_called_once()
         finally:
             middleware.use_redis = original_use_redis
             middleware.redis_client = original_client
+            middleware._sliding_window_script = original_script
 
     def test_check_rate_limit_redis_exception_fallback(self, middleware):
         """Test Redis exception triggers fallback."""
         original_use_redis = middleware.use_redis
         original_client = middleware.redis_client
+        original_script = middleware._sliding_window_script
 
         try:
             middleware.use_redis = True
             mock_client = MagicMock()
-            mock_client.zremrangebyscore.side_effect = Exception("Redis error")
             middleware.redis_client = mock_client
+
+            mock_script = MagicMock(side_effect=Exception("Redis error"))
+            middleware._sliding_window_script = mock_script
 
             allowed, remaining = middleware._check_rate_limit_sync(
                 "ratelimit:test:LOW", 10, 60
@@ -685,6 +734,7 @@ class TestRateLimitMiddleware:
         finally:
             middleware.use_redis = original_use_redis
             middleware.redis_client = original_client
+            middleware._sliding_window_script = original_script
 
     def test_get_client_ip_with_both_headers(self, middleware, mock_request):
         """Test IP extraction prefers X-Forwarded-For."""
@@ -701,7 +751,7 @@ class TestRateLimitMiddleware:
         """Test IP returns unknown when no client info."""
         mock_request = MagicMock()
         mock_request.headers = {}
-        mock_request.client = None
+        mock_request.scope = {}
 
         ip = middleware._get_client_ip(mock_request)
 
@@ -722,14 +772,15 @@ class TestRateLimitMiddleware:
         """Test Redis zadd exception triggers fallback."""
         original_use_redis = middleware.use_redis
         original_client = middleware.redis_client
+        original_script = middleware._sliding_window_script
 
         try:
             middleware.use_redis = True
             mock_client = MagicMock()
-            mock_client.zremrangebyscore.return_value = None
-            mock_client.zcard.return_value = 3
-            mock_client.zadd.side_effect = Exception("Redis error")
             middleware.redis_client = mock_client
+
+            mock_script = MagicMock(side_effect=Exception("Redis error"))
+            middleware._sliding_window_script = mock_script
 
             allowed, remaining = middleware._check_rate_limit_sync(
                 "ratelimit:test:LOW", 10, 60
@@ -739,6 +790,7 @@ class TestRateLimitMiddleware:
         finally:
             middleware.use_redis = original_use_redis
             middleware.redis_client = original_client
+            middleware._sliding_window_script = original_script
 
     def test_should_lockout_sync_with_redis_error(self, middleware):
         """Test lockout sync handles Redis error."""
@@ -751,7 +803,7 @@ class TestRateLimitMiddleware:
             mock_client.get.side_effect = Exception("Redis error")
             middleware.redis_client = mock_client
 
-            result = middleware._should_lockout_sync("test:dimension", "CRITICAL")
+            result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
 
             assert isinstance(result, bool)
         finally:
@@ -794,6 +846,7 @@ class TestRateLimitMiddleware:
         """Test dimensions when no auth info."""
         mock_request.state = MagicMock()
         mock_request.state.user_email = None
+        mock_request.state.user = None
         mock_request.state.team_id = None
 
         dims = middleware._get_client_dimensions(mock_request)
@@ -884,7 +937,6 @@ class TestRateLimitMiddleware:
     def test_check_rate_limit_handles_timeout(self, middleware):
         """Test check_rate_limit handles timeout from executor."""
         import asyncio
-        from unittest.mock import patch
 
         original_executor = middleware.executor
         middleware.executor = MagicMock()
@@ -976,13 +1028,15 @@ class TestRateLimitMiddleware:
 
     def test_should_lockout_uses_both_redis_and_memory(self, middleware):
         """Test lockout check tries Redis first then memory."""
+        import asyncio
+
         if not hasattr(middleware, "_violation_counts"):
             middleware._violation_counts = {}
         middleware._violation_counts["test:dim"] = 3
         middleware.lockout_enabled = True
         middleware.use_redis = False
 
-        result = middleware._should_lockout("test:dim", "CRITICAL")
+        result = asyncio.run(middleware._should_lockout("test:dim", "CRITICAL"))
 
         assert result is False
 

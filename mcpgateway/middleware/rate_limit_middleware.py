@@ -26,6 +26,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import re
+import threading
 import time
 from typing import Any, Dict, List, Tuple
 import uuid
@@ -44,6 +45,27 @@ logger = logging.getLogger(__name__)
 
 # Thread pool for running sync Redis calls in async middleware
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
+
+# Lua script for atomic sliding-window check+add in Redis.
+# Arguments: KEY, window_start, limit, member, ttl
+# Returns: 1 if allowed, 0 if blocked
+_SLIDING_WINDOW_LUA = """
+local key = KEYS[1]
+local window_start = tonumber(ARGV[1])
+local limit = tonumber(ARGV[2])
+local score = tonumber(ARGV[3])
+local member = ARGV[4]
+local ttl = tonumber(ARGV[5])
+
+redis.call('zremrangebyscore', key, 0, window_start)
+local count = redis.call('zcard', key)
+if count >= limit then
+    return 0
+end
+redis.call('zadd', key, score, member)
+redis.call('expire', key, ttl)
+return 1
+"""
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -79,28 +101,29 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "burst": settings.rate_limit_critical_burst,
             },
             "CRITICAL_SSO": {
-                "pattern": r"^/auth/sso/",
+                "pattern": r"^/auth/sso(/|$)",
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
             "HIGH": {
-                "pattern": r"^/(tokens|oauth|rbac)/",
+                "pattern": r"^/(tokens|oauth|rbac)(/|$)",
                 "limit": settings.rate_limit_high_rpm,
                 "burst": settings.rate_limit_high_burst,
             },
             "MEDIUM": {
-                "pattern": r"^/(mcp|tools|prompts|resources|servers|gateways|llmchat)/",
+                "pattern": r"^/(mcp|tools|prompts|resources|servers|gateways|llmchat)(/|$)",
                 "limit": settings.rate_limit_medium_rpm,
                 "burst": settings.rate_limit_medium_burst,
             },
             "LOW": {
-                "pattern": r"^/(health|metrics|docs|openapi)",
+                "pattern": r"^/(health|metrics|docs|openapi)(/|$)",
                 "limit": settings.rate_limit_low_rpm,
                 "burst": settings.rate_limit_low_burst,
             },
         }
 
         self.redis_client = None
+        self._sliding_window_script = None
         self._init_redis()
 
         self.compiled_tiers = self._compile_tiers()
@@ -108,7 +131,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         self._memory_store: Dict[str, List[float]] = {}
         self._violation_counts: Dict[str, int] = {}
-        self._daily_counts: Dict[str, int] = {}
+        self._violation_expiry: Dict[str, float] = {}
+        self._store_lock = threading.Lock()
 
         logger.info(f"RateLimitMiddleware initialized: enabled={self.enabled}, " f"use_redis={self.use_redis}, lockout={self.lockout_enabled}")
 
@@ -124,6 +148,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if client is not None:
                 client.ping()
                 self.redis_client = client
+                self._sliding_window_script = client.register_script(_SLIDING_WINDOW_LUA)
                 self.use_redis = True
                 logger.info("Rate limiting Redis client connected")
             else:
@@ -155,11 +180,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         dimensions.append(f"ip:{client_ip}")
 
-        if hasattr(request.state, "user_email") and request.state.user_email:
-            dimensions.append(f"user:{request.state.user_email}")
+        user_email = getattr(request.state, "user_email", None)
+        if not user_email:
+            user = getattr(request.state, "user", None)
+            if user is not None:
+                user_email = getattr(user, "email", None)
+        if user_email:
+            dimensions.append(f"user:{user_email}")
 
-        if hasattr(request.state, "team_id") and request.state.team_id:
-            dimensions.append(f"team:{request.state.team_id}")
+        team_id = getattr(request.state, "team_id", None)
+        if team_id:
+            dimensions.append(f"team:{team_id}")
 
         return dimensions
 
@@ -172,10 +203,38 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         dimensions = self._get_client_dimensions(request)
 
         tier_name = self._get_tier_name(request.url.path)
+
+        # Check lockout first — a locked-out dimension blocks regardless of
+        # whether the sliding window has cleared.
+        locked_out_dims = []
+        for dimension in dimensions:
+            if await self._should_lockout(dimension, tier_name):
+                locked_out_dims.append(dimension)
+
+        if locked_out_dims:
+            for dim in locked_out_dims:
+                self._log_security_event(
+                    request=request,
+                    dimension=dim,
+                    tier=tier,
+                    tier_name=tier_name,
+                    is_lockout=True,
+                )
+
+            return self._create_rate_limit_response(
+                request=request,
+                dimensions=locked_out_dims,
+                tier=tier,
+                tier_name=tier_name,
+                is_lockout=True,
+            )
+
         violation_dims = []
+        pre_check_results: Dict[str, Tuple[bool, int]] = {}
 
         for dimension in dimensions:
             allowed, remaining = await self._check_rate_limit(dimension, tier, tier_name)
+            pre_check_results[dimension] = (allowed, remaining)
             if not allowed:
                 violation_dims.append(dimension)
 
@@ -186,21 +245,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     dimension=dim,
                     tier=tier,
                     tier_name=tier_name,
-                    is_lockout=self._should_lockout(dim, tier_name),
+                    is_lockout=False,
                 )
+                await self._increment_violation(dim, tier_name)
 
             return self._create_rate_limit_response(
                 request=request,
                 dimensions=violation_dims,
                 tier=tier,
                 tier_name=tier_name,
+                is_lockout=False,
             )
 
         response = await call_next(request)
 
-        allowed, remaining = await self._check_rate_limit(dimensions[0], tier, tier_name)
+        # Use the pre-check result for the first dimension to avoid double-counting.
+        first_dim = dimensions[0] if dimensions else "ip:unknown"
+        _, remaining = pre_check_results.get(first_dim, (True, 0))
         response.headers["X-RateLimit-Limit"] = str(tier["limit"])
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        response.headers["X-RateLimit-Remaining"] = str(max(0, remaining))
 
         return response
 
@@ -218,7 +281,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         window_seconds = 60
 
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             allowed, remaining = await loop.run_in_executor(
                 self.executor,
                 self._check_rate_limit_sync,
@@ -236,20 +299,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         window_start = now - window_seconds
 
-        if self.use_redis and self.redis_client:
+        if self.use_redis and self.redis_client and self._sliding_window_script is not None:
             try:
-                self.redis_client.zremrangebyscore(key, 0, window_start)
-
-                count = self.redis_client.zcard(key)
-
-                if count >= limit:
+                member = f"{now}:{uuid.uuid4()}"
+                allowed = self._sliding_window_script(
+                    keys=[key],
+                    args=[window_start, limit, now, member, window_seconds * 2],
+                )
+                if allowed == 0:
                     return False, 0
-
-                member = f"{uuid.uuid4()}:{now}"
-                self.redis_client.zadd(key, {member: now})
-                self.redis_client.expire(key, window_seconds * 2)
-
-                return True, limit - count - 1
+                # Script returns 1 on success; approximate remaining.
+                count = self.redis_client.zcard(key)
+                return True, max(0, limit - count)
             except Exception as e:
                 logger.warning(f"Redis rate limit failed: {e}")
 
@@ -263,48 +324,87 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         window_start = now - window_seconds
 
-        if key in self._memory_store:
-            self._memory_store[key] = [ts for ts in self._memory_store[key] if ts > window_start]
+        with self._store_lock:
+            if key in self._memory_store:
+                self._memory_store[key] = [ts for ts in self._memory_store[key] if ts > window_start]
 
-        count = len(self._memory_store.get(key, []))
+            count = len(self._memory_store.get(key, []))
 
-        if count >= limit:
-            return False, 0
+            if count >= limit:
+                return False, 0
 
-        self._memory_store.setdefault(key, []).append(now)
+            self._memory_store.setdefault(key, []).append(now)
 
-        return True, limit - count - 1
+            return True, limit - count - 1
 
-    def _should_lockout(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
+    async def _should_lockout(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
         """Check if dimension should be locked out."""
         if not self.lockout_enabled:
             return False
 
         violation_key = f"ratelimit:violations:{dimension}"
         try:
-            loop = asyncio.get_event_loop()
-            return loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key, tier_name)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self.executor, self._should_lockout_sync, violation_key, tier_name, dimension
+            )
         except Exception:
             return self._should_lockout_memory(dimension, tier_name)
 
-    def _should_lockout_sync(self, violation_key: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
+    def _should_lockout_sync(self, violation_key: str, tier_name: str, dimension: str) -> bool:  # pylint: disable=unused-argument
         """Synchronous lockout check."""
         if not self.use_redis or not self.redis_client:
-            return self._should_lockout_memory(violation_key, tier_name)
+            return self._should_lockout_memory(dimension, tier_name)
 
         try:
             count = self.redis_client.get(violation_key)
             return int(count or 0) >= self.lockout_threshold
         except Exception:
-            return self._should_lockout_memory(violation_key, tier_name)
+            return self._should_lockout_memory(dimension, tier_name)
 
     def _should_lockout_memory(self, dimension: str, tier_name: str) -> bool:  # pylint: disable=unused-argument
         """In-memory lockout check."""
         if not hasattr(self, "_violation_counts"):
             self._violation_counts: Dict[str, int] = {}
+        if not hasattr(self, "_violation_expiry"):
+            self._violation_expiry: Dict[str, float] = {}
+        with self._store_lock:
+            now = time.time()
+            expiry = self._violation_expiry.get(dimension, float("inf"))
+            if now > expiry:
+                self._violation_counts.pop(dimension, None)
+                self._violation_expiry.pop(dimension, None)
+                return False
+            count = self._violation_counts.get(dimension, 0)
+            return count >= self.lockout_threshold
 
-        count = self._violation_counts.get(dimension, 0)
-        return count >= self.lockout_threshold
+    async def _increment_violation(self, dimension: str, tier_name: str) -> None:  # pylint: disable=unused-argument
+        """Increment violation counter for a dimension."""
+        violation_key = f"ratelimit:violations:{dimension}"
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                self.executor, self._increment_violation_sync, violation_key, dimension
+            )
+        except Exception:
+            self._increment_violation_memory(dimension)
+
+    def _increment_violation_sync(self, violation_key: str, dimension: str) -> None:
+        """Synchronous violation increment."""
+        if self.use_redis and self.redis_client:
+            try:
+                self.redis_client.incr(violation_key)
+                self.redis_client.expire(violation_key, self.lockout_duration_minutes * 60)
+                return
+            except Exception:
+                pass
+        self._increment_violation_memory(dimension)
+
+    def _increment_violation_memory(self, dimension: str) -> None:
+        """In-memory violation increment."""
+        with self._store_lock:
+            self._violation_counts[dimension] = self._violation_counts.get(dimension, 0) + 1
+            self._violation_expiry[dimension] = time.time() + self.lockout_duration_minutes * 60
 
     def _log_security_event(
         self,
@@ -349,15 +449,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def _create_rate_limit_response(
         self,
         request: Request,  # pylint: disable=unused-argument
-        dimensions: List[str],
+        dimensions: List[str],  # pylint: disable=unused-argument
         tier: Dict[str, Any],
         tier_name: str,
+        is_lockout: bool = False,
     ) -> JSONResponse:
         """Create rate limit exceeded response."""
         now = time.time()
         limit = tier["limit"]
-
-        is_lockout = self._should_lockout(dimensions[0], tier_name)
 
         headers = {
             "Retry-After": str(self.lockout_duration_minutes * 60 if is_lockout else 60),
@@ -392,16 +491,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request."""
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
+        """Extract client IP from request.
 
-        real_ip = request.headers.get("X-Real-IP")
-        if real_ip:
-            return real_ip
+        Only trusts X-Forwarded-For / X-Real-IP when the deployment is
+        configured to trust proxy headers (trust_proxy_auth). Otherwise
+        falls back to the direct transport client address to prevent
+        IP-spoofing evasion of rate limits.
+        """
+        if settings.trust_proxy_auth:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
 
-        if request.client:
-            return request.client.host
+            real_ip = request.headers.get("X-Real-IP")
+            if real_ip:
+                return real_ip
+
+        # Use scope client (set by ASGI server) rather than request.client,
+        # which can be rewritten by upstream proxy middleware.
+        client = request.scope.get("client")
+        if client:
+            return client[0]
 
         return "unknown"
