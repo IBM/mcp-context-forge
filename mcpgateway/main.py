@@ -1846,7 +1846,7 @@ def validate_security_configuration():
     logger.info("🔒 Validating security configuration...")
     try:
         current_settings = get_settings()
-        # Get security status
+
         security_status: settings.SecurityStatus = current_settings.get_security_status()
         security_warnings = security_status["warnings"]
 
@@ -1854,14 +1854,15 @@ def validate_security_configuration():
 
         # Warn about ephemeral storage without strict user-in-DB mode
         if not getattr(current_settings, "require_user_in_db", False):
-            database_url = getattr(current_settings, "database_url", settings.database_url)
-            is_ephemeral = ":memory:" in database_url or database_url == "sqlite:///./mcp.db"
+
+            is_ephemeral = ":memory:" in current_settings.database_url or current_settings.database_url == "sqlite:///./mcp.db"
             if is_ephemeral:
                 logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
         # Warn about default JWT issuer/audience in non-development environments
         if current_settings.environment != "development":
             if current_settings.jwt_issuer == "mcpgateway":
+
                 logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
             if current_settings.jwt_audience == "mcpgateway-api":
                 logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
@@ -2971,6 +2972,18 @@ if settings.security_logging_enabled or _siem_auth_source_enabled or settings.mc
     logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
 else:
     logger.info("🔐 Security event logging disabled")
+
+# Add CSRF protection middleware
+# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
+# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
+if settings.csrf_enabled:
+    # First-Party
+    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
+    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
+else:
+    logger.info("🛡️  CSRF protection middleware disabled")
 
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
@@ -11594,9 +11607,10 @@ else:
 if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.siem import router as siem_router
 
-        app.include_router(siem_router)
+        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
         logger.info("SIEM router included")
     except ImportError as e:  # pragma: no cover - optional import guard
         logger.warning(f"SIEM router not available: {e}")
@@ -11737,10 +11751,11 @@ if settings.llmchat_enabled:
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
         logger.info("LLM configuration, proxy, and admin routers included")
     except ImportError as e:
         logger.debug(f"LLM routers not available: {e}")
@@ -11781,7 +11796,7 @@ if ADMIN_API_ENABLED:
     # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
     # Only load it when the admin API is actually mounted.
     # First-Party
-    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
@@ -11793,7 +11808,7 @@ if ADMIN_API_ENABLED:
     # First-Party
     from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 # First-Party
-from mcpgateway.routers.auth import LoginRequest, get_db, login
+from mcpgateway.routers.auth import LoginRequest, get_csrf_token, get_db, login
 
 
 class TestLoginRequest:
@@ -241,6 +241,87 @@ class TestLogin:
 
             assert response.access_token == "test_token"
             mock_service.authenticate_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_login_csrf_rotation_sets_cookie(self, mock_request, mock_db, mock_user):
+        """Test login with csrf_rotate_on_login=True sets CSRF cookie."""
+        with (
+            patch("mcpgateway.routers.auth.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
+            patch("mcpgateway.config.settings") as mock_settings,
+            patch("jwt.decode", return_value={"jti": "session-123"}),
+            patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+            patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+        ):
+            mock_service = MagicMock()
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user)
+            mock_auth_service.return_value = mock_service
+
+            mock_create_token.return_value = ("test_token", 3600)
+            mock_settings.csrf_rotate_on_login = True
+            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_token_expiry = 60
+
+            login_request = LoginRequest(email="test@example.com", password="password123")
+
+            response = await login(login_request, mock_request, mock_db)
+
+            assert response.status_code == 200
+            mock_generate.assert_called_once()
+            mock_set_cookie.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_csrf_token_success(self):
+        """Test CSRF token endpoint returns token and cookie."""
+        request = MagicMock()
+        request.state = SimpleNamespace(jti="session-123")
+        current_user = SimpleNamespace(email="test@example.com")
+
+        with (
+            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+            patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+        ):
+            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_token_expiry = 60
+
+            response = await get_csrf_token(request, current_user)
+
+            assert response.status_code == 200
+            assert response.body is not None
+            mock_generate.assert_called_once_with(user_id="test@example.com", session_id="session-123", secret="secret", expiry=60)
+            mock_set_cookie.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_csrf_token_missing_jti_raises_401(self):
+        """Test CSRF token endpoint rejects missing session id."""
+        request = MagicMock()
+        request.state = SimpleNamespace()
+        current_user = SimpleNamespace(email="test@example.com")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_csrf_token(request, current_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_get_csrf_token_exception_raises_500(self):
+        """Test CSRF token endpoint handles unexpected errors."""
+        request = MagicMock()
+        request.state = SimpleNamespace(jti="session-123")
+        current_user = SimpleNamespace(email="test@example.com")
+
+        with (
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
+            patch("mcpgateway.services.csrf_service.generate_csrf_token", side_effect=Exception("boom")),
+        ):
+            mock_settings.csrf_secret_key = "secret"
+            mock_settings.csrf_token_expiry = 60
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_csrf_token(request, current_user)
+
+        assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
     async def test_login_with_plain_username_fails(self, mock_request, mock_db):
