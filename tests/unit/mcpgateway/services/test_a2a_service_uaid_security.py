@@ -934,6 +934,21 @@ class TestTokenTypeFiltering:
         assert "Authorization" in captured_headers
         assert captured_headers["Authorization"] == f"Bearer {valid_jwt}"
 
+    def test_empty_token_is_not_jwt(self, service):
+        from mcpgateway.services.a2a_service import _is_jwt_token
+
+        assert not _is_jwt_token("")
+
+    def test_token_with_wrong_part_count_is_not_jwt(self, service):
+        from mcpgateway.services.a2a_service import _is_jwt_token
+
+        assert not _is_jwt_token("one.two")
+
+    def test_token_with_empty_part_is_not_jwt(self, service):
+        from mcpgateway.services.a2a_service import _is_jwt_token
+
+        assert not _is_jwt_token("header..signature")
+
 
 class TestNativeIdPathRejection:
     """Tests for path component rejection in UAID native_id parsing."""
@@ -985,6 +1000,102 @@ class TestNativeIdPathRejection:
                     mock_db,
                     agent_data,
                 )
+
+    async def test_register_rejects_native_id_with_query_string(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "https://example.com?foo=bar"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = None
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="cannot contain query strings"):
+                await service.register_agent(mock_db, agent_data)
+
+    async def test_register_rejects_native_id_with_fragment(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "https://example.com#frag"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = None
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="cannot contain fragments"):
+                await service.register_agent(mock_db, agent_data)
+
+    async def test_register_rejects_disallowed_native_id_override_domain(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "https://example.com"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = "https://evil.example.net"
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="not in UAID_ALLOWED_DOMAINS"):
+                await service.register_agent(mock_db, agent_data)
 
     async def test_register_rejects_native_id_override_with_path(self, service, monkeypatch):
         """
@@ -1118,3 +1229,142 @@ class TestNativeIdPathRejection:
                     agent_id="agent-123",
                     agent_data=agent_data,
                 )
+
+    async def test_update_rejects_native_id_with_query_string(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent = MagicMock()
+        agent.uaid = None
+        agent.name = "test-agent"
+        agent.version = 1
+        agent.endpoint_url = "https://example.com"
+        agent.team_id = None
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+
+        agent_data = A2AAgentUpdate(
+            endpoint_url="https://example.com?foo=bar",
+            generate_uaid=True,
+            uaid_registry="context-forge",
+            version="1.0.0",
+            uaid_protocol="a2a",
+        )
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with pytest.raises(A2AAgentError, match="cannot contain query strings"):
+                await service.update_agent(mock_db, agent_id="agent-123", agent_data=agent_data)
+
+    async def test_update_rejects_native_id_with_fragment(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent = MagicMock()
+        agent.uaid = None
+        agent.name = "test-agent"
+        agent.version = 1
+        agent.endpoint_url = "https://example.com"
+        agent.team_id = None
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+
+        agent_data = A2AAgentUpdate(
+            endpoint_url="https://example.com#frag",
+            generate_uaid=True,
+            uaid_registry="context-forge",
+            version="1.0.0",
+            uaid_protocol="a2a",
+        )
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with pytest.raises(A2AAgentError, match="cannot contain fragments"):
+                await service.update_agent(mock_db, agent_id="agent-123", agent_data=agent_data)
+
+    async def test_update_rejects_disallowed_native_id_override_domain(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent = MagicMock()
+        agent.uaid = None
+        agent.name = "test-agent"
+        agent.version = 1
+        agent.endpoint_url = "https://example.com"
+        agent.team_id = None
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+
+        agent_data = A2AAgentUpdate(
+            endpoint_url="https://example.com",
+            generate_uaid=True,
+            uaid_native_id_override="https://evil.example.net",
+            uaid_registry="context-forge",
+            version="1.0.0",
+            uaid_protocol="a2a",
+        )
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with pytest.raises(A2AAgentError, match="not in UAID_ALLOWED_DOMAINS"):
+                await service.update_agent(mock_db, agent_id="agent-123", agent_data=agent_data)
+
+    async def test_update_sets_uaid_native_id_on_success(self, service, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent = MagicMock()
+        agent.uaid = None
+        agent.name = "test-agent"
+        agent.version = 1
+        agent.endpoint_url = "https://example.com"
+        agent.team_id = None
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+
+        agent_data = A2AAgentUpdate(
+            endpoint_url="https://example.com",
+            generate_uaid=True,
+            uaid_registry="context-forge",
+            uaid_protocol="a2a",
+        )
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            with patch("mcpgateway.utils.uaid.generate_uaid", return_value="uaid:aid:123;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"):
+                with patch("mcpgateway.services.a2a_service._get_registry_cache") as mock_cache:
+                    from unittest.mock import AsyncMock
+
+                    mock_cache.return_value.invalidate_agents = AsyncMock()
+                    with patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache.invalidate_tags", new=AsyncMock()):
+                        with patch("mcpgateway.services.tool_service.tool_service.update_tool_from_a2a_agent", new=AsyncMock()):
+                            with patch.object(service, "convert_agent_to_read", return_value=agent):
+                                with patch.object(mock_db, "commit", MagicMock()), patch.object(mock_db, "refresh", MagicMock()):
+                                    result = await service.update_agent(mock_db, agent_id="agent-123", agent_data=agent_data)
+
+        assert result is agent
+        assert agent.uaid_native_id == "https://example.com"

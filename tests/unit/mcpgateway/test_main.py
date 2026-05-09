@@ -3794,6 +3794,17 @@ class TestA2AAgentEndpoints:
             assert response.status_code == 200
             assert mock_service.invoke_agent.call_args.kwargs["bearer_token"] == test_token, f"Failed for: {auth_value}"
 
+    def test_is_jwt_token_rejects_invalid_inputs(self):
+        """Test JWT detection rejects empty and malformed tokens."""
+        from unittest.mock import patch
+        from mcpgateway.main import _is_jwt_token
+
+        assert _is_jwt_token("") is False
+        assert _is_jwt_token("header..signature") is False
+        # Force base64 decode failure to cover the except branch
+        with patch("mcpgateway.main.base64.urlsafe_b64decode", side_effect=ValueError("bad base64")):
+            assert _is_jwt_token("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.invalid") is False
+
 
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #
@@ -5278,5 +5289,15 @@ class TestA2AInvokeBodyEndpoint:
         # Return a string user instead of dict
         mock_context.return_value = ("user@example.com", ["string-user-id"], False)
         response = test_client.post("/a2a/invoke", json={"agent_id": "test-agent", "parameters": {}}, headers=auth_headers)
+        assert response.status_code in [200, 404]
+        assert mock_context.called
+
+    @patch("mcpgateway.main.a2a_service")
+    @patch("mcpgateway.main.get_rpc_filter_context")
+    def test_invoke_by_id_user_id_from_non_dict_user(self, mock_context, mock_service, test_client, auth_headers):
+        """Test user_id extraction when user is not a dict for /a2a/{agent_id}/invoke."""
+        mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
+        mock_context.return_value = ("user@example.com", "string-user-id", False)
+        response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called

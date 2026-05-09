@@ -301,15 +301,13 @@ def _is_jwt_token(token: str) -> bool:
     if len(parts) != 3:
         return False
 
-    import base64
-
     for part in parts:
         if not part:
             return False
         try:
             padded = part + "=" * (-len(part) % 4)
             base64.urlsafe_b64decode(padded)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             return False
     return True
 
