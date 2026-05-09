@@ -931,16 +931,22 @@ def init_telemetry() -> Optional[Any]:
             header_dict = _resolve_otlp_headers(endpoint)
             if _is_langfuse_otlp_endpoint(endpoint):
                 protocol = "http"
-            # Note: some versions of OTLP exporters may not accept 'insecure' kwarg; avoid passing it.
-            # Use endpoint scheme or env to control TLS externally.
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
-                exporter = cast(Any, OTLP_SPAN_EXPORTER)(endpoint=endpoint, headers=header_dict or None)
+                exporter = cast(Any, OTLP_SPAN_EXPORTER)(
+                    endpoint=endpoint,
+                    headers=header_dict or None,
+                    insecure=cfg.otel_exporter_otlp_insecure
+                )
             elif HTTP_EXPORTER:
                 # Use HTTP exporter as fallback
                 ep = str(endpoint) if endpoint is not None else ""
                 http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
-                exporter = cast(Any, HTTP_EXPORTER)(endpoint=http_ep, headers=header_dict or None)
+                exporter = cast(Any, HTTP_EXPORTER)(
+                    endpoint=http_ep,
+                    headers=header_dict or None,
+                    insecure=cfg.otel_exporter_otlp_insecure
+                )
             else:
                 logger.error("No OTLP exporter available")
                 return None

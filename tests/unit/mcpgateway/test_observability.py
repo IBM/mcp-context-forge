@@ -138,6 +138,59 @@ class TestObservability:
         provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
+    @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_insecure_parameter(self, mock_processor, mock_provider, mock_exporter):
+        """Test that OTEL_EXPORTER_OTLP_INSECURE is passed to the exporter constructor."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "false"
+        os.environ["OTEL_SERVICE_NAME"] = "test-service"
+
+        # Mock the provider and exporter instances
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+        exporter_instance = MagicMock()
+        mock_exporter.return_value = exporter_instance
+
+        result = init_telemetry()
+
+        # Verify the exporter was called with insecure=False
+        mock_exporter.assert_called_once()
+        call_kwargs = mock_exporter.call_args[1]
+        assert "insecure" in call_kwargs
+        assert call_kwargs["insecure"] is False
+        assert result is not None
+
+    @patch("mcpgateway.observability.HTTP_EXPORTER")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_http_insecure_parameter(self, mock_processor, mock_provider, mock_exporter):
+        """Test that OTEL_EXPORTER_OTLP_INSECURE is passed to HTTP exporter constructor."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
+        os.environ["OTEL_SERVICE_NAME"] = "test-service"
+
+        # Mock the provider and exporter instances
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+        exporter_instance = MagicMock()
+        mock_exporter.return_value = exporter_instance
+
+        result = init_telemetry()
+
+        # Verify the HTTP exporter was called with insecure=True
+        mock_exporter.assert_called_once()
+        call_kwargs = mock_exporter.call_args[1]
+        assert "insecure" in call_kwargs
+        assert call_kwargs["insecure"] is True
+        assert result is not None
+
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")
     @patch("mcpgateway.observability.TracerProvider")
