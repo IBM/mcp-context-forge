@@ -7540,6 +7540,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </p>
                   </div>
 
+                  <!-- UAID Native ID Override -->
+                  <div>
+                    <label for="a2a-uaid-native-id-override" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                      Native ID Override (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      id="a2a-uaid-native-id-override"
+                      name="uaid_native_id_override"
+                      placeholder="http://gateway.example.com:4445"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Override the routing address in UAID. Leave empty to use endpoint URL. Use when gateway address differs from agent endpoint (e.g., gateway proxies to agent).
+                    </p>
+                  </div>
+
                   <!-- Info Box -->
                   <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
                     <p class="text-xs text-blue-700 dark:text-blue-300">
@@ -10971,6 +10988,23 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             </select>
                             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                               Agent communication protocol
+                            </p>
+                          </div>
+
+                          <!-- UAID Native ID Override -->
+                          <div>
+                            <label for="a2a-uaid-native-id-override-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                              Native ID Override (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              id="a2a-uaid-native-id-override-edit"
+                              name="uaid_native_id_override"
+                              placeholder="http://gateway.example.com:4445"
+                              class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            />
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              Override the routing address in UAID. Leave empty to use endpoint URL. Use when gateway address differs from agent endpoint (e.g., gateway proxies to agent).
                             </p>
                           </div>
 

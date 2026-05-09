@@ -626,6 +626,7 @@ export const editA2AAgent = async function (agentId) {
     const generateUAIDCheckbox = safeGetElement("a2a-generate-uaid-edit");
     const uaidRegistryField = safeGetElement("a2a-uaid-registry-edit");
     const uaidProtocolField = safeGetElement("a2a-uaid-protocol-edit");
+    const uaidNativeIdOverrideField = safeGetElement("a2a-uaid-native-id-override-edit");
 
     const hasUAID = !!agent.uaid;
 
@@ -678,6 +679,24 @@ export const editA2AAgent = async function (agentId) {
         // Agent has no UAID - allow selection
         uaidProtocolField.value = "a2a";
         uaidProtocolField.title = "Protocol for UAID generation";
+      }
+    }
+
+    if (uaidNativeIdOverrideField) {
+      // Clear any previous styling
+      uaidNativeIdOverrideField.classList.remove('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+      uaidNativeIdOverrideField.readOnly = false;
+
+      if (hasUAID) {
+        // Agent has UAID - make field read-only and populate with stored value
+        uaidNativeIdOverrideField.value = agent.uaidNativeIdOverride || "";
+        uaidNativeIdOverrideField.readOnly = true;
+        uaidNativeIdOverrideField.classList.add('bg-gray-100', 'dark:bg-gray-800', 'cursor-not-allowed');
+        uaidNativeIdOverrideField.title = "UAID is immutable and cannot be changed";
+      } else {
+        // Agent has no UAID - allow editing
+        uaidNativeIdOverrideField.value = "";
+        uaidNativeIdOverrideField.title = "Override routing address for cross-gateway calls (optional)";
       }
     }
 

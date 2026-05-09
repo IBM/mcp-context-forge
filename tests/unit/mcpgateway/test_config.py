@@ -1387,3 +1387,139 @@ def test_hot_server_check_interval_property():
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
+
+
+# --------------------------------------------------------------------------- #
+#                    UAID Security Configuration                               #
+# --------------------------------------------------------------------------- #
+def test_uaid_allow_all_domains_defaults_false():
+    """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_allow_all_domains is False
+
+
+def test_uaid_forward_auth_defaults_true():
+    """Verify UAID_FORWARD_AUTH defaults to True (auth forwarding enabled)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_forward_auth is True
+
+
+def test_uaid_allow_all_domains_can_be_enabled():
+    """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
+    settings = Settings(uaid_allow_all_domains=True, _env_file=None)
+    assert settings.uaid_allow_all_domains is True
+
+
+# UAID Domain Allowlist Validation Tests
+def test_uaid_allowed_domains_rejects_localhost():
+    """Verify validator rejects localhost in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["example.com", "localhost"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_127_0_0_1():
+    """Verify validator rejects 127.0.0.1 in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["127.0.0.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local():
+    """Verify validator rejects link-local addresses (169.254.x.x)."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_private_ips():
+    """Verify validator rejects private IP ranges."""
+    # Test various private IP ranges
+    private_ips = ["10.0.0.1", "192.168.1.1", "172.16.0.1"]
+    for ip in private_ips:
+        with pytest.raises(ValueError, match="private IP range"):
+            Settings(uaid_allowed_domains=[ip], _env_file=None)
+
+
+def test_uaid_allowed_domains_172_range_boundary():
+    """Verify only the private 172.16/12 range is rejected."""
+    with pytest.raises(ValueError, match="private IP range"):
+        Settings(uaid_allowed_domains=["172.20.1.1"], _env_file=None)
+
+    settings = Settings(uaid_allowed_domains=["172.32.1.1"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["172.32.1.1"]
+
+
+def test_uaid_allowed_domains_rejects_whitespace():
+    """Verify validator rejects domains with whitespace."""
+    with pytest.raises(ValueError, match="contains whitespace"):
+        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_domains():
+    """Verify validator accepts valid public domain names."""
+    valid_domains = ["example.com", "gateway.acme.org", "api.partner.io"]
+    settings = Settings(uaid_allowed_domains=valid_domains, _env_file=None)
+    assert settings.uaid_allowed_domains == valid_domains
+
+
+def test_uaid_allowed_domains_accepts_empty_list():
+    """Verify validator accepts empty list (fail-closed default)."""
+    settings = Settings(uaid_allowed_domains=[], _env_file=None)
+    assert settings.uaid_allowed_domains == []
+
+
+def test_uaid_config_warns_on_contradictory_settings(caplog):
+    """Verify warning when both allow_all and allowlist are set."""
+    import logging
+
+    # Capture warnings from the config logger
+    with caplog.at_level(logging.WARNING, logger='mcpgateway.config'):
+        settings = Settings(
+            uaid_allow_all_domains=True,
+            uaid_allowed_domains=["example.com"],
+            _env_file=None
+        )
+
+    # Should create settings successfully but log warning
+    assert settings.uaid_allow_all_domains is True
+    assert settings.uaid_allowed_domains == ["example.com"]
+
+    # Check warning was logged in config module
+    assert any("Configuration conflict" in record.message for record in caplog.records), \
+        f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
+
+
+def test_uaid_allowed_domains_rejects_ipv6_with_brackets():
+    """Verify validator rejects IPv6 loopback with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::1]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_ipv6_zero_with_brackets():
+    """Verify validator rejects IPv6 zero address with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::0]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_multiple_invalid():
+    """Verify validator reports all invalid domains when multiple are present."""
+    with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
+        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_loopback_with_port():
+    """Verify validator rejects loopback addresses with ports."""
+    loopback_with_ports = ["localhost:4444", "127.0.0.1:4444", "[::1]:8080"]
+    for domain in loopback_with_ports:
+        with pytest.raises(ValueError, match="loopback address"):
+            Settings(uaid_allowed_domains=[domain], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local_with_port():
+    """Verify validator rejects link-local addresses with ports."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1:8080"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_with_port():
+    """Verify validator accepts valid public domains with ports."""
+    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]
