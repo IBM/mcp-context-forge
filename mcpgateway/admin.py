@@ -1383,14 +1383,19 @@ def serialize_datetime(obj):
     return obj
 
 
-def validate_password_strength(password: str) -> tuple[bool, str]:
+def validate_password_strength(password: str, email: str = "", is_admin: bool = False) -> tuple[bool, str]:
     """Validate password meets strength requirements.
 
-    Uses configurable settings from config.py for password policy.
+    Delegates to PasswordPolicyService for comprehensive validation including
+    complexity, common password detection, sequential character detection,
+    and username-based validation.
+
     Respects password_policy_enabled toggle - if disabled, all passwords pass.
 
     Args:
         password: Password to validate
+        email: User's email address (for username-based validation)
+        is_admin: Whether this is an admin account (requires longer password)
 
     Returns:
         tuple: (is_valid, error_message)
@@ -1399,30 +1404,16 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
-    min_length = getattr(settings, "password_min_length", 8)
-    require_uppercase = getattr(settings, "password_require_uppercase", False)
-    require_lowercase = getattr(settings, "password_require_lowercase", False)
-    require_numbers = getattr(settings, "password_require_numbers", False)
-    require_special = getattr(settings, "password_require_special", False)
+    from mcpgateway.db import SessionLocal
+    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
-    if len(password) < min_length:
-        return False, f"Password must be at least {min_length} characters long"
-
-    if require_uppercase and not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter (A-Z)"
-
-    if require_lowercase and not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter (a-z)"
-
-    if require_numbers and not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one number (0-9)"
-
-    # Match the special character set used in EmailAuthService
-    special_chars = '!@#$%^&*(),.?":{}|<>'
-    if require_special and not any(c in special_chars for c in password):
-        return False, f"Password must contain at least one special character ({special_chars})"
-
-    return True, ""
+    with SessionLocal() as db:
+        policy = PasswordPolicyService(db)
+        try:
+            policy.validate_user_password(password, email or None, is_admin)
+            return True, ""
+        except PasswordPolicyError as e:
+            return False, str(e)
 
 
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
@@ -7791,8 +7782,10 @@ async def admin_create_user(
 
         # Validate password strength
         password = str(form.get("password", ""))
+        email_val = str(form.get("email", ""))
+        is_admin_val = form.get("is_admin") == "on"
         if password:
-            is_valid, error_msg = validate_password_strength(password)
+            is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
@@ -7802,10 +7795,10 @@ async def admin_create_user(
 
         # Create new user
         new_user = await auth_service.create_user(
-            email=str(form.get("email", "")),
+            email=email_val,
             password=password,
             full_name=str(form.get("full_name", "")),
-            is_admin=form.get("is_admin") == "on",
+            is_admin=is_admin_val,
             auth_provider="local",
             granted_by=get_user_email(user),  # Pass current admin user for audit trail
         )
@@ -8052,7 +8045,7 @@ async def admin_update_user(
 
         # Validate password if provided
         if password:
-            is_valid, error_msg = validate_password_strength(password)
+            is_valid, error_msg = validate_password_strength(password, decoded_email, is_admin)
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 

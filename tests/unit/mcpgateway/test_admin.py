@@ -9223,7 +9223,7 @@ async def test_admin_search_users_email_auth_disabled(monkeypatch, mock_db, allo
 async def test_admin_create_user_password_invalid(monkeypatch, mock_db, allow_permission):
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({"email": "a@example.com", "password": "short"}))
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (False, "too weak"))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw, email="", is_admin=False: (False, "too weak"))
 
     response = await admin_create_user(request=request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 400
@@ -9234,7 +9234,7 @@ async def test_admin_create_user_password_invalid(monkeypatch, mock_db, allow_pe
 async def test_admin_create_user_success(monkeypatch, mock_db, allow_permission):
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({"email": "a@example.com", "password": "StrongPass1!", "full_name": "A", "is_admin": "on"}))
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw, email="", is_admin=False: (True, ""))
 
     auth_service = MagicMock()
     auth_service.create_user = AsyncMock(return_value=SimpleNamespace(email="a@example.com", password_change_required=False))
@@ -9251,7 +9251,7 @@ async def test_admin_create_user_default_password_forces_password_change(monkeyp
     default_pw = settings.default_user_password.get_secret_value()
     monkeypatch.setattr(settings, "password_change_enforcement_enabled", True, raising=False)
     monkeypatch.setattr(settings, "require_password_change_for_default_password", True, raising=False)
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw, email="", is_admin=False: (True, ""))
 
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({"email": "a@example.com", "password": default_pw, "full_name": "A"}))
@@ -9269,7 +9269,7 @@ async def test_admin_create_user_default_password_forces_password_change(monkeyp
 
 @pytest.mark.asyncio
 async def test_admin_create_user_exception(monkeypatch, mock_db, allow_permission):
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw, email="", is_admin=False: (True, ""))
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({"email": "a@example.com", "password": "StrongPass1!"}))
 
@@ -9348,7 +9348,7 @@ async def test_admin_update_user_success(monkeypatch, mock_db, allow_permission)
     auth_service.is_last_active_admin = AsyncMock(return_value=False)
     auth_service.update_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw, email="", is_admin=False: (True, ""))
 
     response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 200
@@ -9368,7 +9368,7 @@ async def test_admin_update_user_password_invalid(monkeypatch, mock_db, allow_pe
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({"full_name": "A", "password": "weak", "confirm_password": "weak"}))
-    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda _pw: (False, "too weak"))
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda _pw, email="", is_admin=False: (False, "too weak"))
 
     auth_service = MagicMock()
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=False))
@@ -9805,13 +9805,9 @@ def test_validate_password_strength_policy(monkeypatch):
     assert validate_password_strength("weak") == (True, "")
 
     monkeypatch.setattr(settings, "password_policy_enabled", True)
-    monkeypatch.setattr(settings, "password_min_length", 8)
-    monkeypatch.setattr(settings, "password_require_uppercase", True)
-    monkeypatch.setattr(settings, "password_require_lowercase", True)
-    monkeypatch.setattr(settings, "password_require_numbers", True)
-    monkeypatch.setattr(settings, "password_require_special", True)
+    # PasswordPolicyService uses password_min_length_user=12 and 3-of-4 complexity
 
-    ok, msg = validate_password_strength("Aa1!aaaa")
+    ok, msg = validate_password_strength("Aa1!Aa1!Aa1!")
     assert ok is True
     assert msg == ""
 
