@@ -105,7 +105,7 @@ class DcrService:
 
         try:
             client = await self._get_client()
-            response = await client.get(rfc8414_url, timeout=self._get_timeout())
+            response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
             if response.status_code == 200:
                 metadata = response.json()
 
@@ -127,7 +127,7 @@ class DcrService:
 
         try:
             client = await self._get_client()
-            response = await client.get(oidc_url, timeout=self._get_timeout())
+            response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
             if response.status_code == 200:
                 metadata = response.json()
 

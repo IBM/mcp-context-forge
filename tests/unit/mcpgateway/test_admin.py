@@ -77,6 +77,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_delete_a2a_agent,
     admin_delete_gateway,
     admin_delete_grpc_service,
+    admin_discover_oauth,
     admin_delete_prompt,
     admin_delete_resource,
     admin_delete_root,
@@ -3322,6 +3323,107 @@ class TestAdminGatewayRoutes:
         response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_admin_discover_oauth_missing_issuer(self, mock_request):
+        """Test that missing issuer returns 400."""
+        mock_request.json = AsyncMock(return_value={})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 400
+        assert not response.body or b"issuer is required" in response.body
+
+    @pytest.mark.asyncio
+    async def test_admin_discover_oauth_invalid_json_body(self, mock_request):
+        """Test that invalid JSON body returns 400."""
+        mock_request.json = AsyncMock(side_effect=json.JSONDecodeError("test", "", 0))
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 400
+        assert b"Invalid JSON body" in response.body
+
+    @pytest.mark.asyncio
+    async def test_admin_discover_oauth_non_object_json(self, mock_request):
+        """Test that non-object JSON body returns 400."""
+        mock_request.json = AsyncMock(return_value=["not", "an", "object"])
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 400
+        assert b"JSON object" in response.body
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.admin.SecurityValidator")
+    async def test_admin_discover_oauth_invalid_issuer_url(self, mock_validator_cls, mock_request):
+        """Test that invalid issuer URL returns 400 without making outbound request."""
+        mock_validator_cls.validate_url.side_effect = ValueError("Invalid scheme")
+        mock_request.json = AsyncMock(return_value={"issuer": "ftp://evil.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 400
+        assert b"Invalid issuer URL" in response.body
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_discovery_failure(self, mock_dcr_service_cls, mock_request):
+        """Test that upstream discovery failure returns 502."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.side_effect = RuntimeError("Network timeout")
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 502
+        body = json.loads(response.body)
+        assert body["success"] is False
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_success(self, mock_dcr_service_cls, mock_request):
+        """Test successful OAuth endpoint discovery."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://example.com/token",
+            "authorization_endpoint": "https://example.com/authorize",
+            "jwks_uri": "https://example.com/jwks",
+            "registration_endpoint": "https://example.com/register",
+            "scopes_supported": ["openid", "profile"],
+            "grant_types_supported": ["authorization_code"],
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] == "https://example.com/token"
+        assert body["authorization_endpoint"] == "https://example.com/authorize"
+        assert body["dcr_available"] is True
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_invalid_endpoint_urls_filtered(self, mock_dcr_service_cls, mock_request):
+        """Invalid discovered endpoint URLs are filtered out (returned as None)."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "ftp://evil.com/token",
+            "authorization_endpoint": None,
+            "jwks_uri": "https://example.com/jwks",
+            "registration_endpoint": "",
+            "scopes_supported": [],
+            "grant_types_supported": [],
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] is None  # invalid URL filtered
+        assert body["authorization_endpoint"] is None  # None input filtered
+        assert body["jwks_uri"] == "https://example.com/jwks"  # valid kept
+        assert body["registration_endpoint"] is None  # empty string filtered
 
 
 class TestAdminRootRoutes:
