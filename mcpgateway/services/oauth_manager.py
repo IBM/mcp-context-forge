@@ -244,13 +244,19 @@ class OAuthManager:
     async def _post_token_request(
         self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
     ) -> httpx.Response:
-        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+        """POST to a token endpoint, using a custom SSL context when CA certs or mTLS are provided.
 
-        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
-        is created with the corresponding SSL context so that OAuth token
-        exchange works against self-signed or custom-CA upstream servers.
+        When ``ca_certificate``, ``client_cert``, or ``client_key`` is supplied,
+        an isolated ``httpx.AsyncClient`` is created with the corresponding SSL
+        context so that OAuth token exchange works against self-signed or
+        custom-CA upstream servers and/or presents client certificates for mTLS.
         Otherwise the shared HTTP client (which respects the global
         ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Note:
+            When only ``client_cert``/``client_key`` are provided (no custom CA),
+            the isolated client uses the system's default trust store and does
+            not honour ``SKIP_SSL_VERIFY``.
 
         Args:
             url: Token endpoint URL.

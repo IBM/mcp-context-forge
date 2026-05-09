@@ -159,7 +159,9 @@ def get_cached_ssl_context(
         avoid repeated expensive SSL setup operations.
     """
     # Ensure CA certificate is normalized to bytes for hash calculation
-    if isinstance(ca_certificate, bytes):
+    if ca_certificate is None:
+        ca_cert_bytes = b""
+    elif isinstance(ca_certificate, bytes):
         ca_cert_bytes = ca_certificate
     elif isinstance(ca_certificate, str):
         ca_cert_bytes = ca_certificate.encode()
