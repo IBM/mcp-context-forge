@@ -9595,11 +9595,12 @@ async def handle_internal_mcp_tools_call(request: Request):
         request: Trusted internal MCP tools/call request.
 
     Returns:
-        JSON-RPC response payload for the tools/call request.
+        dict: JSON-RPC response containing result on success,
+              or JSON-RPC error on plugin failures.
+              All plugin errors returned as structured JSON-RPC (never re-raised)
+              since this is an internal Rust↔Python interface.
 
     Raises:
-        PluginError: Re-raised so plugin middleware can preserve existing behavior.
-        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
         Exception: Propagated after best-effort rollback when unexpected failures occur.
     """
     req_id = None
@@ -9825,9 +9826,11 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             if hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
                 error_code = exc.violation.mcp_error_code
             if hasattr(exc.violation, "http_status_code") and isinstance(exc.violation.http_status_code, int):
-                http_status = exc.violation.http_status_code
+                candidate_status = exc.violation.http_status_code
+                if VALID_HTTP_STATUS_CODES.get(candidate_status):
+                    http_status = candidate_status
 
-        return ORJSONResponse(
+        response = ORJSONResponse(
             status_code=http_status,
             content={
                 "jsonrpc": "2.0",
@@ -9835,6 +9838,13 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
                 "id": request_id,
             },
         )
+        # Forward validated HTTP headers from violation if present
+        headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
+        if headers:
+            validated_headers = _validate_http_headers(headers)
+            if validated_headers:
+                response.headers.update(validated_headers)
+        return response
     except PluginError as exc:
         request_id = body.get("id") if isinstance(body, dict) else None
         error_code = -32603  # Internal error (JSON-RPC standard)

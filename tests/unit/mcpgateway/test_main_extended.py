@@ -8762,7 +8762,7 @@ class TestRpcHandling:
         missing_name_result = await handle_internal_mcp_tools_call(missing_name_request)
         assert missing_name_result["error"]["code"] == -32602
 
-    async def test_handle_internal_mcp_tools_call_generates_id_and_reraises_plugin_error_while_ignoring_close_failures(self):
+    async def test_handle_internal_mcp_tools_call_generates_id_and_returns_jsonrpc_plugin_error_while_ignoring_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
@@ -8873,7 +8873,7 @@ class TestRpcHandling:
                 await handle_internal_mcp_tools_call_resolve(request_no_scope)
         public_db.invalidate.assert_called_once()
 
-    async def test_internal_mcp_tools_call_resolve_re_raises_plugin_errors_and_ignores_close_failures(self):
+    async def test_internal_mcp_tools_call_resolve_returns_jsonrpc_plugin_errors_and_ignores_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "plugin-err", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",

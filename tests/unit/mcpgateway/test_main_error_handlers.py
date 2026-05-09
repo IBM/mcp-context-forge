@@ -839,22 +839,23 @@ class TestInternalMcpPluginExceptions:
     def mock_internal_auth(self):
         """Mock internal MCP authentication helpers."""
         with patch("mcpgateway.main._build_internal_mcp_forwarded_user") as mock_user, patch(
-            "mcpgateway.main._get_internal_mcp_auth_context"
-        ) as mock_auth, patch("mcpgateway.main._get_rpc_filter_context") as mock_filter, patch(
-            "mcpgateway.main._ensure_rpc_permission"
-        ) as mock_perm, patch("mcpgateway.main._enforce_internal_mcp_server_scope") as mock_scope:
+            "mcpgateway.main.get_internal_mcp_auth_context"
+        ) as mock_auth, patch("mcpgateway.main.get_rpc_filter_context") as mock_filter, patch(
+            "mcpgateway.main._ensure_rpc_permission", new=AsyncMock()
+        ) as mock_perm, patch(
+            "mcpgateway.main._enforce_internal_mcp_server_scope"
+        ) as mock_scope:
             mock_user.return_value = MagicMock(email="test@example.com")
             mock_auth.return_value = {"is_authenticated": True}
             mock_filter.return_value = ("test@example.com", [], False)
-            mock_perm.return_value = AsyncMock()
             mock_scope.return_value = None
             yield
 
     def test_resolve_plugin_violation_returns_jsonrpc_format(self, test_client, mock_internal_auth):
         """Resolve endpoint returns proper JSON-RPC format for PluginViolationError."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         # Setup: Mock prepare_rust_mcp_tool_execution to raise PluginViolationError
         violation = PluginViolation(
@@ -895,8 +896,8 @@ class TestInternalMcpPluginExceptions:
     def test_resolve_plugin_error_returns_jsonrpc_format(self, test_client, mock_internal_auth):
         """Resolve endpoint returns proper JSON-RPC format for PluginError."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         # Setup: Mock prepare_rust_mcp_tool_execution to raise PluginError
         error = PluginErrorModel(
@@ -934,8 +935,8 @@ class TestInternalMcpPluginExceptions:
     def test_call_plugin_violation_returns_jsonrpc_format(self, test_client, mock_internal_auth):
         """Tools/call endpoint returns proper JSON-RPC format for PluginViolationError."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(
             reason="Rate limit exceeded",
@@ -963,8 +964,8 @@ class TestInternalMcpPluginExceptions:
     def test_call_plugin_error_returns_jsonrpc_format(self, test_client, mock_internal_auth):
         """Tools/call endpoint returns proper JSON-RPC format for PluginError."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginError
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.errors import PluginError
+        from cpex.framework.models import PluginErrorModel
 
         error = PluginErrorModel(
             message="Plugin crashed",
@@ -992,8 +993,8 @@ class TestInternalMcpPluginExceptions:
     def test_resolve_preserves_request_id(self, test_client, mock_internal_auth):
         """Resolve endpoint preserves request ID from incoming JSON-RPC request."""
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
-        from mcpgateway.plugins.framework.models import PluginViolation
+        from cpex.framework.errors import PluginViolationError
+        from cpex.framework.models import PluginViolation
 
         violation = PluginViolation(reason="test", description="test", code="TEST")
 
