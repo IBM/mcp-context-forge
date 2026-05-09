@@ -303,11 +303,16 @@ class ErrorFormatter:
             if (
                 "uq_email_api_tokens_user_name_team" in error_str
                 or "uq_email_api_tokens_user_name" in error_str
+                or "uq_email_api_tokens_user_name_global" in error_str
                 or "uq_email_api_tokens_user_email_name" in error_str
                 or ("email_api_tokens.user_email" in error_str and "email_api_tokens.name" in error_str)
             ):
+                if should_expose_error_details():
+                    detail = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
+                else:
+                    detail = "A token with this name already exists. Please choose a different name."
                 return {
-                    "message": "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+                    "message": detail,
                     "success": False,
                 }
             if "UNIQUE constraint failed" in error_str:

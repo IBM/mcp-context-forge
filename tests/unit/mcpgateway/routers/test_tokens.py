@@ -299,6 +299,38 @@ class TestCreateToken:
         """IntegrityError handler must call db.rollback() before raising."""
         request = TokenCreateRequest(name="Dup Token")
 
+        orig = MagicMock()
+        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_team"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException):
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_token_integrity_error_global_scope_partial_index(self, mock_db, mock_current_user):
+        """IntegrityError from the partial unique index for global-scope tokens (team_id IS NULL) returns specific 409."""
+        request = TokenCreateRequest(name="Global Dup")
+
+        orig = MagicMock()
+        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_global"
+        err = IntegrityError("INSERT", {}, orig)
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(side_effect=err)
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "already exists" in exc_info.value.detail
+
 
 @pytest.mark.asyncio
 async def test_create_token_public_validation_error(mock_db, mock_current_user):
@@ -342,38 +374,6 @@ async def test_create_team_token_public_validation_error(mock_db, mock_current_u
 
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
         assert "Team does not exist or user lacks access" in exc_info.value.detail
-
-        orig = MagicMock()
-        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_team"
-        err = IntegrityError("INSERT", {}, orig)
-
-        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
-            mock_service = mock_service_class.return_value
-            mock_service.create_token = AsyncMock(side_effect=err)
-
-            with pytest.raises(HTTPException):
-                await create_token(request, current_user=mock_current_user, db=mock_db)
-
-            mock_db.rollback.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_create_token_integrity_error_global_scope_partial_index(self, mock_db, mock_current_user):
-        """IntegrityError from the partial unique index for global-scope tokens (team_id IS NULL) returns specific 409."""
-        request = TokenCreateRequest(name="Global Dup")
-
-        orig = MagicMock()
-        orig.__str__ = lambda self: "uq_email_api_tokens_user_name_global"
-        err = IntegrityError("INSERT", {}, orig)
-
-        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
-            mock_service = mock_service_class.return_value
-            mock_service.create_token = AsyncMock(side_effect=err)
-
-            with pytest.raises(HTTPException) as exc_info:
-                await create_token(request, current_user=mock_current_user, db=mock_db)
-
-            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-            assert "already exists" in exc_info.value.detail
 
 
 class TestListTokens:
@@ -580,6 +580,24 @@ class TestUpdateToken:
             assert response.is_active is True
             call_args = mock_service.update_token.call_args
             assert call_args[1]["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in update_token."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenUpdateRequest(name="Updated Token")
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.update_token = AsyncMock(side_effect=PublicValidationError("Token name exceeds maximum length"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Token name exceeds maximum length" in exc_info.value.detail
 
 
 class TestRevokeToken:
@@ -909,6 +927,22 @@ class TestTeamTokens:
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             # Security fix: generic error message in production (debug=False by default)
             assert "Invalid request" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_list_team_tokens_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in list_team_tokens."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.list_team_tokens = AsyncMock(side_effect=PublicValidationError("Team access revoked"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Team access revoked" in exc_info.value.detail
 
 
 class TestApiTokenAuth:

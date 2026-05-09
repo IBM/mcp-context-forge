@@ -24,7 +24,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
-from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +43,12 @@ def _handle_token_integrity_error(err_str: str) -> None:
     Raises:
         HTTPException: 409 CONFLICT with appropriate detail message
     """
-    # First-Party
-    from mcpgateway.utils.error_formatter import should_expose_error_details
-
     # Match the specific name constraint: PostgreSQL reports the constraint name
     # (either the db.py name or the Alembic migration name); SQLite reports column paths.
     if (
         "uq_email_api_tokens_user_name_team" in err_str
         or "uq_email_api_tokens_user_name" in err_str
+        or "uq_email_api_tokens_user_name_global" in err_str
         or "uq_email_api_tokens_user_email_name" in err_str
         or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
     ):
@@ -246,15 +244,15 @@ async def create_token(
             access_token=raw_token,
         )
     except PublicValidationError as e:
-        logger.error(f"Token creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Token creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        logger.error(f"Token creation integrity error: {SecurityValidator.sanitize_log_message(err_str)}")
+        logger.error("Token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
         _handle_token_integrity_error(err_str)
 
 
@@ -471,6 +469,9 @@ async def update_token(
         db.commit()
         db.close()
         return result
+    except PublicValidationError as e:
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
         logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
@@ -800,15 +801,15 @@ async def create_team_token(
             access_token=raw_token,
         )
     except PublicValidationError as e:
-        logger.error(f"Team token creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Team token creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        logger.error(f"Team token creation integrity error: {SecurityValidator.sanitize_log_message(err_str)}")
+        logger.error("Team token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
         _handle_token_integrity_error(err_str)
 
 
@@ -903,6 +904,9 @@ async def list_team_tokens(
         db.commit()
         db.close()
         return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
+    except PublicValidationError as e:
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
         logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))

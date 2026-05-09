@@ -118,10 +118,10 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         return RoleResponse.model_validate(role)
 
     except PublicValidationError as e:
-        logger.error(f"Role creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Role creation validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role creation failed: {e}")
@@ -245,10 +245,10 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
     except HTTPException:
         raise
     except PublicValidationError as e:
-        logger.error(f"Role update validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Role update validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role update failed: {e}")
@@ -291,10 +291,10 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
     except HTTPException:
         raise
     except PublicValidationError as e:
-        logger.error(f"Role deletion validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Role deletion validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role deletion failed: {e}")
@@ -338,10 +338,10 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         return UserRoleResponse.model_validate(user_role)
 
     except PublicValidationError as e:
-        logger.error(f"Role assignment validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        logger.error(f"Role assignment validation error: {SecurityValidator.sanitize_log_message(str(e))}")
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role assignment failed: {e}")

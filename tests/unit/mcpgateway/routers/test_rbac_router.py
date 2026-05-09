@@ -298,6 +298,9 @@ async def test_check_permission_and_user_permissions(monkeypatch):
     assert result.granted is True
     assert result.checked_at <= datetime.now(tz=timezone.utc)
 
+    perms = await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    assert sorted(perms) == ["p1", "p2"]
+
 
 @pytest.mark.asyncio
 async def test_create_role_public_validation_error(monkeypatch):
