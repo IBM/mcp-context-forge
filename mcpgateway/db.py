@@ -1322,6 +1322,7 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_COMPLIANCE = "admin.compliance"
     ADMIN_OVERVIEW = "admin.overview"
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"

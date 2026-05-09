@@ -11556,6 +11556,17 @@ app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
 
+# Compliance report router (admin API)
+if settings.mcpgateway_admin_api_enabled:
+    try:
+        from mcpgateway.routers.compliance_router import router as compliance_router
+        app.include_router(compliance_router)
+        logger.info("Compliance router included")
+    except ImportError as e:  # pragma: no cover - optional import guard
+        logger.warning(f"Compliance router not available: {e}")
+else:
+    logger.info("Compliance router not included - admin API disabled")
+
 # Tool plugin bindings router
 try:
     # First-Party
