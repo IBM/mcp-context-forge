@@ -563,6 +563,17 @@ class ComplianceService:
         """
 
         def _default(obj: Any) -> Any:
+            """Fallback JSON encoder for datetime and Enum objects.
+
+            Args:
+                obj: Object to serialise.
+
+            Returns:
+                ISO-format string for datetime objects, enum value for Enum objects.
+
+            Raises:
+                TypeError: If the object type is not supported.
+            """
             if isinstance(obj, datetime):
                 return obj.isoformat()
             if isinstance(obj, Enum):

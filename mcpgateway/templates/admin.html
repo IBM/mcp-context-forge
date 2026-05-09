@@ -63,7 +63,7 @@
         // Add JWT token from cookie if available
         const jwtToken = getCookie("jwt_token");
         if (jwtToken) {
-          evt.detail.headers["Authorization"] = "Bearer " + jwtToken;
+          evt.detail.headers["{{ auth_header_name|default('Authorization') }}"] = "Bearer " + jwtToken;
         }
 
         const csrfToken = getCookie("mcpgateway_csrf_token");
@@ -108,9 +108,16 @@
           const method = (requestInit.method || methodFromRequest || "GET").toUpperCase();
           if (isUnsafeHttpMethod(method) && isSameOriginRequest(resource)) {
             const csrfToken = getCookie("mcpgateway_csrf_token");
-            if (csrfToken) {
+            const jwtToken = getCookie("jwt_token");
+            if (csrfToken || jwtToken) {
               const nextHeaders = new Headers(requestInit.headers || (resource instanceof Request ? resource.headers : undefined));
-              nextHeaders.set("X-CSRF-Token", csrfToken);
+              const authHeaderName = "{{ auth_header_name|default('Authorization') }}";
+              if (jwtToken && !nextHeaders.has(authHeaderName)) {
+                nextHeaders.set(authHeaderName, "Bearer " + jwtToken);
+              }
+              if (csrfToken) {
+                nextHeaders.set("X-CSRF-Token", csrfToken);
+              }
               requestInit.headers = nextHeaders;
             }
           }

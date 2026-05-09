@@ -167,15 +167,14 @@ class SecurityConfigurationError(Exception):
 
 
 def calculate_entropy(text: str) -> float:
+    """Calculate Shannon entropy to detect low-randomness secrets.
+
+    Args:
+        text (str): The secret string to evaluate.
+
+    Returns:
+        float: The calculated entropy score.
     """
-        Calculate Shannon entropy to detect low-randomness secrets.
-
-        Args:
-            text (str): The secret string to evaluate.
-
-        Returns:
-            float: The calculated entropy score.
-        """
     if not text:
         return 0.0
     probabilities = [text.count(c) / len(text) for c in set(text)]
@@ -420,6 +419,41 @@ class Settings(BaseSettings):
     )
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+
+    # CSRF Protection Configuration
+    csrf_enabled: bool = Field(default=True, description="Enable CSRF protection for state-changing operations")
+    csrf_secret_key: str = Field(default="", description="Secret key for CSRF token generation (falls back to jwt_secret_key if empty)")
+    csrf_token_name: str = Field(default="X-CSRF-Token", description="HTTP header name for CSRF token")
+    csrf_cookie_name: str = Field(default="mcpgateway_csrf_token", description="Cookie name for CSRF token")
+    csrf_token_expiry: int = Field(default=3600, description="CSRF token expiration time in seconds")
+    csrf_cookie_secure: bool = Field(default=True, description="Set Secure flag on CSRF cookie (HTTPS only)")
+    csrf_cookie_samesite: str = Field(default="Strict", description="SameSite attribute for CSRF cookie (Strict, Lax, or None)")
+    csrf_cookie_httponly: bool = Field(default=False, description="Set HttpOnly flag on CSRF cookie (False allows JavaScript to read for API calls)")
+    csrf_check_referer: bool = Field(default=True, description="Validate Referer header for CSRF protection")
+    csrf_rotate_on_login: bool = Field(default=True, description="Rotate CSRF token on user login for enhanced security")
+    csrf_trusted_origins: List[str] = Field(default_factory=list, description="Additional trusted origins for CSRF validation")
+    csrf_exempt_paths: List[str] = Field(
+        default_factory=lambda: [
+            "/health",
+            "/auth/login",
+            "/auth/logout",
+            "/auth/refresh",
+            "/auth/email/login",
+            "/auth/email/register",
+            "/auth/email/forgot-password",
+            "/auth/email/reset-password",
+            "/admin",  # Exempt: all admin routes use per-route enforce_admin_csrf dependency
+            "/admin/login",
+            "/admin/forgot-password",
+            "/admin/reset-password",
+            "/oauth/fetch-tools",  # Exempt: OAuth callback uses enforce_fetch_tools_csrf with origin+double-submit
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/metrics",
+        ],
+        description="Paths exempt from CSRF protection",
+    )
 
     # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
     json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
@@ -1269,6 +1303,10 @@ class Settings(BaseSettings):
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
+        # CSRF secret key fallback to JWT secret key
+        if not self.csrf_secret_key:
+            self.csrf_secret_key = self.jwt_secret_key.get_secret_value()
+
         return self
 
     def get_security_warnings(self) -> List[str]:
@@ -1332,7 +1370,7 @@ class Settings(BaseSettings):
         security_score: int
 
     def get_security_status(self) -> SecurityStatus:
-        """Get comprehensive security status and enforces fail-closed logic in production.
+        """Get comprehensive security status and enforce fail-closed logic in production.
 
         Returns:
             SecurityStatus: Dictionary containing security status information including score and warnings.
@@ -1357,11 +1395,10 @@ class Settings(BaseSettings):
         is_prod = self.environment == "production"
         remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
 
-        # Evaluate specific critical secrets
         critical_secrets = {
             "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
             "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
-            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value(),
         }
 
         for name, value in critical_secrets.items():
@@ -1369,14 +1406,13 @@ class Settings(BaseSettings):
                 continue
             is_sentinel = value in self.SENTINEL_VALUES
             is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
-            # Check for empty or "UNCONFIGURED" values
+
             if is_sentinel:
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
                 if is_prod:
                     return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
                 logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
 
-            # Check for known weak values
             if self.require_strong_secrets and is_weak:
                 error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
                 return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
@@ -1400,36 +1436,16 @@ class Settings(BaseSettings):
         }
 
     def log_critical_issues(self, status: SecurityStatus) -> None:
-        """
-        Logs critical security issues and provides remediation steps.
 
-        Args:
-            status (SecurityStatus): The security status dictionary to log.
-        """
+        """Log critical security issues and remediation steps."""
         if status["status"] == "FAIL":
-            # [Requirement]: Explain specific risk
             logger.critical(f"[SECURITY FATAL] {status['message']}")
-
-            # [Requirement]: Include generation command
             if status["remediation"]:
                 logger.info(f"REMEDIATION: {status['remediation']}")
-
-            # [Requirement]: Reference documentation
             logger.info("REFERENCE: For full security configuration guide, see: https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/operations/config-validation.md")
 
     def _build_security_response(self, status: str, code: str, msg: str, remediation: str) -> SecurityStatus:
-        """
-        Helper to build a failure response for get_security_status.
-
-        Args:
-            status (str): The overall security status (e.g., "FAIL").
-            code (str): The specific error code.
-            msg (str): The error description.
-            remediation (str): The suggested fix for the user.
-
-        Returns:
-            SecurityStatus: A dictionary containing the structured security response.
-        """
+        """Build a failure response for get_security_status."""
         logger.error(f"[{code}] CRITICAL SECURITY ISSUE: {msg}")
         return {
             "status": status,
@@ -3235,11 +3251,10 @@ def get_settings(**kwargs: Any) -> Settings:
     cfg.validate_transport()
     # Ensure sqlite DB directories exist if needed.
     cfg.validate_database()
-    # Get the status (SUCCESS/FAIL) based on sentinel and weak values
-    security_status = cfg.get_security_status()
 
+    # Get the status (SUCCESS/FAIL) based on sentinel and weak values.
+    security_status = cfg.get_security_status()
     if security_status["status"] == "FAIL":
-        # Log the critical issues (remediation, risk, documentation)
         cfg.log_critical_issues(security_status)
         raise SecurityConfigurationError(security_status["message"])
     # Return the one-and-only Settings instance (cached).
