@@ -2286,8 +2286,31 @@ class TestGatewayTestEndpointSecurity:
         SecurityValidator.validate_host_allowlist("evil.com", empty_allowlist)
         SecurityValidator.validate_host_allowlist("127.0.0.1", empty_allowlist)
 
-    def test_private_ips_blocked_unconditionally(self):
-        """Test that private IPs are blocked regardless of allowlist."""
+    def test_allowlist_ipv6_handling(self):
+        """Test that IPv6 addresses are handled gracefully in allowlist (no IDN errors)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["::1", "2001:db8::1"]
+
+        # Should pass - exact match for IPv6
+        SecurityValidator.validate_host_allowlist("::1", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("2001:db8::1", allowed_patterns)
+
+        # Should fail - not in allowlist but should NOT raise IDN error
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("::2", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+        assert "IDN" not in str(exc_info.value)
+
+        # Should fail - IPv6 not in allowlist, clean error (no IDN confusion)
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("fe80::1", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+        logger.debug("IPv6 allowlist handling works correctly")
+
+    def test_private_ips_blocked_when_private_networks_disabled(self):
+        """Test that private IPs are blocked when private networks are disabled."""
         from mcpgateway.common.validators import SecurityValidator
         from mcpgateway.config import settings
 
@@ -2308,8 +2331,8 @@ class TestGatewayTestEndpointSecurity:
                     assert "private" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
                     logger.debug(f"Private IP URL blocked: {url} - {exc_info.value}")
 
-    def test_loopback_blocked_unconditionally(self):
-        """Test that loopback addresses are blocked."""
+    def test_loopback_blocked_when_localhost_disabled(self):
+        """Test that loopback addresses are blocked when localhost is disabled."""
         from mcpgateway.common.validators import SecurityValidator
         from mcpgateway.config import settings
 
@@ -2392,6 +2415,43 @@ class TestGatewayTestEndpointSecurity:
         # Should match nested subdomains
         SecurityValidator.validate_host_allowlist("api.staging.example.com", allowed_patterns)
         logger.debug("Nested subdomain api.staging.example.com matched wildcard *.example.com")
+
+    def test_allowlist_rejects_empty_hostname(self):
+        """Test that empty/None hostname raises clean error."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("", ["example.com"])
+        assert "empty" in str(exc_info.value).lower()
+
+    def test_allowlist_defends_against_percent_encoding(self):
+        """Test that percent-encoded hostnames are decoded before matching."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Percent-encoded dots should be normalized before matching
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evil%2ecom", ["example.com"])
+        assert "not in allowlist" in str(exc_info.value)
+
+        # Valid hostname with percent encoding should match after decode
+        SecurityValidator.validate_host_allowlist("api%2eexample%2ecom", ["api.example.com"])
+
+    def test_allowlist_rejects_malformed_patterns(self):
+        """Test that malformed allowlist patterns raise clean errors."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Single "*" is not a valid pattern (no domain to match)
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("example.com", ["*"])
+
+        # "*." without a domain is not valid
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("example.com", ["*."])
+
+        # A list with one valid and one invalid pattern: the invalid pattern is
+        # reached when the hostname does not match the valid one, so it raises
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("evil.com", ["*.example.com", "*"])
 
 
 if __name__ == "__main__":

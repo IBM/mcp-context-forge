@@ -1322,7 +1322,7 @@ class SecurityValidator:
         Performs:
         - Lowercase conversion
         - Trailing dot removal
-        - IDN to ASCII (Punycode) conversion
+        - IDN to ASCII (Punycode) conversion (skipped for IP addresses)
         - Handles wildcard patterns (*.example.com)
 
         Args:
@@ -1352,6 +1352,13 @@ class SecurityValidator:
             hostname = hostname[2:]  # Remove "*." for normalization
 
         hostname_normalized = hostname.lower().rstrip(".")
+
+        # Skip IDN encoding for IP addresses (IPv4 and IPv6)
+        try:
+            ipaddress.ip_address(hostname_normalized)
+            return wildcard_prefix + hostname_normalized
+        except ValueError:
+            pass  # Not an IP address, proceed with IDN normalization
 
         try:
             # Convert IDN to ASCII (e.g., "münchen.de" → "xn--mnchen-3ya.de")
@@ -1536,6 +1543,13 @@ class SecurityValidator:
         # Empty allowlist = no enforcement
         if not allowed_patterns:
             return
+
+        # Guard against None or empty hostname
+        if not hostname:
+            raise ValueError(f"{field_name} hostname is empty")
+
+        # Defensive percent-decode (matching _validate_ssrf behavior)
+        hostname = _unquote_if_needed(hostname)
 
         # Normalize hostname: lowercase, strip trailing dots, IDN conversion
         hostname_normalized = cls._normalize_hostname(hostname)
