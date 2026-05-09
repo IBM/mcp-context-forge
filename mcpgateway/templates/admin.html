@@ -14932,7 +14932,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             `${window.ROOT_PATH}/admin/gateways/discover-oauth`,
             {
               method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCookie('mcpgateway_csrf_token') || '',
+              },
               body:    JSON.stringify({ issuer }),
             }
           );
@@ -14940,7 +14943,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
           if (!data.success) {
             _oauthDiscoverStatus(statusEl, 'error',
-              `Discovery failed: ${data.error || data.message || 'Unknown error'}. ` +
+              `Discovery failed: ${_escHtml(data.error || data.message || 'Unknown error')}. ` +
               'Please configure Token URL and Authorization URL manually.');
             return;
           }

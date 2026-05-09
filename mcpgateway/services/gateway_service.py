@@ -567,6 +567,50 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
 
+    @staticmethod
+    async def _auto_discover_oauth_endpoints(raw_oauth_config: dict) -> dict:
+        """Auto-discover OAuth endpoints from issuer metadata if needed.
+
+        Args:
+            raw_oauth_config: The raw OAuth config dict with potential 'issuer' key.
+
+        Returns:
+            The (possibly mutated) raw_oauth_config dict.
+        """
+        if not raw_oauth_config:
+            return raw_oauth_config
+        issuer = raw_oauth_config.get("issuer")
+        has_token_url = raw_oauth_config.get("token_url")
+        has_authz_url = raw_oauth_config.get("authorization_url")
+        if not issuer or (has_token_url and has_authz_url):
+            return raw_oauth_config
+
+        # First-Party
+        from mcpgateway.common.validators import SecurityValidator  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+
+        try:
+            SecurityValidator.validate_url(issuer, "OAuth issuer URL")
+        except ValueError as _e:
+            logger.warning("OAuth endpoint discovery skipped for issuer %s: %s", issuer, _e)
+            return raw_oauth_config
+
+        try:
+            _dcr = DcrService()
+            _metadata = await _dcr.discover_as_metadata(issuer)
+            if _metadata.get("token_endpoint") and not raw_oauth_config.get("token_url"):
+                raw_oauth_config["token_url"] = _metadata["token_endpoint"]
+            if _metadata.get("authorization_endpoint") and not raw_oauth_config.get("authorization_url"):
+                raw_oauth_config["authorization_url"] = _metadata["authorization_endpoint"]
+            if _metadata.get("jwks_uri") and not raw_oauth_config.get("jwks_uri"):
+                raw_oauth_config["jwks_uri"] = _metadata["jwks_uri"]
+            raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
+            raw_oauth_config["endpoints_discovered"] = True
+            logger.info("Auto-discovered OAuth endpoints for issuer %s", issuer)
+        except Exception as _e:  # pylint: disable=broad-except
+            logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
+        return raw_oauth_config
+
         # Per-gateway refresh locks to prevent concurrent refreshes for the same gateway
         self._refresh_locks: Dict[str, asyncio.Lock] = {}
 
@@ -1034,23 +1078,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 authentication_headers = None
 
             raw_oauth_config = getattr(gateway, "oauth_config", None)
-            if raw_oauth_config and raw_oauth_config.get("issuer") and not raw_oauth_config.get("token_url") and not raw_oauth_config.get("authorization_url"):
-                try:
-                    # First-Party
-                    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
-                    _dcr = DcrService()
-                    _metadata = await _dcr.discover_as_metadata(raw_oauth_config["issuer"])
-                    if _metadata.get("token_endpoint") and not raw_oauth_config.get("token_url"):
-                        raw_oauth_config["token_url"] = _metadata["token_endpoint"]
-                    if _metadata.get("authorization_endpoint") and not raw_oauth_config.get("authorization_url"):
-                        raw_oauth_config["authorization_url"] = _metadata["authorization_endpoint"]
-                    if _metadata.get("jwks_uri") and not raw_oauth_config.get("jwks_uri"):
-                        raw_oauth_config["jwks_uri"] = _metadata["jwks_uri"]
-                    raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
-                    raw_oauth_config["endpoints_discovered"] = True
-                    logger.info(f"Auto-discovered OAuth endpoints for issuer {raw_oauth_config['issuer']}")
-                except Exception as _e:
-                    logger.warning(f"OAuth endpoint discovery failed for issuer {raw_oauth_config.get('issuer')}: {_e}")
+            raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
             oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
             ca_certificate = getattr(gateway, "ca_certificate", None)
             init_client_cert = getattr(gateway, "client_cert", None)
@@ -2272,23 +2300,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
                     raw_oauth_update = dict(gateway_update.oauth_config)
-                    if raw_oauth_update.get("issuer") and not raw_oauth_update.get("token_url") and not raw_oauth_update.get("authorization_url"):
-                        try:
-                            # First-Party
-                            from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
-                            _dcr = DcrService()
-                            _metadata = await _dcr.discover_as_metadata(raw_oauth_update["issuer"])
-                            if _metadata.get("token_endpoint") and not raw_oauth_update.get("token_url"):
-                                raw_oauth_update["token_url"] = _metadata["token_endpoint"]
-                            if _metadata.get("authorization_endpoint") and not raw_oauth_update.get("authorization_url"):
-                                raw_oauth_update["authorization_url"] = _metadata["authorization_endpoint"]
-                            if _metadata.get("jwks_uri") and not raw_oauth_update.get("jwks_uri"):
-                                raw_oauth_update["jwks_uri"] = _metadata["jwks_uri"]
-                            raw_oauth_update["dcr_available"] = bool(_metadata.get("registration_endpoint"))
-                            raw_oauth_update["endpoints_discovered"] = True
-                            logger.info(f"Auto-discovered OAuth endpoints for issuer {raw_oauth_update['issuer']}")
-                        except Exception as _e:
-                            logger.warning(f"OAuth endpoint discovery failed for issuer {raw_oauth_update.get('issuer')}: {_e}")
+                    raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
                     gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
