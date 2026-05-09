@@ -11,12 +11,24 @@ Comprehensive tests for the main API endpoints with full coverage.
 
 # Standard
 import asyncio
+import base64
 from copy import deepcopy
 import datetime
 import importlib
 import json
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+
+def _make_test_jwt() -> str:
+    """Return a syntactically valid JWT for tests that expect token forwarding."""
+    return (
+        base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b'{"sub":"user"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
+    )
 
 # Third-Party
 from fastapi import HTTPException
@@ -3695,7 +3707,7 @@ class TestA2AAgentEndpoints:
         the caller provided credentials.
         """
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        test_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test-payload.signature"
+        test_token = _make_test_jwt()
 
         response = test_client.post(
             "/a2a/agent-1/invoke",
@@ -3762,7 +3774,7 @@ class TestA2AAgentEndpoints:
         The implementation uses .lower().startswith() so it should handle various cases.
         """
         mock_service.invoke_agent = AsyncMock(return_value={"ok": True})
-        test_token = "test-token-123"
+        test_token = _make_test_jwt()
 
         # Test case variations that should all work
         case_variations = [

@@ -287,6 +287,33 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     return True
 
 
+def _is_jwt_token(token: str) -> bool:
+    """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
+
+    Rejects local opaque tokens (cf_sess_*, cf_pat_*) that remote gateways
+    cannot validate.
+    """
+    if not token:
+        return False
+    if token.startswith(("cf_sess_", "cf_pat_")):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+
+    import base64
+
+    for part in parts:
+        if not part:
+            return False
+        try:
+            padded = part + "=" * (-len(part) % 4)
+            base64.urlsafe_b64decode(padded)
+        except Exception:
+            return False
+    return True
+
+
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
 
@@ -4878,6 +4905,11 @@ async def invoke_a2a_agent(
             if auth_header.lower().startswith("bearer "):
                 bearer_token = auth_header[7:]  # Remove "Bearer " prefix
 
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4957,6 +4989,11 @@ async def invoke_a2a_agent_by_id(
             auth_header = request.headers.get("authorization", "")
             if auth_header.lower().startswith("bearer "):
                 bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
 
         return await a2a_service.invoke_agent(
             db,

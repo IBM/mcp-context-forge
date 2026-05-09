@@ -5202,9 +5202,12 @@ class TestUAIDGenerationCoverage:
         assert captured_agent.id is None  # Falls back to UUID generation
 
     async def test_update_agent_with_uaid_validation(self, service, mock_db, sample_db_agent, monkeypatch, caplog):
-        """Test update_agent validates endpoint domain when regenerating UAID."""
+        """Test update_agent validates endpoint domain when regenerating UAID.
+
+        Security: Domain validation failures must propagate (not be silently swallowed)
+        to prevent registration of agents pointing to unauthorized domains.
+        """
         # Standard
-        import logging
         from unittest.mock import patch
 
         # Set version attribute
@@ -5228,18 +5231,14 @@ class TestUAIDGenerationCoverage:
                     uaid_registry="context-forge",
                 )
 
-                # Should trigger validation and fallback to continuing without UAID
-                with caplog.at_level(logging.WARNING):
-                    result = await service.update_agent(
+                # Security: validation failure must raise, not silently continue
+                with pytest.raises(A2AAgentError, match="not in UAID_ALLOWED_DOMAINS"):
+                    await service.update_agent(
                         mock_db,
                         agent_id=sample_db_agent.id,
                         agent_data=agent_update,
                         modified_by="test-user",
                     )
-
-                # Verify validation was triggered (logged warning)
-                assert any("not in UAID_ALLOWED_DOMAINS" in record.message for record in caplog.records)
-                assert any("Continuing without UAID" in record.message for record in caplog.records)
 
 
 class TestCrossGatewayRoutingCoverage:

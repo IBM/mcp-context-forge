@@ -816,14 +816,22 @@ class Settings(BaseSettings):
         invalid_domains = []
         for domain in v:
             domain_lower = domain.lower()
+            # Extract host for loopback/link-local checks (strip ports)
+            host_for_check = domain_lower
+            if host_for_check.startswith("[") and "]:" in host_for_check:
+                host_for_check = host_for_check.split("]:")[0] + "]"
+            elif not host_for_check.startswith("[") and ":" in host_for_check and host_for_check.count(":") == 1:
+                # hostname:port (not IPv6) - strip port
+                host_for_check = host_for_check.split(":")[0]
+
             # Check for localhost variants (including IPv6 bracket notation)
-            if domain_lower in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
+            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
                 invalid_domains.append((domain, "loopback address"))
             # Check for link-local
-            elif domain_lower.startswith("169.254."):
+            elif host_for_check.startswith("169.254."):
                 invalid_domains.append((domain, "link-local address"))
             # Check for private IP ranges (commonly misconfigured)
-            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.3", "192.168.")):
+            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.")):
                 invalid_domains.append((domain, "private IP range"))
             # Check for obviously invalid patterns
             elif " " in domain or "\t" in domain or "\n" in domain:

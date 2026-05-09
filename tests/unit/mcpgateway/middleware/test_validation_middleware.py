@@ -735,3 +735,53 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 422
             assert "dangerous characters" in exc_info.value.detail
+
+    def test_validate_parameter_uaid_in_non_id_field(self):
+        """Test that UAID values bypass dangerous pattern check regardless of key name.
+
+        UAIDs contain semicolons which may match dangerous patterns.
+        The exemption should apply to any value starting with 'uaid:', not just '_id' keys.
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            # Semicolons are commonly in dangerous patterns
+            mock_settings.dangerous_patterns = [r";"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Valid UAID with semicolons passed in a non-id field (e.g., agent_name)
+            valid_uaid = "uaid:aid:abc123;uid=0;registry=context-forge;proto=a2a;nativeId=example.com"
+
+            # Should NOT raise even though key is not '_id' and value contains semicolons
+            middleware._validate_parameter("agent_name", valid_uaid)
+
+    def test_validate_parameter_invalid_uaid_falls_through_to_dangerous_pattern(self):
+        """Test that invalid UAIDs fall through to dangerous pattern check.
+
+        An attacker should not be able to bypass pattern matching by prefixing
+        any payload with 'uaid:' in non-strict environments.
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            # Invalid UAID containing a dangerous pattern
+            invalid_uaid_with_script = "uaid:aid:abc123;<script>alert('xss')</script>"
+
+            # Should raise because it contains <script even though it starts with uaid:
+            with pytest.raises(HTTPException) as exc_info:
+                middleware._validate_parameter("agent_name", invalid_uaid_with_script)
+            assert exc_info.value.status_code == 422
+            assert "dangerous characters" in exc_info.value.detail

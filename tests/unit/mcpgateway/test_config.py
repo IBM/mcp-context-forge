@@ -1438,6 +1438,15 @@ def test_uaid_allowed_domains_rejects_private_ips():
             Settings(uaid_allowed_domains=[ip], _env_file=None)
 
 
+def test_uaid_allowed_domains_172_range_boundary():
+    """Verify only the private 172.16/12 range is rejected."""
+    with pytest.raises(ValueError, match="private IP range"):
+        Settings(uaid_allowed_domains=["172.20.1.1"], _env_file=None)
+
+    settings = Settings(uaid_allowed_domains=["172.32.1.1"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["172.32.1.1"]
+
+
 def test_uaid_allowed_domains_rejects_whitespace():
     """Verify validator rejects domains with whitespace."""
     with pytest.raises(ValueError, match="contains whitespace"):
@@ -1494,3 +1503,23 @@ def test_uaid_allowed_domains_multiple_invalid():
     """Verify validator reports all invalid domains when multiple are present."""
     with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
         Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_loopback_with_port():
+    """Verify validator rejects loopback addresses with ports."""
+    loopback_with_ports = ["localhost:4444", "127.0.0.1:4444", "[::1]:8080"]
+    for domain in loopback_with_ports:
+        with pytest.raises(ValueError, match="loopback address"):
+            Settings(uaid_allowed_domains=[domain], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local_with_port():
+    """Verify validator rejects link-local addresses with ports."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1:8080"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_with_port():
+    """Verify validator accepts valid public domains with ports."""
+    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]

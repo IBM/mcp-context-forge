@@ -11,6 +11,20 @@ import pytest
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentService
 
 
+def _make_test_jwt() -> str:
+    """Return a syntactically valid JWT for tests that expect token forwarding."""
+    # Standard
+    import base64
+
+    return (
+        base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b'{"sub":"user"}').decode().rstrip("=")
+        + "."
+        + base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
+    )
+
+
 class TestFailClosedDomainAllowlist:
     """Tests for fail-closed domain allowlist enforcement in _invoke_remote_agent."""
 
@@ -230,7 +244,7 @@ class TestUAIDBearerTokenForwarding:
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
-        test_token = "test-bearer-token-12345"
+        test_token = _make_test_jwt()
 
         captured_headers = {}
 
@@ -273,7 +287,7 @@ class TestUAIDBearerTokenForwarding:
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
-        test_token = "test-bearer-token-12345"
+        test_token = _make_test_jwt()
         test_email = "user@example.com"
 
         captured_headers = {}
@@ -322,7 +336,7 @@ class TestUAIDBearerTokenForwarding:
         # Arrange
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
-        test_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sensitive-jwt-payload"
+        test_token = _make_test_jwt()
         test_email = "user@example.com"
 
         captured_headers = {}
@@ -463,7 +477,7 @@ class TestUAIDBearerTokenForwarding:
         monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
         monkeypatch.setattr("mcpgateway.config.settings.uaid_forward_auth", False)
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
-        test_token = "test-bearer-token-should-not-be-forwarded"
+        test_token = _make_test_jwt()
 
         captured_headers = {}
 
@@ -542,7 +556,7 @@ class TestAuthenticationErrorHandling:
                 uaid=uaid,
                 parameters={"test": "data"},
                 interaction_type="request",
-                bearer_token="test-token",
+                bearer_token=_make_test_jwt(),
             )
 
     async def test_403_forbidden_error_handling(self, service, monkeypatch):
@@ -582,7 +596,7 @@ class TestAuthenticationErrorHandling:
                 uaid=uaid,
                 parameters={"test": "data"},
                 interaction_type="request",
-                bearer_token="test-token",
+                bearer_token=_make_test_jwt(),
             )
 
 class TestBearerTokenForwardingGracefulDegradation:
@@ -691,7 +705,7 @@ class TestBearerTokenForwardingGracefulDegradation:
                 uaid=uaid,
                 parameters={"test": "data"},
                 interaction_type="request",
-                bearer_token="test-token-123",  # Token available but forwarding disabled
+                bearer_token=_make_test_jwt(),  # Token available but forwarding disabled
             )
 
         # Assert
@@ -701,3 +715,406 @@ class TestBearerTokenForwardingGracefulDegradation:
         # Verify INFO log about forwarding being disabled
         assert any("UAID_FORWARD_AUTH disabled" in record.message for record in caplog.records)
         assert any("not forwarding bearer token" in record.message for record in caplog.records)
+
+
+class TestTokenTypeFiltering:
+    """Tests for JWT token type filtering before cross-gateway forwarding."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance for testing."""
+        return A2AAgentService()
+
+    async def test_cf_sess_token_not_forwarded(self, service, monkeypatch, caplog):
+        """
+        SECURITY: Local session tokens (cf_sess_*) must NOT be forwarded to remote gateways.
+
+        Given: A cf_sess_ token is provided
+        When: _invoke_remote_agent is called
+        Then: Should NOT include Authorization header and should log info
+        """
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        sess_token = "cf_sess_abc123def456"
+
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token=sess_token,
+            )
+
+        # Assert
+        assert result == {"result": "success"}
+        assert "Authorization" not in captured_headers, "SECURITY: cf_sess_ token must NOT be forwarded to remote gateways"
+        assert any("Non-JWT token detected" in record.message for record in caplog.records)
+
+    async def test_cf_pat_token_not_forwarded(self, service, monkeypatch, caplog):
+        """
+        SECURITY: Personal access tokens (cf_pat_*) must NOT be forwarded to remote gateways.
+
+        Given: A cf_pat_ token is provided
+        When: _invoke_remote_agent is called
+        Then: Should NOT include Authorization header
+        """
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        pat_token = "cf_pat_xyz789uvw123"
+
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token=pat_token,
+            )
+
+        # Assert
+        assert result == {"result": "success"}
+        assert "Authorization" not in captured_headers, "SECURITY: cf_pat_ token must NOT be forwarded to remote gateways"
+
+    async def test_malformed_jwt_not_forwarded(self, service, monkeypatch, caplog):
+        """
+        SECURITY: Malformed JWT-like tokens must NOT be forwarded.
+
+        Given: A token with 2 dots but invalid base64 parts
+        When: _invoke_remote_agent is called
+        Then: Should NOT include Authorization header
+        """
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+        import logging
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        bad_token = "header.!!!invalid!!!.signature"
+
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act
+        with caplog.at_level(logging.INFO):
+            result = await service._invoke_remote_agent(
+                uaid=uaid,
+                parameters={"test": "data"},
+                interaction_type="request",
+                bearer_token=bad_token,
+            )
+
+        # Assert
+        assert result == {"result": "success"}
+        assert "Authorization" not in captured_headers, "SECURITY: malformed JWT must NOT be forwarded"
+
+    async def test_valid_jwt_is_forwarded(self, service, monkeypatch):
+        """
+        Verify that valid JWT tokens ARE forwarded.
+
+        Given: A valid JWT token (3 base64url parts)
+        When: _invoke_remote_agent is called
+        Then: Should include Authorization: Bearer {token} header
+        """
+        # Third-Party
+        import base64
+        # First-Party
+        from unittest.mock import AsyncMock, MagicMock
+
+        # Arrange
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+
+        uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=agent.example.com"
+        # Create a valid-looking JWT (base64url-encoded parts)
+        valid_jwt = (
+            base64.urlsafe_b64encode(b'{"alg":"HS256"}').decode().rstrip("=")
+            + "."
+            + base64.urlsafe_b64encode(b'{"sub":"user"}').decode().rstrip("=")
+            + "."
+            + base64.urlsafe_b64encode(b"signature").decode().rstrip("=")
+        )
+
+        captured_headers = {}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        async def mock_post(*args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            return mock_response
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=mock_post)
+
+        async def mock_get_http_client():
+            return mock_client
+
+        monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", mock_get_http_client)
+
+        # Act
+        result = await service._invoke_remote_agent(
+            uaid=uaid,
+            parameters={"test": "data"},
+            interaction_type="request",
+            bearer_token=valid_jwt,
+        )
+
+        # Assert
+        assert result == {"result": "success"}
+        assert "Authorization" in captured_headers
+        assert captured_headers["Authorization"] == f"Bearer {valid_jwt}"
+
+
+class TestNativeIdPathRejection:
+    """Tests for path component rejection in UAID native_id parsing."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2AAgentService instance for testing."""
+        return A2AAgentService()
+
+    async def test_register_rejects_native_id_with_path(self, service, monkeypatch):
+        """
+        SECURITY: Registration must reject endpoint URLs with paths in native_id.
+
+        Given: endpoint_url contains a path component
+        When: register_agent is called with generate_uaid=True
+        Then: Should raise ValueError with path rejection message
+        """
+        # Standard
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "https://example.com/a2a/path"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = None
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="cannot contain path components"):
+                await service.register_agent(
+                    mock_db,
+                    agent_data,
+                )
+
+    async def test_register_rejects_native_id_override_with_path(self, service, monkeypatch):
+        """
+        SECURITY: Registration must reject uaid_native_id_override with paths.
+
+        Given: uaid_native_id_override contains a path component
+        When: register_agent is called with generate_uaid=True
+        Then: Should raise ValueError with path rejection message
+        """
+        # Standard
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "https://example.com"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = "example.com/a2a/override"
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="cannot contain path components"):
+                await service.register_agent(
+                    mock_db,
+                    agent_data,
+                )
+
+    async def test_register_rejects_schemeless_native_id_with_path(self, service, monkeypatch):
+        """
+        SECURITY: Registration must reject schemeless endpoint URLs with paths.
+
+        Given: endpoint_url has no scheme but contains a path
+        When: register_agent is called with generate_uaid=True
+        Then: Should raise ValueError with path rejection message
+        """
+        # Standard
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        agent_data = MagicMock()
+        agent_data.name = "test-agent"
+        agent_data.slug = "test-agent"
+        agent_data.endpoint_url = "example.com/a2a/path"
+        agent_data.agent_type = "http"
+        agent_data.protocol_version = "1.0"
+        agent_data.description = "Test"
+        agent_data.capabilities = []
+        agent_data.config = {}
+        agent_data.tags = []
+        agent_data.auth_type = None
+        agent_data.auth_value = None
+        agent_data.auth_headers = None
+        agent_data.generate_uaid = True
+        agent_data.uaid_registry = "context-forge"
+        agent_data.version = "1.0.0"
+        agent_data.uaid_protocol = "a2a"
+        agent_data.uaid_skills = []
+        agent_data.uaid_native_id_override = None
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=None):
+            with pytest.raises(ValueError, match="cannot contain path components"):
+                await service.register_agent(
+                    mock_db,
+                    agent_data,
+                )
+
+    async def test_update_rejects_native_id_with_path(self, service, monkeypatch):
+        """
+        SECURITY: Update must reject endpoint URLs with paths in native_id.
+
+        Given: An existing agent without UAID, endpoint_url updated with path
+        When: update_agent is called with generate_uaid=True
+        Then: Should raise ValueError with path rejection message
+        """
+        # Standard
+        from unittest.mock import MagicMock, patch
+
+        # First-Party
+        from mcpgateway.schemas import A2AAgentUpdate
+
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["example.com"])
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allow_all_domains", False)
+
+        # Create a mock agent without UAID (simulating pre-existing agent with bad endpoint)
+        agent = MagicMock()
+        agent.uaid = None
+        agent.name = "test-agent"
+        agent.version = 1
+        agent.endpoint_url = "https://example.com/a2a/path"
+        agent.team_id = None
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+
+        agent_data = A2AAgentUpdate(
+            endpoint_url="https://example.com/a2a/path",
+            generate_uaid=True,
+            uaid_registry="context-forge",
+            version="1.0.0",
+            uaid_protocol="a2a",
+        )
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
+            # ValueError from path rejection is wrapped in A2AAgentError by outer try/except
+            with pytest.raises(A2AAgentError, match="cannot contain path components"):
+                await service.update_agent(
+                    mock_db,
+                    agent_id="agent-123",
+                    agent_data=agent_data,
+                )
