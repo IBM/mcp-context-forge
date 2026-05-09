@@ -354,7 +354,7 @@ class EmailAuthService:
             # First-Party
             from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
-            policy_service = PasswordPolicyService(self.db)
+            policy_service = PasswordPolicyService(self.db, self.password_service)
             return policy_service.validate_user_password(password, email, is_privileged)
         except PasswordPolicyError as e:
             # Wrap PasswordPolicyError in PasswordValidationError for consistency
@@ -1128,12 +1128,38 @@ class EmailAuthService:
             password_reset_completions_counter.labels(outcome="invalid_user").inc()
             raise AuthenticationError("This reset link is invalid")
 
-        self.validate_password(new_password)
-        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+        self.validate_password(new_password, user.email, user.is_admin)
+
+        # Check password history (prevents reuse of last N passwords and current password)
+        try:
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            history_count = getattr(settings, "password_history_count", 5)
+            await policy_service.check_password_history(user.email, new_password, history_count, user.password_hash)
+        except ImportError:
+            # Fallback to simple current password check
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+                password_reset_completions_counter.labels(outcome="reused_password").inc()
+                raise PasswordValidationError("New password must be different from current password")
+        except PasswordPolicyError as e:
             password_reset_completions_counter.labels(outcome="reused_password").inc()
-            raise PasswordValidationError("New password must be different from current password")
+            raise PasswordValidationError(str(e)) from e
+        except Exception as e:
+            logger.error("Password history check failed unexpectedly: %s", e)
+            raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         now = utc_now()
+
+        # Save old password to history before updating
+        try:
+            from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            await policy_service.save_password_to_history(user.email, user.password_hash)
+        except Exception as history_error:
+            logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
+
         user.password_hash = await self.password_service.hash_password_async(new_password)
         user.password_change_required = False
         user.password_changed_at = now
@@ -1245,9 +1271,9 @@ class EmailAuthService:
         # Check password history (prevents reuse of last N passwords and current password)
         try:
             # First-Party
-            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel,unused-import
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
-            policy_service = PasswordPolicyService(self.db)
+            policy_service = PasswordPolicyService(self.db, self.password_service)
             history_count = getattr(settings, "password_history_count", 5)
             await policy_service.check_password_history(email, new_password, history_count, user.password_hash)
         except ImportError:
@@ -1258,10 +1284,9 @@ class EmailAuthService:
             # Wrap PasswordPolicyError in PasswordValidationError for consistency
             raise PasswordValidationError(str(e)) from e
         except Exception as e:
-            # Otherwise log and continue with fallback
-            logger.warning(f"Password history check failed: {e}")
-            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
-                raise PasswordValidationError("New password must be different from current password")
+            # Fail closed: if history check fails, reject the password change
+            logger.error("Password history check failed unexpectedly: %s", e)
+            raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         success = False
         try:
@@ -1273,10 +1298,10 @@ class EmailAuthService:
                 # First-Party
                 from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
-                policy_service = PasswordPolicyService(self.db)
+                policy_service = PasswordPolicyService(self.db, self.password_service)
                 await policy_service.save_password_to_history(email, user.password_hash)
             except Exception as history_error:
-                logger.warning(f"Failed to save password to history for {SecurityValidator.sanitize_log_message(email)}: {history_error}")
+                logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(email), history_error)
                 # Continue with password change even if history save fails
 
             user.password_hash = new_password_hash
@@ -1879,7 +1904,34 @@ class EmailAuthService:
                 user.is_active = is_active
 
             if password is not None:
-                self.validate_password(password)
+                self.validate_password(password, user.email, user.is_admin)
+
+                # Check password history (prevents reuse of last N passwords and current password)
+                try:
+                    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                    policy_service = PasswordPolicyService(self.db, self.password_service)
+                    history_count = getattr(settings, "password_history_count", 5)
+                    await policy_service.check_password_history(user.email, password, history_count, user.password_hash)
+                except ImportError:
+                    # Fallback to simple current password check
+                    if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(password, user.password_hash):
+                        raise PasswordValidationError("New password must be different from current password")
+                except PasswordPolicyError as e:
+                    raise PasswordValidationError(str(e)) from e
+                except Exception as e:
+                    logger.error("Password history check failed unexpectedly: %s", e)
+                    raise PasswordValidationError("Unable to verify password history. Please try again.") from e
+
+                # Save old password to history before updating
+                try:
+                    from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                    policy_service = PasswordPolicyService(self.db, self.password_service)
+                    await policy_service.save_password_to_history(user.email, user.password_hash)
+                except Exception as history_error:
+                    logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
+
                 user.password_hash = await self.password_service.hash_password_async(password)
                 # Only clear password_change_required if it wasn't explicitly set
                 if password_change_required is None:

@@ -6,14 +6,15 @@ addressing pentesting report findings.
 """
 
 # Standard
+from unittest.mock import Mock, patch
+
+# Third-Party
 import pytest
-from unittest.mock import Mock, MagicMock, patch
 
 # First-Party
 from mcpgateway.services.password_policy_service import (
-    PasswordPolicyService,
     PasswordPolicyError,
-    COMMON_PASSWORDS,
+    PasswordPolicyService,
 )
 
 

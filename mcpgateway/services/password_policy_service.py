@@ -102,14 +102,16 @@ class PasswordPolicyService:
         password_service (Argon2PasswordService): Service for password hashing
     """
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, password_service: Optional[Argon2PasswordService] = None):
         """Initialize the password policy service.
 
         Args:
             db: SQLAlchemy database session
+            password_service: Optional password service for hashing/verification.
+                              If not provided, a new Argon2PasswordService is created.
         """
         self.db = db
-        self.password_service = Argon2PasswordService()
+        self.password_service = password_service or Argon2PasswordService()
 
     def validate_user_password(
         self,
@@ -283,17 +285,13 @@ class PasswordPolicyService:
             password_hash=password_hash,
         )
         self.db.add(history_entry)
-        self.db.commit()
 
-        # Clean up old history entries (keep only last 5)
+        # Clean up old history entries (keep only last N)
         history_count = getattr(settings, "password_history_count", 5)
         old_entries = self.db.query(PasswordHistory).filter(PasswordHistory.user_email == email).order_by(PasswordHistory.changed_at.desc()).offset(history_count).all()
 
         for entry in old_entries:
             self.db.delete(entry)
-
-        if old_entries:
-            self.db.commit()
 
     @staticmethod
     def generate_secure_password(length: int = 20, for_service_account: bool = False) -> str:
@@ -345,19 +343,23 @@ class PasswordPolicyService:
         Returns:
             bool: True if password has too many sequential characters
         """
-        # Check for sequential numbers (e.g., "123", "456")
+        # Check for sequential numbers (e.g., "123", "456") and reverse (e.g., "321", "987")
         for i in range(len(password) - max_sequential + 1):
             substr = password[i : i + max_sequential]
             if substr.isdigit():
                 digits = [int(c) for c in substr]
-                if all(digits[j] + 1 == digits[j + 1] for j in range(len(digits) - 1)):
+                is_ascending = all(digits[j] + 1 == digits[j + 1] for j in range(len(digits) - 1))
+                is_descending = all(digits[j] - 1 == digits[j + 1] for j in range(len(digits) - 1))
+                if is_ascending or is_descending:
                     return True
 
-        # Check for sequential letters (e.g., "abc", "xyz")
+        # Check for sequential letters (e.g., "abc", "xyz") and reverse (e.g., "cba", "zyx")
         for i in range(len(password) - max_sequential + 1):
             substr = password[i : i + max_sequential].lower()
             if substr.isalpha():
-                if all(ord(substr[j]) + 1 == ord(substr[j + 1]) for j in range(len(substr) - 1)):
+                is_ascending = all(ord(substr[j]) + 1 == ord(substr[j + 1]) for j in range(len(substr) - 1))
+                is_descending = all(ord(substr[j]) - 1 == ord(substr[j + 1]) for j in range(len(substr) - 1))
+                if is_ascending or is_descending:
                     return True
 
         return False

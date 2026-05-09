@@ -1,7 +1,7 @@
 """add_password_history_table
 
 Revision ID: 351b43e1d273
-Revises: d2b501bf4262
+Revises: w7x8y9z0a1b2
 Create Date: 2026-04-23 12:25:15.946938
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "351b43e1d273"
-down_revision: Union[str, Sequence[str], None] = "d2b501bf4262"
+down_revision: Union[str, Sequence[str], None] = "w7x8y9z0a1b2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
