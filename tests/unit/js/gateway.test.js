@@ -1337,8 +1337,7 @@ describe("initGatewaySelect - extended", () => {
       </div>
       <div id="gw-pills"></div>
       <div id="gw-warn"></div>
-      <div id="noGatewayMessage" style="display:none"></div>
-      <span id="searchQueryServers"></span>
+      <p id="noGatewayMessage" style="display:none">No MCP server found containing "<span id="searchQueryServers"></span>"</p>
     `;
 
     initGatewaySelect("gw-select", "gw-pills", "gw-warn", 12, null, null, "searchGateways");

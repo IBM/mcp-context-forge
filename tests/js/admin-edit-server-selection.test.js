@@ -2233,6 +2233,59 @@ describe("ensureNoResultsElement", () => {
     expect(result.msg).toBeNull();
     expect(result.span).toBeNull();
   });
+
+  // Edge case: span found globally but not a descendant of msg — should fall back to querySelector
+  test("falls back to querySelector when globally-found span is not inside msg", () => {
+    // msg exists in the DOM with its own inner span (no id)
+    const container = makeContainer("ctr3326a");
+    const msg = doc.createElement("p");
+    msg.id = "noMsg3326a";
+    const innerSpan = doc.createElement("span");
+    msg.appendChild(innerSpan);
+    container.parentNode.insertBefore(msg, container.nextSibling);
+
+    // A rogue span elsewhere in the DOM has the same id
+    const rogueSpan = doc.createElement("span");
+    rogueSpan.id = "querySpan3326a";
+    doc.body.appendChild(rogueSpan);
+
+    const result = win.ensureNoResultsElement(
+      "ctr3326a",
+      "noMsg3326a",
+      "querySpan3326a",
+      "item",
+    );
+
+    // Should return the inner span, not the rogue one
+    expect(result.msg).toBe(msg);
+    expect(result.span).toBe(innerSpan);
+    expect(result.span).not.toBe(rogueSpan);
+    expect(msg.contains(result.span)).toBe(true);
+  });
+
+  // Edge case: msg absent but a stale span with the same id exists — must strip it to prevent duplicate IDs
+  test("removes stale span id before creating new elements to prevent duplicate IDs", () => {
+    const container = makeContainer("ctr3326b");
+
+    // Orphaned span with the target id already in the DOM (msg is absent)
+    const orphanSpan = doc.createElement("span");
+    orphanSpan.id = "querySpan3326b";
+    doc.body.appendChild(orphanSpan);
+
+    const result = win.ensureNoResultsElement(
+      "ctr3326b",
+      "noMsg3326b",
+      "querySpan3326b",
+      "tool",
+    );
+
+    // The newly created span should have the id
+    expect(result.span.id).toBe("querySpan3326b");
+    // The orphan must have had its id stripped to avoid duplicates
+    expect(orphanSpan.id).toBe("");
+    // Only one element with that id should exist
+    expect(doc.querySelectorAll("#querySpan3326b").length).toBe(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
