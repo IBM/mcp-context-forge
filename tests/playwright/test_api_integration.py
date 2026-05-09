@@ -26,7 +26,7 @@ def json_param_tool(api_request_context: APIRequestContext):
     payload = {
         "tool": {
             "name": tool_name,
-            "url": "http://localhost:8080/health",
+            "url": "https://httpbin.org/post",
             "integration_type": "REST",
             "request_type": "POST",
             "inputSchema": {

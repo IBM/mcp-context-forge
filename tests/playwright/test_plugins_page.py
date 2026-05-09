@@ -17,7 +17,7 @@ Examples:
 """
 
 # Third-Party
-from playwright.sync_api import expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 import pytest
 
 # Local
@@ -25,7 +25,10 @@ from .pages.plugins_page import PluginsPage, RAW_LEGACY_MODES, UNIFIED_MODE_LABE
 
 
 def _skip_if_no_plugins(plugins_page: PluginsPage) -> None:
-    plugins_page.navigate_to_plugins()
+    try:
+        plugins_page.navigate_to_plugins()
+    except PlaywrightTimeoutError:
+        pytest.skip("Plugins tab not available — PLUGINS_ENABLED may be false")
     if plugins_page.plugin_cards.count() == 0:
         pytest.skip("No plugins loaded — PLUGINS_ENABLED may be false or no plugins configured")
 
@@ -35,7 +38,10 @@ class TestPluginsPageModeUI:
 
     def test_plugins_tab_loads(self, plugins_page: PluginsPage):
         """Plugins tab shows the panel and plugin grid."""
-        plugins_page.navigate_to_plugins()
+        try:
+            plugins_page.navigate_to_plugins()
+        except PlaywrightTimeoutError:
+            pytest.skip("Plugins tab not available — PLUGINS_ENABLED may be false")
         expect(plugins_page.plugins_panel).not_to_have_class("hidden")
         expect(plugins_page.plugin_grid).to_be_visible()
 

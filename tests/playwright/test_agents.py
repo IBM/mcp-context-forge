@@ -461,7 +461,7 @@ class TestAgentsUI:
 
         # Create an agent WITHOUT UAID
         agents_page.fill_locator(agents_page.agent_name_input, "Test Agent No UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://no-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -474,8 +474,9 @@ class TestAgentsUI:
         agents_page.submit_agent_form()
         agents_page.page.wait_for_timeout(2000)
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible("Test Agent No UAID")
+        agents_page.open_edit_modal_by_name("Test Agent No UAID")
 
         # Verify UAID checkbox is NOT checked and is ENABLED (can be checked)
         expect(agents_page.edit_generate_uaid_checkbox).not_to_be_checked()
@@ -505,7 +506,7 @@ class TestAgentsUI:
 
         # Create an agent WITH UAID
         agents_page.fill_locator(agents_page.agent_name_input, "Test Agent With UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://with-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -518,8 +519,9 @@ class TestAgentsUI:
         agents_page.submit_agent_form()
         agents_page.page.wait_for_timeout(2000)
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible("Test Agent With UAID")
+        agents_page.open_edit_modal_by_name("Test Agent With UAID")
 
         # Verify UAID checkbox is CHECKED and DISABLED (immutable)
         expect(agents_page.edit_generate_uaid_checkbox).to_be_checked()

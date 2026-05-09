@@ -538,6 +538,29 @@ class AgentsPage(BasePage):
             raise AssertionError(f"Agent API fetch failed (HTTP {response.status}) for {response.url}")
         self.page.wait_for_selector("#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000)
 
+    def open_edit_modal_by_name(self, agent_name: str) -> None:
+        """Open the edit modal for a specific A2A agent by name.
+
+        Searches the table for the agent name, opens its action dropdown,
+        and clicks Edit — then waits for the modal to appear.
+
+        Args:
+            agent_name: Name of the agent to edit.
+        """
+        row = self.agent_rows.locator(f'td:has-text("{agent_name}")').locator("..")
+        row.first.wait_for(state="visible", timeout=10000)
+        self._open_action_dropdown(row.first)
+        edit_btn = row.first.locator('button[role="menuitem"]:has-text("Edit")')
+        with self.page.expect_response(
+            lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
+            timeout=30000,
+        ) as resp_info:
+            edit_btn.click()
+        response = resp_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Agent API fetch failed (HTTP {response.status}) for {response.url}")
+        self.page.wait_for_selector("#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000)
+
     def agent_exists(self, agent_name: str) -> bool:
         """Check if an agent with the given name exists.
 
@@ -547,7 +570,7 @@ class AgentsPage(BasePage):
         Returns:
             True if agent exists, False otherwise
         """
-        return self.page.locator(f"text={agent_name}").is_visible()
+        return self.agent_rows.locator(f'td:has-text("{agent_name}")').is_visible()
 
     def wait_for_agent_visible(self, agent_name: str, timeout: int = 30000) -> None:
         """Wait for an agent to be visible in the list.
@@ -556,8 +579,8 @@ class AgentsPage(BasePage):
             agent_name: The name of the agent
             timeout: Maximum time to wait in milliseconds
         """
-        self.page.wait_for_selector(f"text={agent_name}", timeout=timeout)
-        expect(self.page.locator(f"text={agent_name}")).to_be_visible()
+        row = self.agent_rows.locator(f'td:has-text("{agent_name}")').locator("..")
+        row.first.wait_for(state="visible", timeout=timeout)
 
     def search_agents(self, query: str) -> None:
         """Search for agents using the search input.
