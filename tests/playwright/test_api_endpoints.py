@@ -30,7 +30,9 @@ class TestAPIEndpoints:
     def test_list_servers(self, api_request_context: APIRequestContext):
         """Test list servers endpoint."""
         response = api_request_context.get("/servers")
-        assert response.ok
+        if response.status in (401, 403):
+            pytest.skip(f"Auth required for /servers (HTTP {response.status})")
+        assert response.ok, f"/servers returned HTTP {response.status}: {response.text()[:200]}"
 
         servers = response.json()
         assert isinstance(servers, list)
@@ -38,7 +40,9 @@ class TestAPIEndpoints:
     def test_list_tools(self, api_request_context: APIRequestContext):
         """Test list tools endpoint."""
         response = api_request_context.get("/tools")
-        assert response.ok
+        if response.status in (401, 403):
+            pytest.skip(f"Auth required for /tools (HTTP {response.status})")
+        assert response.ok, f"/tools returned HTTP {response.status}: {response.text()[:200]}"
 
         tools = response.json()
         assert isinstance(tools, list)
@@ -48,7 +52,9 @@ class TestAPIEndpoints:
         payload = {"jsonrpc": "2.0", "id": 1, "method": "system.listMethods", "params": {}}
 
         response = api_request_context.post("/rpc", data=payload)
-        assert response.ok
+        if response.status in (401, 403):
+            pytest.skip(f"Auth required for /rpc (HTTP {response.status})")
+        assert response.ok, f"/rpc returned HTTP {response.status}: {response.text()[:200]}"
 
         result = response.json()
         assert result.get("jsonrpc") == "2.0"

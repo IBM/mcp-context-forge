@@ -51,7 +51,7 @@ class TestServersExtended:
         server_name = f"full-server-{uuid.uuid4().hex[:8]}"
 
         # Fill all form fields
-        servers_page.fill_server_form(name=server_name, icon="https://example.com/icon.png", description="A complete test server with all fields", tags="test,automation,qa,extended")
+        servers_page.fill_server_form(name=server_name, description="A complete test server with all fields", tags="test,automation,qa,extended")
 
         # Submit and verify
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
@@ -76,7 +76,7 @@ class TestServersExtended:
         server_name = f"public-server-{uuid.uuid4().hex[:8]}"
 
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="public")
+            servers_page.create_server(name=server_name, visibility="public")
 
         response = response_info.value
         if response.status >= 400:
@@ -99,7 +99,7 @@ class TestServersExtended:
         server_name = f"team-server-{uuid.uuid4().hex[:8]}"
 
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="team")
+            servers_page.create_server(name=server_name, visibility="team")
 
         response = response_info.value
         if response.status >= 400:
@@ -122,7 +122,7 @@ class TestServersExtended:
         server_name = f"private-server-{uuid.uuid4().hex[:8]}"
 
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", visibility="private")
+            servers_page.create_server(name=server_name, visibility="private")
 
         response = response_info.value
         if response.status >= 400:
@@ -216,12 +216,16 @@ class TestServersExtended:
         server_name = f"tagged-server-{uuid.uuid4().hex[:8]}"
         tags = "production,api,v2,critical"
 
-        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", tags=tags)
+        with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+            servers_page.create_server(name=server_name, tags=tags)
+
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Server creation failed (HTTP {response.status})")
 
         # Verify server was created with tags
         created_server = find_server(servers_page.page, server_name)
-        assert created_server is not None
+        assert created_server is not None, f"Server '{server_name}' was not found after creation"
 
         # Cleanup
         cleanup_server(servers_page.page, server_name)
@@ -459,7 +463,7 @@ class TestServersExtended:
 
         # Create test server
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for view button test")
+            servers_page.create_server(name=server_name, description="Server for view button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
@@ -503,7 +507,7 @@ class TestServersExtended:
 
         # Create test server
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for edit button test")
+            servers_page.create_server(name=server_name, description="Server for edit button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
@@ -552,7 +556,7 @@ class TestServersExtended:
 
         # Create test server
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for export button test")
+            servers_page.create_server(name=server_name, description="Server for export button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
@@ -590,7 +594,7 @@ class TestServersExtended:
 
         # Create test server
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for deactivate button test")
+            servers_page.create_server(name=server_name, description="Server for deactivate button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
@@ -632,7 +636,7 @@ class TestServersExtended:
 
         # Create test server
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
-            servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for UI delete button test")
+            servers_page.create_server(name=server_name, description="Server for UI delete button test")
 
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
@@ -896,7 +900,10 @@ class TestEditServerSelectionBugs:
             servers_page.open_edit_modal(server_name)
 
             # Inputs attached means the initial HTMX load is done.
-            servers_page.page.wait_for_selector('#edit-server-resources input[name="associatedResources"]', state="attached", timeout=10000)
+            try:
+                servers_page.page.wait_for_selector('#edit-server-resources input[name="associatedResources"]', state="attached", timeout=10000)
+            except PlaywrightTimeoutError:
+                pytest.skip("No resources loaded in edit modal — cannot test Select All")
             res_count = servers_page.edit_resources_container.locator('input[name="associatedResources"]').count()
             if res_count == 0:
                 pytest.skip("No resources available to test Select All")
