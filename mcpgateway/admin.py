@@ -12040,6 +12040,95 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         raise e
 
 
+@admin_router.post("/gateways/discover-oauth")
+@require_permission("gateways.create", allow_admin_bypass=False)
+async def admin_discover_oauth(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+) -> JSONResponse:
+    """Discover OAuth/OIDC endpoints from an issuer URL (RFC 8414 / OIDC discovery).
+
+    Args:
+        request: FastAPI request containing JSON body with 'issuer' field.
+        user: Authenticated user.
+
+    Returns:
+        JSONResponse with discovered endpoints or error message.
+
+    Examples:
+        >>> callable(admin_discover_oauth)
+        True
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
+
+    try:
+        body = await request.json()
+    except Exception as _e:
+        LOGGER.warning("OAuth discovery failed: invalid JSON body")
+        return JSONResponse(
+            {"success": False, "error": "Invalid JSON body"},
+            status_code=400,
+        )
+
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"success": False, "error": "Request body must be a JSON object"},
+            status_code=400,
+        )
+
+    issuer = body.get("issuer", "").strip()
+    if not issuer:
+        return JSONResponse(
+            {"success": False, "error": "issuer is required"},
+            status_code=400,
+        )
+
+    try:
+        SecurityValidator.validate_url(issuer, "OAuth issuer URL")
+    except ValueError as _e:
+        return JSONResponse(
+            {"success": False, "error": f"Invalid issuer URL: {_e}"},
+            status_code=400,
+        )
+
+    try:
+        dcr = DcrService()
+        metadata = await dcr.discover_as_metadata(issuer)
+
+        def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            if not raw:
+                return None
+            try:
+                SecurityValidator.validate_url(raw, name)
+                return raw
+            except ValueError:
+                return None
+
+        return JSONResponse({
+            "success": True,
+            "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+            "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+            "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
+            "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
+            "dcr_available": bool(metadata.get("registration_endpoint")),
+            "scopes_supported": metadata.get("scopes_supported", []),
+            "grant_types_supported": metadata.get("grant_types_supported", []),
+        })
+    except Exception as e:
+        LOGGER.warning("OAuth discovery failed: %s", e)
+        sanitized = sanitize_exception_message(str(e))
+        return JSONResponse(
+            {
+                "success": False,
+                "error": sanitized,
+                "message": "Discovery failed. Please configure token and authorization endpoints manually.",
+            },
+            status_code=502,
+        )
+
+
 @admin_router.post("/gateways")
 @require_permission("gateways.create", allow_admin_bypass=False)
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
