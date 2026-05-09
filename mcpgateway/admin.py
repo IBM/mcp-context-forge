@@ -5361,12 +5361,8 @@ async def admin_teams_partial_html(
     # consider implementing SQL-level pagination for non-admin users.
     public_teams_limit = 500
     public_teams = await team_service.discover_public_teams(user_email, limit=public_teams_limit)
-    public_team_ids = {str(t.id) for t in public_teams}
     if len(public_teams) >= public_teams_limit:
         LOGGER.warning(f"Public teams discovery hit limit of {public_teams_limit} for user {user_email}. Some teams may not be visible.")
-
-    # Get pending join requests for public teams
-    pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
 
     if current_user.is_admin and not relationship:
         # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
@@ -5476,14 +5472,24 @@ async def admin_teams_partial_html(
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-        elif current_user.is_admin:
-            # Admins get admin controls for teams they're not members of
-            t.relationship = "none"  # Falls through to admin controls in template
-        elif team_id in public_team_ids:
+        elif t.visibility == "public" and t.is_active:
+            # Public teams show join button for ALL non-members (including admins)
+            # This ensures platform admins go through the normal join request workflow
+            # for public teams, respecting team ownership boundaries. Issue #3488
             t.relationship = "public"
-            t.pending_request = pending_requests.get(team_id)
+        elif current_user.is_admin:
+            # Admins get admin controls ONLY for non-public teams they're not members of
+            # This allows emergency access to private teams for platform maintenance
+            t.relationship = "none"  # Falls through to admin controls in template
 
         enriched_data.append(t)
+
+    # Get pending join requests for all public teams on current page
+    public_team_ids_on_page = [str(t.id) for t in enriched_data if t.relationship == "public"]
+    pending_requests = team_service.get_pending_join_requests_batch(user_email, public_team_ids_on_page)
+    for t in enriched_data:
+        if t.relationship == "public":
+            t.pending_request = pending_requests.get(str(t.id))
 
     # Build query params dict for pagination controls
     query_params_dict = {}
