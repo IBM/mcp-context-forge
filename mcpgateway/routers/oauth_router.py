@@ -15,6 +15,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 # Standard
 from html import escape
 import logging
+import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
@@ -38,8 +39,56 @@ from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 logger = logging.getLogger(__name__)
+
+ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
+ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+
+
+async def enforce_fetch_tools_csrf(request: Request) -> None:
+    """Validate admin CSRF token for OAuth fetch-tools mutations.
+
+    Also enforces same-origin via Origin/Referer header check to prevent
+    cross-site request forgery on this state-changing endpoint.
+    """
+    auth_header = get_auth_header_value(request.headers) or ""
+    scheme, separator, token = auth_header.partition(" ")
+    if separator and scheme.lower() == "bearer" and token.strip():
+        return
+
+    # Same-origin check: require Origin or Referer to match app domain (fail-closed)
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
+    candidate = origin
+    if not candidate and referer:
+        try:
+            parsed = urlparse(referer)
+            if parsed.scheme and parsed.netloc:
+                candidate = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            candidate = None
+
+    if not candidate:
+        # Fail closed: missing Origin/Referer is not allowed for state-changing requests
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    app_domain = str(settings.app_domain)
+    parsed_app = urlparse(app_domain)
+    app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+    allowed = {app_origin}
+    allowed.update(settings.csrf_trusted_origins)
+    if candidate not in allowed:
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
+    # Double-submit cookie check
+    csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+    csrf_header = request.headers.get(ADMIN_CSRF_HEADER_NAME)
+    if not isinstance(csrf_cookie, str) or not csrf_cookie or not isinstance(csrf_header, str) or not csrf_header:
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+    if not secrets.compare_digest(csrf_header, csrf_cookie):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
 def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
@@ -653,10 +702,11 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
+                    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('mcpgateway_csrf_token='))?.split('=')[1] || '';
                     const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                         method: 'POST',
                         credentials: 'include',
-                        headers: {{ 'Accept': 'text/html' }}
+                        headers: {{ 'Accept': 'text/html', 'X-CSRF-Token': decodeURIComponent(csrfToken) }}
                     }});
 
                     const result = await response.json();
@@ -833,6 +883,7 @@ async def get_oauth_status(
 async def fetch_tools_after_oauth(
     gateway_id: str,
     request: Request,
+    _: None = Depends(enforce_fetch_tools_csrf),
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:

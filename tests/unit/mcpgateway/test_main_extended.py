@@ -230,6 +230,21 @@ def _import_fresh_main_module(
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
+    def test_import_logs_csrf_disabled_when_setting_is_false(self, monkeypatch, caplog):
+        """Import-time CSRF middleware setup should log the disabled branch when CSRF is off."""
+        caplog.set_level("INFO")
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "csrf_enabled": False,
+            },
+        )
+
+        assert any(
+            "CSRF protection middleware disabled" in rec.message for rec in caplog.records
+        )
+
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
         """When boot mode is edge, the ingress mount selects rust-internal by default."""
         module = _import_fresh_main_module(
@@ -339,6 +354,33 @@ class TestConditionalPaths:
 
         assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
         assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
+
+    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+        """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        include_calls = []
+        from fastapi.applications import FastAPI
+
+        original_include_router = FastAPI.include_router
+
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+            include_calls.append((router, kwargs.get("dependencies")))
+            return original_include_router(self, router, *args, **kwargs)
+
+        monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "mcpgateway_admin_api_enabled": True,
+                "siem_export_enabled": True,
+            },
+        )
+
+        assert any(
+            deps
+            and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps)
+            for _, deps in include_calls
+        )
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""

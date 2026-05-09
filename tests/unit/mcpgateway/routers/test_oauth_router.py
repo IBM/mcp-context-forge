@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway
+from mcpgateway.routers.oauth_router import enforce_fetch_tools_csrf
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
 
@@ -99,6 +100,103 @@ class TestNormalizeResourceUrl:
 
         result = _normalize_resource_url("https://example.com/path?x=1#frag", preserve_query=True)
         assert result == "https://example.com/path?x=1"
+
+
+class TestEnforceFetchToolsCsrf:
+    """Tests for enforce_fetch_tools_csrf."""
+
+    @pytest.fixture
+    def csrf_request(self):
+        request = Mock(spec=Request)
+        request.headers = {}
+        request.cookies = {}
+        return request
+
+    @pytest.mark.asyncio
+    async def test_bearer_token_skips_csrf(self, csrf_request):
+        csrf_request.headers = {"authorization": "Bearer abc123"}
+
+        assert await enforce_fetch_tools_csrf(csrf_request) is None
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", {"https://trusted.example.com"})
+    @pytest.mark.asyncio
+    async def test_valid_origin_with_matching_csrf_cookie_and_header(self, csrf_request):
+        csrf_request.headers = {
+            "origin": "https://gateway.example.com",
+            "x-csrf-token": "token-123",
+        }
+        csrf_request.cookies = {"mcpgateway_csrf_token": "token-123"}
+
+        assert await enforce_fetch_tools_csrf(csrf_request) is None
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_missing_origin_and_referer_raises_403(self, csrf_request):
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_invalid_origin_raises_403(self, csrf_request):
+        csrf_request.headers = {"origin": "https://evil.example.com"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_missing_csrf_cookie_raises_403(self, csrf_request):
+        csrf_request.headers = {"origin": "https://gateway.example.com", "x-csrf-token": "token-123"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_missing_csrf_header_raises_403(self, csrf_request):
+        csrf_request.headers = {"origin": "https://gateway.example.com"}
+        csrf_request.cookies = {"mcpgateway_csrf_token": "token-123"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_mismatched_csrf_cookie_and_header_raises_403(self, csrf_request):
+        csrf_request.headers = {"origin": "https://gateway.example.com", "x-csrf-token": "header-token"}
+        csrf_request.cookies = {"mcpgateway_csrf_token": "cookie-token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @patch("mcpgateway.routers.oauth_router.urlparse", side_effect=Exception("parse error"))
+    @pytest.mark.asyncio
+    async def test_referer_parse_exception_raises_403(self, mock_urlparse, csrf_request):
+        csrf_request.headers = {"referer": "https://gateway.example.com", "x-csrf-token": "token-123"}
+        csrf_request.cookies = {"mcpgateway_csrf_token": "token-123"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
 
 
 class TestPersistLearnedAudience:

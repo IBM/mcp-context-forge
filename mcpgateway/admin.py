@@ -1436,10 +1436,11 @@ def _admin_cookie_path(request: Request) -> str:
         request: Incoming request used to read ASGI ``root_path``.
 
     Returns:
-        Admin cookie path scoped under the deployed app root.
+        Cookie path scoped to the deployed app root so admin-originated
+        non-/admin mutations can carry the same double-submit token.
     """
     root_path = _resolve_root_path(request)
-    return f"{root_path}/admin" if root_path else "/admin"
+    return root_path or "/"
 
 
 def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
@@ -3967,6 +3968,7 @@ async def admin_ui(
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
+            "auth_header_name": settings.auth_header_name,
             "selected_team_id": selected_team_id,
             "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
@@ -4716,6 +4718,11 @@ async def _admin_logout(request: Request) -> Response:
 
     # Always clear local JWT session cookie.
     clear_auth_cookie(response)
+
+    # Clear CSRF token cookie
+    from mcpgateway.services.csrf_service import clear_csrf_cookie
+    clear_csrf_cookie(response, settings)
+
     use_secure = (settings.environment == "production") or settings.secure_cookies
     response.delete_cookie(
         key="sso_id_token_hint",
