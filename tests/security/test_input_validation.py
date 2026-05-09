@@ -2188,6 +2188,272 @@ class TestSensitiveLoggingRegressions:
         assert "Sensitive variable interpolation" in result.stderr
 
 
+class TestGatewayTestEndpointSecurity:
+    """Security tests for /admin/gateways/test endpoint (ICACF-15)."""
+
+    def test_trailing_dot_fqdn_normalization(self):
+        """Test that trailing-dot FQDN bypass is prevented via normalization."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Ensure SSRF protection is enabled and strict for this test
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            # Trailing dot should be normalized and matched against blocklist
+            blocked_with_trailing_dot = [
+                "http://metadata.google.internal./",
+                "http://169.254.169.254./",
+                "http://METADATA.GOOGLE.INTERNAL./",
+            ]
+
+            for url in blocked_with_trailing_dot:
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator.validate_url(url, "Gateway test URL")
+                assert "blocked" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                logger.debug(f"Trailing-dot URL blocked: {url}")
+
+    def test_allowlist_exact_match(self):
+        """Test allowlist validation with exact hostname match."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["api.example.com", "test.example.com"]
+
+        # Should pass
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("test.example.com", allowed_patterns)
+
+        # Should fail
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evil.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+    def test_allowlist_wildcard_match(self):
+        """Test allowlist validation with wildcard subdomain patterns."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["*.example.com"]
+
+        # Should pass - subdomains only (per DNS conventions)
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("test.api.example.com", allowed_patterns)
+
+        # Should fail - base domain NOT matched by wildcard
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+        # Should fail - different domain
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.org", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evilexample.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+    def test_allowlist_trailing_dot_normalization(self):
+        """Test that trailing dots are normalized in allowlist matching."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["api.example.com"]
+
+        # Trailing dot on hostname should be normalized and match
+        SecurityValidator.validate_host_allowlist("api.example.com.", allowed_patterns)
+
+        # Trailing dot on pattern should also work
+        allowed_patterns_with_dot = ["api.example.com."]
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns_with_dot)
+        SecurityValidator.validate_host_allowlist("api.example.com.", allowed_patterns_with_dot)
+
+    def test_allowlist_case_insensitive(self):
+        """Test that allowlist matching is case-insensitive."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["API.Example.COM"]
+
+        # Different cases should all match
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("Api.Example.Com", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("API.EXAMPLE.COM", allowed_patterns)
+
+    def test_allowlist_empty_allows_all(self):
+        """Test that empty allowlist skips validation (backwards compatible)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        empty_allowlist = []
+
+        # Any hostname should pass with empty allowlist
+        SecurityValidator.validate_host_allowlist("any.host.com", empty_allowlist)
+        SecurityValidator.validate_host_allowlist("evil.com", empty_allowlist)
+        SecurityValidator.validate_host_allowlist("127.0.0.1", empty_allowlist)
+
+    def test_allowlist_ipv6_handling(self):
+        """Test that IPv6 addresses are handled gracefully in allowlist (no IDN errors)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        allowed_patterns = ["::1", "2001:db8::1"]
+
+        # Should pass - exact match for IPv6
+        SecurityValidator.validate_host_allowlist("::1", allowed_patterns)
+        SecurityValidator.validate_host_allowlist("2001:db8::1", allowed_patterns)
+
+        # Should fail - not in allowlist but should NOT raise IDN error
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("::2", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+        assert "IDN" not in str(exc_info.value)
+
+        # Should fail - IPv6 not in allowlist, clean error (no IDN confusion)
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("fe80::1", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value)
+
+        logger.debug("IPv6 allowlist handling works correctly")
+
+    def test_private_ips_blocked_when_private_networks_disabled(self):
+        """Test that private IPs are blocked when private networks are disabled."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # RFC 1918 private ranges should be blocked by SSRF protection when configured
+        private_ips = [
+            "http://192.168.1.1/",
+            "http://10.0.0.1/",
+            "http://172.16.0.1/",
+        ]
+
+        # Ensure SSRF protection is enabled and private networks are blocked
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            with patch.object(settings, "ssrf_allow_private_networks", False):
+                for url in private_ips:
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url(url, "Gateway test URL")
+                    # Should be blocked by SSRF protection
+                    assert "private" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                    logger.debug(f"Private IP URL blocked: {url} - {exc_info.value}")
+
+    def test_loopback_blocked_when_localhost_disabled(self):
+        """Test that loopback addresses are blocked when localhost is disabled."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        loopback_urls = [
+            "http://127.0.0.1/",
+            "http://127.0.0.2/",
+            "http://localhost/",
+        ]
+
+        # Ensure SSRF protection is enabled and localhost is blocked
+        with patch.object(settings, "ssrf_protection_enabled", True):
+            with patch.object(settings, "ssrf_allow_localhost", False):
+                for url in loopback_urls:
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url(url, "Gateway test URL")
+                    assert "localhost" in str(exc_info.value).lower() or "loopback" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+                    logger.debug(f"Loopback URL blocked: {url} - {exc_info.value}")
+
+    def test_allowlist_does_not_bypass_ssrf_protection(self):
+        """Test that allowlist with private IP still triggers SSRF block (ICACF-15 Issue #1)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Configure allowlist with private IP
+        with patch.object(settings, "gateway_test_allowed_hosts", ["192.168.1.1"]):
+            with patch.object(settings, "ssrf_protection_enabled", True):
+                with patch.object(settings, "ssrf_allow_private_networks", False):
+                    # Allowlist check should pass
+                    SecurityValidator.validate_host_allowlist("192.168.1.1", ["192.168.1.1"])
+                    logger.debug("Allowlist check passed for 192.168.1.1")
+
+                    # SSRF check should fail (unconditional)
+                    with pytest.raises(ValueError) as exc_info:
+                        SecurityValidator.validate_url("http://192.168.1.1/", "Test")
+                    assert "private" in str(exc_info.value).lower()
+                    logger.debug(f"SSRF correctly blocked private IP in allowlist: {exc_info.value}")
+
+    def test_allowlist_idn_normalization(self):
+        """Test that IDN/Punycode domains are normalized in allowlist (ICACF-15 Issue #3)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Allowlist contains ASCII Punycode version
+        allowed_patterns = ["xn--mnchen-3ya.de"]
+
+        # Should match IDN version (münchen.de)
+        SecurityValidator.validate_host_allowlist("münchen.de", allowed_patterns)
+        logger.debug("IDN hostname münchen.de matched Punycode allowlist xn--mnchen-3ya.de")
+
+        # Should also match ASCII version
+        SecurityValidator.validate_host_allowlist("xn--mnchen-3ya.de", allowed_patterns)
+        logger.debug("Punycode hostname matched Punycode allowlist")
+
+        # Test reverse: IDN in allowlist, ASCII in hostname
+        allowed_patterns_idn = ["münchen.de"]
+        SecurityValidator.validate_host_allowlist("xn--mnchen-3ya.de", allowed_patterns_idn)
+        logger.debug("Punycode hostname matched IDN allowlist")
+
+        # Test with wildcard and IDN
+        allowed_patterns_wildcard = ["*.münchen.de"]
+        SecurityValidator.validate_host_allowlist("api.münchen.de", allowed_patterns_wildcard)
+        logger.debug("IDN subdomain matched wildcard IDN allowlist")
+
+    def test_allowlist_wildcard_excludes_base_domain(self):
+        """Test that wildcard excludes base domain (ICACF-15 Issue #4)."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Allowlist with wildcard pattern
+        allowed_patterns = ["*.example.com"]
+
+        # Should match subdomain
+        SecurityValidator.validate_host_allowlist("api.example.com", allowed_patterns)
+        logger.debug("Subdomain api.example.com matched wildcard *.example.com")
+
+        # Should NOT match base domain (per DNS conventions)
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("example.com", allowed_patterns)
+        assert "not in allowlist" in str(exc_info.value).lower()
+        logger.debug(f"Base domain example.com correctly rejected by wildcard: {exc_info.value}")
+
+        # Should match nested subdomains
+        SecurityValidator.validate_host_allowlist("api.staging.example.com", allowed_patterns)
+        logger.debug("Nested subdomain api.staging.example.com matched wildcard *.example.com")
+
+    def test_allowlist_rejects_empty_hostname(self):
+        """Test that empty/None hostname raises clean error."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("", ["example.com"])
+        assert "empty" in str(exc_info.value).lower()
+
+    def test_allowlist_defends_against_percent_encoding(self):
+        """Test that percent-encoded hostnames are decoded before matching."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Percent-encoded dots should be normalized before matching
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.validate_host_allowlist("evil%2ecom", ["example.com"])
+        assert "not in allowlist" in str(exc_info.value)
+
+        # Valid hostname with percent encoding should match after decode
+        SecurityValidator.validate_host_allowlist("api%2eexample%2ecom", ["api.example.com"])
+
+    def test_allowlist_rejects_malformed_patterns(self):
+        """Test that malformed allowlist patterns raise clean errors."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # Single "*" is not a valid pattern (no domain to match)
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("example.com", ["*"])
+
+        # "*." without a domain is not valid
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("example.com", ["*."])
+
+        # A list with one valid and one invalid pattern: the invalid pattern is
+        # reached when the hostname does not match the valid one, so it raises
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_host_allowlist("evil.com", ["*.example.com", "*"])
+
+
 if __name__ == "__main__":
     # Run tests with pytest
     pytest.main([__file__, "-v", "--tb=short", "-s"])  # -s to see print statements

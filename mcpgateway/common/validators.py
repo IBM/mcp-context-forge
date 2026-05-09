@@ -1315,6 +1315,59 @@ class SecurityValidator:
 
         return value
 
+    @staticmethod
+    def _normalize_hostname(hostname: str) -> str:
+        """Normalize hostname for security checks.
+
+        Performs:
+        - Lowercase conversion
+        - Trailing dot removal
+        - IDN to ASCII (Punycode) conversion (skipped for IP addresses)
+        - Handles wildcard patterns (*.example.com)
+
+        Args:
+            hostname: Raw hostname from URL (may include wildcard prefix)
+
+        Returns:
+            Normalized hostname (with wildcard prefix preserved if present)
+
+        Raises:
+            ValueError: If hostname contains invalid IDN
+
+        Examples:
+            >>> SecurityValidator._normalize_hostname("Example.COM.")
+            'example.com'
+            >>> SecurityValidator._normalize_hostname("münchen.de")
+            'xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("*.münchen.de")
+            '*.xn--mnchen-3ya.de'
+        """
+        # Third-Party
+        import idna  # pylint: disable=import-outside-toplevel
+
+        # Handle wildcard patterns separately
+        wildcard_prefix = ""
+        if hostname.startswith("*."):
+            wildcard_prefix = "*."
+            hostname = hostname[2:]  # Remove "*." for normalization
+
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Skip IDN encoding for IP addresses (IPv4 and IPv6)
+        try:
+            ipaddress.ip_address(hostname_normalized)
+            return wildcard_prefix + hostname_normalized
+        except ValueError:
+            pass  # Not an IP address, proceed with IDN normalization
+
+        try:
+            # Convert IDN to ASCII (e.g., "münchen.de" → "xn--mnchen-3ya.de")
+            hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+        except idna.IDNAError as e:
+            raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+
+        return wildcard_prefix + hostname_normalized
+
     @classmethod
     def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
         """Validate hostname/IP against SSRF protection rules.
@@ -1378,12 +1431,12 @@ class SecurityValidator:
         # callers other than validate_url() which already decodes.
         hostname = _unquote_if_needed(hostname)
 
-        # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
-        hostname_normalized = hostname.lower().rstrip(".")
+        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
+        hostname_normalized = cls._normalize_hostname(hostname)
 
         # Check blocked hostnames (case-insensitive, normalized)
         for blocked_host in settings.ssrf_blocked_hosts:
-            blocked_normalized = blocked_host.lower().rstrip(".")
+            blocked_normalized = cls._normalize_hostname(blocked_host)
             if hostname_normalized == blocked_normalized:
                 raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
 
@@ -1391,13 +1444,13 @@ class SecurityValidator:
         # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
         ip_addresses: list = []
         try:
-            # Try to parse as IP address directly
-            ip_addresses = [ipaddress.ip_address(hostname)]
+            # Try to parse as IP address directly (use normalized hostname)
+            ip_addresses = [ipaddress.ip_address(hostname_normalized)]
         except ValueError:
             # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
             try:
-                # getaddrinfo returns all A/AAAA records
-                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                # getaddrinfo returns all A/AAAA records (use normalized hostname)
+                addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
                 for _, _, _, _, sockaddr in addr_info:
                     try:
                         ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
@@ -1450,6 +1503,72 @@ class SecurityValidator:
 
                     if not allowed_private:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+
+    @classmethod
+    def validate_host_allowlist(cls, hostname: str, allowed_patterns: List[str], field_name: str = "URL") -> None:
+        """Validate hostname against allowlist patterns.
+
+        Args:
+            hostname (str): Hostname to validate (e.g., "api.example.com")
+            allowed_patterns (List[str]): List of allowed patterns. Supports:
+                - Exact matches: "api.example.com"
+                - Wildcard subdomains: "*.example.com" matches "api.example.com", "test.example.com"
+                - Empty list: skip validation (no allowlist enforced)
+            field_name (str): Name of field being validated (for error messages)
+
+        Raises:
+            ValueError: If hostname doesn't match any allowed pattern
+
+        Examples:
+            Exact match:
+
+            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['api.example.com'])
+
+            Wildcard match:
+
+            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['*.example.com'])
+            >>> SecurityValidator.validate_host_allowlist('test.api.example.com', ['*.example.com'])
+
+            No match:
+
+            >>> SecurityValidator.validate_host_allowlist('evil.com', ['*.example.com'])
+            Traceback (most recent call last):
+                ...
+            ValueError: URL hostname 'evil.com' not in allowlist
+
+            Empty allowlist (always passes):
+
+            >>> SecurityValidator.validate_host_allowlist('any.host.com', [])
+        """
+        # Empty allowlist = no enforcement
+        if not allowed_patterns:
+            return
+
+        # Guard against None or empty hostname
+        if not hostname:
+            raise ValueError(f"{field_name} hostname is empty")
+
+        # Defensive percent-decode (matching _validate_ssrf behavior)
+        hostname = _unquote_if_needed(hostname)
+
+        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
+        hostname_normalized = cls._normalize_hostname(hostname)
+
+        for pattern in allowed_patterns:
+            pattern_normalized = cls._normalize_hostname(pattern)
+
+            # Exact match
+            if hostname_normalized == pattern_normalized:
+                return
+
+            # Wildcard subdomain match (*.example.com)
+            if pattern_normalized.startswith("*."):
+                base_domain = pattern_normalized[2:]  # Remove "*."
+                # Match only subdomains, not the base domain itself (per DNS conventions)
+                if hostname_normalized.endswith(f".{base_domain}"):
+                    return
+
+        raise ValueError(f"{field_name} hostname '{hostname}' not in allowlist")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

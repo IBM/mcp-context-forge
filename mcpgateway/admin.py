@@ -164,6 +164,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
@@ -14012,16 +14013,40 @@ async def admin_test_gateway(
         'admin_test_gateway'
     """
     start_time: float = time.monotonic()
+
+    # Step 1: Enforce allowlist if configured (narrows scope to approved hosts)
+    try:
+        # Standard
+        from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+        parsed_url = urlparse(str(request.base_url))
+        if parsed_url.hostname:
+            SecurityValidator.validate_host_allowlist(parsed_url.hostname, settings.gateway_test_allowed_hosts, "Gateway test URL")
+    except ValueError as e:
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        LOGGER.warning("Gateway test hostname not in allowlist for %s: %s", safe_url, e)
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
+
+    # Step 2: Validate URL format and SSRF protection (unconditional security check)
     try:
         validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
     except ValueError as e:
-        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        LOGGER.warning("Gateway test URL validation failed for %s: %s", safe_url, e)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
     full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
+    safe_validated_url = sanitize_url_for_logging(validated_base_url)
+    LOGGER.debug(f"User {get_user_email(user)} testing server at {safe_validated_url}.")
+
+    # TODO(ICACF-15): DNS rebinding risk — allowlist and SSRF checks resolve DNS, but the
+    # actual ResilientHttpClient request resolves DNS a third time. An attacker-controlled DNS
+    # server could return a public IP during validation and a private IP during the actual
+    # request. Consider pinning the resolved IP for outbound requests (custom transport) or
+    # caching DNS resolution across validation and request phases.
     headers = request.headers or {}
 
     # Attempt to find a registered gateway matching this URL and team.
@@ -14112,7 +14137,7 @@ async def admin_test_gateway(
         structured_logger = get_structured_logger("gateway_service")
         structured_logger.log(
             level="INFO",
-            message=f"Gateway test completed: {request.base_url}",
+            message=f"Gateway test completed: {safe_validated_url}",
             event_type="gateway_tested",
             component="gateway_service",
             user_email=get_user_email(user),
@@ -14121,7 +14146,7 @@ async def admin_test_gateway(
             resource_id=gateway.id if gateway else None,
             custom_fields={
                 "gateway_name": gateway.name if gateway else None,
-                "gateway_url": str(request.base_url),
+                "gateway_url": safe_validated_url,
                 "test_method": request.method,
                 "test_path": request.path,
                 "status_code": response.status_code,
@@ -14132,14 +14157,15 @@ async def admin_test_gateway(
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
-        LOGGER.warning(f"Gateway test failed: {e}")
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        LOGGER.warning("Gateway test failed for %s: %s", safe_url, e)
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
         # Structured logging: Log failed gateway test
         structured_logger = get_structured_logger("gateway_service")
         structured_logger.log(
             level="ERROR",
-            message=f"Gateway test failed: {request.base_url}",
+            message=f"Gateway test failed: {safe_url}",
             event_type="gateway_test_failed",
             component="gateway_service",
             user_email=get_user_email(user),
@@ -14149,7 +14175,7 @@ async def admin_test_gateway(
             error=e,
             custom_fields={
                 "gateway_name": gateway.name if gateway else None,
-                "gateway_url": str(request.base_url),
+                "gateway_url": safe_url,
                 "test_method": request.method,
                 "test_path": request.path,
                 "latency_ms": latency_ms,
