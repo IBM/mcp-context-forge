@@ -3400,6 +3400,31 @@ class TestAdminGatewayRoutes:
         assert body["authorization_endpoint"] == "https://example.com/authorize"
         assert body["dcr_available"] is True
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
+    async def test_admin_discover_oauth_invalid_endpoint_urls_filtered(self, mock_dcr_service_cls, mock_request):
+        """Invalid discovered endpoint URLs are filtered out (returned as None)."""
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "ftp://evil.com/token",
+            "authorization_endpoint": None,
+            "jwks_uri": "https://example.com/jwks",
+            "registration_endpoint": "",
+            "scopes_supported": [],
+            "grant_types_supported": [],
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        mock_request.json = AsyncMock(return_value={"issuer": "https://example.com"})
+        response = await admin_discover_oauth(mock_request, user={"email": "test-user"})
+        assert isinstance(response, JSONResponse)
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["success"] is True
+        assert body["token_endpoint"] is None  # invalid URL filtered
+        assert body["authorization_endpoint"] is None  # None input filtered
+        assert body["jwks_uri"] == "https://example.com/jwks"  # valid kept
+        assert body["registration_endpoint"] is None  # empty string filtered
+
 
 class TestAdminRootRoutes:
     """Test admin routes for root management with enhanced coverage."""

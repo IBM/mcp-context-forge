@@ -8189,6 +8189,31 @@ class TestGatewayServiceOAuthAutoDiscovery:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.dcr_service.DcrService")
+    @patch("mcpgateway.services.gateway_service.SecurityValidator")
+    async def test_auto_discover_filters_invalid_endpoints(self, mock_validator_cls, mock_dcr_service_cls):
+        """Discovered endpoints that fail URL validation are rejected but discovery continues."""
+
+        def _validate_side_effect(url, _name):
+            if "evil" in url:
+                raise ValueError("bad host")
+
+        mock_validator_cls.validate_url.side_effect = _validate_side_effect
+        mock_dcr = AsyncMock()
+        mock_dcr.discover_as_metadata.return_value = {
+            "token_endpoint": "https://evil.com/token",  # invalid - rejected
+            "authorization_endpoint": "https://as.example.com/authorize",  # valid
+            "jwks_uri": "https://as.example.com/jwks",  # valid
+        }
+        mock_dcr_service_cls.return_value = mock_dcr
+        config = {"issuer": "https://as.example.com"}
+        result = await GatewayService._auto_discover_oauth_endpoints(config)
+        assert "token_url" not in result  # rejected by _validate_discovered
+        assert result["authorization_url"] == "https://as.example.com/authorize"
+        assert result["jwks_uri"] == "https://as.example.com/jwks"
+        assert result["endpoints_discovered"] is True
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.services.dcr_service.DcrService")
     async def test_auto_discover_graceful_on_failure(self, mock_dcr_service_cls):
         """Discovery failure is logged but does not raise."""
         mock_dcr = AsyncMock()
