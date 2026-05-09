@@ -34,9 +34,28 @@ export const DEFAULT_TEAMS_PER_PAGE = 10;
 
 /**
  * Clear search functionality for different entity types
+ *
+ * IMPORTANT: All entity types used with handleFormSubmitAndRefresh (formHandlers.js)
+ * must be registered here with their correct partialPath and targetSelector.
+ * Failure to register new entity types will cause UI refresh issues after
+ * delete/toggle operations (the entity will remain visible until manual page refresh).
+ *
+ * Each entity type must define:
+ * - partialPath: The backend route for fetching the partial HTML (e.g., "a2a/partial")
+ * - targetSelector: The DOM selector for the target element (e.g., "#agents-table")
  */
 export const PANEL_SEARCH_CONFIG = {
   catalog: {
+    tableName: "servers",
+    partialPath: "servers/partial",
+    targetSelector: "#servers-table",
+    indicatorSelector: "#servers-loading",
+    searchInputId: "servers-search-input",
+    tagInputId: "servers-tag-filter",
+    inactiveCheckboxId: "show-inactive-servers",
+    defaultPerPage: 50,
+  },
+  servers: {
     tableName: "servers",
     partialPath: "servers/partial",
     targetSelector: "#servers-table",
@@ -95,6 +114,18 @@ export const PANEL_SEARCH_CONFIG = {
     tagInputId: "a2a-agents-tag-filter",
     inactiveCheckboxId: "show-inactive-a2a-agents",
     defaultPerPage: 50,
+  },
+  // Note: roots doesn't have a /partial endpoint yet, so it uses full page reload fallback
+  roots: {
+    tableName: "roots",
+    partialPath: "roots/partial",  // Route doesn't exist - will fallback to navigateAdmin
+    targetSelector: "#roots-table-wrapper",
+    indicatorSelector: null,
+    searchInputId: null,
+    tagInputId: null,
+    inactiveCheckboxId: null,
+    defaultPerPage: 50,
+    fallbackOnly: true,
   },
 };
 
