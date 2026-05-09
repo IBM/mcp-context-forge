@@ -125,6 +125,7 @@ export const PANEL_SEARCH_CONFIG = {
     tagInputId: null,
     inactiveCheckboxId: null,
     defaultPerPage: 50,
+    fallbackOnly: true,
   },
 };
 

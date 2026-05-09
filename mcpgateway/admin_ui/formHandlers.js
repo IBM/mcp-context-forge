@@ -17,6 +17,7 @@ const ENTITY_DISPLAY_NAMES = {
   servers: "server",
   teams: "team",
   users: "user",
+  roots: "root",
 };
 
 // ===================================================================
@@ -26,12 +27,6 @@ const ENTITY_DISPLAY_NAMES = {
 // via HTMX. Used by both handleSubmitWithConfirmation and handleDeleteSubmit.
 export const handleFormSubmitAndRefresh = async function (event, type) {
   event.preventDefault();
-
-  // Validate PANEL_SEARCH_CONFIG registration before proceeding
-  const panelConfig = PANEL_SEARCH_CONFIG[type];
-  if (!panelConfig) {
-    throw new Error(`No PANEL_SEARCH_CONFIG found for type: ${type}. All entity types must be registered in PANEL_SEARCH_CONFIG (constants.js) with partialPath and targetSelector.`);
-  }
 
   const isInactiveCheckedBool = isInactiveChecked(type);
   const form = event.target;
@@ -52,15 +47,29 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
     formData.set("csrf_token", csrfToken);
   }
 
+  let panelConfig = null;
+
   try {
+    // Validate PANEL_SEARCH_CONFIG registration before proceeding
+    panelConfig = PANEL_SEARCH_CONFIG[type];
+    if (!panelConfig) {
+      throw new Error(
+        `No PANEL_SEARCH_CONFIG found for type: ${type}. All entity types must be registered in PANEL_SEARCH_CONFIG (constants.js) with partialPath and targetSelector.`
+      );
+    }
+
     // Use redirect:'manual' so the browser does not follow the 303
     // redirect to the backend-direct URL (which bypasses the proxy).
-    await fetch(form.action, {
+    const response = await fetch(form.action, {
       method: "POST",
       body: formData,
       credentials: "include", // pragma: allowlist secret
       redirect: "manual",
     });
+    if (!response.ok && response.status !== 0) {
+      // status === 0 can occur with opaque redirected responses
+      throw new Error(`Submit failed: ${response.status}`);
+    }
 
     // Use HTMX to refresh the table instead of full page reload
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
@@ -71,15 +80,19 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
     };
 
     // Read current search query from DOM
-    const searchInput = document.getElementById(panelConfig.searchInputId);
-    if (searchInput?.value) {
-      refreshParams.q = searchInput.value;
+    if (panelConfig.searchInputId) {
+      const searchInput = document.getElementById(panelConfig.searchInputId);
+      if (searchInput?.value) {
+        refreshParams.q = searchInput.value;
+      }
     }
 
     // Read current tag filter from DOM
-    const tagInput = document.getElementById(panelConfig.tagInputId);
-    if (tagInput?.value) {
-      refreshParams.tags = tagInput.value;
+    if (panelConfig.tagInputId) {
+      const tagInput = document.getElementById(panelConfig.tagInputId);
+      if (tagInput?.value) {
+        refreshParams.tags = tagInput.value;
+      }
     }
 
     // Add team_id if present
@@ -99,18 +112,20 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
       refreshParams
     );
 
-    if (window.htmx) {
+    // Build fallback params preserving state for non-HTMX or error paths
+    const fallbackParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(refreshParams)) {
+      fallbackParams.set(key, value);
+    }
+
+    if (panelConfig.fallbackOnly || !window.htmx) {
+      // Fallback to full reload for entities without HTMX partial support
+      navigateAdmin(fragment, fallbackParams);
+    } else {
       window.htmx.ajax('GET', partialUrl, {
         target: targetSelector,
         swap: 'outerHTML'
       });
-    } else {
-      // Fallback to full reload if HTMX not available
-      const fallbackParams = new URLSearchParams();
-      if (teamId) {
-        fallbackParams.set("team_id", teamId);
-      }
-      navigateAdmin(fragment, fallbackParams);
     }
   } catch (error) {
     // Network error or missing config — notify user and fallback to full reload
@@ -118,8 +133,24 @@ export const handleFormSubmitAndRefresh = async function (event, type) {
     alert("Failed to refresh table. Reloading page...");
     const fragment = TOGGLE_FRAGMENT_MAP[type] || type;
     const params = new URLSearchParams();
+    params.set("include_inactive", String(isInactiveCheckedBool));
     if (teamId) {
       params.set("team_id", teamId);
+    }
+    // Preserve search/tag state when panelConfig is available
+    if (panelConfig) {
+      if (panelConfig.searchInputId) {
+        const searchInput = document.getElementById(panelConfig.searchInputId);
+        if (searchInput?.value) {
+          params.set("q", searchInput.value);
+        }
+      }
+      if (panelConfig.tagInputId) {
+        const tagInput = document.getElementById(panelConfig.tagInputId);
+        if (tagInput?.value) {
+          params.set("tags", tagInput.value);
+        }
+      }
     }
     navigateAdmin(fragment, params);
   }

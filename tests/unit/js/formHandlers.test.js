@@ -10,10 +10,20 @@ import {
   handleSubmitWithConfirmation,
   handleDeleteSubmit,
 } from "../../../mcpgateway/admin_ui/formHandlers.js";
+import { navigateAdmin } from "../../../mcpgateway/admin_ui/navigation.js";
+
+vi.mock("../../../mcpgateway/admin_ui/navigation.js", () => ({
+  navigateAdmin: vi.fn(),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  delete global.window.htmx;
+  delete global.window.ROOT_PATH;
+  delete global.fetch;
+  delete global.alert;
+  vi.mocked(navigateAdmin).mockClear();
 });
 
 // ---------------------------------------------------------------------------
@@ -320,7 +330,8 @@ describe("handleDeleteSubmit", () => {
     );
   });
 
-  test("throws error when PANEL_SEARCH_CONFIG is missing for a type", async () => {
+  test("falls back to navigateAdmin when PANEL_SEARCH_CONFIG is missing for a type", async () => {
+    global.alert = vi.fn();
     const form = document.createElement("form");
     form.id = "test-form";
     form.action = "/test";
@@ -340,12 +351,99 @@ describe("handleDeleteSubmit", () => {
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
 
-    // Should throw error for unregistered entity type
-    await expect(async () => {
-      await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
-    }).rejects.toThrow('No PANEL_SEARCH_CONFIG found for type: unknown-type');
+    await handleDeleteSubmit(event, "unknown", "test-unknown", "unknown-type");
 
-    // HTMX should NOT be called since error is thrown before refresh
+    // HTMX should NOT be called; instead alert + navigateAdmin fallback is triggered
     expect(htmxAjaxMock).not.toHaveBeenCalled();
+    expect(global.alert).toHaveBeenCalledWith("Failed to refresh table. Reloading page...");
+    expect(navigateAdmin).toHaveBeenCalled();
+  });
+
+  test("falls back to navigateAdmin for roots (fallbackOnly entity)", async () => {
+    global.alert = vi.fn();
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    global.fetch = fetchMock;
+
+    // Mock HTMX — even though it's available, roots should not use it
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "roots", "test-root", "roots");
+
+    // HTMX should NOT be called for fallbackOnly entities
+    expect(htmxAjaxMock).not.toHaveBeenCalled();
+    expect(navigateAdmin).toHaveBeenCalled();
+  });
+
+  test("falls back to navigateAdmin when fetch response is not ok", async () => {
+    global.alert = vi.fn();
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    global.fetch = fetchMock;
+
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "tools", "test-tool", "tools");
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(htmxAjaxMock).not.toHaveBeenCalled();
+    expect(global.alert).toHaveBeenCalledWith("Failed to refresh table. Reloading page...");
+    expect(navigateAdmin).toHaveBeenCalled();
+  });
+
+  test("allows HTMX refresh when fetch returns opaque redirect (status 0)", async () => {
+    const form = document.createElement("form");
+    form.id = "test-form";
+    form.action = "/test";
+    document.body.appendChild(form);
+
+    const tableDiv = document.createElement("div");
+    tableDiv.id = "tools-table";
+    document.body.appendChild(tableDiv);
+
+    // status === 0 with ok: false is treated as success (opaque redirect)
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 0 });
+    global.fetch = fetchMock;
+
+    const htmxAjaxMock = vi.fn();
+    global.window.htmx = { ajax: htmxAjaxMock };
+    global.window.ROOT_PATH = "";
+
+    const event = { preventDefault: vi.fn(), target: form };
+
+    vi.spyOn(window, "confirm")
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    await handleDeleteSubmit(event, "tools", "test-tool", "tools");
+
+    expect(fetchMock).toHaveBeenCalled();
+    // HTMX SHOULD be called because status 0 is treated as success
+    expect(htmxAjaxMock).toHaveBeenCalled();
+    expect(global.alert).not.toHaveBeenCalled();
   });
 });
