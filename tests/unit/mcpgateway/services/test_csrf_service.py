@@ -10,14 +10,16 @@ Tests cover token generation, validation, cookie management, and edge cases.
 
 # Standard
 import time
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.services.csrf_service import (
+    CSRFService,
     clear_csrf_cookie,
+    get_csrf_service,
     generate_csrf_token,
     set_csrf_cookie,
     validate_csrf_token,
@@ -164,6 +166,22 @@ class TestValidateCSRFToken:
         result = validate_csrf_token(uppercase_token, "user@example.com", "session123", "secret", 3600)
         assert result is False
 
+    def test_previous_window_compare_digest_path_returns_true(self):
+        """Test that a previous-window match is accepted."""
+        token = "a" * 64
+
+        with patch("mcpgateway.services.csrf_service.hmac.compare_digest", side_effect=[False, True]):
+            result = validate_csrf_token(token, "user@example.com", "session123", "secret", 3600)
+
+        assert result is True
+
+    def test_validation_exception_returns_false(self):
+        """Test that validation exceptions are handled and return False."""
+        with patch("mcpgateway.services.csrf_service.hmac.new", side_effect=Exception("boom")):
+            result = validate_csrf_token("a" * 64, "user@example.com", "session123", "secret", 3600)
+
+        assert result is False
+
 
 class TestSetCSRFCookie:
     """Test cases for set_csrf_cookie function."""
@@ -282,3 +300,41 @@ class TestClearCSRFCookie:
         call_kwargs = response.set_cookie.call_args[1]
         assert call_kwargs["secure"] is False
         assert call_kwargs["samesite"] == "Lax"
+
+
+class TestCSRFService:
+    """Test cases for CSRFService wrapper."""
+
+    def test_init_sets_secret_and_expiry(self):
+        service = CSRFService("secret", 3600)
+        assert service.secret == "secret"
+        assert service.expiry == 3600
+
+    def test_generate_csrf_token_delegates(self):
+        service = CSRFService("secret", 3600)
+
+        with patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="token") as mock_generate:
+            assert service.generate_csrf_token("user@example.com", "session123") == "token"
+
+        mock_generate.assert_called_once_with("user@example.com", "session123", "secret", 3600)
+
+    def test_validate_csrf_token_delegates(self):
+        service = CSRFService("secret", 3600)
+
+        with patch("mcpgateway.services.csrf_service.validate_csrf_token", return_value=True) as mock_validate:
+            assert service.validate_csrf_token("token", "user@example.com", "session123") is True
+
+        mock_validate.assert_called_once_with("token", "user@example.com", "session123", "secret", 3600)
+
+
+def test_get_csrf_service_uses_app_settings():
+    with patch("mcpgateway.services.csrf_service.app_settings") as mock_settings:
+        mock_settings.csrf_secret_key = "secret"
+        mock_settings.csrf_token_expiry = 3600
+
+        get_csrf_service.cache_clear()
+        service = get_csrf_service()
+
+    assert isinstance(service, CSRFService)
+    assert service.secret == "secret"
+    assert service.expiry == 3600

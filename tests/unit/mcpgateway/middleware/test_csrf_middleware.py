@@ -119,6 +119,67 @@ async def test_post_with_invalid_token_returns_403():
 
 
 @pytest.mark.asyncio
+async def test_post_with_missing_cookie_returns_403():
+    """Test that POST with no CSRF cookie returns 403."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123"}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_with_mismatched_cookie_returns_403():
+    """Test that POST with mismatched CSRF cookie returns 403."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"session_id": "session123", "csrf_token": "different_token"}
+
+    mock_csrf_service = MagicMock()
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
+         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_post_with_valid_token_succeeds():
     """Test that POST with valid CSRF token succeeds."""
     middleware = CSRFMiddleware(app=AsyncMock())

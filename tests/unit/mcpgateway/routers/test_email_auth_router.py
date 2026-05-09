@@ -191,6 +191,50 @@ class TestEmailAuthLoginPasswordChangeRequired:
                         assert response.access_token == "test_token_123"
                         assert response.token_type == "bearer"
 
+    @pytest.mark.asyncio
+    async def test_login_sets_csrf_cookie_when_rotation_enabled(self, mock_user_normal):
+        """Test login returns ORJSONResponse with rotated CSRF cookie."""
+        from mcpgateway.routers.email_auth import login
+        from mcpgateway.schemas import EmailLoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+        mock_request.headers = {"User-Agent": "TestAgent/1.0"}
+
+        mock_db = MagicMock()
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            mock_service = MockAuthService.return_value
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user_normal)
+
+            with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
+                mock_password_service = MockPasswordService.return_value
+                mock_password_service.verify_password.return_value = False
+                mock_password_service.verify_password_async = AsyncMock(return_value=False)
+
+                with (
+                    patch("mcpgateway.routers.email_auth.settings") as mock_settings,
+                    patch("jwt.decode") as mock_jwt_decode,
+                    patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+                    patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+                ):
+                    mock_settings.default_user_password.get_secret_value.return_value = "default_password"
+                    mock_settings.token_expiry = 60
+                    mock_settings.jwt_issuer = "test-issuer"
+                    mock_settings.jwt_audience = "test-audience"
+                    mock_settings.csrf_rotate_on_login = True
+                    mock_settings.csrf_secret_key = "secret"
+                    mock_settings.csrf_token_expiry = 60
+                    mock_jwt_decode.return_value = {"jti": "session-123"}
+
+                    response = await login(login_request, mock_request, mock_db)
+
+        assert response.status_code == 200
+        mock_generate.assert_called_once_with(user_id="test@example.com", session_id="session-123", secret="secret", expiry=60)
+        mock_set_cookie.assert_called_once()
+
 
 class TestCreateAccessTokenTeamsFormat:
     """Test cases for create_access_token teams claim format consistency.
