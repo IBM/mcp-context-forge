@@ -626,15 +626,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.warning("OAuth endpoint discovery skipped for issuer %s: %s", issuer, _e)
             return raw_oauth_config
 
+        def _validate_discovered(url: str, name: str) -> bool:
+            try:
+                SecurityValidator.validate_url(url, name)
+                return True
+            except ValueError as _e:
+                logger.warning("Discovered %s rejected for issuer %s: %s", name, issuer, _e)
+                return False
+
         try:
             _dcr = DcrService()
             _metadata = await _dcr.discover_as_metadata(issuer)
-            if _metadata.get("token_endpoint") and not raw_oauth_config.get("token_url"):
-                raw_oauth_config["token_url"] = _metadata["token_endpoint"]
-            if _metadata.get("authorization_endpoint") and not raw_oauth_config.get("authorization_url"):
-                raw_oauth_config["authorization_url"] = _metadata["authorization_endpoint"]
-            if _metadata.get("jwks_uri") and not raw_oauth_config.get("jwks_uri"):
-                raw_oauth_config["jwks_uri"] = _metadata["jwks_uri"]
+            token_endpoint = _metadata.get("token_endpoint")
+            if token_endpoint and not raw_oauth_config.get("token_url") and _validate_discovered(token_endpoint, "token_endpoint"):
+                raw_oauth_config["token_url"] = token_endpoint
+            authz_endpoint = _metadata.get("authorization_endpoint")
+            if authz_endpoint and not raw_oauth_config.get("authorization_url") and _validate_discovered(authz_endpoint, "authorization_endpoint"):
+                raw_oauth_config["authorization_url"] = authz_endpoint
+            jwks_uri = _metadata.get("jwks_uri")
+            if jwks_uri and not raw_oauth_config.get("jwks_uri") and _validate_discovered(jwks_uri, "jwks_uri"):
+                raw_oauth_config["jwks_uri"] = jwks_uri
             raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
             raw_oauth_config["endpoints_discovered"] = True
             logger.info("Auto-discovered OAuth endpoints for issuer %s", issuer)

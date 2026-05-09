@@ -12098,12 +12098,21 @@ async def admin_discover_oauth(
         dcr = DcrService()
         metadata = await dcr.discover_as_metadata(issuer)
 
+        def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            if not raw:
+                return None
+            try:
+                SecurityValidator.validate_url(raw, name)
+                return raw
+            except ValueError:
+                return None
+
         return JSONResponse({
             "success": True,
-            "token_endpoint": metadata.get("token_endpoint"),
-            "authorization_endpoint": metadata.get("authorization_endpoint"),
-            "jwks_uri": metadata.get("jwks_uri"),
-            "registration_endpoint": metadata.get("registration_endpoint"),
+            "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+            "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+            "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
+            "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
             "dcr_available": bool(metadata.get("registration_endpoint")),
             "scopes_supported": metadata.get("scopes_supported", []),
             "grant_types_supported": metadata.get("grant_types_supported", []),
