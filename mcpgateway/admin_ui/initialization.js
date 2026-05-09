@@ -255,11 +255,6 @@ export const setupTabNavigation = function () {
     if (!tabElement) {
       return;
     }
-    // The sidebar anchors already have inline onclick handlers in admin.html.
-    // Avoid adding a second click handler that would call showTab twice.
-    if (tabElement.hasAttribute("onclick")) {
-      return;
-    }
     if (tabElement.dataset.tabBound === "true") {
       return;
     }

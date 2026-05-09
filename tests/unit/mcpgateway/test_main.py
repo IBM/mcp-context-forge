@@ -278,6 +278,36 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
         importlib.reload(reloaded)
 
 
+def test_get_csp_nonce_from_request_with_none():
+    """Test get_csp_nonce_from_request returns empty string when request is None."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    result = get_csp_nonce_from_request(None)
+    assert result == ""
+
+
+def test_get_csp_nonce_from_request_with_nonce():
+    """Test get_csp_nonce_from_request returns nonce from request state."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    request = _make_request()
+    request.state.csp_nonce = "test-nonce-12345"
+    result = get_csp_nonce_from_request(request)
+    assert result == "test-nonce-12345"
+
+
+def test_get_csp_nonce_from_request_without_nonce():
+    """Test get_csp_nonce_from_request returns empty string when nonce not in state."""
+    # First-Party
+    from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+    request = _make_request()
+    result = get_csp_nonce_from_request(request)
+    assert result == ""
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures                                                                    #
 # --------------------------------------------------------------------------- #

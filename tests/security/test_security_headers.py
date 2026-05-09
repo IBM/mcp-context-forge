@@ -94,6 +94,119 @@ class TestSecurityHeaders:
         # Verify CSP ends with semicolon
         assert csp.endswith(";")
 
+    def test_csp_nonce_header_consistency(self, client: TestClient):
+        """Test that CSP nonce in header is unique per request.
+
+        This verifies that each request generates a unique nonce value in the
+        Content-Security-Policy header, which is critical for preventing XSS attacks.
+        The nonce must be cryptographically random and different for each request.
+        """
+        # Standard
+        import re
+
+        # Make two requests to the same endpoint
+        response1 = client.get("/health")
+        response2 = client.get("/health")
+
+        assert response1.status_code == 200
+        assert response2.status_code == 200
+
+        # Extract nonces from CSP headers
+        csp1 = response1.headers.get("Content-Security-Policy", "")
+        csp2 = response2.headers.get("Content-Security-Policy", "")
+
+        assert csp1, "CSP header must be present in first response"
+        assert csp2, "CSP header must be present in second response"
+
+        # Extract nonce values using regex
+        nonce_match1 = re.search(r"'nonce-([^']+)'", csp1)
+        nonce_match2 = re.search(r"'nonce-([^']+)'", csp2)
+
+        assert nonce_match1, "CSP header must contain nonce directive in first response"
+        assert nonce_match2, "CSP header must contain nonce directive in second response"
+
+        nonce1 = nonce_match1.group(1)
+        nonce2 = nonce_match2.group(1)
+
+        # Verify nonces are not empty and have reasonable length (should be 22 chars for base64url(16 bytes))
+        assert len(nonce1) > 0, "Nonce must not be empty"
+        assert len(nonce1) >= 20, "Nonce should be at least 20 characters (128 bits of entropy)"
+        assert len(nonce2) > 0, "Nonce must not be empty"
+        assert len(nonce2) >= 20, "Nonce should be at least 20 characters (128 bits of entropy)"
+
+        # Critical invariant: nonces must be different between requests
+        assert nonce1 != nonce2, (
+            f"CSP nonces must be unique per request. "
+            f"Got same nonce '{nonce1}' for both requests, indicating a security vulnerability."
+        )
+
+    def test_csp_nonce_format_and_entropy(self, client: TestClient):
+        """Test that CSP nonces have proper format and sufficient entropy.
+
+        This verifies that nonces are:
+        1. Present in every response
+        2. Base64url encoded (URL-safe)
+        3. Have sufficient length (≥20 chars for 128 bits of entropy)
+        4. Contain only valid base64url characters
+        """
+        # Standard
+        import re
+
+        response = client.get("/health")
+        assert response.status_code == 200
+
+        # Extract nonce from CSP header
+        csp_header = response.headers.get("Content-Security-Policy", "")
+        assert csp_header, "CSP header must be present"
+
+        nonce_match = re.search(r"'nonce-([^']+)'", csp_header)
+        assert nonce_match, "CSP header must contain nonce directive"
+        nonce = nonce_match.group(1)
+
+        # Verify nonce format (base64url: alphanumeric, -, _)
+        assert re.match(r'^[A-Za-z0-9_-]+$', nonce), (
+            f"Nonce must be base64url encoded (alphanumeric, -, _). Got: {nonce}"
+        )
+
+        # Verify sufficient entropy (≥20 chars for 128 bits)
+        assert len(nonce) >= 20, (
+            f"Nonce must be at least 20 characters for 128 bits of entropy. Got {len(nonce)} chars: {nonce}"
+        )
+
+        # Verify layered CSP architecture (CSP Level 3)
+        # script-src-elem controls <script> tags and must have the nonce
+        script_src_elem_match = re.search(r"script-src-elem ([^;]+)", csp_header)
+        assert script_src_elem_match, "CSP must contain script-src-elem directive"
+        script_src_elem = script_src_elem_match.group(1)
+
+        assert "'nonce-" in script_src_elem, (
+            "script-src-elem must contain nonce for <script> tag security"
+        )
+        assert "'unsafe-inline'" not in script_src_elem, (
+            "script-src-elem must not contain 'unsafe-inline' (pentesting requirement)"
+        )
+
+        # script-src-attr controls inline event handlers
+        script_src_attr_match = re.search(r"script-src-attr ([^;]+)", csp_header)
+        assert script_src_attr_match, "CSP must contain script-src-attr directive"
+        script_src_attr = script_src_attr_match.group(1)
+
+        assert "'unsafe-inline'" in script_src_attr, (
+            "script-src-attr should allow 'unsafe-inline' for inline event handlers (transitional)"
+        )
+
+        # script-src fallback controls eval() for Alpine.js
+        script_src_match = re.search(r"script-src ([^;]+)", csp_header)
+        assert script_src_match, "CSP must contain script-src directive"
+        script_src = script_src_match.group(1)
+
+        assert "'unsafe-eval'" in script_src, (
+            "script-src must contain 'unsafe-eval' for Alpine.js compatibility"
+        )
+        assert "'unsafe-hashes'" not in script_src, (
+            "'unsafe-hashes' without accompanying hash values is a no-op and should be removed"
+        )
+
 
 class TestCORSConfiguration:
     """Test CORS configuration and behavior."""
@@ -250,7 +363,7 @@ class TestProductionSecurity:
         """Test security headers are consistent across different endpoints."""
         endpoints = ["/health", "/ready"]
 
-        headers_to_check = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "Referrer-Policy", "Content-Security-Policy"]
+        headers_to_check = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "Referrer-Policy"]
 
         responses = {}
         for endpoint in endpoints:
@@ -260,6 +373,15 @@ class TestProductionSecurity:
         for header in headers_to_check:
             values = [responses[endpoint].headers.get(header) for endpoint in endpoints]
             assert all(value == values[0] for value in values), f"Inconsistent {header} across endpoints"
+
+        # CSP headers should have the same structure but different nonces per request
+        # Verify CSP structure is consistent by checking for key directives
+        for endpoint in endpoints:
+            csp = responses[endpoint].headers.get("Content-Security-Policy", "")
+            assert "default-src 'self'" in csp, f"Missing default-src in CSP for {endpoint}"
+            assert "script-src-elem 'self' 'nonce-" in csp, f"Missing nonce-based script-src-elem in CSP for {endpoint}"
+            assert "script-src 'self' 'unsafe-eval'" in csp, f"Missing unsafe-eval in script-src fallback for {endpoint}"
+            assert "frame-ancestors 'none'" in csp, f"Missing frame-ancestors in CSP for {endpoint}"
 
 
 class TestSecurityHeadersEdgeCases:
