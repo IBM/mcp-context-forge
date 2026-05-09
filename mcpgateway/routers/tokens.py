@@ -18,15 +18,52 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+
+def _handle_token_integrity_error(err_str: str) -> None:
+    """Handle IntegrityError for token creation with sanitized error messages.
+
+    Extracts duplicated logic for handling token name uniqueness constraint
+    violations. Raises HTTPException with appropriate status and detail.
+
+    Args:
+        err_str: The error string from the IntegrityError
+
+    Raises:
+        HTTPException: 409 CONFLICT with appropriate detail message
+    """
+    # Match the specific name constraint: PostgreSQL reports the constraint name
+    # (either the db.py name or the Alembic migration name); SQLite reports column paths.
+    if (
+        "uq_email_api_tokens_user_name_team" in err_str
+        or "uq_email_api_tokens_user_name" in err_str
+        or "uq_email_api_tokens_user_name_global" in err_str
+        or "uq_email_api_tokens_user_email_name" in err_str
+        or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
+    ):
+        if should_expose_error_details():
+            detail = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
+        else:
+            detail = "A token with this name already exists. Please choose a different name."
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    # Generic conflict error
+    if should_expose_error_details():
+        detail = "Token creation failed due to a conflict. Please try again."
+    else:
+        detail = "Request could not be completed. Please try again."
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 def _require_authenticated_session(current_user: dict) -> None:
@@ -206,24 +243,17 @@ async def create_token(
             token=token_response,
             access_token=raw_token,
         )
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        # Match the specific name constraint: PostgreSQL reports the constraint name
-        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
-        if (
-            "uq_email_api_tokens_user_name_team" in err_str
-            or "uq_email_api_tokens_user_name" in err_str
-            or "uq_email_api_tokens_user_email_name" in err_str
-            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
-            )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
+        logger.error("Token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
+        _handle_token_integrity_error(err_str)
 
 
 @router.get("", response_model=TokenListResponse)
@@ -439,8 +469,12 @@ async def update_token(
         db.commit()
         db.close()
         return result
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
 
 
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -766,24 +800,17 @@ async def create_team_token(
             token=token_response,
             access_token=raw_token,
         )
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        # Match the specific name constraint: PostgreSQL reports the constraint name
-        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
-        if (
-            "uq_email_api_tokens_user_name_team" in err_str
-            or "uq_email_api_tokens_user_name" in err_str
-            or "uq_email_api_tokens_user_email_name" in err_str
-            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
-            )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
+        logger.error("Team token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
+        _handle_token_integrity_error(err_str)
 
 
 @router.get("/teams/{team_id}", response_model=TokenListResponse)
@@ -877,5 +904,9 @@ async def list_team_tokens(
         db.commit()
         db.close()
         return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))

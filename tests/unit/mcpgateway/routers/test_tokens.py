@@ -220,7 +220,8 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "Token name already exists" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_create_token_with_is_active_false(self, mock_db, mock_current_user, mock_token_record):
@@ -269,8 +270,9 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            # Security fix: simplified message in production (debug=False by default)
             assert "already exists" in exc_info.value.detail
-            assert "unique per user" in exc_info.value.detail
+            assert "choose a different name" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
@@ -289,7 +291,8 @@ class TestCreateToken:
                 await create_token(request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-            assert "conflict" in exc_info.value.detail.lower()
+            # Security fix: generic error message in production (debug=False by default)
+            assert "could not be completed" in exc_info.value.detail.lower() or "try again" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
@@ -327,6 +330,50 @@ class TestCreateToken:
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
             assert "already exists" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed even in production mode."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenCreateRequest(
+        name="Invalid Token",
+        description="Test",
+        expires_in_days=400,  # Exceeds limit
+    )
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Token expiration cannot exceed 365 days"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_token(request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        # PublicValidationError message should be exposed
+        assert "Token expiration cannot exceed 365 days" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_team_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in create_team_token."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenCreateRequest(
+        name="Team Token",
+        description="Test",
+    )
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Team does not exist or user lacks access"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_team_token("team-123", request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Team does not exist or user lacks access" in exc_info.value.detail
 
 
 class TestListTokens:
@@ -497,7 +544,8 @@ class TestUpdateToken:
                 await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "Invalid token name" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_update_token_toggle_is_active(self, mock_db, mock_current_user, mock_token_record):
@@ -532,6 +580,24 @@ class TestUpdateToken:
             assert response.is_active is True
             call_args = mock_service.update_token.call_args
             assert call_args[1]["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_update_token_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in update_token."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    request = TokenUpdateRequest(name="Updated Token")
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.update_token = AsyncMock(side_effect=PublicValidationError("Token name exceeds maximum length"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Token name exceeds maximum length" in exc_info.value.detail
 
 
 class TestRevokeToken:
@@ -761,7 +827,8 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "User is not team owner" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -789,8 +856,9 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            # Security fix: simplified message in production (debug=False by default)
             assert "already exists" in exc_info.value.detail
-            assert "unique per user" in exc_info.value.detail
+            assert "choose a different name" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_team_token_integrity_error_generic_conflict(self, mock_db, mock_current_user):
@@ -809,7 +877,8 @@ class TestTeamTokens:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-            assert "conflict" in exc_info.value.detail.lower()
+            # Security fix: generic error message in production (debug=False by default)
+            assert "could not be completed" in exc_info.value.detail.lower() or "try again" in exc_info.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_create_team_token_integrity_error_calls_rollback(self, mock_db, mock_current_user):
@@ -856,7 +925,24 @@ class TestTeamTokens:
                 await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "User is not team member" in str(exc_info.value.detail)
+            # Security fix: generic error message in production (debug=False by default)
+            assert "Invalid request" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_list_team_tokens_public_validation_error(mock_db, mock_current_user):
+    """Test that PublicValidationError messages are exposed in list_team_tokens."""
+    from mcpgateway.utils.error_formatter import PublicValidationError
+
+    with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+        mock_service = mock_service_class.return_value
+        mock_service.list_team_tokens = AsyncMock(side_effect=PublicValidationError("Team access revoked"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Team access revoked" in exc_info.value.detail
 
 
 class TestApiTokenAuth:
