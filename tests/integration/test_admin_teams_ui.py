@@ -16,14 +16,12 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timezone
-import os
-import tempfile
 from uuid import uuid4
 
 # Third-Party
-from _pytest.monkeypatch import MonkeyPatch
 from fastapi.testclient import TestClient
 import pytest
+from pytest import MonkeyPatch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -31,30 +29,34 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.db import Base, EmailTeam, EmailUser
-from mcpgateway.main import app
+from mcpgateway.db import get_db as main_get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.middleware.rbac import get_db as rbac_get_db
 from mcpgateway.utils.verify_credentials import require_auth
 
 
 @pytest.fixture
-def test_client_with_admin():
+def test_client_with_teams(tmp_path):
     """FastAPI TestClient with actual database and admin user setup."""
     mp = MonkeyPatch()
 
     # Create temp SQLite file
-    fd, path = tempfile.mkstemp(suffix=".db")
-    url = f"sqlite:///{path}"
+    db_path = tmp_path / "test.db"
+    url = f"sqlite:///{db_path}"
 
     # Patch settings
     from mcpgateway.config import settings
     mp.setattr(settings, "database_url", url, raising=False)
     mp.setattr(settings, "email_auth_enabled", True, raising=False)
     mp.setattr(settings, "auth_required", False, raising=False)  # Disable auth requirement for testing
+    mp.setattr(settings, "mcpgateway_admin_api_enabled", True, raising=True)
 
     # Create engine and session
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
+
+    # Patch the ADMIN_API_ENABLED constant that was read at import time
+    mp.setattr(main_mod, "ADMIN_API_ENABLED", True, raising=True)
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -63,6 +65,19 @@ def test_client_with_admin():
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(main_mod, "engine", engine, raising=False)
+
+    # Import app AFTER patching settings so admin routes are mounted
+    from mcpgateway.main import app
+    old_overrides = app.dependency_overrides.copy()
+
+    # If main was already imported earlier in the test session, admin routes may
+    # not be mounted. Dynamically mount them if absent (pattern from conftest.py).
+    admin_routes = [r for r in app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
+    if not admin_routes:
+        from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions
+        set_logging_service(main_mod.logging_service)
+        app.include_router(admin_router)
+        validate_section_permissions(admin_router)
 
     # Create schema
     Base.metadata.create_all(bind=engine)
@@ -149,12 +164,16 @@ def test_client_with_admin():
             db_session.close()
 
     app.dependency_overrides[rbac_get_db] = override_get_db
+    app.dependency_overrides[main_get_db] = override_get_db
 
     # Override auth dependencies to return admin user
     async def mock_get_current_user():
         db_session = TestSessionLocal()
-        user_obj = db_session.query(EmailUser).filter(EmailUser.email == "admin@test.com").first()
-        return user_obj
+        try:
+            user_obj = db_session.query(EmailUser).filter(EmailUser.email == "admin@test.com").first()
+            return user_obj
+        finally:
+            db_session.close()
 
     # Override get_current_user_with_permissions for RBAC middleware
     async def mock_user_with_permissions():
@@ -181,18 +200,18 @@ def test_client_with_admin():
     # Create TestClient
     client = TestClient(app)
 
-    yield client, TestSessionLocal, public_team, private_team
-
-    # Cleanup
-    db.close()
-    os.close(fd)
-    os.unlink(path)
-    mp.undo()
-    app.dependency_overrides.clear()
+    try:
+        yield client, TestSessionLocal, public_team, private_team, app
+    finally:
+        # Cleanup
+        db.close()
+        client.close()
+        app.dependency_overrides = old_overrides
+        mp.undo()
 
 
 @pytest.mark.integration
-def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_admin):
+def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_teams):
     """
     Integration test: Verify admin sees 'Request to Join' button in actual HTML response
     for public teams they're not members of.
@@ -204,7 +223,7 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_admin)
 
     Verifies fix for issue #3488.
     """
-    client, session_factory, public_team, private_team = test_client_with_admin
+    client, session_factory, public_team, private_team, app = test_client_with_teams
 
     # Make request to admin teams partial endpoint
     # Auth is already set up in the fixture via dependency overrides
@@ -232,17 +251,18 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_admin)
 
     # Verify the join button appears in context of the public team
     # The HTML structure has team cards with team names followed by action buttons
-    public_team_section_start = html_content.find("Public Integration Test Team")
-    assert public_team_section_start > 0, "Public team section should exist"
+    # Find team sections regardless of rendering order
+    public_start = html_content.find("Public Integration Test Team")
+    private_start = html_content.find("Private Integration Test Team")
+    assert public_start > 0, "Public team section should exist"
+    assert private_start > 0, "Private team section should exist"
 
-    # Find the next team section or end of content
-    private_team_section_start = html_content.find("Private Integration Test Team", public_team_section_start)
-
-    # Extract the public team section HTML
-    if private_team_section_start > 0:
-        public_team_html = html_content[public_team_section_start:private_team_section_start]
+    if public_start < private_start:
+        public_team_html = html_content[public_start:private_start]
+        private_team_html = html_content[private_start:]
     else:
-        public_team_html = html_content[public_team_section_start:]
+        private_team_html = html_content[private_start:public_start]
+        public_team_html = html_content[public_start:]
 
     # Verify join button is in the public team section
     assert 'Request to Join' in public_team_html or 'requestToJoin' in public_team_html, \
@@ -259,31 +279,22 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_admin)
         "Admin should NOT see 'Delete Team' button for public teams"
 
     # For PRIVATE team: admin should see admin controls, not join button
-    private_team_html = html_content[private_team_section_start:] if private_team_section_start > 0 else ""
-
-    if private_team_html:
-        # Admin controls should appear for private teams
-        # Note: The exact presence depends on template structure, but relationship="none" enables admin controls
-        # We mainly verify that the join button does NOT appear for private teams
-        public_join_buttons_count = html_content.count('Request to Join')
-
-        # If there's at least one join button, it should be for the public team only
-        if public_join_buttons_count > 0:
-            # The join button context should not include the private team
-            assert 'Request to Join' not in private_team_html or \
-                   html_content.find('Request to Join', private_team_section_start) == -1, \
-                "Join button should not appear for private teams in admin view"
+    # Admin controls should appear for private teams
+    # Note: The exact presence depends on template structure, but relationship="none" enables admin controls
+    # We mainly verify that the join button does NOT appear for private teams
+    assert 'Request to Join' not in private_team_html, \
+        "Join button should not appear for private teams in admin view"
 
 
 @pytest.mark.integration
-def test_regular_user_sees_join_button_for_public_teams(test_client_with_admin):
+def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
     """
     Integration test: Verify regular (non-admin) users also see 'Request to Join' button
     for public teams they're not members of.
 
     This ensures the fix doesn't break existing behavior for regular users.
     """
-    client, session_factory, public_team, private_team = test_client_with_admin
+    client, session_factory, public_team, private_team, app = test_client_with_teams
 
     # Create regular user
     db = session_factory()
@@ -294,16 +305,63 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_admin):
         email_verified_at=datetime.now(timezone.utc)
     )
     db.add(regular_user)
+    db.flush()
+
+    # Create a role with teams.read permission for the regular user
+    from mcpgateway.db import Role, UserRole
+    dev_role = Role(
+        id=str(uuid4()),
+        name="developer",
+        description="Developer",
+        scope="global",
+        permissions=["teams.read"],
+        created_by="admin@test.com",
+        is_system_role=False,
+        is_active=True
+    )
+    db.add(dev_role)
+    db.flush()
+
+    dev_ur = UserRole(
+        user_email="regular@test.com",
+        role_id=dev_role.id,
+        scope="global",
+        scope_id=None,
+        granted_by="admin@test.com",
+        is_active=True
+    )
+    db.add(dev_ur)
     db.commit()
     db.close()
 
     # Override auth to return regular user (non-admin)
     async def mock_get_regular_user():
         db_session = session_factory()
-        user_obj = db_session.query(EmailUser).filter(EmailUser.email == "regular@test.com").first()
-        return user_obj
+        try:
+            user_obj = db_session.query(EmailUser).filter(EmailUser.email == "regular@test.com").first()
+            return user_obj
+        finally:
+            db_session.close()
+
+    async def mock_regular_user_with_permissions():
+        db_session = session_factory()
+        try:
+            yield {
+                "email": "regular@test.com",
+                "full_name": "Regular User",
+                "is_admin": False,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "auth_method": "jwt",
+                "db": db_session,
+                "token_use": "session",
+                "team_id": None,
+            }
+        finally:
+            db_session.close()
 
     app.dependency_overrides[get_current_user] = mock_get_regular_user
+    app.dependency_overrides[get_current_user_with_permissions] = mock_regular_user_with_permissions
     app.dependency_overrides[require_auth] = lambda: "regular@test.com"
 
     # Make request to admin teams partial endpoint
@@ -328,5 +386,5 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_admin):
     assert 'Request to Join' in html_content, "Regular user should see 'Request to Join' button"
 
     # Verify regular user does NOT see private team (no access)
-    # Note: This depends on RBAC configuration, but typically private teams require membership to view
-    # For this test, we're mainly ensuring the join button logic works correctly
+    assert "Private Integration Test Team" not in html_content, \
+        "Regular user should NOT see private teams they are not members of"

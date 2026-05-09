@@ -23629,7 +23629,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin._get_user_team_roles", return_value={}),
         ):
 
-            response = await admin_teams_partial_html(
+            _ = await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
                 per_page=50,
@@ -23728,7 +23728,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin._get_user_team_roles", return_value={"public-team-id": "member"}),
         ):
 
-            response = await admin_teams_partial_html(
+            _ = await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
                 per_page=50,
@@ -23823,7 +23823,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin._get_user_team_roles", return_value={}),
         ):
 
-            response = await admin_teams_partial_html(
+            _ = await admin_teams_partial_html(
                 request=mock_request,
                 page=1,
                 per_page=50,
