@@ -3108,8 +3108,12 @@ def get_csp_nonce_from_request(request: Request) -> str:
         The CSP nonce string, or empty string if not available.
     """
     if request is None:
+        logger.debug("CSP nonce requested with None request")
         return ""
-    return getattr(request.state, "csp_nonce", "")
+    nonce = getattr(request.state, "csp_nonce", "")
+    if not nonce:
+        logger.warning("CSP nonce missing from request.state — inline scripts may be blocked by CSP")
+    return nonce
 
 
 jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
