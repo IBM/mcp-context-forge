@@ -1,3 +1,12 @@
+###############################################################################
+# ContextForge (standard) - Full-featured container build
+#
+# This Dockerfile produces a complete runtime image using ubi10-minimal.
+# It includes optional frontend (Vite) and Tailwind CSS builds.
+# For a lighter build with optional Rust, see Containerfile.lite.
+# For an ultra-slim scratch-based image, see Containerfile.scratch.
+###############################################################################
+
 ###########################
 # Frontend builder stage
 ###########################
@@ -8,7 +17,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install frontend dependencies
-RUN npm install --frozen-lockfile
+RUN npm ci
 
 # Copy frontend source files
 COPY mcpgateway/admin_ui/ mcpgateway/admin_ui/
@@ -80,8 +89,9 @@ COPY . /app
 # Copy frontend build artifacts from frontend-builder stage
 COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 
-# Copy Rust plugin wheels from builder (if any exist)
-COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+# Copy Tailwind CSS build artifact from node-builder stage
+COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpgateway/static/css/
+
 
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
 # Including observability packages for OpenTelemetry support and plugins from PyPI

@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# ContextForge (lite) - OCI-compliant container build
+# ContextForge (scratch) - Ultra-slim scratch-based container build
 #
-# This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
-# image that automatically tracks the latest Python 3.12.x patch release
-# from the RHEL 10 repositories and is fully patched on each rebuild.
+# Purpose: Produces the smallest possible runtime image using a scratch base.
+# Only the Python runtime and application are included in the final layer.
+#
+# Distinction from other Containerfiles:
+#   - Containerfile.lite  → recommended production build (ubi10-minimal base)
+#   - Containerfile       → simpler full-featured build (ubi10-minimal base)
+#   - Containerfile.scratch → THIS FILE; ultra-slim scratch-based image
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -119,7 +123,7 @@ RUN set -euo pipefail \
 # Now copy only the application files needed for runtime
 # This ensures code changes don't invalidate the dependency layer
 # ----------------------------------------------------------------------------
-COPY run-gunicorn.sh run-granian.sh /app/
+COPY docker-entrypoint.sh run-gunicorn.sh run-granian.sh /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY gunicorn.config.py /app/
 COPY plugins/ /app/plugins/
@@ -143,7 +147,7 @@ RUN chmod +x /tmp/download-cdn-assets.sh \
 # ----------------------------------------------------------------------------
 # Ensure executable permissions for scripts
 # ----------------------------------------------------------------------------
-RUN chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/run.sh
+RUN chmod +x /app/docker-entrypoint.sh /app/run-gunicorn.sh /app/run-granian.sh /app/run.sh
 
 # ----------------------------------------------------------------------------
 # Pre-compile Python bytecode with -OO optimization

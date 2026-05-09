@@ -129,12 +129,6 @@ aibom.json
 sbom-cyclonedx.json
 sbom-spdx.json
 # ========================================
-# Build Artifacts - CSS
-# ========================================
-mcpgateway/static/css/tailwind.min.css
-
-
-# ========================================
 # Security reports
 # ========================================
 docs/docs/security/report.md
@@ -284,6 +278,9 @@ mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/.vite/
 public/
+
+# Generated Tailwind CSS (built during development or container build)
+mcpgateway/static/css/tailwind.min.css
 
 # Export & SBOM files
 mcpgateway-export*

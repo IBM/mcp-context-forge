@@ -1,15 +1,20 @@
 # syntax=docker/dockerfile:1.7
 
 ###############################################################################
-# ContextForge (lite) - OCI-compliant container build
+# ContextForge (lite) - OCI-compliant multi-stage container build
 #
-# This multi-stage Dockerfile produces a minimal runtime image using
-# ubi10-minimal as the base, supporting multiplatform builds (amd64, arm64,
-# s390x, ppc64le) with native runners for each architecture.
+# Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
+# builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
+#
+# Distinction from Containerfile (standard):
+#   - This is the RECOMMENDED production build (lighter, faster, ubi10-minimal).
+#   - Containerfile (standard) is a simpler single-stage variant without Rust.
+#   - Containerfile.scratch is an ultra-slim scratch-based image.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
 #   - Runtime stage uses ubi10-minimal for cross-platform compatibility
+#   - Optional Rust builder stage for native extensions (ENABLE_RUST=true)
 #   - Development headers are dropped from the final image
 #   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
