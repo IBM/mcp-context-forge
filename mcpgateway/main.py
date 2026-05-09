@@ -3025,7 +3025,7 @@ app.add_middleware(AdminAuthMiddleware)
 # but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
 # This ensures request.base_url reflects the proxy's public host, fixing the
 # OAuth redirect_uri hint and other URL construction throughout the admin UI.
-# Only registered when proxy headers are trusted (same condition as below).
+# Registered alongside ProxyHeadersMiddleware with the same trust model.
 #
 # Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
 # ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme

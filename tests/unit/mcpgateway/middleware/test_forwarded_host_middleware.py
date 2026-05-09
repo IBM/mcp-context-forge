@@ -133,29 +133,42 @@ class TestForwardedHostMiddleware:
 
     @pytest.mark.asyncio
     async def test_ipv6_without_port(self):
-        """IPv6 address in brackets without port."""
+        """Bracketed IPv6 address without port; server is unbracketed."""
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "[2001:db8::1]")
 
         mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
-        assert scope["server"] == ("[2001:db8::1]", 443)
+        assert scope["server"] == ("2001:db8::1", 443)
         host_values = [v.decode() for k, v in scope["headers"] if k == b"host"]
         assert host_values == ["[2001:db8::1]"]
 
     @pytest.mark.asyncio
     async def test_ipv6_with_port(self):
-        """IPv6 address in brackets with port."""
+        """Bracketed IPv6 address with port; server is unbracketed."""
         scope = _make_scope(scheme="https")
         _add_header(scope, "x-forwarded-host", "[2001:db8::1]:8080")
 
         mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
-        assert scope["server"] == ("[2001:db8::1]", 8080)
+        assert scope["server"] == ("2001:db8::1", 8080)
         host_values = [v.decode() for k, v in scope["headers"] if k == b"host"]
         assert host_values == ["[2001:db8::1]:8080"]
+
+    @pytest.mark.asyncio
+    async def test_ipv6_unbracketed_without_port(self):
+        """Unbracketed IPv6 without port is treated as a literal host."""
+        scope = _make_scope(scheme="https")
+        _add_header(scope, "x-forwarded-host", "2001:db8::1")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == ("2001:db8::1", 443)
+        host_values = [v.decode() for k, v in scope["headers"] if k == b"host"]
+        assert host_values == ["2001:db8::1"]
 
     @pytest.mark.asyncio
     async def test_empty_forwarded_host_ignored(self):
@@ -218,12 +231,138 @@ class TestForwardedHostMiddleware:
         assert host_entries[0][1] == b"external.com"
 
     @pytest.mark.asyncio
-    async def test_invalid_port_uses_default(self):
-        """Non-numeric port falls back to default port for the scheme."""
+    async def test_invalid_port_ignored(self):
+        """Non-numeric port causes the header to be ignored entirely."""
         scope = _make_scope(scheme="https")
+        original_server = scope["server"]
         _add_header(scope, "x-forwarded-host", "proxy.example.com:notaport")
 
         mw = ForwardedHostMiddleware(_capture_app)
         await mw(scope, None, None)
 
-        assert scope["server"] == ("proxy.example.com", 443)
+        assert scope["server"] == original_server
+        host_values = [v.decode() for k, v in scope["headers"] if k == b"host"]
+        assert host_values == ["internal-gw:4444"]
+
+    @pytest.mark.asyncio
+    async def test_out_of_range_port_ignored(self):
+        """Port outside 1-65535 causes the header to be ignored entirely."""
+        scope = _make_scope(scheme="https")
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "proxy.example.com:99999")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_path_in_host_ignored(self):
+        """Host value containing '/' is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "evil.com/path")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_duplicate_headers_first_wins(self):
+        """When multiple X-Forwarded-Host headers are present, the first wins."""
+        scope = _make_scope(scheme="https")
+        # Add two headers; the first (client-facing) should win.
+        _add_header(scope, "x-forwarded-host", "first-proxy.com")
+        _add_header(scope, "x-forwarded-host", "last-proxy.com")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == ("first-proxy.com", 443)
+        host_values = [v.decode() for k, v in scope["headers"] if k == b"host"]
+        assert host_values == ["first-proxy.com"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_bracketed_ipv6_ignored(self):
+        """Bracketed IPv6 missing closing ']' is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "[2001:db8::1")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_empty_bracketed_host_ignored(self):
+        """Empty brackets '[]' result in empty host and are rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "[]")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_empty_host_with_port_ignored(self):
+        """Host value ':443' with empty host is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", ":443")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_plus_sign_in_port_ignored(self):
+        """Port with leading '+' is rejected as invalid."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "example.com:+443")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_whitespace_in_forwarded_host_ignored(self):
+        """X-Forwarded-Host containing an embedded space is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "evil.com/path with space")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_bracketed_ipv6_with_trailing_junk_ignored(self):
+        """Bracketed IPv6 with extra colons (last not after ]) is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "[::1]:8080:extra")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server
+
+    @pytest.mark.asyncio
+    async def test_bracketed_ipv6_with_non_digit_port_ignored(self):
+        """Bracketed IPv6 with an alphabetic port is rejected."""
+        scope = _make_scope()
+        original_server = scope["server"]
+        _add_header(scope, "x-forwarded-host", "[::1]:abc")
+
+        mw = ForwardedHostMiddleware(_capture_app)
+        await mw(scope, None, None)
+
+        assert scope["server"] == original_server

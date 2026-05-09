@@ -45,6 +45,83 @@ from typing import Any, Awaitable, Callable, MutableMapping
 logger = logging.getLogger(__name__)
 
 
+def _parse_forwarded_host(value: str, scheme: str) -> tuple[str, int, str] | None:
+    """Parse an X-Forwarded-Host value into (server_host, port, host_header_value).
+
+    Returns *None* if the value is malformed or the port is out of range.
+
+    * ``server_host`` is the unbracketed host literal for ``scope["server"]``.
+    * ``host_header_value`` is the full host (with port if present) for the
+      rewritten HTTP ``Host`` header.
+
+    Handles:
+    * Plain hostnames: ``proxy.example.com``
+    * Host:port: ``proxy.example.com:8443``
+    * Bracketed IPv6: ``[2001:db8::1]``
+    * Bracketed IPv6 with port: ``[2001:db8::1]:8080``
+    * Unbracketed IPv6 without port: ``2001:db8::1``
+    * Comma-separated list (only the first value is used)
+    """
+    # Take only the first value if comma-separated (leftmost = client-facing hop).
+    host_value = value.split(",", 1)[0].strip()
+    if not host_value:
+        return None
+
+    # Reject obviously invalid characters in the host portion.
+    if " " in host_value or "\t" in host_value or "\n" in host_value or "\r" in host_value:
+        logger.debug("Ignoring X-Forwarded-Host with whitespace characters: %r", host_value)
+        return None
+
+    default_port = 443 if scheme in ("https", "wss") else 80
+
+    # Bracketed IPv6 – may include a trailing port.
+    if host_value.startswith("["):
+        if "]:" in host_value:
+            bracketed, _colon, port_str = host_value.rpartition(":")
+            if not bracketed.endswith("]"):
+                # e.g. "[::1]junk:8080" – malformed
+                logger.debug("Ignoring malformed bracketed IPv6: %r", host_value)
+                return None
+            if not port_str.isdigit():
+                logger.debug("Ignoring X-Forwarded-Host with invalid port: %r", host_value)
+                return None
+            port = int(port_str)
+            server_host = bracketed[1:-1]  # strip brackets
+        else:
+            if not host_value.endswith("]"):
+                logger.debug("Ignoring malformed bracketed IPv6: %r", host_value)
+                return None
+            server_host = host_value[1:-1]  # strip brackets
+            port = default_port
+    elif ":" in host_value:
+        # Could be host:port or unbracketed IPv6.
+        # Unbracketed IPv6 has more than one colon and no port suffix.
+        if host_value.count(":") > 1:
+            server_host = host_value
+            port = default_port
+        else:
+            server_host, port_str = host_value.rsplit(":", 1)
+            if not port_str.isdigit():
+                logger.debug("Ignoring X-Forwarded-Host with invalid port: %r", host_value)
+                return None
+            port = int(port_str)
+    else:
+        server_host = host_value
+        port = default_port
+
+    # Validate port range.
+    if not 1 <= port <= 65535:
+        logger.debug("Ignoring X-Forwarded-Host with out-of-range port: %r", host_value)
+        return None
+
+    # Reject paths or other invalid host syntax, and empty hosts.
+    if not server_host or "/" in server_host:
+        logger.debug("Ignoring X-Forwarded-Host with empty or invalid host: %r", host_value)
+        return None
+
+    return server_host, port, host_value
+
+
 class ForwardedHostMiddleware:
     """Rewrite the ASGI ``host`` header from ``X-Forwarded-Host``.
 
@@ -73,36 +150,24 @@ class ForwardedHostMiddleware:
     ) -> None:
         """Rewrite host header from X-Forwarded-Host if present."""
         if scope["type"] in ("http", "websocket"):
-            headers = dict(scope["headers"])  # type: ignore[arg-type]
+            # Use the first occurrence of X-Forwarded-Host (leftmost = client-facing hop).
+            raw = next(
+                (v.decode("latin1") for k, v in scope["headers"] if k == b"x-forwarded-host"),
+                None,
+            )
 
-            if b"x-forwarded-host" in headers:
-                raw = headers[b"x-forwarded-host"].decode("latin1")
-                # Take only the first value if comma-separated (leftmost =
-                # client-facing hop).
-                x_forwarded_host = raw.split(",")[0].strip()
+            if raw is not None:
+                parsed = _parse_forwarded_host(raw, scope.get("scheme", "http"))
+                if parsed is not None:
+                    server_host, port, host_header_value = parsed
 
-                if x_forwarded_host:
-                    # Default port for scope["server"] when the header omits one.
-                    default_port = 443 if scope.get("scheme") in ("https", "wss") else 80
-
-                    # Parse host and optional port.
-                    # IPv6 addresses are bracketed, e.g. [::1]:8080.  A trailing
-                    # "]" means IPv6 *without* a port suffix.
-                    if ":" in x_forwarded_host and not x_forwarded_host.endswith("]"):
-                        host_part, port_str = x_forwarded_host.rsplit(":", 1)
-                        try:
-                            port = int(port_str)
-                        except ValueError:
-                            port = default_port
-                    else:
-                        host_part = x_forwarded_host
-                        port = default_port
-
-                    scope["server"] = (host_part, port)
+                    scope["server"] = (server_host, port)
 
                     # Replace the ``host`` header so Starlette sees the proxy host.
-                    new_headers: list[tuple[bytes, bytes]] = [(name, value) for name, value in scope["headers"] if name != b"host"]  # type: ignore[union-attr]
-                    new_headers.append((b"host", x_forwarded_host.encode("latin1")))
-                    scope["headers"] = new_headers  # type: ignore[typeddict-item]
+                    new_headers: list[tuple[bytes, bytes]] = [
+                        (name, value) for name, value in scope["headers"] if name != b"host"
+                    ]
+                    new_headers.append((b"host", host_header_value.encode("latin1")))
+                    scope["headers"] = new_headers
 
         return await self.app(scope, receive, send)
