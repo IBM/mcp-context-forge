@@ -20,7 +20,7 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -28,12 +28,8 @@ import pytest
 
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric
-from mcpgateway.schemas import PromptArgument, PromptCreate, PromptRead, PromptUpdate
-
-from mcpgateway.services.prompt_service import (
-    PromptService,
-)
+from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
+from mcpgateway.services.prompt_service import PromptService
 
 
 # ---------------------------------------------------------------------------
@@ -83,11 +79,16 @@ def _build_db_prompt(
     return p
 
 
-def _assert_no_db_kwarg(mock_audit: MagicMock) -> None:
-    """Assert that none of the log_action calls included a ``db`` keyword argument."""
+def _assert_no_db_passed(mock_audit: MagicMock) -> None:
+    """Assert that none of the log_action calls received a ``db`` argument."""
     for call in mock_audit.log_action.call_args_list:
         assert "db" not in call.kwargs, (
             f"audit_trail.log_action() was called with db= keyword argument: {call}"
+        )
+        # db is the 22nd positional parameter (0-indexed) after self;
+        # if passed positionally it would appear at index 22 in args.
+        assert len(call.args) < 23, (
+            f"audit_trail.log_action() received too many positional args (db may be positional): {call}"
         )
 
 
@@ -149,7 +150,7 @@ class TestAuditTrailNoDbSession:
             await prompt_service.register_prompt(db=test_db, prompt=pc, created_by="tester")
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_kwarg(mock_audit)
+            _assert_no_db_passed(mock_audit)
 
     @pytest.mark.asyncio
     async def test_get_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -168,7 +169,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_kwarg(mock_audit)
+            _assert_no_db_passed(mock_audit)
 
     @pytest.mark.asyncio
     async def test_update_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -200,7 +201,7 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_kwarg(mock_audit)
+            _assert_no_db_passed(mock_audit)
 
     @pytest.mark.asyncio
     async def test_delete_prompt_audit_no_db_kwarg(self, prompt_service, test_db):
@@ -221,4 +222,4 @@ class TestAuditTrailNoDbSession:
             )
 
             assert mock_audit.log_action.called, "audit_trail.log_action was not called"
-            _assert_no_db_kwarg(mock_audit)
+            _assert_no_db_passed(mock_audit)
