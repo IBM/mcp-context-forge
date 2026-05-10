@@ -1571,7 +1571,7 @@ class TestJsonPathHelpers:
     def test_jsonpath_modifier_invalid_expression(self):
         with pytest.raises(HTTPException) as excinfo:
             jsonpath_modifier({"a": 1}, "$[")
-        assert "Invalid main JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression" in excinfo.value.detail
 
     def test_jsonpath_modifier_execution_error(self):
         class DummyPath:
@@ -1581,7 +1581,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", return_value=DummyPath()):
             with pytest.raises(HTTPException) as excinfo:
                 jsonpath_modifier({"a": 1}, "$.a")
-        assert "Error executing main JSONPath" in excinfo.value.detail
+        assert "Error executing JSONPath expression" in excinfo.value.detail
 
     def test_transform_data_with_mappings_multi_and_empty(self):
         data = [{"items": [{"id": 1}, {"id": 2}]}, {"items": []}]
@@ -1593,7 +1593,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", side_effect=Exception("bad mapping")):
             with pytest.raises(HTTPException) as excinfo:
                 transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
-        assert "Invalid mapping JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression for key" in excinfo.value.detail
 
     def test_jsonpath_modifier_debug_logging_with_list(self, monkeypatch):
         """Test jsonpath_modifier debug logging with list data (lines 789-790)."""
