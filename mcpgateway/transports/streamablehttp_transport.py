@@ -1640,18 +1640,11 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
-    # Extract authorization parameters from user context (same pattern as list_tools)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2096,10 +2089,23 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
     email = payload.get("sub") or payload.get("email")
-    is_admin = payload.get("is_admin", False)
-    if not is_admin:
+    jwt_is_admin = payload.get("is_admin", False)
+    if not jwt_is_admin:
         user_info = payload.get("user", {})
-        is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+        jwt_is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+
+    # SECURITY: Check for effective admin status (DB is_admin OR RBAC platform_admin).
+    # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
+    # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
+    db_user_is_admin = False
+    if email:
+        # First-Party
+        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            db_user_is_admin = is_user_admin(db, email)
+
+    effective_is_admin = db_user_is_admin or jwt_is_admin
 
     token_use = payload.get("token_use")
     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
@@ -2107,7 +2113,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         # First-Party
         from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-        final_teams = await resolve_session_teams(payload, email, {"is_admin": is_admin})
+        final_teams = await resolve_session_teams(payload, email, {"is_admin": effective_is_admin})
     else:
         # API token or legacy: use embedded teams from JWT
         # First-Party
@@ -2118,7 +2124,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     user_ctx: dict[str, Any] = {
         "email": email,
         "teams": final_teams,
-        "is_admin": is_admin,
+        "is_admin": effective_is_admin,
         "is_authenticated": True,
         "token_use": token_use,
     }
@@ -2162,19 +2168,11 @@ async def list_tools() -> List[types.Tool]:
         if not _check_scoped_permission(user_context, "tools.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2291,19 +2289,11 @@ async def list_prompts() -> List[types.Prompt]:
         if not _check_scoped_permission(user_context, "prompts.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2365,17 +2355,11 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         if not _check_scoped_permission(user_context, "prompts.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract authorization parameters from user context (same pattern as list_prompts)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2448,19 +2432,11 @@ async def list_resources() -> List[types.Resource]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract filtering parameters from user context
-    user_email = user_context.get("email") if user_context else None
-    # Use None as default to distinguish "no teams specified" from "empty teams array"
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2562,17 +2538,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    # Extract authorization parameters from user context (same pattern as list_resources)
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2692,17 +2662,11 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         if not _check_scoped_permission(user_context, "resources.read"):
             raise PermissionError(_ACCESS_DENIED_MSG)
 
-    user_email = user_context.get("email") if user_context else None
-    token_teams = user_context.get("teams") if user_context else None
-    is_admin = user_context.get("is_admin", False) if user_context else False
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    if is_admin and token_teams is None:
-        user_email = None
-        # token_teams stays None (unrestricted)
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    # Extract Layer-1 visibility filter from user context
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
     # When mcp_require_auth=True, the middleware already guarantees authentication.
@@ -2842,15 +2806,11 @@ async def complete(
         await _check_server_oauth_enforcement(server_id, user_context)
 
     try:
-        user_email = user_context.get("email") if user_context else None
-        token_teams = user_context.get("teams") if user_context else None
-        is_admin = user_context.get("is_admin", False) if user_context else False
+        # First-Party
+        from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
 
-        # Admin bypass only for explicit unrestricted context; otherwise secure default.
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []  # Non-admin without explicit teams -> public-only
+        # Extract Layer-1 visibility filter from user context
+        user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
 
         async with get_db() as db:
             params = {
@@ -5126,19 +5086,25 @@ class _StreamableHttpAuthHandler:
                         except Exception as cache_set_error:
                             logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
 
+            # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
+            # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
+            # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
+            effective_is_admin = db_user_is_admin or is_admin
+
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
                 # First-Party
                 from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
                 if cached_team_ids is not None:
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                    preresolved = None if effective_is_admin else cached_team_ids
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 elif batched_auth_ctx is not None:
-                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
+                    preresolved = None if effective_is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 else:
                     _record_mcp_auth_cache_event("teams_db_resolve")
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin})
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -5202,9 +5168,9 @@ class _StreamableHttpAuthHandler:
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
-                "is_admin": is_admin,
+                "is_admin": effective_is_admin,
                 "auth_method": "jwt",
-                "permission_is_admin": db_user_is_admin or is_admin,
+                "permission_is_admin": effective_is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             trace_team_name = await resolve_trace_team_name(user_payload, final_teams, preresolved_team_names=batched_auth_ctx.get("team_names") if batched_auth_ctx else None)
@@ -5223,7 +5189,7 @@ class _StreamableHttpAuthHandler:
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,
-                is_admin=bool(db_user_is_admin or is_admin),
+                is_admin=bool(effective_is_admin),
                 auth_method="jwt",
                 team_name=trace_team_name,
             )
