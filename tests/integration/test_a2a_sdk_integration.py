@@ -623,6 +623,32 @@ class TestContextForgeA2ATestEndpoint:
         assert test_params["parameters"]["query"] == user_query
         assert test_params["parameters"]["message"] == user_query
 
+class TestA2AListEndpoint:
+    """Integration tests for GET /a2a agent listing endpoint (issue #4624)."""
+
+    @pytest.mark.asyncio
+    async def test_get_a2a_returns_200_not_500(self):
+        """Smoke test: GET /a2a does not return HTTP 500.
+
+        Basic integration test that the /a2a endpoint is reachable and does not
+        crash with an unhandled exception. May return 200 (with auth) or 401
+        (without auth), but never 500.
+        """
+        # First-Party
+        from mcpgateway.main import app
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/a2a")
+
+            # Should return 200 or 401, never 500
+            assert response.status_code in (200, 401), f"Expected 200 or 401, got {response.status_code}"
+
+            # If 200, should have valid JSON structure
+            if response.status_code == 200:
+                data = response.json()
+                assert "agents" in data
+                assert isinstance(data["agents"], list)
+
 
 class TestCalculatorAgent:
     """Unit tests for the calculator agent implementation."""
