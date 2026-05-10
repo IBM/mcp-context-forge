@@ -5086,19 +5086,25 @@ class _StreamableHttpAuthHandler:
                         except Exception as cache_set_error:
                             logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
 
+            # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
+            # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
+            # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
+            effective_is_admin = db_user_is_admin or is_admin
+
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
                 # First-Party
                 from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
                 if cached_team_ids is not None:
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                    preresolved = None if effective_is_admin else cached_team_ids
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 elif batched_auth_ctx is not None:
-                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
+                    preresolved = None if effective_is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin}, preresolved_db_teams=preresolved)
                 else:
                     _record_mcp_auth_cache_event("teams_db_resolve")
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": effective_is_admin})
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -5158,11 +5164,6 @@ class _StreamableHttpAuthHandler:
                 else:
                     _record_mcp_auth_cache_event("team_membership_cache_hit")
 
-            # SECURITY: Use effective admin status (DB is_admin OR JWT is_admin) for Layer-1
-            # visibility control. This ensures SSO-provisioned platform_admins get admin bypass
-            # on the MCP HTTP transport, matching the REST transport behavior (issue #4070).
-            effective_is_admin = db_user_is_admin or is_admin
-
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
                 "teams": final_teams,
@@ -5188,7 +5189,7 @@ class _StreamableHttpAuthHandler:
             set_trace_context_from_teams(
                 final_teams,
                 user_email=user_email,
-                is_admin=bool(db_user_is_admin or is_admin),
+                is_admin=bool(effective_is_admin),
                 auth_method="jwt",
                 team_name=trace_team_name,
             )

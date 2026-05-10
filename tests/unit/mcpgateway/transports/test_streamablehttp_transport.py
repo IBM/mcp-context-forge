@@ -14795,7 +14795,7 @@ async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
 
     assert result is True
     ctx = user_context_var.get()
-    assert ctx["teams"] == ["team-a"]
+    assert ctx["teams"] is None  # Admin bypass: effective_is_admin=True overrides cached team list
     assert ctx["permission_is_admin"] is True
     assert ctx["scoped_server_id"] == "srv-1"
     assert ctx["auth_method"] == "jwt"
@@ -14883,7 +14883,7 @@ async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypat
 
     assert result is True
     ctx = user_context_var.get()
-    assert ctx["teams"] == ["team-a"]
+    assert ctx["teams"] is None  # Admin bypass: effective_is_admin=True overrides batched team list
     assert ctx["permission_is_admin"] is True
 
 
@@ -16919,3 +16919,58 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
     assert result["is_admin"] is False
     assert result["email"] == "regular_user@example.com"
     assert result["teams"] == ["team1"]
+
+
+def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == []
+
+
+def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": []})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == []
+
+
+def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": ["team1"]})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypatch):
+    user_context = {"email": "sso_admin@example.com", "is_admin": True, "teams": []}
+    monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(None, {}, user_context)))
+
+    called = {}
+
+    def fake_get_scoped_visibility(_ctx):
+        return None, None
+
+    async def fake_list_tools(db, include_inactive, limit, user_email, token_teams, _request_headers):
+        called["args"] = (user_email, token_teams)
+        return [], 0
+
+    monkeypatch.setattr("mcpgateway.auth_context.get_scoped_visibility_from_user_context", fake_get_scoped_visibility)
+    monkeypatch.setattr(tr.tool_service, "list_tools", fake_list_tools)
+
+    @asynccontextmanager
+    async def dummy_db():
+        yield object()
+
+    monkeypatch.setattr(tr, "get_db", dummy_db)
+
+    await list_tools()
+
+    assert called["args"] == (None, None)

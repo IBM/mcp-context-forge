@@ -492,6 +492,9 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
         >>> # Admin with unrestricted token
         >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": None, "is_admin": True})
         (None, None)
+        >>> # Admin with missing teams key (secure default)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+        ('admin@x.com', [])
         >>> # Admin with public-only token (narrowed)
         >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": [], "is_admin": True})
         ('admin@x.com', [])
@@ -510,8 +513,13 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
         return None, []
 
     user_email = user_context.get("email")
-    token_teams = user_context.get("teams")
     is_admin = user_context.get("is_admin", False)
+
+    # Distinguish missing "teams" key from explicit teams=None
+    if "teams" not in user_context:
+        return user_email, []
+
+    token_teams = user_context["teams"]
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
