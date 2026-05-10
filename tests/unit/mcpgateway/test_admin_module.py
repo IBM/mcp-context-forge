@@ -252,6 +252,8 @@ async def test_rate_limit_enforcement(monkeypatch):
 
 
 def test_user_identity_helpers():
+    # Test email-over-sub precedence (canonical order)
+    assert admin.get_user_email({"email": "primary@example.com", "sub": "secondary@example.com"}) == "primary@example.com"
     assert admin.get_user_email({"sub": "a@example.com"}) == "a@example.com"
     assert admin.get_user_email({"email": "b@example.com"}) == "b@example.com"
     assert admin.get_user_email("c@example.com") == "c@example.com"

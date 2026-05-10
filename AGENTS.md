@@ -146,6 +146,17 @@ ContextForge implements a **two-layer security model**:
 - **Full RBAC guide**: `docs/docs/manage/rbac.md`
 - **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
 - **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+### User Identity Extraction
+
+**Canonical Email Precedence**: All user-email extraction helpers use a consistent **email-over-sub** precedence order to ensure forensic accuracy across visibility checks and audit logs:
+
+- When a user dict contains both `email` and `sub` keys, `email` takes precedence
+- The canonical implementation is `get_user_email()` in `mcpgateway/auth_context.py`
+- All other helpers (including `admin.get_user_email`) re-export or delegate to this canonical implementation
+- This ensures that the identity used for RBAC evaluation matches the identity logged in audit trails
+
+**Rationale**: The `email` field is the human-readable identifier used throughout AGENTS.md and user-facing documentation. Consistent precedence prevents forensic confusion where an incident review pivots on a logged email that differs from the principal actually evaluated by RBAC.
+
 
 ## Observability Transaction Behavior
 
