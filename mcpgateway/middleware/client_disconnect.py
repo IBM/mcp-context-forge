@@ -34,6 +34,7 @@ from mcpgateway.services.logging_service import LoggingService
 
 logger = LoggingService().get_logger(__name__)
 
+
 def _is_server_streaming_path(path: str) -> bool:
     """Return whether path is a server-scoped SSE or MCP streaming endpoint.
 
