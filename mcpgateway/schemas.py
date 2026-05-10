@@ -47,6 +47,50 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# Shared validation helpers
+# ============================================================================
+
+def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
+    """Validate and normalize server association IDs (tools, resources, prompts, agents).
+
+    Accepts a comma-separated string or a list of strings, validates each item
+    as a UUID using SecurityValidator, and returns the normalized hex form.
+    Empty or None items are silently skipped.
+
+    Args:
+        v: Input string or list of IDs.
+        field_name: Human-readable name of the association field (for errors).
+
+    Returns:
+        List of validated, normalized UUID strings, or the original value.
+
+    Raises:
+        ValueError: If any item is not a valid UUID.
+    """
+    if isinstance(v, str):
+        v = [item.strip() for item in v.split(",") if item.strip()]
+    if isinstance(v, list):
+        validated: list[str] = []
+        for item in v:
+            if not item:
+                continue
+            item_str = str(item).strip()
+            if not item_str:
+                continue
+            try:
+                validated.append(SecurityValidator.validate_uuid(item_str, field_name))
+            except ValueError:
+                raise ValueError(
+                    f"Invalid ID format: '{item_str}'. "
+                    f"{field_name} must contain UUID values, not names. "
+                    f"Use UUIDs from the respective entity listings."
+                )
+        return validated
+    return v
+
+
 # ============================================================================
 # Precompiled regex patterns (compiled once at module load for performance)
 # ============================================================================
@@ -4140,19 +4184,17 @@ class ServerCreate(BaseModel):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
     @field_validator("team_id")
     @classmethod
@@ -4301,19 +4343,17 @@ class ServerUpdate(BaseModelWithConfigDict):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
 
 class ServerRead(BaseModelWithConfigDict):
