@@ -269,7 +269,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
                 },
             )
             # SECURITY: Fail closed - deny access on parsing errors to prevent bypass
-            logger.debug("Token has invalid time format in time restrictions: %s", e)
+            logger.warning("Token has invalid time format in time restrictions: %s", e)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Token has invalid time format in time restrictions",

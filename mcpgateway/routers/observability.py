@@ -649,9 +649,12 @@ async def export_traces(
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
-    except (ValueError, Exception):
+    except ValueError:
         logger.exception("Trace export failed")
         raise HTTPException(status_code=400, detail="Export failed")
+    except Exception:
+        logger.exception("Trace export failed")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @router.get("/analytics/query-performance")

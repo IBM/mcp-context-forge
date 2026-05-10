@@ -466,7 +466,7 @@ async def create_sso_provider(
         provider = await sso_service.create_provider(provider_data.model_dump())
     except ValueError as exc:
         logger.warning(f"SSO provider create error: {exc}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="Invalid SSO provider configuration") from exc
 
     result = {
         "id": provider.id,
@@ -609,7 +609,7 @@ async def update_sso_provider(
         provider = await sso_service.update_provider(provider_id, update_data)
     except ValueError as exc:
         logger.warning(f"SSO provider update error: {exc}")
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="Invalid SSO provider configuration") from exc
 
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")

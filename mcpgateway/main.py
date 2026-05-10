@@ -11765,13 +11765,13 @@ async def import_configuration(
         raise
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail="Import validation failed")
     except ImportConflictError as e:
         logger.error(f"Import conflict for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=409, detail="Import conflict detected")
     except ImportServiceError as e:
         logger.error(f"Import failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Import failed")
     except Exception as e:
         logger.error(f"Unexpected import error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
         raise HTTPException(status_code=500, detail="Import failed")

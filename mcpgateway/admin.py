@@ -15307,7 +15307,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
     except ImportValidationError as e:
         LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Invalid import data")
     except HTTPException:
         raise
     except Exception as e:
