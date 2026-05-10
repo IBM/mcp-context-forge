@@ -1153,7 +1153,6 @@ class ServerService(BaseService):
             user_id="system",
             team_id=getattr(server, "team_id", None),
             context={"enabled": server.enabled},
-            db=db,
         )
 
         return server_read

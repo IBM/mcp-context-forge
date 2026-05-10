@@ -1997,7 +1997,6 @@ class ToolService(BaseService):
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool creation
@@ -2303,7 +2302,6 @@ class ToolService(BaseService):
                     resource_type="tool",
                     resource_id=None,
                     details={"count": len(tools_to_add) + len(tools_to_update), "import_batch_id": import_batch_id},
-                    db=db,
                 )
 
         except Exception as e:
@@ -3291,7 +3289,6 @@ class ToolService(BaseService):
                 old_values={
                     "name": tool_name,
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool deletion
@@ -3465,7 +3462,6 @@ class ToolService(BaseService):
                     context={
                         "action": "activate" if activate else "deactivate",
                     },
-                    db=db,
                 )
 
                 # Structured logging: Log successful tool state change
@@ -6358,7 +6354,6 @@ class ToolService(BaseService):
                     "modified_via": modified_via,
                     "changes": ", ".join(changes) if changes else "metadata only",
                 },
-                db=db,
             )
 
             # Structured logging: Log successful tool update
