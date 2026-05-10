@@ -861,13 +861,13 @@ class TestSecurityValidation:
         # Test associated items parsing with valid UUIDs
         server = ServerCreate(
             name="test_server",
-            associated_tools="550e8400e29b41d4a716446655440001,550e8400e29b41d4a716446655440002,550e8400e29b41d4a716446655440003",
-            associated_resources="550e8400e29b41d4a716446655440004,550e8400e29b41d4a716446655440005",
-            associated_prompts="550e8400e29b41d4a716446655440006",
+            associated_tools="550e8400e29b41d4a716446655440001,550e8400e29b41d4a716446655440002,550e8400e29b41d4a716446655440003",  # pragma: allowlist secret
+            associated_resources="550e8400e29b41d4a716446655440004,550e8400e29b41d4a716446655440005",  # pragma: allowlist secret
+            associated_prompts="550e8400e29b41d4a716446655440006",  # pragma: allowlist secret
         )
-        assert server.associated_tools == ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003"]
-        assert server.associated_resources == ["550e8400e29b41d4a716446655440004", "550e8400e29b41d4a716446655440005"]
-        assert server.associated_prompts == ["550e8400e29b41d4a716446655440006"]
+        assert server.associated_tools == ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003"]  # pragma: allowlist secret
+        assert server.associated_resources == ["550e8400e29b41d4a716446655440004", "550e8400e29b41d4a716446655440005"]  # pragma: allowlist secret
+        assert server.associated_prompts == ["550e8400e29b41d4a716446655440006"]  # pragma: allowlist secret
 
     # --- Test RPC Schemas ---
 

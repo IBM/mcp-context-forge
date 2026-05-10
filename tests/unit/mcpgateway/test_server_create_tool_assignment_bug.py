@@ -19,7 +19,7 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_create_with_valid_uuid_list(self):
         """Test that ServerCreate accepts a list of valid UUIDs."""
-        valid_uuid = "550e8400e29b41d4a716446655440000"
+        valid_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=[valid_uuid],
@@ -29,7 +29,7 @@ class TestServerToolAssignmentBugFix:
     def test_server_create_with_valid_hyphenated_uuid_list(self):
         """Test that ServerCreate normalizes hyphenated UUIDs to hex form."""
         hyphenated_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        normalized_uuid = "550e8400e29b41d4a716446655440000"
+        normalized_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=[hyphenated_uuid],
@@ -38,7 +38,7 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_create_with_valid_uuid_string(self):
         """Test that ServerCreate accepts comma-separated UUID string (UI format)."""
-        valid_uuid = "550e8400e29b41d4a716446655440000"
+        valid_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=valid_uuid,
@@ -47,8 +47,8 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_create_with_multiple_valid_uuids(self):
         """Test that ServerCreate accepts multiple valid UUIDs."""
-        uuid1 = "550e8400e29b41d4a716446655440000"
-        uuid2 = "6ba7b8109dad11d180b400c04fd430c8"
+        uuid1 = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
+        uuid2 = "6ba7b8109dad11d180b400c04fd430c8"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=[uuid1, uuid2],
@@ -82,7 +82,7 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_create_with_32_char_hex_uuid(self):
         """Test that ServerCreate accepts 32-character hex UUIDs (no hyphens)."""
-        uuid_no_hyphens = "550e8400e29b41d4a716446655440000"
+        uuid_no_hyphens = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=[uuid_no_hyphens],
@@ -91,7 +91,7 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_update_with_valid_uuid_list(self):
         """Test that ServerUpdate accepts a list of valid UUIDs."""
-        valid_uuid = "550e8400e29b41d4a716446655440000"
+        valid_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerUpdate(
             associated_tools=[valid_uuid],
         )
@@ -126,7 +126,7 @@ class TestServerToolAssignmentBugFix:
 
     def test_server_create_filters_empty_strings(self):
         """Test that ServerCreate filters out empty strings from lists."""
-        valid_uuid = "550e8400e29b41d4a716446655440000"
+        valid_uuid = "550e8400e29b41d4a716446655440000"  # pragma: allowlist secret
         server = ServerCreate(
             name="Test Server",
             associated_tools=[valid_uuid, "", "  "],

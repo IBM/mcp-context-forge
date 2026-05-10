@@ -710,12 +710,12 @@ class TestServerSchemas:
     def test_server_create(self):
         """Test ServerCreate model."""
         # Use valid UUIDs for associations
-        tool_id1 = "550e8400e29b41d4a716446655440001"
-        tool_id2 = "550e8400e29b41d4a716446655440002"
-        tool_id3 = "550e8400e29b41d4a716446655440003"
-        resource_id1 = "550e8400e29b41d4a716446655440004"
-        resource_id2 = "550e8400e29b41d4a716446655440005"
-        prompt_id1 = "550e8400e29b41d4a716446655440006"
+        tool_id1 = "550e8400e29b41d4a716446655440001"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440002"  # pragma: allowlist secret
+        tool_id3 = "550e8400e29b41d4a716446655440003"  # pragma: allowlist secret
+        resource_id1 = "550e8400e29b41d4a716446655440004"  # pragma: allowlist secret
+        resource_id2 = "550e8400e29b41d4a716446655440005"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440006"  # pragma: allowlist secret
 
         server = ServerCreate(
             name="Test Server",
@@ -762,11 +762,11 @@ class TestServerSchemas:
     def test_server_update(self):
         """Test ServerUpdate model."""
         # Use valid UUIDs for associations
-        tool_id1 = "550e8400e29b41d4a716446655440010"
-        tool_id2 = "550e8400e29b41d4a716446655440011"
-        resource_id1 = "550e8400e29b41d4a716446655440012"
-        resource_id2 = "550e8400e29b41d4a716446655440013"
-        prompt_id1 = "550e8400e29b41d4a716446655440014"
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        resource_id2 = "550e8400e29b41d4a716446655440013"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
 
         update = ServerUpdate(
             name="Updated Server",
@@ -805,8 +805,8 @@ class TestServerSchemas:
         - Empty/None items in the list
         - Empty strings after stripping
         """
-        tool_id1 = "550e8400e29b41d4a716446655440010"
-        tool_id2 = "550e8400e29b41d4a716446655440011"
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
 
         # Test with None items in list
         server_with_none = ServerCreate(
@@ -837,9 +837,9 @@ class TestServerSchemas:
         assert server_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
-        resource_id1 = "550e8400e29b41d4a716446655440012"
-        prompt_id1 = "550e8400e29b41d4a716446655440014"
-        agent_id1 = "550e8400e29b41d4a716446655440015"
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
+        agent_id1 = "550e8400e29b41d4a716446655440015"  # pragma: allowlist secret
 
         server_all_fields = ServerCreate(
             name="Test Server",
@@ -893,7 +893,7 @@ class TestServerSchemas:
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
-        valid_uuid = "550e8400e29b41d4a716446655440010"
+        valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
         with pytest.raises(ValueError) as exc_info:
             ServerCreate(
                 name="Test Server",
@@ -908,8 +908,8 @@ class TestServerSchemas:
         - Empty/None items in the list
         - Empty strings after stripping
         """
-        tool_id1 = "550e8400e29b41d4a716446655440010"
-        tool_id2 = "550e8400e29b41d4a716446655440011"
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
 
         # Test with None items in list
         update_with_none = ServerUpdate(
@@ -936,9 +936,9 @@ class TestServerSchemas:
         assert update_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
-        resource_id1 = "550e8400e29b41d4a716446655440012"
-        prompt_id1 = "550e8400e29b41d4a716446655440014"
-        agent_id1 = "550e8400e29b41d4a716446655440015"
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
+        agent_id1 = "550e8400e29b41d4a716446655440015"  # pragma: allowlist secret
 
         update_all_fields = ServerUpdate(
             associated_tools=[tool_id1, None, ""],
@@ -987,7 +987,7 @@ class TestServerSchemas:
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
-        valid_uuid = "550e8400e29b41d4a716446655440010"
+        valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
         with pytest.raises(ValueError) as exc_info:
             ServerUpdate(
                 associated_tools=[valid_uuid, "invalid-tool"]
@@ -1037,7 +1037,7 @@ class TestServerSchemas:
 
         # Test root validator for associated IDs
         server_with_objects = ServerRead(
-            id="f1548803b0ff4bf7833b762b0a8c5c34",
+            id="f1548803b0ff4bf7833b762b0a8c5c34",  # pragma: allowlist secret
             name="Object Server",
             description="Server with object associations",
             icon="http://example.com/object_server.png",
