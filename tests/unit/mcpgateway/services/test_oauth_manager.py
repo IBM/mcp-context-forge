@@ -1082,6 +1082,180 @@ async def test_exchange_code_for_tokens_omits_resource_for_entra_v2_scope_flow(o
     request_data = mock_client.post.call_args[1]["data"]
     assert "resource" not in request_data
 
+@pytest.mark.asyncio
+async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
+    """Test that complete_authorization_code_flow handles scope returned as list (OAuth providers like Gamma)."""
+    mock_token_response = {
+        "access_token": "test-token",
+        "scope": ["read", "write", "admin"],  # List format
+        "expires_in": 3600
+    }
+
+    mock_token_storage = AsyncMock()
+    mock_token_record = MagicMock()
+    mock_token_record.expires_at = None
+    mock_token_storage.store_tokens.return_value = mock_token_record
+    oauth_manager.token_storage = mock_token_storage
+
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+        patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+        patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+    ):
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id="gw-123",
+            code="auth-code",
+            state="test-state",
+            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        )
+
+    assert result["success"] is True
+    # Verify store_tokens was called with list of scopes
+    mock_token_storage.store_tokens.assert_called_once()
+    call_kwargs = mock_token_storage.store_tokens.call_args[1]
+    assert call_kwargs["scopes"] == ["read", "write", "admin"]
+
+
+@pytest.mark.asyncio
+async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
+    """Test that complete_authorization_code_flow handles scope as space-separated string (standard OAuth)."""
+    mock_token_response = {
+        "access_token": "test-token",
+        "scope": "read write admin",  # String format
+        "expires_in": 3600
+    }
+
+    mock_token_storage = AsyncMock()
+    mock_token_record = MagicMock()
+    mock_token_record.expires_at = None
+    mock_token_storage.store_tokens.return_value = mock_token_record
+    oauth_manager.token_storage = mock_token_storage
+
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+        patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+        patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+    ):
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id="gw-123",
+            code="auth-code",
+            state="test-state",
+            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        )
+
+    assert result["success"] is True
+    # Verify store_tokens was called with list of scopes
+    mock_token_storage.store_tokens.assert_called_once()
+    call_kwargs = mock_token_storage.store_tokens.call_args[1]
+    assert call_kwargs["scopes"] == ["read", "write", "admin"]
+
+
+@pytest.mark.asyncio
+async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager):
+    """Test that complete_authorization_code_flow handles empty scope string."""
+    mock_token_response = {
+        "access_token": "test-token",
+        "scope": "",  # Empty string
+        "expires_in": 3600
+    }
+
+    mock_token_storage = AsyncMock()
+    mock_token_record = MagicMock()
+    mock_token_record.expires_at = None
+    mock_token_storage.store_tokens.return_value = mock_token_record
+    oauth_manager.token_storage = mock_token_storage
+
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+        patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+        patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+    ):
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id="gw-123",
+            code="auth-code",
+            state="test-state",
+            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        )
+
+    assert result["success"] is True
+    # Verify store_tokens was called with empty list
+    mock_token_storage.store_tokens.assert_called_once()
+    call_kwargs = mock_token_storage.store_tokens.call_args[1]
+    assert call_kwargs["scopes"] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager):
+    """Test that complete_authorization_code_flow handles invalid scope type gracefully."""
+    mock_token_response = {
+        "access_token": "test-token",
+        "scope": 123,  # Invalid type (number)
+        "expires_in": 3600
+    }
+
+    mock_token_storage = AsyncMock()
+    mock_token_record = MagicMock()
+    mock_token_record.expires_at = None
+    mock_token_storage.store_tokens.return_value = mock_token_record
+    oauth_manager.token_storage = mock_token_storage
+
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+        patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+        patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+    ):
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id="gw-123",
+            code="auth-code",
+            state="test-state",
+            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        )
+
+    assert result["success"] is True
+    # Verify store_tokens was called with empty list (fallback for invalid type)
+    mock_token_storage.store_tokens.assert_called_once()
+    call_kwargs = mock_token_storage.store_tokens.call_args[1]
+    assert call_kwargs["scopes"] == []
+
+
+@pytest.mark.asyncio
+async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager):
+    """Test that complete_authorization_code_flow filters non-string items from list scopes."""
+    mock_token_response = {
+        "access_token": "test-token",
+        "scope": ["read", 123, None, "write"],  # Mixed types
+        "expires_in": 3600
+    }
+
+    mock_token_storage = AsyncMock()
+    mock_token_record = MagicMock()
+    mock_token_record.expires_at = None
+    mock_token_storage.store_tokens.return_value = mock_token_record
+    oauth_manager.token_storage = mock_token_storage
+
+    with (
+        patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+        patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+        patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+    ):
+        result = await oauth_manager.complete_authorization_code_flow(
+            gateway_id="gw-123",
+            code="auth-code",
+            state="test-state",
+            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        )
+
+    assert result["success"] is True
+    # Verify store_tokens was called with only string items
+    mock_token_storage.store_tokens.assert_called_once()
+    call_kwargs = mock_token_storage.store_tokens.call_args[1]
+    assert call_kwargs["scopes"] == ["read", "write"]
+
 
 @pytest.mark.asyncio
 async def test_refresh_token_omits_resource_for_entra_v2_scope_flow(oauth_manager):
