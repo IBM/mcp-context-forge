@@ -343,7 +343,7 @@ class TestA2AViewModal:
 
         # View first agent - get name from table
         first_row = agents_page.get_agent_row(0)
-        first_name = first_row.locator("td").nth(3).text_content().strip()
+        first_name = first_row.locator("td").nth(4).text_content().strip()
         _open_view_modal(agents_page, 0)
         details = agents_page.page.locator("#agent-details")
         expect(details).to_contain_text(first_name)
@@ -351,7 +351,7 @@ class TestA2AViewModal:
 
         # View second agent
         second_row = agents_page.get_agent_row(1)
-        second_name = second_row.locator("td").nth(3).text_content().strip()
+        second_name = second_row.locator("td").nth(4).text_content().strip()
         _open_view_modal(agents_page, 1)
         expect(details).to_contain_text(second_name)
         _close_view_modal(agents_page)
@@ -530,7 +530,7 @@ class TestA2AEditModal:
 
         # Get original name from table
         first_row = agents_page.get_agent_row(0)
-        original_name = first_row.locator("td").nth(3).text_content().strip()
+        original_name = first_row.locator("td").nth(4).text_content().strip()
 
         _open_edit_modal(agents_page, 0)
 
@@ -551,7 +551,7 @@ class TestA2AEditModal:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        current_name = first_row.locator("td").nth(3).text_content().strip()
+        current_name = first_row.locator("td").nth(4).text_content().strip()
         assert current_name == original_name, f"Name should be unchanged after Cancel: expected '{original_name}', " f"got '{current_name}'"
 
     def test_edit_modal_has_save_changes_button(self, agents_page: AgentsPage):
@@ -1039,8 +1039,8 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Status column is at index 8 (Actions=0, S.No.=1, AgentID=2, Name=3, Description=4, Endpoint=5, Tags=6, Type=7, Status=8)
-        status_cell = first_row.locator("td").nth(8)
+        # Status column is at index 9 (Actions=0, S.No.=1, AgentID=2, IDType=3, Name=4, Description=5, Endpoint=6, Tags=7, Type=8, Status=9)
+        status_cell = first_row.locator("td").nth(9)
         status_text = status_cell.text_content().strip()
         assert "Active" in status_text or "Inactive" in status_text, f"Status should be 'Active' or 'Inactive', got '{status_text}'"
 
@@ -1230,8 +1230,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Name is in column index 3 (after Actions, S.No., Agent ID)
-        name_cell = first_row.locator("td").nth(3)
+        # Name is in column index 4 (after Actions, S.No., Agent ID, ID Type)
+        name_cell = first_row.locator("td").nth(4)
         name_text = name_cell.text_content().strip()
         assert len(name_text) > 0, "Agent name should not be empty"
 
@@ -1242,8 +1242,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Endpoint is in column index 5 (after Actions, S.No., Agent ID, Name, Description)
-        endpoint_cell = first_row.locator("td").nth(5)
+        # Endpoint is in column index 6 (after Actions, S.No., Agent ID, ID Type, Name, Description)
+        endpoint_cell = first_row.locator("td").nth(6)
         endpoint_text = endpoint_cell.text_content().strip()
         assert len(endpoint_text) > 0, "Endpoint URL should not be empty"
         assert "://" in endpoint_text, f"Endpoint should be a URL, got '{endpoint_text}'"
@@ -1255,8 +1255,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Description is in column index 4 (after Actions, S.No., Agent ID, Name)
-        desc_cell = first_row.locator("td").nth(4)
+        # Description is in column index 5 (after Actions, S.No., Agent ID, ID Type, Name)
+        desc_cell = first_row.locator("td").nth(5)
         # Description may be empty but the cell should exist
         expect(desc_cell).to_be_attached()
 
@@ -1267,8 +1267,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Tags column is at index 6 (after Actions, S.No., Agent ID, Name, Description, Endpoint)
-        tags_cell = first_row.locator("td").nth(6)
+        # Tags column is at index 7 (after Actions, S.No., Agent ID, ID Type, Name, Description, Endpoint)
+        tags_cell = first_row.locator("td").nth(7)
 
         # Check if there are any tag badges (spans with inline-flex styling)
         tag_badges = tags_cell.locator("span")
@@ -1286,8 +1286,8 @@ class TestA2ATableDataDisplay:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
-        # Visibility is the last column, index 12
-        visibility_cell = first_row.locator("td").nth(12)
+        # Visibility is the last column, index 13
+        visibility_cell = first_row.locator("td").nth(13)
         visibility_text = visibility_cell.text_content().strip()
         assert visibility_text in [
             "Public",

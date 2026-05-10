@@ -9,6 +9,7 @@ Gateways page object for MCP Server & Federated Gateway management.
 
 # Standard
 import logging
+import re
 
 # Third-Party
 from playwright.sync_api import Error as PlaywrightError
@@ -1174,6 +1175,31 @@ class GatewaysPage(BasePage):
 
     # ==================== Modal Helper Methods ====================
 
+    def _click_and_wait_for_gateway_fetch(self, button: Locator, modal_id: str) -> None:
+        """Click a button that triggers an async gateway API fetch, then wait for the modal.
+
+        viewGateway() and editGateway() both fetch /admin/gateways/{id} before
+        opening their respective modals.  If the API returns an error (e.g., RBAC
+        403), the JS catch block shows an error toast but never calls openModal(),
+        so waiting for the modal selector would hang until timeout.  This method
+        intercepts the API response and raises early.
+        """
+        with self.page.expect_response(
+            lambda resp: (
+                re.search(r"/admin/gateways/[0-9a-fA-F-]", resp.url) is not None
+                and "/partial" not in resp.url
+                and "/search" not in resp.url
+                and resp.request.method == "GET"
+            ),
+            timeout=30000,
+        ) as response_info:
+            self.click_locator(button)
+        response = response_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Gateway API fetch failed with HTTP {response.status} for {response.url}")
+        # API succeeded — wait for the JS to open the modal
+        self.page.wait_for_selector(f"#{modal_id}:not(.hidden)", state="visible", timeout=30000)
+
     def open_test_modal(self, gateway_index: int = 0) -> None:
         """Click Test on a gateway row and wait for the test modal to appear."""
         self.click_test_button(gateway_index)
@@ -1193,12 +1219,16 @@ class GatewaysPage(BasePage):
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
         self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
-        self.click_view_button(gateway_index)
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
         try:
-            self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
+            self._click_and_wait_for_gateway_fetch(view_btn, "gateway-modal")
         except PlaywrightTimeoutError:
-            self.click_view_button(gateway_index)
-            self.page.wait_for_selector("#gateway-modal:not(.hidden)", state="visible", timeout=10000)
+            # Retry once: table may have been swapped by HTMX
+            self._open_action_dropdown(gateway_row)
+            view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
+            self._click_and_wait_for_gateway_fetch(view_btn, "gateway-modal")
 
     def close_view_modal(self) -> None:
         """Close the view modal."""
@@ -1215,13 +1245,16 @@ class GatewaysPage(BasePage):
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
         self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
-        self.click_edit_button(gateway_index)
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
         try:
-            self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
+            self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
         except PlaywrightTimeoutError:
-            # Retry: table may have been swapped by HTMX after our first click
-            self.click_edit_button(gateway_index)
-            self.page.wait_for_selector("#gateway-edit-modal:not(.hidden)", state="visible", timeout=10000)
+            # Retry once: table may have been swapped by HTMX after our first click
+            self._open_action_dropdown(gateway_row)
+            edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
+            self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
 
     def close_edit_modal(self) -> None:
         """Close the edit modal via Cancel."""

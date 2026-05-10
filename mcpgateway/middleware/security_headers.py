@@ -380,6 +380,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content Security Policy with nonce-based approach (nonce already generated above)
 
+        # Determine the route-only path (strip root_path for path matching)
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path):]
+
+        # FastAPI's built-in /docs and /redoc pages use inline scripts without nonces
+        # to initialise SwaggerUIBundle.  Skipping CSP on these endpoints lets the
+        # documentation UI render while keeping strict CSP everywhere else.
+        skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
+
         # CSP directives with layered script security (CSP Level 3)
         #
         # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
@@ -397,36 +408,37 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         #   protection in script-src-elem is the primary defense for modern browsers.
         #
         # style-src: Retains 'unsafe-inline' for Alpine.js dynamic inline styles.
-        csp_directives = [
-            "default-src 'self'",
-            f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
-            "script-src-attr 'unsafe-inline'",
-            "script-src 'self' 'unsafe-eval'",
-            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
-            "img-src 'self' data: https:",
-            "font-src 'self' data: https://cdnjs.cloudflare.com",
-            "connect-src 'self' ws: wss: https:",
-        ]
+        if not skip_csp_for_docs:
+            csp_directives = [
+                "default-src 'self'",
+                f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+                "script-src-attr 'unsafe-inline'",
+                "script-src 'self' 'unsafe-eval'",
+                "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+                "img-src 'self' data: https:",
+                "font-src 'self' data: https://cdnjs.cloudflare.com",
+                "connect-src 'self' ws: wss: https:",
+            ]
 
-        # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
-        if x_frame is not None:
-            x_frame_upper = x_frame.upper()
+            # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
+            if x_frame is not None:
+                x_frame_upper = x_frame.upper()
 
-            if x_frame_upper == "DENY":
-                frame_ancestors = "'none'"
-            elif x_frame_upper == "SAMEORIGIN":
-                frame_ancestors = "'self'"
-            elif x_frame_upper.startswith("ALLOW-FROM"):
-                allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
-                frame_ancestors = allowed_uri
-            elif x_frame_upper == "ALLOW-ALL":
-                frame_ancestors = "* file: http: https:"
-            else:
-                # Default to none for unknown values (matches DENY default)
-                frame_ancestors = "'none'"
+                if x_frame_upper == "DENY":
+                    frame_ancestors = "'none'"
+                elif x_frame_upper == "SAMEORIGIN":
+                    frame_ancestors = "'self'"
+                elif x_frame_upper.startswith("ALLOW-FROM"):
+                    allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
+                    frame_ancestors = allowed_uri
+                elif x_frame_upper == "ALLOW-ALL":
+                    frame_ancestors = "* file: http: https:"
+                else:
+                    # Default to none for unknown values (matches DENY default)
+                    frame_ancestors = "'none'"
 
-            csp_directives.append(f"frame-ancestors {frame_ancestors}")
-        response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
+                csp_directives.append(f"frame-ancestors {frame_ancestors}")
+            response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
 
         # HSTS for HTTPS connections (configurable)
         if settings.hsts_enabled and (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"):

@@ -605,7 +605,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Lifecycle test server",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -632,7 +631,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Get test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -656,7 +654,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Original",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -680,7 +677,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Deactivate test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -706,7 +702,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Reactivate test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -733,7 +728,6 @@ class TestServerLifecycle:
                 "server": {
                     "name": name,
                     "description": "Delete test",
-                    "icon": "https://example.com/icon.png",
                 },
                 "team_id": None,
             },
@@ -762,7 +756,7 @@ class TestEntityRBACPermissions:
             ("tools", {"tool": {"name": "deny-tool", "url": "https://httpbin.org/post", "integration_type": "REST", "request_type": "POST"}, "team_id": None}),
             ("resources", {"resource": {"uri": "file:///deny.txt", "name": "deny-res", "mimeType": "text/plain", "content": "denied"}, "team_id": None}),
             ("prompts", {"prompt": {"name": "deny-prompt", "description": "denied", "template": "denied", "arguments": []}, "team_id": None}),
-            ("servers", {"server": {"name": "deny-srv", "icon": "https://example.com/icon.png"}, "team_id": None}),
+            ("servers", {"server": {"name": "deny-srv"}, "team_id": None}),
         ],
     )
     def test_unprivileged_user_cannot_create(self, viewer_api: APIRequestContext, entity: str, body: dict):
