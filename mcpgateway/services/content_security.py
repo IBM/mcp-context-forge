@@ -20,7 +20,7 @@ import threading
 from typing import List, Optional, Union
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.config import settings, Settings
 
 # Import metrics with error handling for test environments
 try:
@@ -48,22 +48,6 @@ except ImportError:
     content_size_violations_counter = NoOpCounter()
     content_type_violations_counter = NoOpCounter()
 
-
-# Some Python builds may expose a native ``timeout`` keyword for regex search,
-# but support is a runtime capability, not something we can safely infer from
-# ``sys.version_info``.  Python 3.13.11, for example, still raises TypeError for
-# ``re.Pattern.search(..., timeout=...)``.  Probe the actual stdlib regex engine
-# once at import time and fall back to the soft thread-join timeout when absent.
-def _supports_native_regex_timeout() -> bool:
-    """Return whether stdlib regex search accepts the ``timeout`` keyword."""
-    try:
-        re.compile("x").search("x", timeout=0.001)  # type: ignore[call-arg]  # pylint: disable=unexpected-keyword-arg
-    except TypeError:
-        return False
-    return True
-
-
-_HAS_NATIVE_REGEX_TIMEOUT: bool = _supports_native_regex_timeout()
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +306,12 @@ class ContentSecurityService:
             settings.content_blocked_template_patterns,
             pattern_kind="content_blocked_template_patterns",
         )
+        self._clean_pattern_cache: dict[str, None] = {}
+        self._clean_pattern_cache_lock = threading.Lock()
+        self._clean_pattern_cache_max_entries = settings.content_pattern_max_cache_size
+        self._blocked_patterns_signature = self._patterns_signature(settings.content_blocked_patterns)
+        self._use_blocked_pattern_timeout = settings.content_blocked_patterns != self._default_settings_list("content_blocked_patterns")
+        self._use_template_pattern_timeout = settings.content_blocked_template_patterns != self._default_settings_list("content_blocked_template_patterns")
         logger.info(
             "ContentSecurityService initialized",
             extra={
@@ -332,8 +322,23 @@ class ContentSecurityService:
                 "compiled_blocked_patterns": len(self._compiled_blocked_patterns),
                 "compiled_template_patterns": len(self._compiled_template_patterns),
                 "pattern_max_scan_size": settings.content_pattern_max_scan_size,
+                "pattern_cache_max_entries": self._clean_pattern_cache_max_entries,
             },
         )
+
+    @staticmethod
+    def _default_settings_list(field_name: str) -> List[str]:
+        """Return the configured Settings default list for a field."""
+        field = Settings.model_fields[field_name]
+        if field.default_factory is None:
+            return list(field.default or [])
+        return list(field.default_factory())
+
+    @staticmethod
+    def _patterns_signature(raw_patterns: List[str]) -> str:
+        """Return a stable signature for the active pattern list."""
+        # Use null delimiter to avoid ambiguity when patterns contain newlines
+        return hashlib.sha256("\0".join(raw_patterns).encode("utf-8")).hexdigest()
 
     @staticmethod
     def _compile_patterns(raw_patterns: List[str], pattern_kind: str) -> List[tuple[str, re.Pattern]]:
@@ -357,10 +362,11 @@ class ContentSecurityService:
         return compiled
 
     def _regex_search_with_timeout(self, pattern, content: str, timeout: float = 1.0):
-        """Execute regex search with timeout protection for Python < 3.13.
+        """Execute regex search with best-effort timeout detection.
 
-        Uses threading to implement timeout for regex operations that don't
-        natively support it. This prevents ReDoS attacks on Python 3.11/3.12.
+        Uses threading to implement a soft timeout for regex operations. Because
+        CPython's re engine holds the GIL during backtracking, this is a
+        best-effort defense and may not abort pathological regex promptly.
 
         Args:
             pattern: Regex pattern to search for. Accepts either a raw source
@@ -418,6 +424,21 @@ class ContentSecurityService:
             raise captured_exception
 
         return result[0]
+
+    def _search_compiled_pattern(self, pattern, content: str, timeout: float = 1.0, enforce_timeout: bool = False):
+        """Search a compiled regex, optionally using the legacy soft timeout wrapper.
+
+        Default project patterns use direct search for the hot path. Custom
+        operator-provided patterns retain the pre-existing thread-join timeout
+        behavior because they may have unknown ReDoS characteristics.
+
+        Note: CPython's re engine holds the GIL during backtracking, so the
+        thread-join timeout is a *soft* timeout. Custom patterns should be
+        authored to avoid catastrophic backtracking.
+        """
+        if enforce_timeout:
+            return self._regex_search_with_timeout(pattern, content, timeout=timeout)
+        return pattern.search(content)
 
     def _normalize_input(self, content: str) -> str:
         """Normalize input to prevent encoding bypass attacks (CWE-116).
@@ -648,8 +669,8 @@ class ContentSecurityService:
 
         Scans content for XSS, command injection, SQL injection, and template injection patterns.
         Behavior depends on content_pattern_validation_mode:
-        - strict: Raises ContentPatternError on detection
-        - moderate: Logs warning and raises ContentPatternError
+        - strict: Logs warning and raises ContentPatternError on detection
+        - moderate: Same as strict (maintained for future enhancements)
         - lenient: Logs warning only, allows content
 
         Args:
@@ -704,14 +725,27 @@ class ContentSecurityService:
                 violation_type="content_too_large_to_scan",
             )
 
+        cache_key = None
+        if settings.content_pattern_cache_enabled and self._clean_pattern_cache_max_entries > 0:
+            cache_key = ":".join(
+                [
+                    validation_mode,
+                    str(max_scan_size),
+                    self._blocked_patterns_signature,
+                    hashlib.sha256(normalized_content.encode("utf-8")).hexdigest(),
+                ]
+            )
+            with self._clean_pattern_cache_lock:
+                if cache_key in self._clean_pattern_cache:
+                    return
+
+        found_violation = False
         for raw_pattern, compiled in self._compiled_blocked_patterns:
             try:
-                if _HAS_NATIVE_REGEX_TIMEOUT:
-                    match = compiled.search(normalized_content, timeout=regex_timeout)  # pylint: disable=unexpected-keyword-arg
-                else:
-                    match = self._regex_search_with_timeout(compiled, normalized_content, timeout=regex_timeout)
+                match = self._search_compiled_pattern(compiled, normalized_content, timeout=regex_timeout, enforce_timeout=self._use_blocked_pattern_timeout)
 
                 if match:
+                    found_violation = True
                     # Determine violation type from pattern
                     violation_type = self._classify_violation(raw_pattern, match.group(0))
 
@@ -758,6 +792,13 @@ class ContentSecurityService:
                     content_type=content_type,
                     violation_type="redos_timeout",
                 )
+
+        if cache_key is not None and not found_violation:
+            with self._clean_pattern_cache_lock:
+                if cache_key not in self._clean_pattern_cache:
+                    if len(self._clean_pattern_cache) >= self._clean_pattern_cache_max_entries:
+                        self._clean_pattern_cache.pop(next(iter(self._clean_pattern_cache)))
+                    self._clean_pattern_cache[cache_key] = None
 
     def _classify_violation(self, pattern: str, matched_text: str) -> str:
         """Classify violation type based on pattern and matched text.
@@ -854,10 +895,7 @@ class ContentSecurityService:
         regex_timeout = settings.content_pattern_regex_timeout
         for raw_pattern, compiled in self._compiled_template_patterns:
             try:
-                if _HAS_NATIVE_REGEX_TIMEOUT:
-                    match = compiled.search(template, timeout=regex_timeout)  # pylint: disable=unexpected-keyword-arg
-                else:
-                    match = self._regex_search_with_timeout(compiled, template, timeout=regex_timeout)
+                match = self._search_compiled_pattern(compiled, template, timeout=regex_timeout, enforce_timeout=self._use_template_pattern_timeout)
             except TimeoutError:
                 sanitized = _sanitize_pii_for_logging(user_email, ip_address)
                 logger.error("Template pattern matching timeout - possible ReDoS", extra={"template_name": template_name, "pattern_length": len(raw_pattern), **sanitized})

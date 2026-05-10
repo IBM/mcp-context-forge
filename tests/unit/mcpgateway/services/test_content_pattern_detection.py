@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.services.content_security import ContentPatternError, ContentSecurityService
+from mcpgateway.services.content_security import ContentPatternError, ContentSecurityService, TemplateValidationError
 
 
 class TestMaliciousPatternDetection:
@@ -129,6 +129,7 @@ class TestMaliciousPatternDetection:
             mock_settings.content_blocked_patterns = [r"<script[^>]*>.*?</script>"]
             mock_settings.content_blocked_template_patterns = []
             mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_max_cache_size = 1000
             mock_settings.content_pattern_regex_timeout = 1.0
 
             service = ContentSecurityService()
@@ -151,6 +152,7 @@ class TestMaliciousPatternDetection:
             ]
             mock_settings.content_blocked_template_patterns = []
             mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_max_cache_size = 1000
             mock_settings.content_pattern_regex_timeout = 1.0
 
             service = ContentSecurityService()
@@ -241,18 +243,173 @@ class TestClassifyViolation:
 class TestTimeoutAndEdgeCases:
     """Test timeout handling and edge cases for coverage."""
 
-    def test_timeout_error_handling(self):
-        """Test TimeoutError is caught and converted to ContentPatternError."""
+    def test_python312_clean_scan_uses_direct_compiled_regex(self):
+        """Clean scans with default patterns avoid the thread-per-pattern timeout wrapper."""
         service = ContentSecurityService()
 
-        # Force the thread-based fallback path (Py<3.13 semantics) regardless of
-        # the interpreter the tests are running on, then make that helper raise.
-        with patch("mcpgateway.services.content_security._HAS_NATIVE_REGEX_TIMEOUT", False), patch.object(service, "_regex_search_with_timeout", side_effect=TimeoutError("Pattern timeout")):
+        class CountingPattern:
+            """Pattern wrapper that counts direct search calls."""
+
+            pattern = "clean"
+            search_calls = 0
+
+            def search(self, _content):
+                """Count search call."""
+                self.search_calls += 1
+
+        pattern = CountingPattern()
+        service._compiled_blocked_patterns = [("clean", pattern)]
+
+        with patch.object(service, "_regex_search_with_timeout") as mock_fallback:
+            mock_fallback.return_value = None
+            service.detect_malicious_patterns(content="Hello world, this is clean content", content_type="Test")
+
+        mock_fallback.assert_not_called()
+        assert pattern.search_calls == 1
+
+    def test_custom_pattern_timeout_wrapper_is_preserved(self, monkeypatch):
+        """Custom operator patterns still use timeout wrapper for ReDoS safety."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_blocked_patterns", [r"(a+)+$"])
+        service = ContentSecurityService()
+
+        with patch.object(service, "_regex_search_with_timeout", side_effect=TimeoutError("Pattern timeout")) as mock_timeout:
+            with pytest.raises(ContentPatternError) as exc_info:
+                service.detect_malicious_patterns(content="a" * 20 + "!", content_type="Test content")
+
+        mock_timeout.assert_called_once()
+        assert exc_info.value.violation_type == "redos_timeout"
+
+    def test_clean_scan_cache_skips_repeated_regex_work(self, monkeypatch):
+        """Repeated clean scans use the advertised content pattern cache."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_pattern_cache_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_validation_mode", "strict")
+
+        service = ContentSecurityService()
+        search_calls = 0
+        original_patterns = service._compiled_blocked_patterns
+
+        class CountingPattern:
+            """Pattern wrapper that counts search calls."""
+
+            def __init__(self, pattern):
+                self.pattern = pattern.pattern
+                self._pattern = pattern
+
+            def search(self, content):
+                """Count search call and delegate to wrapped pattern."""
+                nonlocal search_calls
+                search_calls += 1
+                return self._pattern.search(content)
+
+        service._compiled_blocked_patterns = [(raw, CountingPattern(compiled)) for raw, compiled in original_patterns]
+
+        content = "This clean prompt is submitted repeatedly"
+        service.detect_malicious_patterns(content=content, content_type="Prompt template")
+        first_call_count = search_calls
+        service.detect_malicious_patterns(content=content, content_type="Prompt template")
+
+        assert first_call_count > 0
+        assert search_calls == first_call_count
+
+    def test_clean_scan_cache_is_bounded(self, monkeypatch):
+        """Clean-result cache evicts old entries at its configured bound."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_pattern_cache_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_max_cache_size", 2)
+
+        service = ContentSecurityService()
+        assert service._clean_pattern_cache_max_entries == 2
+
+        service.detect_malicious_patterns(content="clean content 1", content_type="Prompt template")
+        service.detect_malicious_patterns(content="clean content 2", content_type="Prompt template")
+        service.detect_malicious_patterns(content="clean content 3", content_type="Prompt template")
+
+        assert len(service._clean_pattern_cache) == 2
+
+    def test_zero_cache_size_disables_clean_scan_cache(self, monkeypatch):
+        """Cache size 0 disables clean-result cache insertion."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_pattern_cache_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_max_cache_size", 0)
+
+        service = ContentSecurityService()
+        assert service._clean_pattern_cache_max_entries == 0
+
+        service.detect_malicious_patterns(content="clean content", content_type="Prompt template")
+
+        assert not service._clean_pattern_cache
+
+    def test_malicious_content_is_not_cached(self, monkeypatch):
+        """Repeated malicious scans still evaluate patterns and raise."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_pattern_cache_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(settings, "content_pattern_validation_mode", "strict")
+
+        service = ContentSecurityService()
+
+        for _ in range(2):
+            with pytest.raises(ContentPatternError):
+                service.detect_malicious_patterns(content="<script>alert(1)</script>", content_type="Resource content")
+
+        assert not service._clean_pattern_cache
+
+    def test_timeout_error_handling(self, monkeypatch):
+        """Test TimeoutError is caught and converted to ContentPatternError."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_blocked_patterns", [r"timeout"])
+        service = ContentSecurityService()
+
+        class TimeoutPattern:
+            """Pattern stub that simulates regex timeout handling."""
+
+            pattern = "timeout"
+
+            def search(self, content):
+                """Simulate regex timeout."""
+                raise TimeoutError("Pattern timeout")
+
+        with (
+            patch.object(service, "_compiled_blocked_patterns", [("timeout", TimeoutPattern())]),
+            patch.object(service, "_regex_search_with_timeout", side_effect=TimeoutError("Pattern timeout")),
+        ):
             with pytest.raises(ContentPatternError) as exc_info:
                 service.detect_malicious_patterns(content="test content", content_type="Test content")
 
             assert exc_info.value.violation_type == "redos_timeout"
             assert exc_info.value.pattern_matched == "[timeout]"
+
+    def test_custom_template_pattern_timeout_wrapper_is_preserved(self, monkeypatch):
+        """Custom template patterns still use timeout wrapper for ReDoS safety."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "content_blocked_template_patterns", [r"(a+)+$"])
+        service = ContentSecurityService()
+
+        with patch.object(service, "_regex_search_with_timeout", side_effect=TimeoutError("Pattern timeout")) as mock_timeout:
+            with pytest.raises(TemplateValidationError) as exc_info:
+                service.validate_prompt_template(template="hello", name="timeout-test")
+
+        mock_timeout.assert_called_once()
+        assert "exceeded timeout" in str(exc_info.value)
 
     def test_fallback_path_no_match(self):
         """Test fallback path when no patterns match (covers line 514 fallback)."""
@@ -270,6 +427,7 @@ class TestTimeoutAndEdgeCases:
             mock_settings.content_blocked_patterns = [r"<script"]
             mock_settings.content_blocked_template_patterns = []
             mock_settings.content_pattern_max_scan_size = 1_000_000
+            mock_settings.content_pattern_max_cache_size = 1000
             mock_settings.content_pattern_regex_timeout = 1.0
 
             service = ContentSecurityService()
@@ -278,26 +436,33 @@ class TestTimeoutAndEdgeCases:
             service.detect_malicious_patterns(content="<script>alert(1)</script>", content_type="Test")
             # If we get here without exception, lenient mode worked
 
-    def test_python313_native_timeout_path_coverage(self):
-        """Cover the Python 3.13+ native `compiled.search(..., timeout=)` branch.
-
-        Stubs the compiled pattern list with a mock whose ``.search`` accepts the
-        timeout kwarg (real re.Pattern.search rejects it on Py<3.13), forces the
-        module-level ``_HAS_NATIVE_REGEX_TIMEOUT`` constant True, and asserts the
-        thread-based fallback helper is not invoked.
-        """
+    def test_search_helper_never_passes_timeout_keyword_to_stdlib_re(self):
+        """The stdlib re API has no timeout keyword on supported Python versions."""
         # Standard
-        from unittest.mock import MagicMock
+        import re
 
         service = ContentSecurityService()
-        mock_compiled = MagicMock()
-        mock_compiled.search.return_value = None
 
-        with (
-            patch("mcpgateway.services.content_security._HAS_NATIVE_REGEX_TIMEOUT", True),
-            patch.object(service, "_compiled_blocked_patterns", [("test_pattern", mock_compiled)]),
-            patch.object(service, "_regex_search_with_timeout") as mock_fallback,
-        ):
+        # Wrap a real compiled pattern to record calls and assert no timeout kwarg
+        class SearchRecorder:
+            """Proxy that records search calls and rejects unexpected kwargs."""
+
+            def __init__(self, pattern: re.Pattern):
+                self._pattern = pattern
+                self.search_calls: list[tuple[tuple, dict]] = []
+
+            def search(self, content: str, **kwargs):
+                """Record call and proxy to real pattern, rejecting unexpected kwargs."""
+                if kwargs:
+                    raise TypeError(f"Unexpected keyword arguments: {kwargs}")
+                self.search_calls.append(((content,), kwargs))
+                return self._pattern.search(content)
+
+        real_pattern = re.compile(r"clean")
+        recorder = SearchRecorder(real_pattern)
+
+        with patch.object(service, "_compiled_blocked_patterns", [("test_pattern", recorder)]), patch.object(service, "_regex_search_with_timeout") as mock_fallback:
             service.detect_malicious_patterns(content="Clean content", content_type="Test")
-            assert not mock_fallback.called, "Py3.13+ path incorrectly fell back to thread-based timeout"
-            mock_compiled.search.assert_called_once_with("Clean content", timeout=1.0)
+            assert not mock_fallback.called, "Default pattern path incorrectly fell back to thread-based timeout"
+            assert len(recorder.search_calls) == 1
+            assert recorder.search_calls[0][0] == ("Clean content",)

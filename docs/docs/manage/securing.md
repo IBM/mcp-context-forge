@@ -442,41 +442,18 @@ CONTENT_MAX_PROMPT_SIZE=10240     # 10KB for prompt templates (range: 512B–1MB
 - [ ] Review default size limits for your use case
 - [ ] Monitor 413 responses in logs for legitimate content being blocked
 
-#### Layer 2: PII Detection
+#### Layer 2: PII-Safe Logging
 
-Automatically detect and block Personally Identifiable Information (PII) in resource and prompt content:
+User identifiers are automatically sanitized before being written to audit logs:
 
-```bash
-# Enable PII detection (enabled by default)
-CONTENT_PII_DETECTION_ENABLED=true
+- **Email addresses**: Hashed to an 8-character SHA-256 prefix
+- **IP addresses**: Last octet masked (e.g., `192.168.1.xxx`)
 
-# Configure PII validation mode
-CONTENT_PII_VALIDATION_MODE=strict  # Options: strict, moderate, lenient
-
-# PII detection patterns (default patterns cover common PII types)
-# CONTENT_PII_PATTERNS='["email", "ssn", "credit_card", "phone", "ip_address"]'
-```
-
-**PII Detection Features:**
-
-- **Email addresses**: RFC 5322 compliant pattern
-- **Social Security Numbers**: US SSN format (XXX-XX-XXXX)
-- **Credit card numbers**: Luhn algorithm validation for major card types
-- **Phone numbers**: International formats (E.164)
-- **IP addresses**: IPv4 and IPv6 formats
-- **Custom patterns**: Extensible via configuration
-
-**Validation Modes:**
-
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| `strict` | Block all PII, no exceptions | Production, high-security environments |
-| `moderate` | Context-aware validation, allow some formats | Development, testing |
-| `lenient` | Log only, don't block | Monitoring, gradual rollout |
+This ensures that security event logs contain enough information for debugging and correlation without exposing raw PII. No additional configuration is required.
 
 #### Layer 3: Malicious Pattern Detection
 
-Detect and block common attack patterns including XSS, template injection, command injection, and SQL injection with **context-aware validation**:
+Detect and block common attack patterns including XSS, template injection, command injection, and SQL injection:
 
 ```bash
 # Enable pattern detection (enabled by default)
@@ -493,66 +470,73 @@ CONTENT_PATTERN_MAX_CACHE_SIZE=1000
 # CONTENT_BLOCKED_PATTERNS='["custom_pattern_1", "custom_pattern_2"]'
 ```
 
-**Context-Aware Validation:**
+**Pattern Detection Behavior:**
 
-The system intelligently distinguishes between legitimate and malicious use of template syntax:
+The system scans all content for malicious patterns. Specific high-risk template patterns
+(such as `{{ config }}` and `${...}`) are blocked globally, while generic template
+variables (such as `{{ user.name }}`) are not blocked. Prompt templates are additionally
+validated for balanced braces and Jinja2 syntax safety.
 
-| Pattern Type | Prompts | Resources | Rationale |
-|--------------|---------|-----------|-----------|
-| Template syntax (`{{ }}`, `{% %}`, `${ }`) | ✅ **ALLOWED** | ❌ **BLOCKED** | Prompts legitimately use template variables; resources could enable SSTI attacks |
-| XSS (`<script>`, `javascript:`) | ❌ **BLOCKED** | ❌ **BLOCKED** | Always dangerous |
-| Command injection (`;`, `&&`, `` ` ``) | ❌ **BLOCKED** | ❌ **BLOCKED** | Always dangerous |
-| SQL injection (`union`, `--`) | ❌ **BLOCKED** | ❌ **BLOCKED** | Always dangerous |
+| Pattern Type | Blocked Globally | Notes |
+|--------------|-----------------|-------|
+| XSS (`<script>`, `javascript:`) | ❌ **BLOCKED** | Always dangerous |
+| Command injection (`&&`, `` ` ``) | ❌ **BLOCKED** | Always dangerous |
+| SQL injection (`union`, `--`) | ❌ **BLOCKED** | Always dangerous |
+| High-risk template (`{{ config }}`, `${...}`) | ❌ **BLOCKED** | Blocks config access and expression evaluation |
+| Generic template variables (`{{ var }}`) | ✅ **ALLOWED** | Legitimate in prompts and resources |
 
 **Example - Legitimate Prompt Template:**
 ```python
-# ✅ This is ALLOWED in prompts
+# ✅ This is ALLOWED
 template = "Hello {{ user.name }}, welcome to {{ company }}!"
 ```
 
-**Example - Potential SSTI Attack in Resource:**
+**Example - Potential SSTI Attack:**
 ```python
-# ❌ This is BLOCKED in resources
+# ❌ This is BLOCKED
 content = "Data: {{ config.secret_key }}"  # Potential server-side template injection
 ```
 
-**Default Attack Patterns (12 patterns):**
+**Default Attack Patterns:**
 
-1. **XSS Attacks** (3 patterns) - **Always blocked**:
+1. **XSS Attacks** (4 patterns) - **Always blocked**:
    - Script tag injection: `<script[^>]*>.*?</script>`
    - Event handler injection: `on\w+\s*=`
    - JavaScript protocol: `javascript:`
+   - Iframe injection: `<iframe[^>]*>`
 
-2. **Template Injection** (3 patterns) - **Context-aware**:
-   - Jinja2/Django: `\{\{.*?\}\}|\{%.*?%\}`
-   - Mustache/Handlebars: `\{\{.*?\}\}`
-   - Expression evaluation: `\$\{.*?\}`
+2. **Command Injection** (4 patterns) - **Always blocked**:
+   - Dangerous rm command: `;\s*rm\s+-rf`
+   - Command chaining: `&&|\|\|`
+   - Backtick execution: `` `[^`]+` ``
+   - Command substitution: `\$\([^)]+\)`
 
-3. **Command Injection** (3 patterns) - **Always blocked**:
-   - Shell metacharacters: `[;&|`$()]`
-   - Command chaining: `&&|\|\||;`
-   - Backtick execution: `` `.*?` ``
+3. **SQL Injection** (3 patterns) - **Always blocked**:
+   - SQL keywords: `(?i)(union|select|insert|update|delete|drop)\s+`
+   - Comment injection: `--\s*$`
+   - Classic injection: `'\s*or\s*'1'\s*=\s*'1`
 
-4. **SQL Injection** (3 patterns) - **Always blocked**:
-   - SQL keywords: `(union|select|insert|update|delete|drop|create|alter)\s`
-   - Comment injection: `--|\#|/\*|\*/`
-   - String concatenation: `'\s*(or|and)\s*'`
+4. **Template Injection** (4 patterns) - **High-risk patterns only**:
+   - Jinja2 config object access: `\{\{\s*config\s*\}\}`
+   - Jinja2 config attribute access: `\{\{\s*config\.`
+   - Jinja2 config loops: `\{%\s*for\s+\w+\s+in\s+config`
+   - Expression evaluation: `\$\{.*\}`
 
 **Validation Modes:**
 
 | Mode | Behavior | Use Case |
 |------|----------|----------|
-| `strict` | Block patterns with context-awareness | Production (recommended) |
-| `moderate` | Same as strict (context-aware) | Production |
+| `strict` | Block high-risk patterns | Production (recommended) |
+| `moderate` | Same as strict | Production |
 | `lenient` | Log only, don't block | Monitoring, testing |
 
-**Note**: Both `strict` and `moderate` modes use context-aware validation. The distinction is maintained for future enhancements.
+**Note**: Both `strict` and `moderate` modes block the same set of high-risk patterns. The distinction is maintained for future enhancements.
 
 **Performance Optimization:**
 
-- **Pattern Caching**: Compiled regex patterns are cached for 10x performance improvement
-- **Cache Size**: Default 1000 patterns, configurable via `CONTENT_PATTERN_MAX_CACHE_SIZE`
-- **Lazy Compilation**: Patterns compiled on first use
+- **Pattern Caching**: Compiled regex patterns are reused and successful clean validation results are cached for repeated content
+- **Cache Size**: Default 1000 clean validation results, configurable via `CONTENT_PATTERN_MAX_CACHE_SIZE`
+- **Startup Compilation**: Patterns compile once when the content security service initializes
 - **Thread-Safe**: Cache uses threading locks for concurrent access
 
 **Security Checklist:**
@@ -594,7 +578,7 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' c
 The 6-layer approach ensures that even if one layer is bypassed, other layers provide protection. For example:
 
 1. Size limits prevent DoS before content is processed
-2. PII detection blocks sensitive data leakage
+2. PII-safe logging prevents sensitive data exposure in audit trails
 3. Pattern detection catches attack attempts
 4. Sanitization removes dangerous elements
 5. Output encoding prevents injection
@@ -604,8 +588,8 @@ The 6-layer approach ensures that even if one layer is bypassed, other layers pr
 
 All content security violations are logged with:
 
-- Violation type (size, PII, pattern, etc.)
-- Sanitized user identifier (email masked)
+- Violation type (size, pattern, etc.)
+- Sanitized user identifier (email hashed, IP masked)
 - Timestamp and correlation ID
 - Attack classification (XSS, SQLi, etc.)
 - Validation mode and action taken
@@ -617,7 +601,7 @@ All content security violations are logged with:
   "timestamp": "2026-03-27T12:00:00Z",
   "level": "WARNING",
   "message": "Content pattern violation detected",
-  "user": "user@*****.com",
+  "user_hash": "a1b2c3d4",
   "violation_type": "xss_script_tag",
   "validation_mode": "strict",
   "action": "blocked",
