@@ -156,7 +156,7 @@ RUN chmod +x /app/docker-entrypoint.sh /app/run-gunicorn.sh /app/run-granian.sh 
 #  - Must be done before copying to rootfs
 #  - Remove __pycache__ directories after compilation
 # ----------------------------------------------------------------------------
-RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
+RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway /app/plugins \
     && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ----------------------------------------------------------------------------
@@ -186,12 +186,12 @@ RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
 #  - Use ${var:?} to prevent accidental deletion of host directories
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
-    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
-    ${ROOTFS_PATH:?}/usr/share/man/* \
-    ${ROOTFS_PATH:?}/usr/share/doc/* \
-    ${ROOTFS_PATH:?}/usr/share/info/* \
-    ${ROOTFS_PATH:?}/usr/share/locale/* \
-    ${ROOTFS_PATH:?}/var/log/* \
+    && rm -rf "${ROOTFS_PATH:?}/usr/include/"* \
+    "${ROOTFS_PATH:?}/usr/share/man/"* \
+    "${ROOTFS_PATH:?}/usr/share/doc/"* \
+    "${ROOTFS_PATH:?}/usr/share/info/"* \
+    "${ROOTFS_PATH:?}/usr/share/locale/"* \
+    "${ROOTFS_PATH:?}/var/log/"* \
     ${ROOTFS_PATH:?}/boot \
     ${ROOTFS_PATH:?}/media \
     ${ROOTFS_PATH:?}/srv \
