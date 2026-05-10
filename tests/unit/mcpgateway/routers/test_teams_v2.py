@@ -56,25 +56,16 @@ with patch("mcpgateway.middleware.rbac.require_permission", mock_require_permiss
 
 
 def mock_permission_check(is_admin=False):
-    """Helper context manager to mock PermissionService.check_admin_permission."""
+    """Helper context manager to mock PermissionService.check_platform_admin_permission."""
     from contextlib import contextmanager
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, patch
 
     @contextmanager
     def _mock():
-        with patch("mcpgateway.routers.teams.fresh_db_session") as mock_fresh_db, \
-             patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
-
-            # Mock PermissionService
+        with patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
             mock_perm_service = AsyncMock()
-            mock_perm_service.check_admin_permission = AsyncMock(return_value=is_admin)
+            mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=is_admin)
             MockPermissionService.return_value = mock_perm_service
-
-            # Mock fresh_db_session context manager
-            mock_db = MagicMock()
-            mock_fresh_db.return_value.__enter__.return_value = mock_db
-            mock_fresh_db.return_value.__exit__.return_value = None
-
             yield mock_perm_service
 
     return _mock()

@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
@@ -99,12 +99,11 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
     """
     try:
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
-        with fresh_db_session() as db_perm:
-            permission_service = PermissionService(db_perm)
-            is_admin = await permission_service.check_admin_permission(
-                current_user_ctx["email"],
-                token_teams=current_user_ctx.get("token_teams"),
-            )
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user_ctx["email"],
+            token_teams=current_user_ctx.get("token_teams"),
+        )
 
         if not settings.allow_team_creation and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
@@ -184,12 +183,11 @@ async def list_teams(
         total = 0
 
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
-        with fresh_db_session() as db_perm:
-            permission_service = PermissionService(db_perm)
-            has_admin_team_access = await permission_service.check_admin_permission(
-                current_user_ctx["email"],
-                token_teams=current_user_ctx.get("token_teams"),
-            )
+        permission_service = PermissionService(db)
+        has_admin_team_access = await permission_service.check_platform_admin_permission(
+            current_user_ctx["email"],
+            token_teams=current_user_ctx.get("token_teams"),
+        )
 
         if has_admin_team_access:
             # Use updated list_teams logic
@@ -330,7 +328,12 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
 
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if not user_role:
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
+        if not user_role and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         team_obj = cast(Any, team)
@@ -378,18 +381,17 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
     """
     try:
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
-        with fresh_db_session() as db_perm:
-            permission_service = PermissionService(db_perm)
-            is_admin = await permission_service.check_admin_permission(
-                current_user["email"],
-                token_teams=current_user.get("token_teams"),
-            )
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
 
         service = TeamManagementService(db)
 
-        # Check if user is team owner
+        # Check if user is team owner or platform admin
         role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if role != "owner":
+        if role != "owner" and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Only pass max_members when explicitly provided in the request body
@@ -456,10 +458,15 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
     try:
         service = TeamManagementService(db)
 
-        # Check if user is team owner
+        # Check if user is team owner or platform admin
         role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can delete teams")
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
+        if role != "owner" and not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.delete_team(team_id, current_user["email"])
         if not success:
