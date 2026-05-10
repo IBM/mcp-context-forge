@@ -126,6 +126,20 @@ class TestRateLimitMiddleware:
         assert "user:user@example.com" in dims
         assert len(dims) == 2
 
+    def test_get_client_dimensions_with_user_object(self, middleware, mock_request):
+        """Test dimensions when user object provides email."""
+        user = MagicMock()
+        user.email = "user@example.com"
+        mock_request.state.user_email = None
+        mock_request.state.user = user
+        mock_request.state.team_id = None
+
+        dims = middleware._get_client_dimensions(mock_request)
+
+        assert "ip:192.168.1.100" in dims
+        assert "user:user@example.com" in dims
+        assert len(dims) == 2
+
     def test_get_client_dimensions_with_team(self, middleware, mock_request):
         """Test dimensions for team-scoped request."""
         mock_request.state.user_email = "user@example.com"
@@ -176,6 +190,40 @@ class TestRateLimitMiddleware:
         result = middleware._should_lockout_memory("test:ip:192.168.1.100", "CRITICAL")
 
         assert result is True
+
+    def test_should_lockout_memory_expires_stale_entries(self, middleware):
+        """Test memory lockout clears expired violation entries."""
+        dim = "ip:192.168.1.100"
+        middleware._violation_counts = {dim: 5}
+        middleware._violation_expiry = {dim: time.time() - 1}
+
+        result = middleware._should_lockout_memory(dim, "LOW")
+
+        assert result is False
+        assert dim not in middleware._violation_counts
+        assert dim not in middleware._violation_expiry
+
+    @pytest.mark.asyncio
+    async def test_should_lockout_async_executor_exception_falls_back(self, middleware):
+        """Test async lockout check falls back to memory on executor failure."""
+        middleware._violation_counts = {"ip:192.168.1.100": 5}
+        middleware._violation_expiry = {"ip:192.168.1.100": float("inf")}
+
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=Exception("executor boom"))
+            result = await middleware._should_lockout("ip:192.168.1.100", "CRITICAL")
+
+        assert result is True
+
+    def test_should_lockout_sync_redis_below_threshold(self, middleware):
+        """Test Redis lockout check below threshold."""
+        middleware.use_redis = True
+        middleware.redis_client = MagicMock()
+        middleware.redis_client.get.return_value = "2"
+
+        result = middleware._should_lockout_sync("ratelimit:violations:ip:192.168.1.100", "CRITICAL", "ip:192.168.1.100")
+
+        assert result is False
 
     def test_get_tier_name_critical(self, middleware):
         """Test tier name for auth endpoints."""
@@ -281,18 +329,6 @@ class TestRateLimitMiddleware:
         finally:
             middleware._increment_violation = original_increment
 
-    def test_should_lockout_memory_expires_stale_entries(self, middleware):
-        """Test memory lockout clears expired violation entries."""
-        dim = "ip:192.168.1.100"
-        middleware._violation_counts = {dim: 5}
-        middleware._violation_expiry = {dim: time.time() - 1}
-
-        result = middleware._should_lockout_memory(dim, "LOW")
-
-        assert result is False
-        assert dim not in middleware._violation_counts
-        assert dim not in middleware._violation_expiry
-
     def test_compiled_tiers_not_empty(self, middleware):
         """Test tier patterns are compiled."""
         assert len(middleware.compiled_tiers) > 0
@@ -305,6 +341,65 @@ class TestRateLimitMiddleware:
     def test_redis_fallback_when_disabled(self, middleware):
         """Test in-memory fallback when Redis disabled."""
         assert middleware.use_redis is False
+
+    def test_init_redis_success(self, mock_app):
+        """Test Redis initialization success path."""
+        mock_client = MagicMock()
+        mock_script = MagicMock()
+        mock_client.register_script.return_value = mock_script
+
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch(
+            "mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", return_value=mock_client
+        ):
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = True
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            mw = RateLimitMiddleware(mock_app)
+
+        mock_client.ping.assert_called_once()
+        mock_client.register_script.assert_called_once()
+        assert mw.use_redis is True
+        assert mw._sliding_window_script is mock_script
+
+    def test_init_redis_exception(self, mock_app):
+        """Test Redis initialization fallback on exception."""
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch(
+            "mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", side_effect=Exception("boom")
+        ):
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = True
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            mw = RateLimitMiddleware(mock_app)
+
+        assert mw.use_redis is False
 
     def test_get_endpoint_tier_default_unknown(self, middleware):
         """Test default tier for unknown endpoints."""
@@ -400,6 +495,17 @@ class TestRateLimitMiddleware:
         assert allowed is False
         assert remaining == 0
 
+    def test_check_rate_limit_sync_redis_blocked(self, middleware):
+        """Test Redis rate limit blocks when script returns 0."""
+        middleware.use_redis = True
+        middleware.redis_client = MagicMock()
+        middleware._sliding_window_script = MagicMock(return_value=0)
+
+        allowed, remaining = middleware._check_rate_limit_sync("ratelimit:test:LOW", 10, 60)
+
+        assert allowed is False
+        assert remaining == 0
+
     def test_tier_for_unknown_regex(self, middleware):
         """Test tier for endpoint not matching any regex."""
         tier = middleware.get_endpoint_tier("/totally/unknown/endpoint")
@@ -423,6 +529,16 @@ class TestRateLimitMiddleware:
         result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
         assert result is False
 
+    def test_lockout_sync_redis_below_threshold(self, middleware):
+        """Test lockout sync with Redis count below threshold."""
+        middleware.use_redis = True
+        middleware.redis_client = MagicMock()
+        middleware.redis_client.get.return_value = "2"
+
+        result = middleware._should_lockout_sync("ratelimit:violations:test:dimension", "CRITICAL", "test:dimension")
+
+        assert result is False
+
     def test_lockout_sync_returns_true_at_threshold(self, middleware):
         """Test lockout sync returns true when threshold met."""
         if not hasattr(middleware, "_violation_counts"):
@@ -432,6 +548,18 @@ class TestRateLimitMiddleware:
         result = middleware._should_lockout_sync("test:dimension", "CRITICAL", "test:dimension")
 
         assert result is True
+
+    def test_increment_violation_sync_redis_path(self, middleware):
+        """Test Redis increment and expiry are called."""
+        middleware.use_redis = True
+        middleware.redis_client = MagicMock()
+
+        middleware._increment_violation_sync("ratelimit:violations:test:dimension", "test:dimension")
+
+        middleware.redis_client.incr.assert_called_once_with("ratelimit:violations:test:dimension")
+        middleware.redis_client.expire.assert_called_once_with(
+            "ratelimit:violations:test:dimension", middleware.lockout_duration_minutes * 60
+        )
 
     def test_endpoint_tiers_all_critical(self, middleware):
         """Test all critical tier patterns defined."""
@@ -1103,3 +1231,58 @@ class TestRateLimitMiddleware:
         """Test rate limit key format is correct."""
         key = middleware._check_rate_limit_sync("test:dim", 10, 60)
         assert key is not None
+
+    @pytest.mark.asyncio
+    async def test_increment_violation_async_exception_fallback(self, middleware):
+        """Test _increment_violation falls back to memory on executor error."""
+        original_executor = middleware.executor
+        mock_executor = MagicMock()
+        mock_executor.submit.side_effect = RuntimeError("Executor error")
+        middleware.executor = mock_executor
+
+        if not hasattr(middleware, "_violation_counts"):
+            middleware._violation_counts = {}
+        middleware._violation_counts.pop("test:dim", None)
+
+        try:
+            await middleware._increment_violation("test:dim", "CRITICAL")
+            assert middleware._violation_counts.get("test:dim") == 1
+        finally:
+            middleware.executor = original_executor
+
+    def test_increment_violation_sync_redis_exception_fallback(self, middleware):
+        """Test _increment_violation_sync falls back to memory on Redis error."""
+        original_use_redis = middleware.use_redis
+        original_client = middleware.redis_client
+        original_script = getattr(middleware, "_sliding_window_script", None)
+
+        try:
+            middleware.use_redis = True
+            mock_client = MagicMock()
+            mock_client.incr.side_effect = RuntimeError("Redis incr error")
+            middleware.redis_client = mock_client
+            middleware._sliding_window_script = None
+
+            if not hasattr(middleware, "_violation_counts"):
+                middleware._violation_counts = {}
+            middleware._violation_counts.pop("test:dim", None)
+
+            middleware._increment_violation_sync("test:key", "test:dim")
+            assert middleware._violation_counts.get("test:dim") == 1
+        finally:
+            middleware.use_redis = original_use_redis
+            middleware.redis_client = original_client
+            if original_script is not None:
+                middleware._sliding_window_script = original_script
+
+    def test_should_lockout_memory_initializes_expiry(self, middleware):
+        """Test _should_lockout_memory initializes _violation_expiry if missing."""
+        if hasattr(middleware, "_violation_expiry"):
+            del middleware._violation_expiry
+        if not hasattr(middleware, "_violation_counts"):
+            middleware._violation_counts = {}
+
+        result = middleware._should_lockout_memory("test:dim", "CRITICAL")
+
+        assert result is False
+        assert hasattr(middleware, "_violation_expiry")
