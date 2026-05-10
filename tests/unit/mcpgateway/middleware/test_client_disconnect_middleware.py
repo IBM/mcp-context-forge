@@ -342,20 +342,17 @@ async def test_request_body_reading():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_message_enqueued():
-    """Disconnect message is enqueued so app can drain receive."""
-    received_messages: list[dict] = []
+async def test_handler_cancelled_while_waiting_on_receive():
+    """Handler is cancelled when waiting on receive() and client disconnects."""
+    receive_call_count = 0
 
-    async def app_that_reads_all(scope, receive, send):  # type: ignore[no-untyped-def]
+    async def app_that_reads_forever(scope, receive, send):  # type: ignore[no-untyped-def]
+        nonlocal receive_call_count
         while True:
-            msg = await receive()
-            received_messages.append(msg)
-            if msg["type"] == "http.disconnect":
-                break
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"ok"})
+            await receive()
+            receive_call_count += 1
 
-    middleware = ClientDisconnectMiddleware(app_that_reads_all)
+    middleware = ClientDisconnectMiddleware(app_that_reads_forever)
     messages: list[dict] = []
 
     async def send(msg):  # type: ignore[no-untyped-def]
@@ -368,7 +365,8 @@ async def test_disconnect_message_enqueued():
     ])
     await middleware(scope, receive, send)
 
-    assert any(msg["type"] == "http.disconnect" for msg in received_messages)
+    # App received the first message, then was cancelled on the second receive()
+    assert receive_call_count == 1
 
 
 @pytest.mark.asyncio
@@ -401,3 +399,78 @@ async def test_empty_path_defaults_to_empty_string():
     await middleware(scope, receive, send)
 
     assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_send_wrapper_suppresses_body_when_disconnected_before_start():
+    """Non-start messages are suppressed when disconnected before response start."""
+    async def app_that_sends_body_after_delay(scope, receive, send):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0.05)
+        await send({"type": "http.response.body", "body": b"should not send"})
+
+    middleware = ClientDisconnectMiddleware(app_that_sends_body_after_delay)
+    messages: list[dict] = []
+
+    async def send(msg):  # type: ignore[no-untyped-def]
+        messages.append(msg)
+
+    scope = {"type": "http", "path": "/api/test"}
+    receive = await _receive_messages([
+        {"type": "http.request", "body": b"", "more_body": False},
+        {"type": "http.disconnect"},
+    ])
+
+    await middleware(scope, receive, send)
+    assert len(messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_wrapper_oserror_on_body_sets_disconnected():
+    """OSError when sending body sets disconnected flag."""
+    call_count = 0
+
+    async def flaky_send(msg):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        if msg["type"] == "http.response.body":
+            raise ConnectionResetError("client gone")
+
+    async def app(scope, receive, send):  # type: ignore[no-untyped-def]
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    middleware = ClientDisconnectMiddleware(app)
+    scope = {"type": "http", "path": "/api/test"}
+    receive = await _receive_messages([{"type": "http.request", "body": b"", "more_body": False}])
+    await middleware(scope, receive, flaky_send)
+    # Should not raise; the OSError is caught and disconnected is set
+
+
+@pytest.mark.asyncio
+async def test_handler_not_done_in_finally_gets_cancelled():
+    """Handler task is cancelled in finally if not done when middleware returns."""
+    handler_started = asyncio.Event()
+    handler_continue = asyncio.Event()
+
+    async def app_that_waits(scope, receive, send):  # type: ignore[no-untyped-def]
+        handler_started.set()
+        await handler_continue.wait()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    middleware = ClientDisconnectMiddleware(app_that_waits)
+    messages: list[dict] = []
+
+    async def send(msg):  # type: ignore[no-untyped-def]
+        messages.append(msg)
+
+    scope = {"type": "http", "path": "/api/test"}
+    receive = await _receive_messages([{"type": "http.request", "body": b"", "more_body": False}])
+
+    # Run middleware in background so we can test the finally block
+    middleware_task = asyncio.create_task(middleware(scope, receive, send))
+    await handler_started.wait()
+    # Cancel the middleware itself; this should trigger the finally block
+    middleware_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await middleware_task

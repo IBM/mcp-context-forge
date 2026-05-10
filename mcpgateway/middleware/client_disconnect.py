@@ -103,16 +103,15 @@ class ClientDisconnectMiddleware:
         async def _reader() -> None:
             """Read from the raw ASGI receive channel and forward to the queue.
 
-            When ``http.disconnect`` arrives, signal via the event and enqueue
-            the disconnect message so the app can drain the queue, then return.
+            When ``http.disconnect`` arrives, signal via the event and return.
+            The handler will be cancelled by ``_cancel_on_disconnect``, so
+            there is no need to enqueue the disconnect message.
             """
             try:
                 while True:
                     message = await receive()
                     if message["type"] == "http.disconnect":
                         disconnected.set()
-                        # Enqueue disconnect so the app can drain the queue
-                        await recv_queue.put(message)
                         return
                     await recv_queue.put(message)
             except asyncio.CancelledError:
@@ -133,9 +132,6 @@ class ClientDisconnectMiddleware:
                 message: ASGI message to send.
             """
             nonlocal response_started
-            # Don't send if client already gone and response hasn't started
-            if disconnected.is_set() and not response_started:
-                return
             if message["type"] == "http.response.start":
                 try:
                     await send(message)
@@ -143,6 +139,9 @@ class ClientDisconnectMiddleware:
                     disconnected.set()
                 else:
                     response_started = True
+                return
+            # Don't send non-start messages if client already gone and response hasn't started
+            if disconnected.is_set() and not response_started:
                 return
             try:
                 await send(message)
