@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.query_params import QueryIdentifierDotted300, QueryToolOpsMode
 from mcpgateway.main import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
@@ -66,14 +67,10 @@ class ToolNLTestInput(BaseModel):
 @toolops_router.post("/validation/generate_testcases")
 @require_permission("admin.system_config")
 async def generate_testcases_for_tool(
-    tool_id: str = Query(None, max_length=300, pattern=r"^[a-zA-Z0-9_.-]+$", description="Tool ID"),
+    tool_id: QueryIdentifierDotted300 = None,
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
-    mode: str = Query(
-        "generate",
-        pattern=r"^(generate|query|status)$",
-        description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status",
-    ),
+    mode: QueryToolOpsMode = "generate",
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> List[Dict]:
@@ -148,7 +145,9 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 @toolops_router.post("/enrichment/enrich_tool")
 @require_permission("admin.system_config")
 async def enrich_a_tool(
-    tool_id: str = Query(None, max_length=300, pattern=r"^[a-zA-Z0-9_.-]+$", description="Tool ID"), db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)
+    tool_id: QueryIdentifierDotted300 = None,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
 ) -> dict[str, Any]:
     """
     Enriches an input tool

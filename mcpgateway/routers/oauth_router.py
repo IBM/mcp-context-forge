@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
@@ -509,7 +510,7 @@ async def oauth_callback(
     # - `error_description` is human-readable free text per RFC 6749 Section 5.2.
     code: Annotated[str | None, Query(max_length=2048, description="Authorization code from OAuth provider")] = None,
     state: Annotated[str | None, Query(max_length=2048, description="State parameter for CSRF protection")] = None,
-    error: Annotated[str | None, Query(max_length=100, pattern=r"^[a-zA-Z0-9_]+$", description="OAuth provider error code")] = None,
+    error: QueryErrorCode = None,
     error_description: Annotated[str | None, Query(max_length=500, description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,

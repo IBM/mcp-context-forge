@@ -72,6 +72,25 @@ from mcpgateway.auth_context import get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.query_params import (
+    QueryEntityType,
+    QueryEntityTypes,
+    QueryExportFormatAliased,
+    QueryGatewayIdList,
+    QueryHttpMethod,
+    QueryPeriodType,
+    QueryRelationship,
+    QueryRenderMode,
+    QueryRenderModeControls,
+    QueryRenderModeUserSelector,
+    QueryStatusFilter,
+    QueryTagsFilter,
+    QueryTimeRange,
+    QueryToolName,
+    QueryUserIdentifierNoDescription,
+    QueryVisibility,
+    QueryVisibilityCompact,
+)
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -2556,9 +2575,9 @@ async def admin_servers_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = True,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user_with_permissions),
@@ -5099,7 +5118,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 @require_permission("teams.read", allow_admin_bypass=False)
 async def admin_get_all_team_ids(
     include_inactive: bool = False,
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    visibility: QueryVisibilityCompact = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5169,7 +5188,7 @@ async def admin_search_teams(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    visibility: QueryVisibility = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5242,10 +5261,10 @@ async def admin_teams_partial_html(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = Query(False, description="Include inactive teams"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
+    visibility: QueryVisibilityCompact = None,
+    render: QueryRenderModeControls = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
-    relationship: Optional[str] = Query(None, pattern=r"^(owner|member|public)$", description="Filter by relationship: owner, member, public"),
+    relationship: QueryRelationship = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -7300,7 +7319,7 @@ async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
+    render: QueryRenderModeUserSelector = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8343,10 +8362,10 @@ async def admin_tools_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderModeControls = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8585,7 +8604,7 @@ async def admin_tool_ops_partial(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8701,7 +8720,7 @@ async def admin_tool_ops_partial(
 async def admin_get_all_tool_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8802,10 +8821,10 @@ async def admin_get_all_tool_ids(
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_search_tools(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8940,10 +8959,10 @@ async def admin_prompts_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderMode = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9178,9 +9197,9 @@ async def admin_gateways_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = True,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9438,7 +9457,7 @@ async def admin_get_all_gateways_ids(
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_search_gateways(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9613,7 +9632,7 @@ async def admin_get_all_server_ids(
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_search_servers(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9723,10 +9742,10 @@ async def admin_resources_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderModeControls = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9961,7 +9980,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10059,7 +10078,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10156,10 +10175,10 @@ async def admin_get_all_resource_ids(
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_search_resources(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10281,10 +10300,10 @@ async def admin_search_resources(
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_search_prompts(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10418,7 +10437,7 @@ async def admin_tokens_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query for token name"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -10664,10 +10683,10 @@ async def admin_a2a_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderMode = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -10935,7 +10954,7 @@ async def admin_get_all_agent_ids(
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_search_a2a_agents(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -11043,13 +11062,8 @@ async def admin_search_a2a_agents(
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
-    entity_types: Optional[str] = Query(
-        None,
-        max_length=200,
-        pattern=r"^[a-zA-Z,]*$",
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
-    ),
+    tags: QueryTagsFilter = None,
+    entity_types: QueryEntityTypes = None,
     include_inactive: bool = False,
     limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
     limit_per_type: Optional[int] = Query(
@@ -11058,7 +11072,7 @@ async def admin_unified_search(
         le=settings.pagination_max_page_size,
         description="Optional alias for per-entity result limit",
     ),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -13822,7 +13836,7 @@ async def get_aggregated_metrics(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_metrics_partial_html(
     request: Request,
-    entity_type: str = Query("tools", pattern=r"^(tools|resources|prompts|servers)$", description="Entity type: tools, resources, prompts, or servers"),
+    entity_type: QueryEntityType = "tools",
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
@@ -14951,7 +14965,7 @@ async def admin_get_log_file(
 @admin_router.get("/logs/export")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_logs(
-    export_format: str = Query("json", alias="format", pattern=r"^(json|csv|ndjson)$"),
+    export_format: QueryExportFormatAliased = "json",
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -17757,18 +17771,18 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_observability_traces(
     request: Request,
-    time_range: str = Query("24h", pattern=r"^(1h|6h|12h|24h|7d|30d)$"),
-    status_filter: str = Query("all", pattern=r"^(all|ok|error)$"),
+    time_range: QueryTimeRange = "24h",
+    status_filter: QueryStatusFilter = "all",
     limit: int = Query(50, ge=1, le=1000),
     min_duration: Optional[float] = Query(None, ge=0),
     max_duration: Optional[float] = Query(None, ge=0),
-    http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"),
-    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
+    http_method: QueryHttpMethod = None,
+    user_email: QueryUserIdentifierNoDescription = None,
     name_search: Optional[str] = Query(None, max_length=500),
     attribute_search: Optional[str] = Query(None, max_length=500),
     # tool_name pattern follows MCP SEP-986 (Specify Format for Tool Names), matching
     # mcpgateway.config.Settings.validation_tool_name_pattern. Allows namespacing via '/'.
-    tool_name: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"),
+    tool_name: QueryToolName = None,
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -19862,7 +19876,7 @@ async def get_performance_cache(
 @admin_router.get("/performance/history")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_history(
-    period_type: str = Query("hourly", pattern=r"^(hourly|daily)$", description="Aggregation period: hourly or daily"),
+    period_type: QueryPeriodType = "hourly",
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
