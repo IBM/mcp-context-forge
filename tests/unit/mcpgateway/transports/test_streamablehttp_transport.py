@@ -1654,7 +1654,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 
     # Verify the service was called with admin unrestricted access
     assert len(captured_calls) == 1
-    assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
+    assert captured_calls[0]["user_email"] == "admin@example.com"  # Admin bypass preserves email
     assert captured_calls[0]["token_teams"] is None  # Unrestricted
     assert captured_calls[0]["server_id"] == "test-server"
 
@@ -3825,7 +3825,7 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tool_admin_bypass(monkeypatch):
-    """Test call_tool admin bypass sets user_email=None for unrestricted admin."""
+    """Test call_tool admin bypass preserves user_email for unrestricted admin."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
 
@@ -3858,8 +3858,8 @@ async def test_call_tool_admin_bypass(monkeypatch):
     try:
         result = await call_tool("mytool", {"arg": "val"})
         assert isinstance(result, list)
-        # Admin bypass: user_email should be None
-        assert captured_kwargs["user_email"] is None
+        # Admin bypass: user_email preserved for downstream RBAC
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None  # Unrestricted
     finally:
         user_context_var.reset(token)
@@ -3982,8 +3982,8 @@ async def test_list_tools_admin_bypass(monkeypatch):
         result = await list_tools()
         assert len(result) == 1
         assert result[0].name == "admin_tool"
-        # Admin bypass: user_email should be None, token_teams should be None
-        assert captured_kwargs["user_email"] is None
+        # Admin bypass: user_email preserved, token_teams should be None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4066,7 +4066,7 @@ async def test_list_prompts_admin_bypass(monkeypatch):
     try:
         result = await list_prompts()
         assert len(result) == 1
-        assert captured_kwargs["user_email"] is None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4110,7 +4110,7 @@ async def test_get_prompt_admin_bypass(monkeypatch):
     try:
         result = await get_prompt("test_prompt", {"arg1": "val1"})
         assert isinstance(result, types.GetPromptResult)
-        assert captured_kwargs["user"] is None  # Admin bypass
+        assert captured_kwargs["user"] == "admin@test.com"  # Admin bypass preserves email
         assert captured_kwargs["token_teams"] is None
     finally:
         user_context_var.reset(user_token)
@@ -4190,7 +4190,7 @@ async def test_list_resources_admin_bypass(monkeypatch):
     try:
         result = await list_resources()
         assert len(result) == 1
-        assert captured_kwargs["user_email"] is None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4234,7 +4234,7 @@ async def test_read_resource_admin_bypass(monkeypatch):
         test_uri = AnyUrl("file:///admin.txt")
         result = await read_resource(test_uri)
         assert result == "admin resource content"
-        assert captured_kwargs["user"] is None
+        assert captured_kwargs["user"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         user_context_var.reset(user_token)
@@ -4602,7 +4602,7 @@ async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatc
         result = await complete(ref, argument)
         assert isinstance(result, mcp_types.Completion)
         assert result.values == ["all"]
-        assert mock_cs.handle_completion.await_args.kwargs["user_email"] is None
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "admin@example.com"
         assert mock_cs.handle_completion.await_args.kwargs["token_teams"] is None
 
 
@@ -16715,7 +16715,7 @@ async def test_get_scoped_visibility_from_user_context_empty_context_returns_pub
 
 @pytest.mark.asyncio
 async def test_get_scoped_visibility_from_user_context_admin_bypass():
-    """Admin with teams=None gets admin bypass (None, None)."""
+    """Admin with teams=None gets admin bypass (email, None)."""
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
@@ -16726,7 +16726,7 @@ async def test_get_scoped_visibility_from_user_context_admin_bypass():
     }
 
     user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
-    assert user_email is None
+    assert user_email == "admin@example.com"
     assert token_teams is None  # Admin bypass
 
 

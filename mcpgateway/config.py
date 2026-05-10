@@ -451,6 +451,9 @@ class Settings(BaseSettings):
             "/redoc",
             "/openapi.json",
             "/metrics",
+            "/mcp/",  # Exempt: MCP Streamable HTTP is a programmatic protocol, not browser-based
+            "/sse",  # Exempt: SSE is a server-sent event stream, not vulnerable to CSRF
+            "/message",  # Exempt: MCP SSE message endpoint
         ],
         description="Paths exempt from CSRF protection",
     )

@@ -518,7 +518,7 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
     Returns:
         Tuple of ``(user_email, token_teams)`` where:
 
-        - ``(None, None)``: admin bypass (authenticated admin with unrestricted token)
+        - ``(email, None)``: admin bypass (authenticated admin with unrestricted token)
         - ``(None, [])``: unauthenticated or empty context (public-only secure default)
         - ``(email, [])``: authenticated public-only token
         - ``(email, ["team-a", ...])``: authenticated team-scoped token
@@ -526,7 +526,7 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
     Examples:
         >>> # Admin with unrestricted token
         >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": None, "is_admin": True})
-        (None, None)
+        ('admin@x.com', None)
         >>> # Admin with missing teams key (secure default)
         >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
         ('admin@x.com', [])
@@ -558,8 +558,9 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Preserve user_email so downstream RBAC can verify admin status via is_user_admin()
     if is_admin and token_teams is None:
-        return None, None
+        return user_email, None
 
     # Non-admin without teams = public-only (secure default)
     if token_teams is None:

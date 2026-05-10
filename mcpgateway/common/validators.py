@@ -1322,8 +1322,10 @@ class SecurityValidator:
         Performs:
         - Lowercase conversion
         - Trailing dot removal
-        - IDN to ASCII (Punycode) conversion (skipped for IP addresses)
+        - IDN to ASCII (Punycode) conversion for non-ASCII domains
+        - RFC 1123 fallback for ASCII hostnames (allows underscores for Docker/K8s)
         - Handles wildcard patterns (*.example.com)
+        - Skips normalization for IP addresses
 
         Args:
             hostname: Raw hostname from URL (may include wildcard prefix)
@@ -1332,7 +1334,7 @@ class SecurityValidator:
             Normalized hostname (with wildcard prefix preserved if present)
 
         Raises:
-            ValueError: If hostname contains invalid IDN
+            ValueError: If hostname contains invalid IDN or fails RFC 1123 validation
 
         Examples:
             >>> SecurityValidator._normalize_hostname("Example.COM.")
@@ -1341,6 +1343,8 @@ class SecurityValidator:
             'xn--mnchen-3ya.de'
             >>> SecurityValidator._normalize_hostname("*.münchen.de")
             '*.xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("fast_time_server")
+            'fast_time_server'
         """
         # Third-Party
         import idna  # pylint: disable=import-outside-toplevel
@@ -1353,20 +1357,35 @@ class SecurityValidator:
 
         hostname_normalized = hostname.lower().rstrip(".")
 
-        # Skip IDN encoding for IP addresses (IPv4 and IPv6)
+        # Skip normalization for IP addresses (IPv4 and IPv6)
         try:
             ipaddress.ip_address(hostname_normalized)
             return wildcard_prefix + hostname_normalized
         except ValueError:
-            pass  # Not an IP address, proceed with IDN normalization
+            pass  # Not an IP address, proceed with hostname normalization
 
+        # Non-ASCII hostnames MUST pass strict IDNA encoding (homograph protection)
+        if not hostname_normalized.isascii():
+            try:
+                hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+                return wildcard_prefix + hostname_normalized
+            except idna.IDNAError as e:
+                raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+
+        # For ASCII hostnames, try IDN first (covers ASCII-only IDN domains)
         try:
-            # Convert IDN to ASCII (e.g., "münchen.de" → "xn--mnchen-3ya.de")
             hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
-        except idna.IDNAError as e:
-            raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+            return wildcard_prefix + hostname_normalized
+        except idna.IDNAError:
+            pass  # Not a valid IDN domain, fall through to RFC 1123
 
-        return wildcard_prefix + hostname_normalized
+        # IDN failed — validate as RFC 1123 hostname (allows underscores for internal names)
+        _rfc1123_label_re = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
+        labels = hostname_normalized.split(".")
+        if all(_rfc1123_label_re.match(label) for label in labels if label):
+            return wildcard_prefix + hostname_normalized
+
+        raise ValueError(f"Invalid hostname: {hostname}")
 
     @classmethod
     def _validate_ssrf(cls, hostname: str, field_name: str) -> None:

@@ -48,6 +48,7 @@ from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
@@ -1016,7 +1017,7 @@ class ServerService(BaseService):
         if visibility == "public":
             return True
 
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return visibility != "private"
 
         if not user_email:
@@ -1106,7 +1107,7 @@ class ServerService(BaseService):
                 user_email=user_email,
                 custom_fields={
                     "visibility": getattr(server, "visibility", None),
-                    "admin_bypass": user_email is None and token_teams is None,
+                    "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                 },
             )
             raise ServerNotFoundError(f"Server not found: {server_id}")

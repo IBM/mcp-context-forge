@@ -1675,6 +1675,12 @@ HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
+	@# Fail early if port 8080 is already bound (nginx needs it)
+	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
+		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
+		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
+		exit 1; \
+	fi
 	@mkdir -p reports
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \

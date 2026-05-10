@@ -2794,7 +2794,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -3142,7 +3142,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
-    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
+    url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
@@ -6804,7 +6804,9 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        team_id: Optional team ID for team-scoped tokens
         is_active: Token active status (defaults to True)
+        user_email: Optional email of user to create token for (admin only)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6824,6 +6826,7 @@ class TokenCreateRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     is_active: bool = Field(default=True, description="Token active status")
+    user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -6897,7 +6900,7 @@ class TokenResponse(BaseModel):
     id: str = Field(..., description="Token ID")
     name: str = Field(..., description="Token name")
     description: Optional[str] = Field(None, description="Token description")
-    user_email: str = Field(..., description="Token creator's email")
+    user_email: str = Field(..., description="Token owner's email")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     server_id: Optional[str] = Field(None, description="Server scope limitation")
     resource_scopes: List[str] = Field(..., description="Permission scopes")

@@ -1088,6 +1088,7 @@ class TestEdgeCases:
         request.tags = []
         request.team_id = "team-789"  # Add team_id attribute
         request.is_active = True  # Add is_active attribute
+        request.user_email = None  # Add user_email attribute for new parameter
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
@@ -1183,6 +1184,7 @@ class TestEdgeCases:
         request.tags = []
         request.team_id = None
         request.is_active = True
+        request.user_email = None  # Add user_email attribute for new parameter
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
