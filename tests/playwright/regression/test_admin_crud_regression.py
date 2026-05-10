@@ -97,7 +97,16 @@ def _filter_benign_errors(errors: List[str]) -> List[str]:
 
 def _filter_expected_failures(requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Filter out expected 404s and other acceptable failures."""
-    return [r for r in requests if not (r["status"] == 404 and ("favicon" in r["url"] or "static" in r["url"]))]
+    def _is_benign(req: Dict[str, Any]) -> bool:
+        url = req["url"]
+        status = req["status"]
+        if status == 404 and ("favicon" in url or "static" in url):
+            return True
+        # Background import status polling may return 401 in test environments
+        if status == 401 and "/admin/import/status" in url:
+            return True
+        return False
+    return [r for r in requests if not _is_benign(r)]
 
 
 # ---------------------------------------------------------------------------

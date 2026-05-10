@@ -390,7 +390,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default=SecretStr("my-test-key"))
+    jwt_secret_key: SecretStr = Field(default=SecretStr("my-test-key-but-now-longer-than-32-bytes"))
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"

@@ -237,6 +237,7 @@ RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
 COPY --from=rust-builder /build/native-extension-wheels/ /tmp/local-native-extension-wheels/
+COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -266,8 +267,8 @@ RUN set -euo pipefail \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
-        /app/.venv/bin/pip install --no-cache-dir /tmp/local-native-extension-wheels/*.whl && \
-        /app/.venv/bin/python3 -c $'import glob\nimport importlib\nimport zipfile\n\nmodules = []\nfor wheel in glob.glob(\"/tmp/local-native-extension-wheels/*.whl\"):\n    with zipfile.ZipFile(wheel) as archive:\n        top_level = next((name for name in archive.namelist() if name.endswith(\".dist-info/top_level.txt\")), None)\n        if top_level:\n            modules.extend(line.strip() for line in archive.read(top_level).decode(\"utf-8\").splitlines() if line.strip())\n            continue\n        for name in archive.namelist():\n            if \"/\" not in name and (name.endswith(\".so\") or name.endswith(\".pyd\")):\n                modules.append(name.split(\".\", 1)[0])\n                break\n            if name.count(\"/\") == 1 and name.endswith(\"/__init__.py\"):\n                modules.append(name.split(\"/\", 1)[0])\n                break\nmodules = list(dict.fromkeys(modules))\nif not modules:\n    raise SystemExit(\"Local native extension wheels installed but no importable top-level modules were discovered\")\nfor module in modules:\n    importlib.import_module(module)\n    print(f\"✓ Local native extension import ok: {module}\")'; \
+        /app/.venv/bin/pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
+        /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
     else \
         echo "⏭️  No local native extensions discovered"; \
     fi \
@@ -329,7 +330,7 @@ COPY plugins/ /app/plugins/
 # ownership. Merged into one layer — all of these are cheap and all get
 # invalidated whenever any app code changes above.
 # ----------------------------------------------------------------------------
-RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
+RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway /app/plugins \
     && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && chown -R 1001:0 /app \
     && chmod -R g=u /app

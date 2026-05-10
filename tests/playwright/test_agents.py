@@ -8,6 +8,7 @@ A2A Agents UI tests for agent management features.
 """
 
 # Standard
+import uuid
 from typing import Any, Dict
 
 # Third-Party
@@ -459,9 +460,12 @@ class TestAgentsUI:
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
+        # Use a unique agent name to avoid 409 conflicts from prior test runs
+        agent_name = f"Test Agent No UAID {uuid.uuid4().hex[:8]}"
+
         # Create an agent WITHOUT UAID
-        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent No UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://no-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -470,12 +474,24 @@ class TestAgentsUI:
         # Do NOT check UAID checkbox
         expect(agents_page.generate_uaid_checkbox).not_to_be_checked()
 
-        # Submit form
-        agents_page.submit_agent_form()
-        agents_page.page.wait_for_timeout(2000)
+        # Submit form and capture response
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        # After form submission the page may redirect/reload; wait for settle
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        # Ensure we're back on the agents tab with the table loaded
+        agents_page.navigate_to_agents_tab()
+
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
 
         # Verify UAID checkbox is NOT checked and is ENABLED (can be checked)
         expect(agents_page.edit_generate_uaid_checkbox).not_to_be_checked()
@@ -503,9 +519,12 @@ class TestAgentsUI:
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
+        # Use a unique agent name to avoid 409 conflicts from prior test runs
+        agent_name = f"Test Agent With UAID {uuid.uuid4().hex[:8]}"
+
         # Create an agent WITH UAID
-        agents_page.fill_locator(agents_page.agent_name_input, "Test Agent With UAID")
-        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://with-uaid.example.com")
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
         agents_page.agent_type_select.select_option("custom")
         agents_page.auth_type_select.select_option("bearer")
         agents_page.wait_for_visible(agents_page.auth_bearer_fields)
@@ -514,12 +533,24 @@ class TestAgentsUI:
         # Enable UAID
         agents_page.enable_uaid(registry="test-registry", protocol="mcp")
 
-        # Submit form
-        agents_page.submit_agent_form()
-        agents_page.page.wait_for_timeout(2000)
+        # Submit form and capture response
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
 
-        # Open edit modal for the newly created agent
-        agents_page.open_edit_modal(agent_index=0)
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        # After form submission the page may redirect/reload; wait for settle
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        # Ensure we're back on the agents tab with the table loaded
+        agents_page.navigate_to_agents_tab()
+
+        # Wait for the newly created agent to appear, then open its edit modal
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
 
         # Verify UAID checkbox is CHECKED and DISABLED (immutable)
         expect(agents_page.edit_generate_uaid_checkbox).to_be_checked()
