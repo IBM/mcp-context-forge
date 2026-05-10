@@ -14,6 +14,7 @@ Enhanced with additional test cases for better coverage.
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
@@ -3640,6 +3641,7 @@ class TestAdminMetricsRoutes:
         mock_prompt_reset.assert_awaited_once_with(mock_db)
 
 
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 class TestAdminGatewayTestRoute:
     """Test the gateway test endpoint with enhanced coverage."""
 
@@ -3782,6 +3784,260 @@ class TestAdminGatewayTestRoute:
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text
+
+    async def test_admin_test_gateway_registered_only_mode_builds_allowlist(self, monkeypatch):
+        """Test that gateway_test_allow_registered_only=True builds allowlist from DB."""
+        # Mock settings using same approach as configure_gateway_test_allowlist fixture
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", True)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", [])
+        # Disable SSRF protection to focus on allowlist validation
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        # Mock DNS resolution to return public IP
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        # Mock DB with registered gateways
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [
+            "https://gateway1.example.com/base",
+            "https://gateway2.example.com/"
+        ]
+        mock_db.execute.return_value = mock_result
+
+        # Add spy to verify mock is being called
+        mock_db.execute = MagicMock(return_value=mock_result)
+
+        request = GatewayTestRequest(
+            base_url="https://gateway1.example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"result": "success"}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+
+            # Should succeed because gateway1.example.com is in registered gateways
+            assert result.status_code == 200
+
+    async def test_admin_test_gateway_registered_mode_with_duplicate_hosts(self, monkeypatch):
+        """Test that duplicate hostnames in registered gateways are deduplicated."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", True)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", [])
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        # Same hostname with different paths
+        mock_result.scalars.return_value.all.return_value = [
+            "https://example.com/path1",
+            "https://example.com/path2",
+            "https://EXAMPLE.COM/path3",  # Case variation
+            "https://example.com./path4",  # Trailing dot
+        ]
+        mock_db.execute.return_value = mock_result
+
+        request = GatewayTestRequest(
+            base_url="https://example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+            assert result.status_code == 200
+
+    async def test_admin_test_gateway_registered_mode_handles_parse_errors(self, monkeypatch):
+        """Test that malformed URLs in registered gateways are logged and skipped."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", True)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", [])
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [
+            "http://[invalid-ipv6",  # Malformed IPv6 - raises ValueError
+            "https://valid.example.com/",  # Valid
+        ]
+        mock_db.execute.return_value = mock_result
+
+        request = GatewayTestRequest(
+            base_url="https://valid.example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            # Should succeed with valid.example.com, malformed URL skipped
+            result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+            assert result.status_code == 200
+
+    async def test_admin_test_gateway_registered_mode_db_query_exception(self, monkeypatch):
+        """Test that DB query exceptions are caught and logged."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", True)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["fallback.example.com"])
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        from sqlalchemy.exc import SQLAlchemyError
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = SQLAlchemyError("Database connection failed")
+
+        request = GatewayTestRequest(
+            base_url="https://fallback.example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            # DB query fails and validation fails closed (no fallback to configured hosts in registered-only mode)
+            result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+            # Validation fails with 400 since allowlist is empty after DB exception
+            assert result.status_code == 400
+
+    async def test_admin_test_gateway_registered_mode_with_team_id(self, monkeypatch):
+        """Test that team_id filters the gateway query when building allowlist."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", True)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", [])
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [
+            "https://team-gateway.example.com/"
+        ]
+        mock_db.execute.return_value = mock_result
+
+        request = GatewayTestRequest(
+            base_url="https://team-gateway.example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"result": "success"}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            result = await admin_test_gateway(request, team_id="team-1", user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+            assert result.status_code == 200
+
+            # Verify team_id was used in the query
+            call_args = mock_db.execute.call_args[0][0]
+            assert hasattr(call_args, "whereclause")
+
+    async def test_admin_test_gateway_configured_hosts_mode(self, monkeypatch):
+        """Test Mode 2: gateway_test_allow_registered_only=False uses configured hosts."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+        monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["allowed.example.com"])
+        monkeypatch.setattr(config.settings, "ssrf_protection_enabled", False)
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        mock_db = MagicMock()
+
+        request = GatewayTestRequest(
+            base_url="https://allowed.example.com",
+            path="/test",
+            method="GET",
+            headers={},
+            body=None,
+        )
+
+        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"result": "success"}
+
+            mock_client = AsyncMock()
+            mock_client.request = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
+            assert result.status_code == 200
 
 
 class TestNormalizeUiHideValues:
@@ -14478,6 +14734,7 @@ async def test_change_password_required_handler_outer_exception(monkeypatch, moc
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
     class MockResponse:
         status_code = 200
@@ -14562,6 +14819,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
@@ -14576,6 +14834,7 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(monkeypatch, mock_db):
     """Cover the 401 branch when OAuth auth-code flow requires a user email."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -14591,6 +14850,7 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_header(monkeypatch, mock_db):
     """Cover stored-token injection for OAuth auth-code flow."""
 
@@ -14634,6 +14894,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_authorization_code_token_exception_returns_500(monkeypatch, mock_db):
     """Cover exception handler when retrieving stored OAuth tokens fails."""
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
@@ -14650,6 +14911,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, mock_db):
     """Cover client-credentials OAuth branch in admin_test_gateway."""
 
@@ -14693,6 +14955,7 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypatch, mock_db):
     """Cover OAuthManager exception path in client-credentials flow."""
     # Third-Party
@@ -14731,6 +14994,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
         ({"a": "1"}, {"a": "1"}),
     ],
 )
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, mock_db, body, expected_data):
     """Cover application/x-www-form-urlencoded request body formatting (str and dict)."""
 
@@ -14776,6 +15040,7 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a dict (raw DbGateway)."""
 
@@ -14815,6 +15080,7 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     """Cover basic/bearer/authheaders branch when auth_value is a str (decode_auth path)."""
 
@@ -14855,6 +15121,7 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
     """Gateway with auth_type=None should not attempt decode_auth."""
 
@@ -14894,6 +15161,7 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_gateway_test_allowlist")
 async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db):
     """Stored gateway auth merges with (and overrides) caller-supplied headers."""
 

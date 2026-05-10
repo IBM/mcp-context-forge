@@ -1505,70 +1505,190 @@ class SecurityValidator:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
-    def validate_host_allowlist(cls, hostname: str, allowed_patterns: List[str], field_name: str = "URL") -> None:
-        """Validate hostname against allowlist patterns.
+    def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> str:
+        """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
+
+        This method implements strict validation for the gateway test endpoint to prevent
+        SSRF attacks and unauthorized proxy usage. It performs:
+        1. FQDN normalization (strips trailing dots to prevent bypass)
+        2. Allowlist enforcement against provided host patterns
+        3. Unconditional blocking of private IPs, loopback, and link-local addresses
+        4. Standard URL validation (scheme, structure, XSS patterns)
+
+        **Security Note - DNS TOCTOU Limitation:**
+        This validation resolves DNS at validation time to check for private IPs, but the
+        HTTP client will re-resolve DNS at connection time. An attacker controlling DNS can
+        return a public IP during validation and a private IP during connection (DNS rebinding).
+        True mitigation requires pinning the validated IP into the connection (custom resolver/
+        transport, or IP allowlist check at connect callback). This is tracked as a known
+        limitation for future improvement.
 
         Args:
-            hostname (str): Hostname to validate (e.g., "api.example.com")
-            allowed_patterns (List[str]): List of allowed patterns. Supports:
-                - Exact matches: "api.example.com"
-                - Wildcard subdomains: "*.example.com" matches "api.example.com", "test.example.com"
-                - Empty list: skip validation (no allowlist enforced)
+            value (str): The URL to validate
+            allowed_hosts (list[str]): List of allowed host patterns. Supports:
+                - Exact hostnames: "example.com"
+                - Wildcard subdomains: "*.example.com"
+                Empty list means reject all URLs.
             field_name (str): Name of field being validated (for error messages)
 
+        Returns:
+            str: The validated URL if acceptable
+
         Raises:
-            ValueError: If hostname doesn't match any allowed pattern
+            ValueError: If URL fails validation (generic message, no internal details)
 
         Examples:
-            Exact match:
+            Valid URL matching allowlist:
 
-            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['api.example.com'])
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://api.example.com/test',
+            ...     ['*.example.com'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            'https://api.example.com/test'
 
-            Wildcard match:
+            Trailing dot bypass attempt (blocked):
 
-            >>> SecurityValidator.validate_host_allowlist('api.example.com', ['*.example.com'])
-            >>> SecurityValidator.validate_host_allowlist('test.api.example.com', ['*.example.com'])
-
-            No match:
-
-            >>> SecurityValidator.validate_host_allowlist('evil.com', ['*.example.com'])
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://evil.com./bypass',
+            ...     ['trusted.com'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
             Traceback (most recent call last):
                 ...
-            ValueError: URL hostname 'evil.com' not in allowlist
+            ValueError: Gateway URL is not allowed
 
-            Empty allowlist (always passes):
+            Private IP address (blocked unconditionally):
 
-            >>> SecurityValidator.validate_host_allowlist('any.host.com', [])
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://192.168.1.1/',
+            ...     ['192.168.1.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Loopback address (blocked unconditionally):
+
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://127.0.0.1/',
+            ...     ['127.0.0.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
         """
-        # Empty allowlist = no enforcement
-        if not allowed_patterns:
-            return
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
 
-        # Guard against None or empty hostname
-        if not hostname:
-            raise ValueError(f"{field_name} hostname is empty")
+        # First, perform standard URL validation (scheme, structure, XSS, etc.)
+        # This also does the initial SSRF checks
+        try:
+            validated_url = cls.validate_url(value, field_name)
+        except ValueError:
+            # Return generic error message (don't expose validation details)
+            raise ValueError(f"{field_name} is not allowed")
 
-        # Defensive percent-decode (matching _validate_ssrf behavior)
-        hostname = _unquote_if_needed(hostname)
+        # Parse the URL to extract hostname for allowlist check
+        try:
+            result = urlparse(validated_url)
+            hostname = result.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not allowed")
+        except Exception:
+            raise ValueError(f"{field_name} is not allowed")
 
-        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
-        hostname_normalized = cls._normalize_hostname(hostname)
+        # FQDN normalization: strip trailing dots to prevent bypass
+        # Example: evil.com. should be normalized to evil.com before allowlist check
+        hostname_normalized = hostname.lower().rstrip(".")
 
-        for pattern in allowed_patterns:
-            pattern_normalized = cls._normalize_hostname(pattern)
+        # Unconditionally block private IPs, loopback, and link-local addresses
+        # This prevents testing internal services regardless of allowlist
+        try:
+            ip_addr = ipaddress.ip_address(hostname_normalized)
+            # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+            # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
+            if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
+                ip_addr = ip_addr.ipv4_mapped
 
-            # Exact match
-            if hostname_normalized == pattern_normalized:
-                return
+            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
+            is_cgnat = False
+            if ip_addr.version == 4:
+                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                is_cgnat = ip_addr in cgnat_network
 
-            # Wildcard subdomain match (*.example.com)
+            # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+            # Block loopback (127.0.0.0/8, ::1)
+            # Block link-local (169.254.0.0/16, fe80::/10)
+            # Block unspecified (0.0.0.0, ::)
+            # Block multicast (224.0.0.0/4, ff00::/8)
+            # Block reserved (240.0.0.0/4)
+            # Block carrier-grade NAT (100.64.0.0/10)
+            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+                raise ValueError(f"{field_name} is not allowed")
+        except ValueError as e:
+            # If it's our security error, re-raise it
+            if "is not allowed" in str(e):
+                raise
+            # Otherwise it's not a valid IP, continue to hostname check
+
+        # Resolve hostname to check for private IPs (prevent DNS rebinding)
+        try:
+            addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _, _, _, _, sockaddr in addr_info:
+                try:
+                    resolved_ip = ipaddress.ip_address(sockaddr[0])
+                    # Unwrap IPv4-mapped IPv6 addresses
+                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                        resolved_ip = resolved_ip.ipv4_mapped
+
+                    # Check for carrier-grade NAT (100.64.0.0/10)
+                    is_cgnat = False
+                    if resolved_ip.version == 4:
+                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                        is_cgnat = resolved_ip in cgnat_network
+
+                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
+                        raise ValueError(f"{field_name} is not allowed")
+                except ValueError as e:
+                    if "is not allowed" in str(e):
+                        raise
+                    continue
+        except (socket.gaierror, socket.herror):
+            # DNS resolution failed - reject with generic message
+            raise ValueError(f"{field_name} is not allowed")
+
+        # Check against allowlist
+        if not allowed_hosts:
+            # Empty allowlist means reject all
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        allowed = False
+        for pattern in allowed_hosts:
+            # Normalize pattern (lowercase, strip trailing dots)
+            pattern_normalized = pattern.lower().rstrip(".")
+
             if pattern_normalized.startswith("*."):
-                base_domain = pattern_normalized[2:]  # Remove "*."
-                # Match only subdomains, not the base domain itself (per DNS conventions)
-                if hostname_normalized.endswith(f".{base_domain}"):
-                    return
+                # Wildcard subdomain pattern: *.example.com
+                # Matches subdomains ONLY, not the base domain itself (per DNS conventions)
+                domain_suffix = pattern_normalized[2:]  # Remove "*."
+                if hostname_normalized.endswith("." + domain_suffix):
+                    allowed = True
+                    break
+            else:
+                # Exact hostname match
+                if hostname_normalized == pattern_normalized:
+                    allowed = True
+                    break
 
-        raise ValueError(f"{field_name} hostname '{hostname}' not in allowlist")
+        if not allowed:
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        return validated_url
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

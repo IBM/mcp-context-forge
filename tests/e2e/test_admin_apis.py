@@ -836,70 +836,166 @@ class TestAdminGatewayAPIs:
         from mcpgateway.config import settings
 
         # Configure allowlist and mock HTTP client
-        with patch.object(settings, "gateway_test_allowed_hosts", ["api.example.com"]):
-            with patch("mcpgateway.common.validators.socket.getaddrinfo", return_value=[
-                (2, 1, 6, "", ("93.184.216.34", 0))
-            ]):
+        with patch.object(settings, "gateway_test_allow_registered_only", False):
+            with patch.object(settings, "gateway_test_allowed_hosts", ["api.example.com"]):
+                with patch("mcpgateway.common.validators.socket.getaddrinfo", return_value=[
+                    (2, 1, 6, "", ("93.184.216.34", 0))
+                ]):
+                    with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                        mock_client = MagicMock()
+                        mock_response = MagicMock()
+                        mock_response.status_code = 200
+                        mock_response.json.return_value = {"status": "ok"}
+                        mock_response.text = '{"status": "ok"}'
+
+                        # Setup async context manager
+                        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                        mock_client.__aexit__ = AsyncMock(return_value=None)
+                        mock_client.request = AsyncMock(return_value=mock_response)
+                        mock_client_class.return_value = mock_client
+
+                        request_data = {"base_url": "https://api.example.com", "path": "/test", "method": "GET", "headers": {}, "body": None}
+
+                        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+
+                        assert response.status_code == 200
+                        data = response.json()
+                        assert data["statusCode"] == 200  # camelCase due to BaseModelWithConfigDict
+                        assert "latencyMs" in data  # camelCase due to BaseModelWithConfigDict
+
+    async def test_admin_test_gateway_empty_allowlist_uses_ssrf(self, client: AsyncClient, mock_settings):
+        """Test that empty allowlist rejects all when not in registered-only mode (ICACF-15)."""
+        from mcpgateway.config import settings
+
+        # Empty allowlist with registered-only mode off = reject all
+        with patch.object(settings, "gateway_test_allow_registered_only", False):
+            with patch.object(settings, "gateway_test_allowed_hosts", []):
                 with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
-                    mock_client = MagicMock()
-                    mock_response = MagicMock()
-                    mock_response.status_code = 200
-                    mock_response.json.return_value = {"status": "ok"}
-                    mock_response.text = '{"status": "ok"}'
-
-                    # Setup async context manager
-                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-                    mock_client.__aexit__ = AsyncMock(return_value=None)
-                    mock_client.request = AsyncMock(return_value=mock_response)
-                    mock_client_class.return_value = mock_client
-
-                    request_data = {"base_url": "https://api.example.com", "path": "/test", "method": "GET", "headers": {}, "body": None}
+                    request_data = {"base_url": "http://169.254.169.254/", "path": "/", "method": "GET", "headers": {}, "body": None}
 
                     response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
 
-                    assert response.status_code == 200
+                    # Should be blocked (empty allowlist rejects all)
+                    assert response.status_code == 200  # HTTP status is always 200
                     data = response.json()
-                    assert data["statusCode"] == 200  # camelCase due to BaseModelWithConfigDict
-                    assert "latencyMs" in data  # camelCase due to BaseModelWithConfigDict
-
-    async def test_admin_test_gateway_empty_allowlist_uses_ssrf(self, client: AsyncClient, mock_settings):
-        """Test that empty allowlist falls back to SSRF protection (ICACF-15)."""
-        from mcpgateway.config import settings
-
-        # Empty allowlist = use SSRF protection
-        with patch.object(settings, "gateway_test_allowed_hosts", []):
-            with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
-                request_data = {"base_url": "http://169.254.169.254/", "path": "/", "method": "GET", "headers": {}, "body": None}
-
-                response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
-
-                # Should be blocked by SSRF protection
-                assert response.status_code == 200  # HTTP status is always 200
-                data = response.json()
-                assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
-                assert "error" in data["body"]
-                mock_client_class.assert_not_called()
+                    assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
+                    assert "error" in data["body"]
+                    mock_client_class.assert_not_called()
 
     async def test_admin_test_gateway_enforces_ssrf_after_allowlist(self, client: AsyncClient, mock_settings):
         """Test E2E: allowlist with localhost blocked by SSRF (ICACF-15 Issue #2)."""
         from mcpgateway.config import settings
 
         # Configure allowlist with localhost
-        with patch.object(settings, "gateway_test_allowed_hosts", ["127.0.0.1"]):
-            with patch.object(settings, "ssrf_protection_enabled", True):
-                with patch.object(settings, "ssrf_allow_localhost", False):
-                    with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
-                        request_data = {"base_url": "http://127.0.0.1/", "path": "/", "method": "GET", "headers": {}, "body": None}
+        with patch.object(settings, "gateway_test_allow_registered_only", False):
+            with patch.object(settings, "gateway_test_allowed_hosts", ["127.0.0.1"]):
+                with patch.object(settings, "ssrf_protection_enabled", True):
+                    with patch.object(settings, "ssrf_allow_localhost", False):
+                        with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
+                            request_data = {"base_url": "http://127.0.0.1/", "path": "/", "method": "GET", "headers": {}, "body": None}
 
-                        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+                            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
 
-                        # Should be blocked by SSRF protection despite allowlist
-                        assert response.status_code == 200  # HTTP status always 200
-                        data = response.json()
-                        assert data["statusCode"] == 400  # Error in response body
-                        assert "error" in data["body"]
-                        assert data["body"]["error"] == "Invalid gateway URL"
-                        mock_client_class.assert_not_called()
+                            # Should be blocked by SSRF protection despite allowlist
+                            assert response.status_code == 200  # HTTP status always 200
+                            data = response.json()
+                            assert data["statusCode"] == 400  # Error in response body
+                            assert "error" in data["body"]
+                            assert data["body"]["error"] == "Invalid gateway URL"
+                            mock_client_class.assert_not_called()
+
+    async def test_gateway_test_endpoint_allowlist_enforcement(self, client: AsyncClient, mock_settings):
+        """Test that gateway test endpoint enforces allowlist (ICA_ContextForgeICACF-14)."""
+        # Configure settings to use allowlist mode (not registered-only)
+        mock_settings.gateway_test_allow_registered_only = False
+        mock_settings.gateway_test_allowed_hosts = ["trusted.example.com"]
+
+        # Test 1: URL not in allowlist should be rejected
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS to return public IP for evil.com
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://evil.com",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200  # HTTP status is always 200
+            response_data = response.json()
+            assert response_data["statusCode"] == 400  # Gateway test result status
+            assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 2: URL with trailing dot should be normalized and still rejected if not in allowlist
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS to return public IP for evil.com.
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://evil.com.",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200
+            response_data = response.json()
+            assert response_data["statusCode"] == 400
+            assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 3: Private IP should be rejected even if in allowlist
+        mock_settings.gateway_test_allowed_hosts = ["192.168.1.1"]
+        request_data = {
+            "base_url": "https://192.168.1.1",
+            "path": "/test",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        response_data = response.json()
+        assert response_data["statusCode"] == 400
+        assert response_data["body"]["error"] == "Invalid gateway URL"
+
+        # Test 4: Loopback should be rejected
+        request_data = {
+            "base_url": "https://127.0.0.1",
+            "path": "/test",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["statusCode"] == 400
+
+        # Test 5: Link-local (cloud metadata) should be rejected
+        request_data = {
+            "base_url": "https://169.254.169.254",
+            "path": "/latest/meta-data",
+            "method": "GET",
+        }
+        response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["statusCode"] == 400
+
+    async def test_gateway_test_endpoint_registered_only_mode(self, client: AsyncClient, mock_settings):
+        """Test gateway test endpoint in registered-only mode."""
+        # Configure to only allow registered gateways
+        mock_settings.gateway_test_allow_registered_only = True
+
+        # Test: Cannot test ANY gateway when no gateways are registered
+        with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
+            # Mock DNS for any domain
+            mock_dns.return_value = [(2, 1, 6, "", ("8.8.8.8", 443))]
+
+            request_data = {
+                "base_url": "https://example.com",
+                "path": "/test",
+                "method": "GET",
+            }
+            response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+            assert response.status_code == 200
+            response_data = response.json()
+            # When allowlist is empty (no registered gateways), all requests should be rejected
+            assert response_data["statusCode"] == 400
+            assert response_data["body"]["error"] == "Invalid gateway URL"
 
 
 # -------------------------
