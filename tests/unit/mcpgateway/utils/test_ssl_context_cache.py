@@ -45,6 +45,23 @@ def test_get_cached_ssl_context_caches_by_sha_for_str_and_bytes() -> None:
     ctx.load_verify_locations.assert_called_once()
 
 
+def test_get_cached_ssl_context_with_none_ca_and_client_certs() -> None:
+    """When CA is None but client_cert/client_key are provided, create context without load_verify_locations."""
+    pem_cert = "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"
+    pem_key = _fake_pem_key("FAKEKEY")
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.get_cached_ssl_context(None, client_cert=pem_cert, client_key=pem_key)
+
+    assert result is ctx
+    ctx.load_verify_locations.assert_not_called()
+    ctx.load_cert_chain.assert_called_once()
+    assert mock_create.call_count == 1
+
+
 def test_get_cached_ssl_context_handles_non_string_objects_via_str() -> None:
     class CertObj(SimpleNamespace):
         def __str__(self) -> str:  # pragma: no cover - method invoked by production code
