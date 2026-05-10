@@ -131,11 +131,33 @@ async def test_lifespan_passes_through():
     assert len(messages) == 2
 
 
-@pytest.mark.parametrize("path", ["/sse", "/sse/", "/mcp", "/mcp/", "/servers/abc/sse", "/servers/abc/mcp"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/sse",
+        "/sse/",
+        "/mcp",
+        "/mcp/",
+        "/servers/abc/sse",
+        "/servers/abc/mcp",
+        "/_internal/mcp/transport",
+        "/_internal/mcp/transport/",
+    ],
+)
 @pytest.mark.asyncio
 async def test_self_managed_paths_skipped(path):
-    """SSE and MCP paths are skipped (pass through unchanged)."""
-    middleware = ClientDisconnectMiddleware(_ok_app)
+    """SSE and MCP paths are skipped (receive/send passed through unwrapped)."""
+    received_via: list[str] = []
+
+    async def tracking_app(scope, receive, send):  # type: ignore[no-untyped-def]
+        # Verify we got the original receive/send, not wrapped versions
+        received_via.append("app")
+        msg = await receive()
+        assert msg["type"] == "http.request"
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    middleware = ClientDisconnectMiddleware(tracking_app)
     messages: list[dict] = []
 
     async def send(msg):  # type: ignore[no-untyped-def]
@@ -146,6 +168,7 @@ async def test_self_managed_paths_skipped(path):
     await middleware(scope, receive, send)
 
     assert len(messages) == 2
+    assert received_via == ["app"]
 
 
 @pytest.mark.asyncio
@@ -175,7 +198,7 @@ async def test_cancelled_error_reraised_when_not_disconnect():
 
 @pytest.mark.asyncio
 async def test_task_cleanup_no_orphans():
-    """All tasks are cleaned up in finally block."""
+    """All middleware-created tasks are cleaned up in finally block."""
     middleware = ClientDisconnectMiddleware(_slow_app)
     messages: list[dict] = []
 
@@ -188,11 +211,15 @@ async def test_task_cleanup_no_orphans():
         {"type": "http.disconnect"},
     ])
 
+    # Capture tasks created by the middleware by tracking before/after
+    before_tasks = set(asyncio.all_tasks())
     await middleware(scope, receive, send)
+    after_tasks = set(asyncio.all_tasks())
 
-    # After middleware returns, there should be no pending tasks related to it
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    assert len(pending) == 0
+    # Only middleware-created tasks should be gone; ignore pytest/plugin tasks
+    new_tasks = after_tasks - before_tasks
+    pending_new = [t for t in new_tasks if not t.done()]
+    assert len(pending_new) == 0
 
 
 @pytest.mark.asyncio

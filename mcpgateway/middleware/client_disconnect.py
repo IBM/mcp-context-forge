@@ -38,6 +38,8 @@ logger = LoggingService().get_logger(__name__)
 _SELF_MANAGED_PREFIXES: tuple[str, ...] = (
     "/sse",
     "/mcp",
+    "/servers",
+    "/_internal/mcp",
 )
 
 
