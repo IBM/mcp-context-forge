@@ -88,7 +88,7 @@
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
               {% if tool.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="tools">
                 <input type="hidden" name="activate" value="false" />
                 <button
                   type="submit"
@@ -99,7 +99,7 @@
                 >Deactivate</button>
               </form>
               {% else %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="tools">
                 <input type="hidden" name="activate" value="true" />
                 <button
                   type="submit"
@@ -110,7 +110,7 @@
                 >Activate</button>
               </form>
               {% endif %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'tool', {{ tool.name|tojson_attr }}, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="tool" data-arg1="{{ tool.name|tojson_attr }}" data-arg2="tools">
                 <button
                   type="submit"
                   role="menuitem"

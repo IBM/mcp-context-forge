@@ -104,7 +104,7 @@
           >Export Config</button>
           {% if can_modify %}
           <hr class="border-gray-200 dark:border-gray-600 my-1">
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'servers')">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="servers">
             <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
             <button
               type="submit"
@@ -113,7 +113,7 @@
               class="w-full flex items-center px-4 py-2 text-sm {% if server.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
             >{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
           </form>
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server_label|tojson_attr }}, 'servers')">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="server" data-arg1="{{ server_label|tojson_attr }}" data-arg2="servers">
             <button
               type="submit"
               role="menuitem"

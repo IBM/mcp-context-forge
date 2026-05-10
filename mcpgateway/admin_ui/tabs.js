@@ -254,6 +254,9 @@ export const showTab = function (tabName) {
       return;
     }
 
+    // Update URL hash to reflect the tab change
+    updateHashForTab(tabName);
+
     if (isTabHidden(tabName)) {
       const fallbackTab = getDefaultTabName();
       console.warn(

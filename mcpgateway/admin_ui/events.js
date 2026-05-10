@@ -2,6 +2,7 @@ import { AppState } from "./appState.js";
 import { initializeCACertUpload } from "./caCertificate.js";
 import { overflowMenu } from "./components/overflow-menu.js";
 import { TABLE_TO_ENTITY_TYPE } from "./constants.js";
+import { initializeEventDelegation } from "./eventDelegation.js";
 import { toggleViewPublic, updateFilterStatus } from "./filters.js";
 import { selectTeamFromSelector } from "./formFieldHandlers.js";
 import { setupFormValidation } from "./formValidation.js";
@@ -69,6 +70,9 @@ import {
     --------------------------------------------------------------------------- */
 
     try {
+      // 0. Initialize event delegation system for CSP compliance
+      initializeEventDelegation();
+
       // 1. Initialize Alpine tooltips
       setupTooltipsWithAlpine();
 
