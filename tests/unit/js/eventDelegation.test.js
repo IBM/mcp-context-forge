@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { initializeEventDelegation } from "../../../mcpgateway/admin_ui/eventDelegation.js";
+import { initializeEventDelegation, resetEventDelegation } from "../../../mcpgateway/admin_ui/eventDelegation.js";
 
 describe("eventDelegation", () => {
   let container;
@@ -26,7 +26,8 @@ describe("eventDelegation", () => {
       },
     };
 
-    // Initialize event delegation
+    // Reset and initialize event delegation for each test
+    resetEventDelegation();
     initializeEventDelegation();
   });
 
@@ -152,6 +153,19 @@ describe("eventDelegation", () => {
 
       expect(mockAdminFunction).toHaveBeenCalledTimes(1);
     });
+
+    it("stops propagation when data-stop-propagation is true", () => {
+      const button = document.createElement("button");
+      button.setAttribute("data-action-click", "testFunction");
+      button.setAttribute("data-stop-propagation", "true");
+      container.appendChild(button);
+
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      const stopPropagationSpy = vi.spyOn(event, "stopPropagation");
+      button.dispatchEvent(event);
+
+      expect(stopPropagationSpy).toHaveBeenCalled();
+    });
   });
 
   describe("input events", () => {
@@ -230,7 +244,7 @@ describe("eventDelegation", () => {
       const preventDefaultSpy = vi.spyOn(event, "preventDefault");
       form.dispatchEvent(event);
 
-      expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith("tools", expect.any(Event));
+      expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(expect.any(Event), "tools");
       expect(preventDefaultSpy).toHaveBeenCalled();
     });
 
@@ -403,18 +417,52 @@ describe("eventDelegation", () => {
     });
   });
 
-  describe("initialization", () => {
-    it("logs initialization message", () => {
-      const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  describe("confirmAction", () => {
+    it("prevents default when user cancels confirm", () => {
+      vi.spyOn(window, "confirm").mockReturnValue(false);
+      const event = new Event("submit", { bubbles: true, cancelable: true });
+      const preventDefaultSpy = vi.spyOn(event, "preventDefault");
 
-      // Re-initialize to capture the log
+      window.Admin.confirmAction(event, "Are you sure?");
+
+      expect(preventDefaultSpy).toHaveBeenCalled();
+    });
+
+    it("does not prevent default when user confirms", () => {
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const event = new Event("submit", { bubbles: true, cancelable: true });
+      const preventDefaultSpy = vi.spyOn(event, "preventDefault");
+
+      const result = window.Admin.confirmAction(event, "Are you sure?");
+
+      expect(preventDefaultSpy).not.toHaveBeenCalled();
+      expect(result).toBe(true);
+    });
+  });
+
+  describe("initialization", () => {
+    it("is idempotent - does not duplicate listeners", () => {
+      window.Admin.idempotentTest = vi.fn();
+
+      const button = document.createElement("button");
+      button.setAttribute("data-action-click", "idempotentTest");
+      container.appendChild(button);
+
+      button.click();
+      expect(window.Admin.idempotentTest).toHaveBeenCalledTimes(1);
+
+      // Re-initialize should be a no-op
       initializeEventDelegation();
 
-      expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Event delegation system initialized for CSP compliance")
-      );
+      button.click();
+      expect(window.Admin.idempotentTest).toHaveBeenCalledTimes(2);
 
-      consoleLogSpy.mockRestore();
+      delete window.Admin.idempotentTest;
+    });
+
+    it("attaches confirmAction to window.Admin", () => {
+      expect(window.Admin.confirmAction).toBeDefined();
+      expect(typeof window.Admin.confirmAction).toBe("function");
     });
   });
 });

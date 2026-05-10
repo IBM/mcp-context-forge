@@ -21,9 +21,6 @@ if (window.htmxConfig && window.htmxConfig.inlineScriptNonce) {
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
 
-// Event Delegation System - Initialize early for CSP compliance
-import { initializeEventDelegation } from "./eventDelegation.js";
-
 // Get reference to the Admin namespace
 const Admin = window.Admin;
 
