@@ -1475,6 +1475,41 @@ class TestOAuthManager:
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=client_cert, client_key=client_key)
 
     @pytest.mark.asyncio
+    async def test_client_credentials_flow_with_client_certificate_only(self):
+        """Test client credentials flow still uses mTLS when no custom CA is configured."""
+        manager = OAuthManager()
+        credentials = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+        }
+        _, mock_ssl_context, mock_client, _, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "mtls_token"})
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", return_value=mock_ssl_context) as mock_get_ssl:
+            with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client):
+                result = await manager.get_access_token(credentials, client_cert=client_cert, client_key=client_key)
+                assert result == "mtls_token"
+                mock_get_ssl.assert_called_once_with(None, client_cert=client_cert, client_key=client_key)
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_flow_with_partial_mtls_config_raises(self):
+        """Test mTLS validation runs when only one client certificate field is configured."""
+        manager = OAuthManager()
+        credentials = {
+            "grant_type": "client_credentials",
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+        }
+        _, _, _, _, client_cert, _ = self._make_ca_cert_mocks()
+
+        with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", side_effect=ValueError("mTLS requires both client_cert and client_key")):
+            with patch.object(manager, "_get_client", side_effect=RuntimeError("shared client should not be used")):
+                with pytest.raises(ValueError, match="mTLS requires both"):
+                    await manager.get_access_token(credentials, client_cert=client_cert)
+
+    @pytest.mark.asyncio
     async def test_refresh_token_with_ca_certificate(self):
         """Test refresh token with custom CA certificate."""
         manager = OAuthManager()

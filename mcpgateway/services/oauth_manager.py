@@ -244,13 +244,19 @@ class OAuthManager:
     async def _post_token_request(
         self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
     ) -> httpx.Response:
-        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+        """POST to a token endpoint, using a custom SSL context when CA certs or mTLS are provided.
 
-        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
-        is created with the corresponding SSL context so that OAuth token
-        exchange works against self-signed or custom-CA upstream servers.
+        When ``ca_certificate``, ``client_cert``, or ``client_key`` is supplied,
+        an isolated ``httpx.AsyncClient`` is created with the corresponding SSL
+        context so that OAuth token exchange works against self-signed or
+        custom-CA upstream servers and/or presents client certificates for mTLS.
         Otherwise the shared HTTP client (which respects the global
         ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Note:
+            When only ``client_cert``/``client_key`` are provided (no custom CA),
+            the isolated client uses the system's default trust store and does
+            not honour ``SKIP_SSL_VERIFY``.
 
         Args:
             url: Token endpoint URL.
@@ -263,7 +269,7 @@ class OAuthManager:
         Returns:
             The HTTP response from the token endpoint.
         """
-        if ca_certificate:
+        if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
                 return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
@@ -1418,9 +1424,10 @@ class OAuthManager:
             code: Authorization code from callback
             code_verifier: Optional PKCE code verifier (RFC 7636)
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
-                When provided, creates an isolated HTTP client with custom SSL context
-                instead of using the shared client. This enables OAuth token exchange
-                with self-signed or custom CA upstream OAuth servers.
+                When provided along with ``client_cert``/``client_key``, creates an
+                isolated HTTP client with custom SSL context instead of using the
+                shared client. This enables OAuth token exchange with self-signed or
+                custom CA upstream OAuth servers and/or mTLS authentication.
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
 
