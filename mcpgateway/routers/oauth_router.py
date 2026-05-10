@@ -463,11 +463,11 @@ async def initiate_oauth_flow(
                     logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
+                        detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
-                    raise HTTPException(status_code=500, detail=f"Failed to register OAuth client: {str(dcr_ex)}")
+                    raise HTTPException(status_code=500, detail="Failed to register OAuth client")
             else:
                 # DCR is disabled or auto-register is off
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
@@ -494,7 +494,7 @@ async def initiate_oauth_flow(
         raise
     except Exception as e:
         logger.error(f"Failed to initiate OAuth flow: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to initiate OAuth flow: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to initiate OAuth flow")
 
 
 @oauth_router.get("/callback")
@@ -875,7 +875,7 @@ async def get_oauth_status(
         raise
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get OAuth status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
@@ -923,10 +923,10 @@ async def fetch_tools_after_oauth(
     except GatewayConnectionError as e:
         # Configuration or token claim mismatch — 400 so operators know to fix oauth_config
         logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to fetch tools")
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch tools")
 
 
 # ============================================================================
@@ -983,7 +983,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 
     except Exception as e:
         logger.error(f"Failed to list registered OAuth clients: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to list registered clients: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list registered clients")
 
 
 @oauth_router.get("/registered-clients/{gateway_id}")
@@ -1036,7 +1036,7 @@ async def get_registered_client_for_gateway(
         raise
     except Exception as e:
         logger.error(f"Failed to get registered client for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get registered client: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get registered client")
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
@@ -1089,4 +1089,4 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     except Exception as e:
         logger.error(f"Failed to delete registered client {client_id}: {e}")
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to delete registered client: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete registered client")

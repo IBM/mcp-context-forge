@@ -6715,7 +6715,7 @@ class TestImportConfigurationEndpoints:
             await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 400
-        assert "Import validation failed" in str(excinfo.value.detail)
+        assert "Import failed" in str(excinfo.value.detail)
 
     @patch.object(ImportService, "import_configuration")
     async def test_admin_import_configuration_with_user_dict(self, mock_import_config, mock_request, mock_db):

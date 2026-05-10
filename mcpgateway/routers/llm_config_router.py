@@ -103,7 +103,7 @@ async def create_provider(
         logger.error(f"Failed to create LLM provider: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create provider: {str(e)}",
+            detail="Failed to create provider",
         )
 
 
