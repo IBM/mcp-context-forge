@@ -1348,7 +1348,6 @@ class SecurityValidator:
         """
         # Third-Party
         import idna  # pylint: disable=import-outside-toplevel
-        import re  # pylint: disable=import-outside-toplevel
 
         # Handle wildcard patterns separately
         wildcard_prefix = ""
@@ -1381,9 +1380,9 @@ class SecurityValidator:
             pass  # Not a valid IDN domain, fall through to RFC 1123
 
         # IDN failed — validate as RFC 1123 hostname (allows underscores for internal names)
-        _RFC1123_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
+        _rfc1123_label_re = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
         labels = hostname_normalized.split(".")
-        if all(_RFC1123_LABEL_RE.match(label) for label in labels if label):
+        if all(_rfc1123_label_re.match(label) for label in labels if label):
             return wildcard_prefix + hostname_normalized
 
         raise ValueError(f"Invalid hostname: {hostname}")
