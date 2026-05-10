@@ -67,6 +67,8 @@ from mcpgateway import version as version_module
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.auth_context import get_scoped_resource_access_context
+# Re-export canonical get_user_email from auth_context for backward compatibility.
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -1032,61 +1034,6 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         return wrapper
 
     return decorator
-
-
-def get_user_email(user: Union[str, dict, object] = None) -> str:
-    """Return the user email from a JWT payload, user object, or string.
-
-    Args:
-        user (Union[str, dict, object], optional): User object from JWT token
-            (from get_current_user_with_permissions). Can be:
-            - dict: representing JWT payload
-            - object: with an `email` attribute
-            - str: an email string
-            - None: will return "unknown"
-            Defaults to None.
-
-    Returns:
-        str: User email address, or "unknown" if no email can be determined.
-             - If `user` is a dict, returns `sub` if present, else `email`, else "unknown".
-             - If `user` has an `email` attribute, returns that.
-             - If `user` is a string, returns it.
-             - If `user` is None, returns "unknown".
-             - Otherwise, returns str(user).
-
-    Examples:
-        >>> get_user_email({'sub': 'alice@example.com'})
-        'alice@example.com'
-        >>> get_user_email({'email': 'bob@company.com'})
-        'bob@company.com'
-        >>> get_user_email({'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'})
-        'charlie@primary.com'
-        >>> get_user_email({'username': 'dave'})
-        'unknown'
-        >>> class MockUser:
-        ...     def __init__(self, email):
-        ...         self.email = email
-        >>> get_user_email(MockUser('eve@test.com'))
-        'eve@test.com'
-        >>> get_user_email(None)
-        'unknown'
-        >>> get_user_email('grace@example.org')
-        'grace@example.org'
-        >>> get_user_email({})
-        'unknown'
-        >>> get_user_email(12345)
-        '12345'
-    """
-    if isinstance(user, dict):
-        return user.get("sub") or user.get("email") or "unknown"
-
-    if hasattr(user, "email"):
-        return user.email
-
-    if user is None:
-        return "unknown"
-
-    return str(user)
 
 
 def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
