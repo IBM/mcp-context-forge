@@ -3115,8 +3115,31 @@ Disallow: /
         "application/octet-stream",
     ]
 
-    # Rate limiting
-    validation_max_requests_per_minute: int = 60
+    # Rate limiting - Redis-backed sliding window
+    rate_limiting_enabled: bool = Field(default=True, description="Enable Redis-backed rate limiting middleware")
+    rate_limiting_redis_enabled: bool = Field(default=True, description="Use Redis for rate limiting (fallback to in-memory if unavailable)")
+
+    # Backward compatibility (used by tests)
+    validation_max_requests_per_minute: int = Field(default=60, description="Backward compatibility for tests")
+
+    # Tier-based rate limits (requests per minute)
+    # CRITICAL: Auth endpoints (login, register, password reset)
+    rate_limit_critical_rpm: int = Field(default=10, description="CRITICAL tier: Auth endpoints")
+    rate_limit_critical_burst: int = Field(default=0, description="CRITICAL tier: No burst allowance")
+    # HIGH: Token management, admin, OAuth
+    rate_limit_high_rpm: int = Field(default=30, description="HIGH tier: Token/admin endpoints")
+    rate_limit_high_burst: int = Field(default=0, description="HIGH tier: No burst allowance")
+    # MEDIUM: MCP, tools, LLM chat (reuse tool_rate_limit)
+    rate_limit_medium_rpm: int = Field(default=100, description="MEDIUM tier: MCP/tools (previously tool_rate_limit)")
+    rate_limit_medium_burst: int = Field(default=20, description="MEDIUM tier: Burst allowance for API clients")
+    # LOW: Health checks, metrics, static content
+    rate_limit_low_rpm: int = Field(default=500, description="LOW tier: Health/metrics")
+    rate_limit_low_burst: int = Field(default=100, description="LOW tier: Burst allowance")
+
+    # Lockout configuration
+    rate_limit_lockout_enabled: bool = Field(default=True, description="Enable temporary lockout after excessive violations")
+    rate_limit_lockout_threshold: int = Field(default=5, description="Violations before account lockout")
+    rate_limit_lockout_duration_minutes: int = Field(default=15, description="Lockout duration in minutes")
 
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")

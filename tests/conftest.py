@@ -89,6 +89,7 @@ def _force_minimal_main_app_features() -> None:
     os.environ.setdefault("MCPGATEWAY_ADMIN_API_ENABLED", "false")
     os.environ.setdefault("MCPGATEWAY_UI_ENABLED", "false")
     os.environ.setdefault("LLMCHAT_ENABLED", "false")
+    os.environ.setdefault("RATE_LIMITING_ENABLED", "false")
 
     # Defensive: if any import above already populated the settings cache,
     # clear it so subsequent reads reflect the values we just set.
