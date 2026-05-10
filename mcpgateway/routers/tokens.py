@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -146,7 +147,7 @@ async def create_token(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenCreateResponse:
-    """Create a new API token for the current user.
+    """Create a new API token for the current user or another user (admin only).
 
     Args:
         request: Token creation request with name, description, scoping, etc.
@@ -157,7 +158,7 @@ async def create_token(
         TokenCreateResponse: Created token details with raw token
 
     Raises:
-        HTTPException: If token name already exists or validation fails
+        HTTPException: If token name already exists, validation fails, or insufficient permissions
 
     Examples:
         >>> import asyncio
@@ -165,6 +166,40 @@ async def create_token(
         True
     """
     _require_authenticated_session(current_user)
+
+    caller_email = get_user_email(current_user)
+
+    # Determine target user for token creation.
+    # When the caller passes their own email (even with different casing),
+    # use the canonical caller_email to avoid case-drift in the database.
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        target_user_email = request.user_email
+    else:
+        target_user_email = caller_email
+
+    # If creating token for different user, require un-narrowed platform admin
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        # Require platform admin privilege
+        if not current_user.get("is_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required to create tokens for other users",
+            )
+
+        # Require un-narrowed admin access (token_teams=None)
+        # Narrowed admin sessions cannot delegate token creation
+        token_teams = current_user.get("token_teams")
+        if token_teams is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin-delegated token creation requires un-narrowed admin access. Your session is narrowed to specific teams.",
+            )
+
+        logger.info(
+            "Admin %s creating token for user %s",
+            caller_email,
+            target_user_email,
+        )
 
     # Auto-inherit team_id from the caller's single team when not explicitly provided.
     # This prevents tokens from being silently scoped to public-only (team_id=None)
@@ -204,7 +239,7 @@ async def create_token(
 
     try:
         token_record, raw_token = await service.create_token(
-            user_email=current_user["email"],
+            user_email=target_user_email,
             name=request.name,
             description=request.description,
             scope=scope,
@@ -216,6 +251,7 @@ async def create_token(
             caller_token_teams=caller_token_teams,
             caller_token_teams_provided=True,
             is_active=request.is_active,
+            caller_email=caller_email,
         )
 
         # Create TokenResponse for the token info
@@ -738,6 +774,40 @@ async def create_team_token(
     """
     _require_authenticated_session(current_user)
 
+    caller_email = get_user_email(current_user)
+
+    # Determine target user for token creation.
+    # When the caller passes their own email (even with different casing),
+    # use the canonical caller_email to avoid case-drift in the database.
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        target_user_email = request.user_email
+    else:
+        target_user_email = caller_email
+
+    # If creating token for different user, require un-narrowed platform admin
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        # Require platform admin privilege
+        if not current_user.get("is_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required to create tokens for other users",
+            )
+
+        # Require un-narrowed admin access (token_teams=None)
+        # Narrowed admin sessions cannot delegate token creation
+        token_teams = current_user.get("token_teams")
+        if token_teams is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin-delegated token creation requires un-narrowed admin access. Your session is narrowed to specific teams.",
+            )
+
+        logger.info(
+            "Admin %s creating team token for user %s",
+            caller_email,
+            target_user_email,
+        )
+
     service = TokenCatalogService(db)
 
     # CRITICAL: Always fetch caller_permissions for admin bypass check.
@@ -761,7 +831,7 @@ async def create_team_token(
 
     try:
         token_record, raw_token = await service.create_token(
-            user_email=current_user["email"],
+            user_email=target_user_email,
             name=request.name,
             description=request.description,
             scope=scope,
@@ -773,6 +843,7 @@ async def create_team_token(
             caller_token_teams=caller_token_teams,
             caller_token_teams_provided=True,
             is_active=request.is_active,
+            caller_email=caller_email,
         )
 
         # Create TokenResponse for the token info

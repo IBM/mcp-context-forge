@@ -387,6 +387,7 @@ class TokenCatalogService:
         caller_token_teams: Optional[List[str]] = None,
         caller_token_teams_provided: bool = False,
         is_active: bool = True,
+        caller_email: Optional[str] = None,
     ) -> tuple[EmailApiToken, str]:
         """
         Create a new API token with team-level scoping and additional configurations.
@@ -426,6 +427,9 @@ class TokenCatalogService:
                 admin bypass, even if they pass ``is_admin=True`` and ``caller_permissions=["*"]``. Routers
                 that intend to allow the bypass must set this to ``True`` (default is False).
             is_active (bool): Whether the token should be created as active (default is True).
+            caller_email (Optional[str]): The email of the caller creating the token. When admin delegation
+                is used (``user_email != caller_email``), team membership checks are enforced even for
+                unrestricted admins to prevent privilege escalation.
 
         Returns:
             tuple[EmailApiToken, str]: A tuple where the first element is the `EmailApiToken` database record and
@@ -489,7 +493,9 @@ class TokenCatalogService:
             # for this contract from accidentally satisfying the bypass.
             is_unrestricted_admin = is_admin and caller_token_teams_provided and caller_token_teams is None and caller_permissions is not None and caller_permissions == ["*"]
 
-            if not is_unrestricted_admin:
+            # When delegating (caller_email != user_email), enforce team membership
+            # even for unrestricted admins to prevent privilege escalation.
+            if not is_unrestricted_admin or (caller_email and caller_email != user_email):
                 # Verify user is an active member of the team
                 membership = self.db.execute(
                     select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
