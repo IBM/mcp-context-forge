@@ -49,9 +49,9 @@ def mock_request():
                 "name": "test_server",
                 "description": "Test description",
                 "icon": "http://example.com/icon.png",
-                "associatedTools": ["1", "2"],
-                "associatedResources": ["3"],
-                "associatedPrompts": ["4"],
+                "associatedTools": ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002"],  # pragma: allowlist secret
+                "associatedResources": ["550e8400e29b41d4a716446655440003"],  # pragma: allowlist secret
+                "associatedPrompts": ["550e8400e29b41d4a716446655440004"],  # pragma: allowlist secret
                 "is_inactive_checked": "false",
                 "visibility": "private",
             }
@@ -213,7 +213,7 @@ class TestAdminEditServerErrors:
                     "name": "updated_server",
                     "description": "Updated description",
                     "icon": "http://example.com/icon.png",
-                    "associatedTools": ["1"],
+                    "associatedTools": ["550e8400e29b41d4a716446655440001"],  # pragma: allowlist secret
                     "associatedResources": [],
                     "associatedPrompts": [],
                     "is_inactive_checked": "false",
