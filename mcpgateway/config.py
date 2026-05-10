@@ -503,6 +503,7 @@ class Settings(BaseSettings):
         description="Enable experimental Rust native extension for request logging sensitive-data masking",
     )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    client_disconnect_middleware_enabled: bool = Field(default=True, description="Enable client disconnect middleware to cancel handlers on connection close")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
