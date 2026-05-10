@@ -831,7 +831,7 @@ async def update_user_deprecated(
     result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
     deprecation_date = "@" + str(int(datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC).timestamp()))
     response.headers["Deprecation"] = deprecation_date
-    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 UTC"
+    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 GMT"
     return result
 
 

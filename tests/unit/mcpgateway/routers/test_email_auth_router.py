@@ -650,17 +650,14 @@ async def test_admin_get_update_delete_user():
             admin_origin_source="api",
         )
         assert response_input.headers["deprecation"] == "@1775001599"
-        assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 UTC"
+        assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 GMT"
         #----------->
 
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert delete_response.success is True
 
         #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
-        if datetime(2026, 8, 16, 23, 59, 59) < datetime.now():
-            pytest.xfail("Time to remove this code visit #2754")
-        else:
-            assert datetime(2026, 8, 16, 23, 59, 59) > datetime.now(), "Will soon deprecate"
+        assert datetime.now(timezone.utc) < datetime(2026, 8, 16, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
         #----------->
 
 
