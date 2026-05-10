@@ -462,3 +462,72 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
     if token_teams is None:
         return user_email, []
     return user_email, token_teams
+
+
+def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any]]) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve scoped visibility from a user_context dict (StreamableHTTP transport).
+
+    This is the Layer-1 entry point for MCP handlers in the StreamableHTTP
+    transport that operate on a ``user_context`` dict rather than a FastAPI
+    ``Request`` object. It applies the same admin-bypass + public-only-secure-default
+    semantics as :func:`get_scoped_resource_access_context`.
+
+    SECURITY: Empty or ``None`` contexts return ``(None, [])`` (public-only secure
+    default), NOT ``(None, None)`` (admin bypass). This prevents unauthenticated
+    StreamableHTTP requests from widening visibility beyond public rows.
+
+    Args:
+        user_context: User context dict from StreamableHTTP auth layer, or ``None``
+            for unauthenticated requests.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` where:
+
+        - ``(None, None)``: admin bypass (authenticated admin with unrestricted token)
+        - ``(None, [])``: unauthenticated or empty context (public-only secure default)
+        - ``(email, [])``: authenticated public-only token
+        - ``(email, ["team-a", ...])``: authenticated team-scoped token
+
+    Examples:
+        >>> # Admin with unrestricted token
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": None, "is_admin": True})
+        (None, None)
+        >>> # Admin with missing teams key (secure default)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Admin with public-only token (narrowed)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": [], "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Regular user with team access
+        >>> get_scoped_visibility_from_user_context({"email": "user@x.com", "teams": ["t1"], "is_admin": False})
+        ('user@x.com', ['t1'])
+        >>> # Unauthenticated request (secure default)
+        >>> get_scoped_visibility_from_user_context(None)
+        (None, [])
+        >>> # Empty context (secure default)
+        >>> get_scoped_visibility_from_user_context({})
+        (None, [])
+    """
+    # SECURITY: Empty or None context returns public-only, not admin bypass.
+    if not user_context:
+        return None, []
+
+    user_email = user_context.get("email")
+    is_admin = user_context.get("is_admin", False)
+
+    # Distinguish missing "teams" key from explicit teams=None
+    if "teams" not in user_context:
+        return user_email, []
+
+    token_teams = user_context["teams"]
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
+        return None, None
+
+    # Non-admin without teams = public-only (secure default)
+    if token_teams is None:
+        return user_email, []
+
+    return user_email, token_teams
