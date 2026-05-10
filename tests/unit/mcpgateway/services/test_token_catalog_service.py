@@ -728,6 +728,91 @@ class TestTokenCatalogService:
             )
 
     @pytest.mark.asyncio
+    async def test_create_token_admin_delegation_enforces_team_membership(self, token_service, mock_db, mock_user, mock_team):
+        """Admin delegation enforces team membership even for unrestricted admins.
+
+        Security invariant: when caller_email != user_email, the target user must
+        be an active team member. Unrestricted admins cannot delegate tokens for
+        users who are not team members.
+        """
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,  # User exists
+            mock_team,  # Team exists
+            None,  # Target user is NOT a team member
+        ]
+
+        with pytest.raises(ValueError, match="User test@example.com is not an active member of team team-123"):
+            await token_service.create_token(
+                user_email="test@example.com",
+                name="Delegated Token",
+                team_id="team-123",
+                caller_permissions=["*"],
+                is_admin=True,
+                caller_token_teams=None,
+                caller_token_teams_provided=True,
+                caller_email="admin@example.com",  # Delegation: caller != target
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_token_admin_delegation_succeeds_for_team_member(self, token_service, mock_db, mock_user, mock_team):
+        """Admin delegation succeeds when target user is an active team member."""
+        mock_membership = MagicMock()
+        mock_membership.is_active = True
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,  # User exists
+            mock_team,  # Team exists
+            mock_membership,  # Target user IS a team member
+            None,  # No existing token with same name
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
+            mock_gen_token.return_value = "jwt_delegated_token"
+
+            token, raw_token = await token_service.create_token(
+                user_email="test@example.com",
+                name="Delegated Member Token",
+                team_id="team-123",
+                caller_permissions=["*"],
+                is_admin=True,
+                caller_token_teams=None,
+                caller_token_teams_provided=True,
+                caller_email="admin@example.com",
+                expires_in_days=30,
+            )
+
+            assert raw_token == "jwt_delegated_token"
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.user_email == "test@example.com"
+            assert added_token.team_id == "team-123"
+
+    @pytest.mark.asyncio
+    async def test_create_token_admin_self_creation_bypasses_membership(self, token_service, mock_db, mock_user, mock_team):
+        """Unrestricted admin creating token for themselves still bypasses membership check."""
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,  # User exists
+            mock_team,  # Team exists
+            None,  # Membership check skipped
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
+            mock_gen_token.return_value = "jwt_admin_self_token"
+
+            token, raw_token = await token_service.create_token(
+                user_email="admin@example.com",
+                name="Admin Self Token",
+                team_id="team-123",
+                caller_permissions=["*"],
+                is_admin=True,
+                caller_token_teams=None,
+                caller_token_teams_provided=True,
+                caller_email="admin@example.com",  # Self: caller == target
+                expires_in_days=30,
+            )
+
+            assert raw_token == "jwt_admin_self_token"
+
+    @pytest.mark.asyncio
     async def test_create_token_with_scope(self, token_service, mock_db, mock_user, token_scope):
         """Test create_token method with TokenScope."""
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [

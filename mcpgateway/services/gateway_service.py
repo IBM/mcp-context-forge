@@ -105,6 +105,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.pagination import unified_paginate
@@ -2795,7 +2796,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if visibility == "public":
             return True
 
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return visibility != "private"
 
         if not user_email:
@@ -2914,7 +2915,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 user_email=user_email,
                 custom_fields={
                     "visibility": getattr(gateway, "visibility", None),
-                    "admin_bypass": user_email is None and token_teams is None,
+                    "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                 },
             )
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")

@@ -90,7 +90,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -2842,9 +2842,10 @@ class ToolService(BaseService):
             if not include_inactive:
                 query = query.where(DbTool.enabled)
 
-            # Add visibility filtering if user context OR token_teams provided
-            # This ensures unauthenticated requests with token_teams=[] only see public tools
-            if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
+            # Admin bypass: skip visibility filtering entirely for unrestricted admin calls
+            if is_admin_bypass_granted(db, user_email, token_teams):
+                pass  # No visibility filter — admin sees all tools
+            elif user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
                 # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
                 if token_teams is not None:
                     team_ids = token_teams
