@@ -178,6 +178,18 @@ class TestA2AVisibleAgentIds:
         assert "team-1" in result
         assert "private-1" not in result
 
+        # Verify the query was filtered to public + team only
+        filter_calls = mock_query.filter.call_args_list
+        assert len(filter_calls) >= 1
+        all_compiled = " ".join(
+            str(arg.compile(compile_kwargs={"literal_binds": True}))
+            for c in filter_calls
+            for arg in c.args
+        )
+        assert "visibility" in all_compiled
+        assert "public" in all_compiled or "'public'" in all_compiled
+        assert "team" in all_compiled or "'team'" in all_compiled
+
     def test_public_only_token_returns_public_agents(self, a2a_service, mock_db):
         """Public-only token (token_teams=[]) should only see public agents."""
         public_agent = create_mock_agent(visibility="public")
@@ -194,6 +206,16 @@ class TestA2AVisibleAgentIds:
         assert result is not None
         assert isinstance(result, list)
         # The actual filtering happens in the query, we just verify it returns a list
+
+        filter_calls = mock_query.filter.call_args_list
+        assert len(filter_calls) >= 1
+        all_compiled = " ".join(
+            str(arg.compile(compile_kwargs={"literal_binds": True}))
+            for c in filter_calls
+            for arg in c.args
+        )
+        assert "visibility" in all_compiled
+        assert "public" in all_compiled or "'public'" in all_compiled
 
     def test_team_scoped_token_returns_team_and_public_agents(self, a2a_service, mock_db):
         """Team-scoped token should see public + team agents."""
@@ -212,6 +234,16 @@ class TestA2AVisibleAgentIds:
 
         assert result is not None
         assert isinstance(result, list)
+
+        filter_calls = mock_query.filter.call_args_list
+        assert len(filter_calls) >= 1
+        all_compiled = " ".join(
+            str(arg.compile(compile_kwargs={"literal_binds": True}))
+            for c in filter_calls
+            for arg in c.args
+        )
+        assert "visibility" in all_compiled
+        assert "team_id" in all_compiled
 
 
 class TestA2AListTasksFiltering:
@@ -247,7 +279,7 @@ class TestA2AListTasksFiltering:
         # Track which query is being created
         query_call_count = [0]
 
-        def query_side_effect(model_or_column):
+        def query_side_effect(_model_or_column):
             query_call_count[0] += 1
             # First call is for _visible_agent_ids (DbA2AAgent.id)
             if query_call_count[0] == 1:
@@ -265,6 +297,8 @@ class TestA2AListTasksFiltering:
             limit=100,
             offset=0
         )
+
+        assert any("IN" in str(arg) for call in mock_task_query.filter.call_args_list for arg in call.args), "Task query should filter by agent IDs"
 
         # Verify that _visible_agent_ids was called and returned a filtered list
         assert isinstance(result, list)
