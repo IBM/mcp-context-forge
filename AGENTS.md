@@ -151,7 +151,7 @@ ContextForge implements a **two-layer security model**:
 **Canonical Email Precedence**: All user-email extraction helpers use a consistent **email-over-sub** precedence order to ensure forensic accuracy across visibility checks and audit logs:
 
 - When a user dict contains both `email` and `sub` keys, `email` takes precedence
-- The canonical implementation is [`get_user_email()`](mcpgateway/auth_context.py:136) in `mcpgateway/auth_context.py`
+- The canonical implementation is `get_user_email()` in `mcpgateway/auth_context.py`
 - All other helpers (including `admin.get_user_email`) re-export or delegate to this canonical implementation
 - This ensures that the identity used for RBAC evaluation matches the identity logged in audit trails
 

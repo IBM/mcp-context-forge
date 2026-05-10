@@ -134,7 +134,7 @@ _INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
 _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 
-def get_user_email(user):
+def get_user_email(user: Any) -> str:
     """Extract email from user object, handling both string and dict formats.
 
     Args:
@@ -175,13 +175,15 @@ def get_user_email(user):
         >>> get_user_email(False)
         'unknown'
     """
-    if not user:
+    if user is None:
         return "unknown"
     if isinstance(user, dict):
         return user.get("email") or user.get("sub") or "unknown"
     if hasattr(user, "email"):
-        return user.email
-    return str(user) if user else "unknown"
+        return getattr(user, "email") or "unknown"
+    if not user:
+        return "unknown"
+    return str(user)
 
 
 def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:

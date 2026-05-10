@@ -9,9 +9,6 @@ and consistency across visibility checks and audit logs.
 # Standard
 from unittest.mock import MagicMock
 
-# Third-Party
-import pytest
-
 # First-Party
 from mcpgateway import admin
 from mcpgateway import auth_context
@@ -98,12 +95,47 @@ class TestEmailSubPrecedenceConsistency:
         assert admin_result == "unknown"
         assert rpc_email is None  # get_rpc_filter_context returns None for "unknown"
 
-    def test_canonical_order_documented_in_docstring(self):
-        """Verify that the canonical get_user_email documents email-over-sub precedence."""
-        docstring = auth_context.get_user_email.__doc__
-        assert docstring is not None
-        # Check that the docstring includes an example showing email-over-sub precedence
-        assert "email" in docstring.lower()
-        assert "sub" in docstring.lower()
-        # The docstring should show that when both are present, email wins
-        assert "admin@example.com" in docstring and "ignored@example.com" in docstring
+    def test_object_with_email_resolves_consistently(self):
+        """Verify that object with email attribute is handled consistently."""
+        from types import SimpleNamespace
+
+        user_obj = SimpleNamespace(email="object@example.com")
+
+        auth_context_result = auth_context.get_user_email(user_obj)
+        admin_result = admin.get_user_email(user_obj)
+
+        mock_request = MagicMock()
+        mock_request.state = MagicMock()
+        mock_request.state._jwt_verified_payload = None
+        mock_request.state.token_teams = []
+
+        rpc_email, _, _ = auth_context.get_rpc_filter_context(mock_request, user_obj)
+
+        assert auth_context_result == "object@example.com"
+        assert admin_result == "object@example.com"
+        assert rpc_email == "object@example.com"
+
+    def test_object_with_falsy_email_returns_unknown(self):
+        """Verify that object with falsy/empty email falls back to unknown."""
+        from types import SimpleNamespace
+
+        user_obj = SimpleNamespace(email="")
+
+        assert auth_context.get_user_email(user_obj) == "unknown"
+        assert admin.get_user_email(user_obj) == "unknown"
+
+    def test_falsy_object_with_email_still_resolves(self):
+        """Verify that falsy object with valid email attribute still resolves."""
+        class FalsyUser:
+            """A user class that evaluates to False in boolean context."""
+            def __init__(self, email):
+                self.email = email
+
+            def __bool__(self):
+                return False
+
+        user_obj = FalsyUser("falsy@example.com")
+        assert bool(user_obj) is False
+
+        assert auth_context.get_user_email(user_obj) == "falsy@example.com"
+        assert admin.get_user_email(user_obj) == "falsy@example.com"

@@ -66,7 +66,9 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context
+# Re-export canonical get_user_email from auth_context for backward compatibility.
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -1032,11 +1034,6 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         return wrapper
 
     return decorator
-
-
-# Re-export canonical get_user_email from auth_context for backward compatibility.
-# This ensures consistent email-over-sub precedence across the codebase.
-# The implementation is now in mcpgateway/auth_context.py:136-181
 
 
 def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
