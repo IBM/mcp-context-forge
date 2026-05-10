@@ -491,7 +491,7 @@ class A2AAgentService(BaseService):
 
         Access rules (matching tools/resources/prompts):
         - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
+        - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
         - No user context (but not admin): Deny access to non-public agents
         - team visibility: Allowed if agent.team_id in token_teams
         - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
@@ -500,7 +500,7 @@ class A2AAgentService(BaseService):
             db: Database session for admin lookup
             agent: The agent to check access for
             user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
+            token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
 
         Returns:
             True if access allowed, False otherwise.
@@ -532,11 +532,14 @@ class A2AAgentService(BaseService):
             return True
 
         # Team agents: check team membership
-        # token_teams=None means admin bypass — allow all team agents
+        # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
         # ([] already handled by public-only check above)
         if agent.visibility == "team":
             if token_teams is None:
-                return True
+                # Upstream token normalization prevents non-admins from reaching
+                # this state, but defend-in-depth: only admins get the unscoped
+                # team bypass here.
+                return is_user_admin(db, user_email)
             return agent.team_id in token_teams
 
         return False
@@ -546,11 +549,10 @@ class A2AAgentService(BaseService):
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
-    ) -> Optional[List[str]]:
-        """Return IDs of agents visible to the caller, or None for admin bypass.
+    ) -> List[str]:
+        """Return IDs of agents visible to the caller.
 
-        Used by list_tasks to scope results to agents the caller can see.
-        Returns None when the caller has unrestricted (admin) access.
+        Used by list_tasks and list_push_configs_for_dispatch.
         Pushes visibility filtering into SQL to avoid loading all agents.
 
         Note: admin bypass here requires BOTH token_teams=None AND
@@ -560,30 +562,35 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
 
-        PR #4341: only the unscoped admin shape (user_email=None AND
-        token_teams=None) returns ``None``. DB-resolved admin sessions
-        ((email, None) shape) fall through to the SQL filter below, which
-        already enforces public + team + own-private. Using
-        ``is_admin_bypass_granted`` here would let DB admins bypass the
-        per-agent visibility filter and enumerate other users' private
-        agents via list_tasks / list_push_configs_for_dispatch.
+        PR #4341: Admin bypass (user_email=None AND token_teams=None) returns
+        agent IDs for public + team visibility only, explicitly excluding
+        private agents. This aligns with the post-#4341 invariant: admin bypass
+        must not grant visibility to another user's private resources.
         """
+        # Admin bypass: return public + team agents only (exclude private)
         if user_email is None and token_teams is None:
-            return None
+            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility.in_(["public", "team"]))
+            return [row[0] for row in query.all()]
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
+        caller_is_admin = token_teams is None and user_email is not None and is_user_admin(db, user_email)
 
         is_public_only = not user_email or (token_teams is not None and len(token_teams) == 0)
         if not is_public_only:
             if token_teams is not None and len(token_teams) > 0:
                 visibility_filters.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(token_teams)))
-            elif token_teams is None:
+            elif token_teams is None and caller_is_admin:
                 # token_teams is None with user_email set → admin with email context
                 visibility_filters.append(DbA2AAgent.visibility == "team")
-            visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
+            elif token_teams is None:
+                # Non-admin with token_teams=None should not see all team agents.
+                # The user_email check below still grants own-private access.
+                pass
+            if user_email:
+                visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
 
         query = query.filter(or_(*visibility_filters))
         return [row[0] for row in query.all()]
@@ -941,8 +948,9 @@ class A2AAgentService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
             team_id: Optional team ID to filter by specific team.
             visibility: Optional visibility filter (private, team, public).
 
@@ -1188,8 +1196,9 @@ class A2AAgentService(BaseService):
             agent_id: Agent ID.
             include_inactive: Whether to include inactive a2a agents.
             user_email: User's email for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
 
         Returns:
             Agent data.
@@ -1293,8 +1302,8 @@ class A2AAgentService(BaseService):
             db: Database session.
             agent_name: Agent name.
             user_email: Email of the requesting user for access control.
-                None combined with token_teams=None means admin bypass.
-            token_teams: JWT-scoped team list. None=admin bypass, []=public-only, [...]=team-scoped.
+                None combined with token_teams=None means admin bypass (public + team only, private excluded).
+            token_teams: JWT-scoped team list. None=admin bypass ONLY when user_email is also None; []=public-only, [...]=team-scoped.
 
         Returns:
             Agent data.
@@ -1933,8 +1942,9 @@ class A2AAgentService(BaseService):
             agent_id: Optional agent ID (UUID or UAID format). If provided, takes precedence over agent_name.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
             hop_count: Federation hop counter from the inbound
                 `X-Contextforge-UAID-Hop` header. Calls at or above
                 `settings.uaid_max_federation_hops` are rejected to break
@@ -3070,7 +3080,7 @@ class A2AAgentService(BaseService):
             agent_id: Optional agent ID filter.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
-                None = admin bypass, [] = public-only.
+                None = admin bypass ONLY when user_email is also None; [] = public-only.
 
         Returns:
             Task data as a dict, or None if not found or not visible.
@@ -3080,7 +3090,7 @@ class A2AAgentService(BaseService):
             return None
         # Enforce agent visibility on the owning agent.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         return self._task_to_wire(task)
 
@@ -3110,7 +3120,7 @@ class A2AAgentService(BaseService):
         if task is None:
             return None
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         if task.state in ("completed", "failed", "canceled"):
             return self._task_to_wire(task)
@@ -3164,7 +3174,7 @@ class A2AAgentService(BaseService):
             offset: Pagination offset.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
-                None = admin bypass, [] = public-only.
+                None = admin bypass ONLY when user_email is also None; [] = public-only.
 
         Returns:
             List of task data dicts visible to the caller.
@@ -3176,8 +3186,9 @@ class A2AAgentService(BaseService):
             query = query.filter(A2ATask.state == state)
         # Filter to tasks owned by agents the caller can see.
         visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
-        if visible_agent_ids is not None:
-            query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
+        if not visible_agent_ids:
+            return []
+        query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
         query = query.order_by(desc(A2ATask.updated_at))
         query = query.limit(limit).offset(offset)
         return [self._task_to_wire(t) for t in query.all()]
@@ -3393,7 +3404,7 @@ class A2AAgentService(BaseService):
         Visibility scoping is pushed into SQL via ``_visible_agent_ids`` —
         the prior Python-side post-filter scanned every row regardless of
         access.  Admin bypass (``token_teams=None`` AND ``user_email=None``)
-        returns all configs.
+        returns public + team configs only (private excluded per PR #4341).
         """
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
@@ -3405,13 +3416,9 @@ class A2AAgentService(BaseService):
             query = query.filter(A2APushNotificationConfig.task_id == task_id)
 
         visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
-        if visible_agent_ids is not None:
-            # Non-admin caller: restrict to configs owned by visible agents.
-            # An empty visible set (e.g. public-only user with no public agents
-            # matching the filters) collapses to "no rows" without a scan.
-            if not visible_agent_ids:
-                return []
-            query = query.filter(A2APushNotificationConfig.a2a_agent_id.in_(visible_agent_ids))
+        if not visible_agent_ids:
+            return []
+        query = query.filter(A2APushNotificationConfig.a2a_agent_id.in_(visible_agent_ids))
 
         results: List[Dict[str, Any]] = []
         decrypt_failed_ids: List[str] = []
