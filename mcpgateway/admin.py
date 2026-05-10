@@ -15373,7 +15373,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
     except ImportServiceError as e:
         LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Import failed")
     except HTTPException:
         raise
     except Exception as e:

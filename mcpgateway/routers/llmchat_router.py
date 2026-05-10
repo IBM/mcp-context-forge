@@ -829,8 +829,10 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
         try:
             config = build_config(input_data)
         except ValueError:
+            logger.debug("Invalid chat configuration for user %s", SecurityValidator.sanitize_log_message(user_id))
             raise HTTPException(status_code=400, detail="Invalid configuration")
         except Exception:
+            logger.error("Chat configuration error for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
             raise HTTPException(status_code=400, detail="Configuration error")
 
         # Store user configuration
@@ -845,14 +847,17 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             await chat_service.clear_history()
         except ConnectionError:
             # Clean up partial state
+            logger.error("Failed to connect to MCP server for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
             await delete_user_config(user_id)
             raise HTTPException(status_code=503, detail="Failed to connect to MCP server. Please verify the server URL and authentication.")
         except ValueError:
             # Clean up partial state
+            logger.warning("Invalid LLM configuration for user %s", SecurityValidator.sanitize_log_message(user_id))
             await delete_user_config(user_id)
             raise HTTPException(status_code=400, detail="Invalid LLM configuration")
         except Exception:
             # Clean up partial state
+            logger.error("Service initialization failed for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
             await delete_user_config(user_id)
             raise HTTPException(status_code=500, detail="Service initialization failed")
 
