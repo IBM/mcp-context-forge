@@ -2929,6 +2929,13 @@ class MCPPathRewriteMiddleware:
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
             >>> app_mock.assert_called_once_with(scope, receive, send)
+
+            >>> # Exact /mcp is normalized to avoid Starlette's mount redirect.
+            >>> scope = {"type": "http", "path": "/mcp"}
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
+            >>> scope["path"]
+            '/mcp/'
         """
         # Auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
@@ -2953,13 +2960,10 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
             if app_path == "/mcp":
-                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
-                scope["path"] = new_path
-                if "raw_path" in scope:
-                    scope["raw_path"] = new_path.encode("latin-1")
+                self._apply_mcp_rewrite(scope, root_path)
                 await self.application(scope, receive, send)
                 return
-            if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
+            if app_path.endswith("/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
@@ -2980,13 +2984,27 @@ class MCPPathRewriteMiddleware:
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
-                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
-                scope["path"] = new_path
-                if "raw_path" in scope:
-                    scope["raw_path"] = new_path.encode("latin-1")
+                self._apply_mcp_rewrite(scope, root_path)
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)
+
+    @staticmethod
+    def _apply_mcp_rewrite(scope, root_path: str) -> str:
+        """Rewrite a validated MCP transport path to the mounted /mcp/ app path."""
+        original_path = scope.get("path", "")
+        new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+        scope["path"] = new_path
+
+        if "raw_path" in scope:
+            try:
+                # ASGI raw_path stores raw octets; latin-1 preserves a 1:1 byte mapping for valid values.
+                scope["raw_path"] = new_path.encode("latin-1")
+            except (UnicodeEncodeError, ValueError):
+                logger.warning("MCPPathRewriteMiddleware: non-latin-1 raw_path skipped for %s", new_path)
+
+        logger.debug("MCPPathRewriteMiddleware: %s -> %s", original_path, new_path)
+        return new_path
 
 
 # Configure CORS with environment-aware origins
