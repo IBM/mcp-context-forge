@@ -34,12 +34,23 @@ from mcpgateway.services.logging_service import LoggingService
 
 logger = LoggingService().get_logger(__name__)
 
+def _is_server_streaming_path(path: str) -> bool:
+    """Return whether path is a server-scoped SSE or MCP streaming endpoint.
+
+    Matches ``/servers/{id}/sse`` and ``/servers/{id}/mcp`` (with or without
+    trailing slash) while NOT matching regular REST endpoints like
+    ``/servers/{id}`` or ``/servers/{id}/tools``.
+    """
+    normalized = path.rstrip("/")
+    parts = normalized.split("/")
+    return len(parts) == 4 and parts[1] == "servers" and parts[3] in ("sse", "mcp")
+
+
 # Paths that manage their own disconnect handling (SSE, WebSocket, streaming)
 _SELF_MANAGED_PREFIXES: tuple[str, ...] = (
     "/sse",
     "/mcp",
-    "/servers",
-    "/_internal/mcp",
+    "/_internal/mcp/transport",
 )
 
 
@@ -77,7 +88,7 @@ class ClientDisconnectMiddleware:
 
         # Skip paths that handle disconnect internally
         path: str = scope.get("path", "")
-        if any(path == prefix or path.startswith(prefix + "/") for prefix in _SELF_MANAGED_PREFIXES):
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in _SELF_MANAGED_PREFIXES) or _is_server_streaming_path(path):
             await self.app(scope, receive, send)
             return
 

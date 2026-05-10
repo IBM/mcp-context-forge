@@ -172,6 +172,32 @@ async def test_self_managed_paths_skipped(path):
 
 
 @pytest.mark.asyncio
+async def test_regular_server_paths_not_skipped():
+    """Regular REST endpoints under /servers are NOT skipped."""
+    middleware = ClientDisconnectMiddleware(_ok_app)
+    messages: list[dict] = []
+
+    async def send(msg):  # type: ignore[no-untyped-def]
+        messages.append(msg)
+
+    # These are regular REST endpoints, not streaming paths
+    for path in (
+        "/servers",
+        "/servers/abc",
+        "/servers/abc/tools",
+        "/servers/abc/state",
+        "/_internal/mcp",
+        "/_internal/mcp/authenticate",
+        "/_internal/mcp/rpc",
+    ):
+        messages.clear()
+        scope = {"type": "http", "path": path}
+        receive = await _receive_messages([{"type": "http.request", "body": b"", "more_body": False}])
+        await middleware(scope, receive, send)
+        assert len(messages) == 2, f"Expected middleware to process {path}, not skip it"
+
+
+@pytest.mark.asyncio
 async def test_cancelled_error_reraised_when_not_disconnect():
     """CancelledError from non-disconnect sources is re-raised."""
     async def app_that_gets_cancelled(scope, receive, send):  # type: ignore[no-untyped-def]
