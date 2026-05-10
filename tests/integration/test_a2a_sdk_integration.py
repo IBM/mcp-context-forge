@@ -628,21 +628,19 @@ class TestA2AListEndpoint:
 
     @pytest.mark.asyncio
     async def test_get_a2a_returns_200_not_500(self):
-        """Integration test: GET /a2a returns 200 not 500 (regression test for issue #4624).
+        """Smoke test: GET /a2a does not return HTTP 500.
 
-        This test verifies the fix prevents HTTP 500 errors in A2A agent listing
-        when get_rpc_filter_context() receives edge-case user objects.
-        The fix ensures non-string email values are handled gracefully.
+        Basic integration test that the /a2a endpoint is reachable and does not
+        crash with an unhandled exception. May return 200 (with auth) or 401
+        (without auth), but never 500.
         """
         # First-Party
         from mcpgateway.main import app
 
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            # Make request - should return 200, not 500
-            # The fix in get_rpc_filter_context() ensures this doesn't crash with SQL binding error
             response = await client.get("/a2a")
 
-            # Should return 200 (may be 401 if auth is required, but not 500)
+            # Should return 200 or 401, never 500
             assert response.status_code in (200, 401), f"Expected 200 or 401, got {response.status_code}"
 
             # If 200, should have valid JSON structure
@@ -650,7 +648,6 @@ class TestA2AListEndpoint:
                 data = response.json()
                 assert "agents" in data
                 assert isinstance(data["agents"], list)
-
 
 
 class TestCalculatorAgent:

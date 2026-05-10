@@ -4953,7 +4953,7 @@ class TestGetRpcFilterContext:
 
         email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
-        # get_user_email() returns "unknown" for dict, which is converted to None
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
         assert email is None
         assert teams == ["t1"]
         assert is_admin is False
@@ -4970,7 +4970,7 @@ class TestGetRpcFilterContext:
 
         email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
-        # get_user_email() returns "unknown" for list, which is converted to None
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
         assert email is None
         assert teams == []
         assert is_admin is False
@@ -4987,7 +4987,7 @@ class TestGetRpcFilterContext:
 
         email, teams, is_admin = get_rpc_filter_context(mock_request, user)
 
-        # get_user_email() returns the int directly from user.get("email"); defensive check catches it
+        # get_user_email() now returns "unknown" for non-string dict values; defensive check converts to None
         assert email is None
         assert teams == ["t1"]
         assert is_admin is False
@@ -5014,7 +5014,7 @@ class TestGetRpcFilterContext:
         assert is_admin is False
 
     def test_get_rpc_filter_context_internal_auth_context_dict_email(self, caplog):
-        """Test that internal_auth_context with dict email is caught and converted to None (blocking issue #1 from #4624)."""
+        """Test that internal_auth_context with dict email is caught and converted to None."""
         # First-Party
         from mcpgateway.main import get_rpc_filter_context
 
@@ -5034,7 +5034,7 @@ class TestGetRpcFilterContext:
         assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
 
     def test_get_rpc_filter_context_admin_bypass_with_non_string_email(self):
-        """Test admin bypass behavior when user_email is forced to None due to type validation (testing gap #9 from #4624)."""
+        """Test admin bypass behavior when user_email is forced to None due to type validation."""
         # First-Party
         from mcpgateway.main import get_rpc_filter_context
 
@@ -5051,6 +5051,41 @@ class TestGetRpcFilterContext:
         assert teams is None  # Admin bypass preserved
         assert is_admin is True
 
+    def test_get_rpc_filter_context_internal_auth_context_list_email(self, caplog):
+        """Test that internal_auth_context with list email is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        mock_request.state._mcp_internal_auth_context = {"email": ["test@example.com"], "is_admin": False, "teams": ["t1"]}
+        user = None
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
+
+    def test_get_rpc_filter_context_internal_auth_context_int_email(self, caplog):
+        """Test that internal_auth_context with int email is caught and converted to None."""
+        # First-Party
+        from mcpgateway.main import get_rpc_filter_context
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
+        mock_request.state._mcp_internal_auth_context = {"email": 12345, "is_admin": False, "teams": ["t1"]}
+        user = None
+
+        with caplog.at_level("WARNING", logger="mcpgateway.auth_context"):
+            email, teams, is_admin = get_rpc_filter_context(mock_request, user)
+
+        assert email is None
+        assert teams == ["t1"]
+        assert is_admin is False
+        assert any("internal_auth_context email non-string type" in record.message for record in caplog.records)
 
 
 # --------------------------------------------------------------------------- #

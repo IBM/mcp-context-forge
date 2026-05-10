@@ -160,6 +160,12 @@ def get_user_email(user: Any) -> str:
         >>> user_dict_no_email = {'other': 'value'}
         >>> get_user_email(user_dict_no_email)
         'unknown'
+        >>> user_dict_bad_email = {'email': {'nested': 'value'}}
+        >>> get_user_email(user_dict_bad_email)
+        'unknown'
+        >>> user_dict_list_email = {'email': ['x'], 'sub': 'user@example.com'}
+        >>> get_user_email(user_dict_list_email)
+        'user@example.com'
         >>> user_string = 'legacy_user'
         >>> get_user_email(user_string)
         'legacy_user'
@@ -184,11 +190,18 @@ def get_user_email(user: Any) -> str:
     # Handle objects with email attribute (e.g., ORM models, dataclasses)
     if hasattr(user, "email"):
         email = getattr(user, "email", None)
-        if email and isinstance(email, str):
-            return email
+        if isinstance(email, str):
+            return email or "unknown"
+        # Non-string email attribute falls through to str(user) below
     # Handle dict-like objects
     if isinstance(user, dict):
-        return user.get("email") or user.get("sub") or "unknown"
+        email = user.get("email")
+        if isinstance(email, str) and email:
+            return email
+        sub = user.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+        return "unknown"
     # Fallback to string conversion for other types
     return str(user) if user else "unknown"
 
@@ -365,21 +378,9 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     """
     # Use existing get_user_email() helper for consistent email extraction
     user_email = get_user_email(user)
-    # get_user_email() always returns a string, but may return "unknown"
+    # get_user_email() guarantees a string return, but may return "unknown"
     # Convert "unknown" to None for downstream SQL queries
     if user_email == "unknown":
-        user_email = None
-
-    # SECURITY: Defensive type validation to ensure user_email is a string or None.
-    # This prevents passing entire user dicts or other objects to SQL queries.
-    # This should never fire if get_user_email() works correctly, but provides
-    # defense-in-depth for edge cases.
-    if user_email is not None and not isinstance(user_email, str):
-        logger.warning(
-            "get_rpc_filter_context: non-string user_email type=%s path=%s; forcing None (public-only access)",
-            type(user_email).__name__,
-            getattr(getattr(request, "url", None), "path", "unknown"),
-        )
         user_email = None
 
     token_teams = get_token_teams_from_request(request)
@@ -394,7 +395,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
             # SECURITY: Type-check internal auth context email
             if internal_email is not None and not isinstance(internal_email, str):
                 logger.warning(
-                    "get_rpc_filter_context: internal_auth_context email non-string type=%s path=%s; forcing None (public-only access)",
+                    "get_rpc_filter_context: internal_auth_context email non-string type=%s path=%s; forcing None to prevent SQL binding errors",
                     type(internal_email).__name__,
                     getattr(getattr(request, "url", None), "path", "unknown"),
                 )
