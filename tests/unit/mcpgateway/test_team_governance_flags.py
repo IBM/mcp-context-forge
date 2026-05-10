@@ -34,13 +34,19 @@ class TestAllowTeamCreationFlag:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.routers.teams.settings")
-    async def test_allow_team_creation_disabled_non_admin(self, mock_settings):
+    @patch("mcpgateway.routers.teams.PermissionService")
+    async def test_allow_team_creation_disabled_non_admin(self, MockPermissionService, mock_settings):
         """When allow_team_creation=False and user is not admin, create_team returns 403."""
         mock_settings.allow_team_creation = False
 
         # First-Party
         from mcpgateway.routers.teams import create_team
         from mcpgateway.schemas import TeamCreateRequest
+
+        # Mock PermissionService
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=False)
+        MockPermissionService.return_value = mock_perm_service
 
         request = TeamCreateRequest(name="Test Team", visibility="private")
         current_user_ctx = {"email": "user@example.com", "is_admin": False}

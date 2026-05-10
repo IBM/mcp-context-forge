@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/routers/test_teams_coverage.py
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
-
-Coverage tests for mcpgateway.routers.teams — error branches, edge cases.
-"""
+"""Coverage tests for mcpgateway.routers.teams — error branches, edge cases."""
 
 # Standard
 import importlib
@@ -125,10 +119,29 @@ def _inv_svc(**methods):
 # ===========================================================================
 
 
+
+
+def mock_permission_check(is_admin=False):
+    """Helper context manager to mock PermissionService.check_platform_admin_permission."""
+    from contextlib import contextmanager
+    from unittest.mock import AsyncMock, patch
+
+    @contextmanager
+    def _mock():
+        with patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=is_admin)
+            MockPermissionService.return_value = mock_perm_service
+            yield mock_perm_service
+
+    return _mock()
+
+
 class TestDiscoverPublicTeamsErrors:
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(discover_public_teams=AsyncMock(side_effect=Exception("db"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(discover_public_teams=AsyncMock(side_effect=Exception("db"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.discover_public_teams(0, 50, current_user_ctx=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -145,9 +158,8 @@ class TestUpdateTeamMaxMembersCap:
     @pytest.mark.asyncio
     async def test_non_admin_create_exceeds_cap_rejected(self, user_ctx, db):
         """Non-admin create with max_members > cap returns 400."""
-        with _svc(
-            create_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100")),
-        ):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(create_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=200)
@@ -160,10 +172,8 @@ class TestUpdateTeamMaxMembersCap:
     async def test_admin_create_exceeds_cap_allowed(self, admin_ctx, db, mock_team):
         """Admin create with max_members > cap succeeds."""
         mock_team.max_members = 500
-        with _svc(
-            create_team=AsyncMock(return_value=mock_team),
-            get_member_counts_batch_cached=AsyncMock(return_value={}),
-        ):
+        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), \
+             _svc(create_team=AsyncMock(return_value=mock_team), get_member_counts_batch_cached=AsyncMock(return_value={})):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=500)
@@ -174,9 +184,8 @@ class TestUpdateTeamMaxMembersCap:
     async def test_non_admin_create_at_cap_allowed(self, user_ctx, db, mock_team):
         """Non-admin create with max_members == cap succeeds."""
         mock_team.max_members = 100
-        with _svc(
-            create_team=AsyncMock(return_value=mock_team),
-        ):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(create_team=AsyncMock(return_value=mock_team)):
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="Team", max_members=100)
@@ -186,10 +195,8 @@ class TestUpdateTeamMaxMembersCap:
     @pytest.mark.asyncio
     async def test_non_admin_update_exceeds_cap_rejected(self, user_ctx, db, mock_team):
         """Non-admin update with max_members > cap returns 400."""
-        with _svc(
-            get_user_role_in_team=AsyncMock(return_value="owner"),
-            update_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100")),
-        ):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="owner"), update_team=AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))):
             from mcpgateway.schemas import TeamUpdateRequest
 
             req = TeamUpdateRequest(max_members=200)
@@ -214,11 +221,8 @@ class TestUpdateTeamMaxMembersCap:
         updated.updated_at = mock_team.updated_at
         updated.is_active = True
         updated.get_member_count = MagicMock(return_value=1)
-        with _svc(
-            get_user_role_in_team=AsyncMock(return_value="owner"),
-            update_team=AsyncMock(return_value=True),
-            get_team_by_id=AsyncMock(return_value=updated),
-        ):
+        with mock_permission_check(is_admin=admin_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="owner"), update_team=AsyncMock(return_value=True), get_team_by_id=AsyncMock(return_value=updated)):
             from mcpgateway.schemas import TeamUpdateRequest
 
             req = TeamUpdateRequest(max_members=500)
@@ -241,7 +245,8 @@ class TestUpdateTeamMaxMembersCap:
         updated.updated_at = mock_team.updated_at
         updated.is_active = True
         updated.get_member_count = MagicMock(return_value=1)
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_team=AsyncMock(return_value=True),
             get_team_by_id=AsyncMock(return_value=updated),
@@ -256,7 +261,8 @@ class TestUpdateTeamMaxMembersCap:
     async def test_update_with_none_max_members_preserves(self, user_ctx, db, mock_team):
         """Update with no max_members field preserves the existing value."""
         mock_team.max_members = 75
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_team=AsyncMock(return_value=True),
             get_team_by_id=AsyncMock(return_value=mock_team),
@@ -271,7 +277,8 @@ class TestUpdateTeamMaxMembersCap:
 class TestUpdateTeamErrors:
     @pytest.mark.asyncio
     async def test_team_not_found_after_update(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_team=AsyncMock(return_value=True),
             get_team_by_id=AsyncMock(return_value=None),
@@ -286,7 +293,8 @@ class TestUpdateTeamErrors:
 
     @pytest.mark.asyncio
     async def test_value_error(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_team=AsyncMock(side_effect=ValueError("bad name")),
         ):
@@ -300,7 +308,8 @@ class TestUpdateTeamErrors:
 
     @pytest.mark.asyncio
     async def test_unexpected_exception(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash")),
         ):
             from mcpgateway.schemas import TeamUpdateRequest
@@ -319,7 +328,8 @@ class TestUpdateTeamErrors:
 class TestDeleteTeamErrors:
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.delete_team("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -335,11 +345,14 @@ class TestListTeamMembersEdge:
     async def test_cursor_pagination(self, user_ctx, db, mock_member):
         mock_user = MagicMock(spec=EmailUser)
         members = [(mock_user, mock_member)]
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="member"),
             get_team_members=AsyncMock(return_value=(members, "next-cursor")),
         ):
-            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db)
+            result = await teams.list_team_members(
+                "tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db
+            )
             assert isinstance(result, list)
             assert len(result) == 1
 
@@ -347,17 +360,21 @@ class TestListTeamMembersEdge:
     async def test_include_pagination(self, user_ctx, db, mock_member):
         mock_user = MagicMock(spec=EmailUser)
         members = [(mock_user, mock_member)]
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="member"),
             get_team_members=AsyncMock(return_value=(members, "nc")),
         ):
-            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db)
+            result = await teams.list_team_members(
+                "tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db
+            )
             assert hasattr(result, "members")
             assert result.next_cursor == "nc"
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=Exception("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.list_team_members("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -371,7 +388,8 @@ class TestListTeamMembersEdge:
 class TestUpdateTeamMemberErrors:
     @pytest.mark.asyncio
     async def test_not_owner(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(return_value="member")):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="member")):
             from mcpgateway.schemas import TeamMemberUpdateRequest
 
             req = TeamMemberUpdateRequest(role="owner")
@@ -381,7 +399,8 @@ class TestUpdateTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_update_failed(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_member_role=AsyncMock(return_value=False),
         ):
@@ -394,7 +413,8 @@ class TestUpdateTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_member_not_found_after_update(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_member_role=AsyncMock(return_value=True),
             get_member=AsyncMock(return_value=None),
@@ -409,7 +429,8 @@ class TestUpdateTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_value_error(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             update_member_role=AsyncMock(side_effect=ValueError("bad role")),
         ):
@@ -422,7 +443,8 @@ class TestUpdateTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             from mcpgateway.schemas import TeamMemberUpdateRequest
 
             req = TeamMemberUpdateRequest(role="member")
@@ -439,7 +461,8 @@ class TestUpdateTeamMemberErrors:
 class TestRemoveTeamMemberErrors:
     @pytest.mark.asyncio
     async def test_member_not_found(self, user_ctx, db):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_user_role_in_team=AsyncMock(return_value="owner"),
             remove_member_from_team=AsyncMock(return_value=False),
         ):
@@ -449,7 +472,8 @@ class TestRemoveTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.remove_team_member("tid", "other@t.com", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -463,11 +487,9 @@ class TestRemoveTeamMemberErrors:
 class TestInviteTeamMemberErrors:
     @pytest.mark.asyncio
     async def test_invitation_creation_failed(self, user_ctx, db):
-        with (
-            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
-            _inv_svc(
-                create_invitation=AsyncMock(return_value=None),
-            ),
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
+            create_invitation=AsyncMock(return_value=None),
         ):
             from mcpgateway.schemas import TeamInviteRequest
 
@@ -478,11 +500,9 @@ class TestInviteTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_value_error(self, user_ctx, db):
-        with (
-            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
-            _inv_svc(
-                create_invitation=AsyncMock(side_effect=ValueError("dup")),
-            ),
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
+            create_invitation=AsyncMock(side_effect=ValueError("dup")),
         ):
             from mcpgateway.schemas import TeamInviteRequest
 
@@ -493,7 +513,8 @@ class TestInviteTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             from mcpgateway.schemas import TeamInviteRequest
 
             req = TeamInviteRequest(email="x@t.com", role="member")
@@ -510,14 +531,16 @@ class TestInviteTeamMemberErrors:
 class TestListTeamInvitationsErrors:
     @pytest.mark.asyncio
     async def test_not_owner(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(return_value="member")):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="member")):
             with pytest.raises(HTTPException) as exc:
                 await teams.list_team_invitations("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.list_team_invitations("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -571,7 +594,8 @@ class TestCancelTeamInvitationErrors:
         mock_filter.first = MagicMock(return_value=mock_invitation)
         db.query = MagicMock(return_value=mock_query)
 
-        with _svc(get_user_role_in_team=AsyncMock(return_value="member")):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="member")):
             with pytest.raises(HTTPException) as exc:
                 await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_403_FORBIDDEN
@@ -584,11 +608,9 @@ class TestCancelTeamInvitationErrors:
         mock_filter.first = MagicMock(return_value=mock_invitation)
         db.query = MagicMock(return_value=mock_query)
 
-        with (
-            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
-            _inv_svc(
-                revoke_invitation=AsyncMock(return_value=False),
-            ),
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
+            revoke_invitation=AsyncMock(return_value=False),
         ):
             with pytest.raises(HTTPException) as exc:
                 await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db)
@@ -611,7 +633,8 @@ class TestCancelTeamInvitationErrors:
 class TestRequestToJoinTeamErrors:
     @pytest.mark.asyncio
     async def test_team_not_found(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(return_value=None)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(return_value=None)):
             from mcpgateway.schemas import TeamJoinRequest
 
             req = TeamJoinRequest(message="hi")
@@ -622,7 +645,8 @@ class TestRequestToJoinTeamErrors:
     @pytest.mark.asyncio
     async def test_value_error(self, user_ctx, db, mock_team):
         mock_team.visibility = "public"
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value=None),
             create_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
@@ -637,7 +661,8 @@ class TestRequestToJoinTeamErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             from mcpgateway.schemas import TeamJoinRequest
 
             req = TeamJoinRequest(message="hi")
@@ -654,14 +679,16 @@ class TestRequestToJoinTeamErrors:
 class TestLeaveTeamErrors:
     @pytest.mark.asyncio
     async def test_team_not_found(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(return_value=None)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
                 await teams.leave_team("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
     async def test_not_a_member(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value=None),
         ):
@@ -672,7 +699,8 @@ class TestLeaveTeamErrors:
 
     @pytest.mark.asyncio
     async def test_remove_failed_last_owner(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             remove_member_from_team=AsyncMock(return_value=False),
@@ -684,7 +712,8 @@ class TestLeaveTeamErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.leave_team("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -698,14 +727,16 @@ class TestLeaveTeamErrors:
 class TestListTeamJoinRequestsErrors:
     @pytest.mark.asyncio
     async def test_team_not_found(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(return_value=None)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
                 await teams.list_team_join_requests("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
     async def test_not_owner(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="member"),
         ):
@@ -715,7 +746,8 @@ class TestListTeamJoinRequestsErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.list_team_join_requests("tid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -729,14 +761,16 @@ class TestListTeamJoinRequestsErrors:
 class TestApproveJoinRequestErrors:
     @pytest.mark.asyncio
     async def test_team_not_found(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(return_value=None)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
     async def test_not_owner(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="member"),
         ):
@@ -746,7 +780,8 @@ class TestApproveJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_member_none(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             approve_join_request=AsyncMock(return_value=None),
@@ -757,7 +792,8 @@ class TestApproveJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_value_error_max_team_limit(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             approve_join_request=AsyncMock(side_effect=ValueError("User has reached the maximum team limit of 50")),
@@ -769,7 +805,8 @@ class TestApproveJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_value_error_max_members_limit(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             approve_join_request=AsyncMock(side_effect=ValueError("Team has reached its maximum member limit of 5")),
@@ -781,7 +818,8 @@ class TestApproveJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_value_error_generic(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             approve_join_request=AsyncMock(side_effect=ValueError("some other validation error")),
@@ -793,7 +831,8 @@ class TestApproveJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.approve_join_request("tid", "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -807,14 +846,16 @@ class TestApproveJoinRequestErrors:
 class TestRejectJoinRequestErrors:
     @pytest.mark.asyncio
     async def test_team_not_found(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(return_value=None)):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(return_value=None)):
             with pytest.raises(HTTPException) as exc:
                 await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
     async def test_request_not_found(self, user_ctx, db, mock_team):
-        with _svc(
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(
             get_team_by_id=AsyncMock(return_value=mock_team),
             get_user_role_in_team=AsyncMock(return_value="owner"),
             reject_join_request=AsyncMock(return_value=False),
@@ -825,7 +866,8 @@ class TestRejectJoinRequestErrors:
 
     @pytest.mark.asyncio
     async def test_exception(self, user_ctx, db):
-        with _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
+        with mock_permission_check(is_admin=user_ctx.get("is_admin", False)), \
+             _svc(get_team_by_id=AsyncMock(side_effect=RuntimeError("crash"))):
             with pytest.raises(HTTPException) as exc:
                 await teams.reject_join_request("tid", "rid", current_user=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
