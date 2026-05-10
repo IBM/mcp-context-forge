@@ -1090,9 +1090,11 @@ async def chat(input_data: ChatInput, user=Depends(get_current_user_with_permiss
                     "elapsed_ms": result["elapsed_ms"],
                 }
             except RuntimeError:
+                logger.error("Chat service runtime error for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
                 raise HTTPException(status_code=503, detail="Chat service error")
 
     except ConnectionError:
+        logger.error("Lost connection to MCP server for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
         raise HTTPException(status_code=503, detail="Lost connection to MCP server. Please reconnect.")
     except TimeoutError:
         raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")
