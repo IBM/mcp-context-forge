@@ -718,13 +718,23 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Gateway Test Endpoint Security
     gateway_test_allowed_hosts: List[str] = Field(
         default_factory=list,
         description=(
-            "Allowlist of host patterns for the /admin/gateways/test endpoint. When non-empty, "
-            "only URLs matching these patterns are allowed. Patterns support wildcards (e.g., "
-            "'*.example.com', 'api.example.com'). Empty list = use standard SSRF blocking only. "
-            "Recommended: populate with approved gateway hostnames to prevent SSRF abuse."
+            "Allowlist of host patterns for /admin/gateways/test endpoint. Supports exact hostnames "
+            "(example.com) and wildcards (*.example.com). Empty list = allow only registered gateways. "
+            "This prevents using the test endpoint as an open proxy to reach arbitrary external or "
+            "internal services."
+        ),
+    )
+
+    gateway_test_allow_registered_only: bool = Field(
+        default=True,
+        description=(
+            "When true, /admin/gateways/test only allows testing URLs that match registered gateway "
+            "base URLs in the database. When false, uses gateway_test_allowed_hosts patterns. "
+            "Default true for maximum security (test only what's already registered)."
         ),
     )
 
