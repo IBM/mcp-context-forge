@@ -10,7 +10,7 @@ Tests for SSO router endpoints and helpers.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
