@@ -3114,6 +3114,7 @@ Disallow: /
     validation_status_filter_pattern: str = r"^(all|ok|error)$"
     validation_period_type_pattern: str = r"^(hourly|daily)$"
     validation_aggregation_pattern: str = r"^(5m|24h)$"
+    validation_entity_types_pattern: str = r"^[a-zA-Z,]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255

@@ -18,7 +18,7 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.query_params import QueryIdentifierDotted
+from mcpgateway.common.query_params import QueryProviderId
 from mcpgateway.config import settings
 from mcpgateway.db import LLMProviderType
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
@@ -127,7 +127,7 @@ async def get_providers_partial(
 @require_permission("admin.system_config")
 async def get_models_partial(
     request: Request,
-    provider_id: QueryIdentifierDotted = None,
+    provider_id: QueryProviderId = None,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),

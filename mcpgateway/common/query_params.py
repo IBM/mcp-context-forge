@@ -107,14 +107,6 @@ QueryVisibilityCompact = Annotated[
     ),
 ]
 
-QueryVisibilityParenthetical = Annotated[
-    Optional[str],
-    Query(
-        pattern=settings.validation_visibility_pattern,
-        description="Filter by visibility (private, team, public)",
-    ),
-]
-
 QueryUserIdentifier = Annotated[
     Optional[str],
     Query(
@@ -208,11 +200,12 @@ QueryIdentifierDotted300 = Annotated[
     ),
 ]
 
-QueryIdentifierHyphen = Annotated[
+QueryProviderId = Annotated[
     Optional[str],
     Query(
         max_length=100,
-        pattern=settings.validation_hyphen_identifier_pattern,
+        pattern=SecurityValidator.IDENTIFIER_PATTERN,
+        description="Filter by provider ID",
     ),
 ]
 
@@ -338,5 +331,14 @@ QueryAggregation = Annotated[
     Query(
         pattern=settings.validation_aggregation_pattern,
         description="Aggregation level for metrics",
+    ),
+]
+
+QueryEntityTypes = Annotated[
+    Optional[str],
+    Query(
+        max_length=200,
+        pattern=settings.validation_entity_types_pattern,
+        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
     ),
 ]

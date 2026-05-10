@@ -74,6 +74,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.query_params import (
     QueryEntityType,
+    QueryEntityTypes,
     QueryExportFormatAliased,
     QueryGatewayIdList,
     QueryHttpMethod,
@@ -11062,12 +11063,7 @@ async def admin_search_a2a_agents(
 async def admin_unified_search(
     q: str = Query("", max_length=500, description="Search query"),
     tags: QueryTagsFilter = None,
-    entity_types: Optional[str] = Query(
-        None,
-        max_length=200,
-        pattern=r"^[a-zA-Z,]*$",
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
-    ),
+    entity_types: QueryEntityTypes = None,
     include_inactive: bool = False,
     limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
     limit_per_type: Optional[int] = Query(

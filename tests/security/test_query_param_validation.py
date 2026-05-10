@@ -34,7 +34,6 @@ import re
 import pytest
 
 # First-Party
-from mcpgateway.common.query_params import QueryErrorCodeSso
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 
@@ -47,6 +46,12 @@ SSO_ERROR = settings.validation_error_code_pattern
 # mcpgateway/routers/sso.py (scopes/code/state) deliberately have NO pattern
 # after the B1/B2/B3 fix; they are bounded only by max_length. No regex to
 # test - absence is the invariant.
+#
+# Length bounds (mirror of router signature; update both together):
+#   - mcpgateway/routers/sso.py:309  code   max_length=4096   # see B5 below
+#   - mcpgateway/routers/sso.py:310  state  max_length=128
+SSO_CODE_MAX_LENGTH = 4096
+SSO_STATE_MAX_LENGTH = 128
 
 USER_IDENTIFIER = settings.validation_user_identifier_pattern
 TRACE_STATUS = settings.validation_trace_status_pattern
@@ -65,16 +70,26 @@ MCP_TOOL_NAME = SecurityValidator.TOOL_NAME_PATTERN
 VISIBILITY = settings.validation_visibility_pattern
 
 # mcpgateway/admin.py - relationship enum
-RELATIONSHIP = r"^(owner|member|public)$"
+RELATIONSHIP = settings.validation_relationship_pattern
 
 # mcpgateway/admin.py:13681 - entity_type enum
-ENTITY_TYPE = r"^(tools|resources|prompts|servers)$"
+ENTITY_TYPE = settings.validation_entity_type_pattern
 
 # mcpgateway/admin.py - observability dashboard guessed enums (values verified
 # against templates/observability_partial.html options)
-TIME_RANGE = r"^(1h|6h|12h|24h|7d|30d)$"
-STATUS_FILTER = r"^(all|ok|error)$"
-PERIOD_TYPE = r"^(hourly|daily)$"
+TIME_RANGE = settings.validation_time_range_pattern
+STATUS_FILTER = settings.validation_status_filter_pattern
+PERIOD_TYPE = settings.validation_period_type_pattern
+
+# Newly centralized patterns (smoke-tested below)
+GATEWAY_ID_LIST = settings.validation_gateway_id_list_pattern
+RENDER_MODE = settings.validation_render_mode_pattern
+TAGS_FILTER = settings.validation_tags_filter_pattern
+TRACE_ID = settings.validation_trace_id_pattern
+TEAM_ID = settings.validation_team_id_pattern
+SCOPE_ID = settings.validation_scope_id_pattern
+GATEWAY_ID = settings.validation_gateway_id_pattern
+AGGREGATION = settings.validation_aggregation_pattern
 
 
 def _matches(pattern: str, value: str) -> bool:
@@ -120,6 +135,36 @@ def test_oauth_state_accepts_session_bound_format(state: str) -> None:
 def test_oauth_scopes_accepts_provider_specific_values(scopes: str) -> None:
     """OAuth `scopes` are provider-specific per RFC 6749 §3.3; no Query-layer regex."""
     assert 1 <= len(scopes) <= 500
+
+
+# ---------------------------------------------------------------------------
+# B5 regression: OAuth `code` must accept Microsoft Entra ID v2 codes
+# (>1500 chars). RFC 6749 leaves auth code size undefined; the previous 512
+# bound rejected Entra ID before token exchange (issue #4490). 4096 leaves
+# headroom below nginx's default 8K request-line buffer while comfortably
+# covering all observed providers (Google ~30, GitHub ~20, Cognito ~36,
+# Keycloak ~43, Entra ID 1200-2000+).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "4/0Adeu5BWxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",  # Google ~70 chars
+        "P5I7mdxxdv13_JfXrCSq",  # GitHub ~20 chars
+        "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111",  # AWS Cognito UUID-style ~36 chars
+        "M.R3_BAY.2-CXyB!fnBSi-EX*MNVfn8C8mF*KsXZkphQOEdmH" + "x" * 1500,  # Entra ID v2 ~1550 chars
+        "x" * 4096,  # boundary - exactly at the bound
+    ],
+)
+def test_oauth_code_accepts_provider_specific_lengths(code: str) -> None:
+    """OAuth `code` is opaque (RFC 6749 §A.11); bounded only by max_length=4096."""
+    assert 1 <= len(code) <= SSO_CODE_MAX_LENGTH
+
+
+def test_oauth_code_max_length_above_entra_id_floor() -> None:
+    """Regression guard: code limit must stay above the 512 floor that broke Entra ID (#4490)."""
+    assert SSO_CODE_MAX_LENGTH > 512, "Reverting below 513 will reintroduce the Entra ID HTTP 422 regression."
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +301,30 @@ def test_cursor_pattern(value: str, expected: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Newly centralized pattern smoke tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("pattern", "good", "bad"),
+    [
+        (GATEWAY_ID_LIST, "gw1,gw2", "gw1;gw2"),
+        (RENDER_MODE, "controls", "controls123"),
+        (TAGS_FILTER, "tag1,tag2", "tag1\ttag2"),
+        (TRACE_ID, "trace_123-abc", "trace 123"),
+        (TEAM_ID, "team-123", "team 123"),
+        (SCOPE_ID, "scope_123", "scope 123"),
+        (GATEWAY_ID, "gw_123", "gw 123"),
+        (AGGREGATION, "5m", "5min"),
+    ],
+)
+def test_newly_centralized_patterns(pattern: str, good: str, bad: str) -> None:
+    """Smoke tests for patterns moved to query_params.py in this PR."""
+    assert _matches(pattern, good), f"expected {good!r} to match {pattern}"
+    assert not _matches(pattern, bad), f"expected {bad!r} to NOT match {pattern}"
+
+
+# ---------------------------------------------------------------------------
 # Enum family smoke tests.
 # ---------------------------------------------------------------------------
 
@@ -315,6 +384,14 @@ CRLF_INJECTION_CASES = [
         TIME_RANGE,
         STATUS_FILTER,
         PERIOD_TYPE,
+        GATEWAY_ID_LIST,
+        RENDER_MODE,
+        TAGS_FILTER,
+        TRACE_ID,
+        TEAM_ID,
+        SCOPE_ID,
+        GATEWAY_ID,
+        AGGREGATION,
     ],
 )
 @pytest.mark.parametrize("injection", CRLF_INJECTION_CASES)
