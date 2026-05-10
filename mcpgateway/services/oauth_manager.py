@@ -813,6 +813,15 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
+            # Handle scope as either string or list (OAuth providers vary)
+            scope_value = token_response.get("scope", "")
+            if isinstance(scope_value, list):
+                scopes_list = [s for s in scope_value if isinstance(s, str)]
+            elif isinstance(scope_value, str):
+                scopes_list = scope_value.split() if scope_value else []
+            else:
+                scopes_list = []
+
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
@@ -820,7 +829,7 @@ class OAuthManager:
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=parse_expires_in(token_response),
-                scopes=token_response.get("scope", "").split(),
+                scopes=scopes_list,
             )
 
             return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
