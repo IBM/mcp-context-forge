@@ -3174,8 +3174,11 @@ else:
 # Client disconnect middleware — MUST be outermost (added last, runs first).
 # Cancels in-flight request handlers when the client (nginx) closes the connection,
 # preventing CLOSE_WAIT accumulation and associated memory leaks.
-app.add_middleware(ClientDisconnectMiddleware)
-logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
+if settings.client_disconnect_middleware_enabled:
+    app.add_middleware(ClientDisconnectMiddleware)
+    logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
+else:
+    logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)

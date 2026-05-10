@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/client_disconnect.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -25,7 +25,6 @@ ASGI server signals disconnect, allowing finally blocks to release resources.
 # Standard
 import asyncio
 from contextlib import suppress
-from typing import Tuple
 
 # Third-Party
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -36,10 +35,9 @@ from mcpgateway.services.logging_service import LoggingService
 logger = LoggingService().get_logger(__name__)
 
 # Paths that manage their own disconnect handling (SSE, WebSocket, streaming)
-_SELF_MANAGED_PREFIXES: Tuple[str, ...] = (
-    "/sse/",
-    "/ws/",
-    "/mcp/",
+_SELF_MANAGED_PREFIXES: tuple[str, ...] = (
+    "/sse",
+    "/mcp",
 )
 
 
@@ -77,29 +75,29 @@ class ClientDisconnectMiddleware:
 
         # Skip paths that handle disconnect internally
         path: str = scope.get("path", "")
-        if any(path.startswith(prefix) for prefix in _SELF_MANAGED_PREFIXES):
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in _SELF_MANAGED_PREFIXES):
             await self.app(scope, receive, send)
             return
 
         disconnected = asyncio.Event()
         response_started = False
 
-        # Queue relays ASGI receive messages from the reader to the app.
-        recv_queue: asyncio.Queue[Message] = asyncio.Queue()
+        # Bounded queue relays ASGI receive messages from the reader to the app.
+        # maxsize=1 preserves ASGI backpressure by preventing unbounded buffering.
+        recv_queue: asyncio.Queue[Message] = asyncio.Queue(maxsize=1)
 
         async def _reader() -> None:
             """Read from the raw ASGI receive channel and forward to the queue.
 
-            When ``http.disconnect`` arrives, signal via the event rather than
-            forwarding — the app should not see the disconnect message since
-            we cancel it instead.
+            When ``http.disconnect`` arrives, signal via the event and enqueue
+            the disconnect message so the app can drain the queue, then return.
             """
             try:
                 while True:
                     message = await receive()
                     if message["type"] == "http.disconnect":
                         disconnected.set()
-                        # Put a disconnect message in case app is waiting on receive
+                        # Enqueue disconnect so the app can drain the queue
                         await recv_queue.put(message)
                         return
                     await recv_queue.put(message)
@@ -110,12 +108,9 @@ class ClientDisconnectMiddleware:
             """Drop-in replacement for ``receive`` that reads from the queue.
 
             Returns:
-                Message: The next ASGI message, or a disconnect message on cancellation.
+                Message: The next ASGI message from the queue.
             """
-            try:
-                return await recv_queue.get()
-            except asyncio.CancelledError:
-                return {"type": "http.disconnect"}
+            return await recv_queue.get()
 
         async def _send_wrapper(message: Message) -> None:
             """Forward ASGI send messages, suppressing errors after disconnect.
@@ -124,14 +119,20 @@ class ClientDisconnectMiddleware:
                 message: ASGI message to send.
             """
             nonlocal response_started
-            if message["type"] == "http.response.start":
-                response_started = True
             # Don't send if client already gone and response hasn't started
             if disconnected.is_set() and not response_started:
                 return
+            if message["type"] == "http.response.start":
+                try:
+                    await send(message)
+                except (OSError, ConnectionError):
+                    disconnected.set()
+                else:
+                    response_started = True
+                return
             try:
                 await send(message)
-            except Exception:
+            except (OSError, ConnectionError):
                 # Client gone — send will fail, that's expected
                 disconnected.set()
 
@@ -154,8 +155,10 @@ class ClientDisconnectMiddleware:
             else:
                 raise
         finally:
-            # Clean up helper tasks
-            for task in (reader_task, cancel_task):
+            # Clean up all tasks including the handler to prevent orphans
+            if not handler_task.done():
+                handler_task.cancel()
+            for task in (reader_task, cancel_task, handler_task):
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
