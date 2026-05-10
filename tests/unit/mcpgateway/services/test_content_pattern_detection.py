@@ -253,7 +253,8 @@ class TestTimeoutAndEdgeCases:
             pattern = "clean"
             search_calls = 0
 
-            def search(self, content):
+            def search(self, _content):
+                """Count search call."""
                 self.search_calls += 1
 
         pattern = CountingPattern()
@@ -302,6 +303,7 @@ class TestTimeoutAndEdgeCases:
                 self._pattern = pattern
 
             def search(self, content):
+                """Count search call and delegate to wrapped pattern."""
                 nonlocal search_calls
                 search_calls += 1
                 return self._pattern.search(content)
@@ -348,7 +350,7 @@ class TestTimeoutAndEdgeCases:
 
         service.detect_malicious_patterns(content="clean content", content_type="Prompt template")
 
-        assert service._clean_pattern_cache == {}
+        assert not service._clean_pattern_cache
 
     def test_malicious_content_is_not_cached(self, monkeypatch):
         """Repeated malicious scans still evaluate patterns and raise."""
@@ -365,7 +367,7 @@ class TestTimeoutAndEdgeCases:
             with pytest.raises(ContentPatternError):
                 service.detect_malicious_patterns(content="<script>alert(1)</script>", content_type="Resource content")
 
-        assert service._clean_pattern_cache == {}
+        assert not service._clean_pattern_cache
 
     def test_timeout_error_handling(self, monkeypatch):
         """Test TimeoutError is caught and converted to ContentPatternError."""
@@ -381,6 +383,7 @@ class TestTimeoutAndEdgeCases:
             pattern = "timeout"
 
             def search(self, content):
+                """Simulate regex timeout."""
                 raise TimeoutError("Pattern timeout")
 
         with (
@@ -436,13 +439,30 @@ class TestTimeoutAndEdgeCases:
     def test_search_helper_never_passes_timeout_keyword_to_stdlib_re(self):
         """The stdlib re API has no timeout keyword on supported Python versions."""
         # Standard
-        from unittest.mock import MagicMock
+        import re
 
         service = ContentSecurityService()
-        mock_compiled = MagicMock()
-        mock_compiled.search.return_value = None
 
-        with patch.object(service, "_compiled_blocked_patterns", [("test_pattern", mock_compiled)]), patch.object(service, "_regex_search_with_timeout") as mock_fallback:
+        # Wrap a real compiled pattern to record calls and assert no timeout kwarg
+        class SearchRecorder:
+            """Proxy that records search calls and rejects unexpected kwargs."""
+
+            def __init__(self, pattern: re.Pattern):
+                self._pattern = pattern
+                self.search_calls: list[tuple[tuple, dict]] = []
+
+            def search(self, content: str, **kwargs):
+                """Record call and proxy to real pattern, rejecting unexpected kwargs."""
+                if kwargs:
+                    raise TypeError(f"Unexpected keyword arguments: {kwargs}")
+                self.search_calls.append(((content,), kwargs))
+                return self._pattern.search(content)
+
+        real_pattern = re.compile(r"clean")
+        recorder = SearchRecorder(real_pattern)
+
+        with patch.object(service, "_compiled_blocked_patterns", [("test_pattern", recorder)]), patch.object(service, "_regex_search_with_timeout") as mock_fallback:
             service.detect_malicious_patterns(content="Clean content", content_type="Test")
-            assert not mock_fallback.called, "Py3.13+ path incorrectly fell back to thread-based timeout"
-            mock_compiled.search.assert_called_once_with("Clean content")
+            assert not mock_fallback.called, "Default pattern path incorrectly fell back to thread-based timeout"
+            assert len(recorder.search_calls) == 1
+            assert recorder.search_calls[0][0] == ("Clean content",)

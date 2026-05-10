@@ -337,7 +337,8 @@ class ContentSecurityService:
     @staticmethod
     def _patterns_signature(raw_patterns: List[str]) -> str:
         """Return a stable signature for the active pattern list."""
-        return hashlib.sha256("\n".join(raw_patterns).encode("utf-8")).hexdigest()
+        # Use null delimiter to avoid ambiguity when patterns contain newlines
+        return hashlib.sha256("\0".join(raw_patterns).encode("utf-8")).hexdigest()
 
     @staticmethod
     def _compile_patterns(raw_patterns: List[str], pattern_kind: str) -> List[tuple[str, re.Pattern]]:
@@ -361,10 +362,11 @@ class ContentSecurityService:
         return compiled
 
     def _regex_search_with_timeout(self, pattern, content: str, timeout: float = 1.0):
-        """Execute regex search with timeout protection for Python < 3.13.
+        """Execute regex search with best-effort timeout detection.
 
-        Uses threading to implement timeout for regex operations that don't
-        natively support it. This prevents ReDoS attacks on Python 3.11/3.12.
+        Uses threading to implement a soft timeout for regex operations. Because
+        CPython's re engine holds the GIL during backtracking, this is a
+        best-effort defense and may not abort pathological regex promptly.
 
         Args:
             pattern: Regex pattern to search for. Accepts either a raw source
@@ -429,6 +431,10 @@ class ContentSecurityService:
         Default project patterns use direct search for the hot path. Custom
         operator-provided patterns retain the pre-existing thread-join timeout
         behavior because they may have unknown ReDoS characteristics.
+
+        Note: CPython's re engine holds the GIL during backtracking, so the
+        thread-join timeout is a *soft* timeout. Custom patterns should be
+        authored to avoid catastrophic backtracking.
         """
         if enforce_timeout:
             return self._regex_search_with_timeout(pattern, content, timeout=timeout)
@@ -663,8 +669,8 @@ class ContentSecurityService:
 
         Scans content for XSS, command injection, SQL injection, and template injection patterns.
         Behavior depends on content_pattern_validation_mode:
-        - strict: Raises ContentPatternError on detection
-        - moderate: Logs warning and raises ContentPatternError
+        - strict: Logs warning and raises ContentPatternError on detection
+        - moderate: Same as strict (maintained for future enhancements)
         - lenient: Logs warning only, allows content
 
         Args:
@@ -789,9 +795,10 @@ class ContentSecurityService:
 
         if cache_key is not None and not found_violation:
             with self._clean_pattern_cache_lock:
-                if len(self._clean_pattern_cache) >= self._clean_pattern_cache_max_entries:
-                    self._clean_pattern_cache.pop(next(iter(self._clean_pattern_cache)))
-                self._clean_pattern_cache[cache_key] = None
+                if cache_key not in self._clean_pattern_cache:
+                    if len(self._clean_pattern_cache) >= self._clean_pattern_cache_max_entries:
+                        self._clean_pattern_cache.pop(next(iter(self._clean_pattern_cache)))
+                    self._clean_pattern_cache[cache_key] = None
 
     def _classify_violation(self, pattern: str, matched_text: str) -> str:
         """Classify violation type based on pattern and matched text.

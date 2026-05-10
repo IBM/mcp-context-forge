@@ -6,10 +6,10 @@ Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Usage:
-    uv run python scripts/benchmark_content_security.py --mode latency
-    uv run python scripts/benchmark_content_security.py --mode service-rps
-    uv run python scripts/benchmark_content_security.py --mode http-e2e
-    uv run python scripts/benchmark_content_security.py --mode all
+    uv run python tests/performance/test_content_security_benchmark.py --mode latency
+    uv run python tests/performance/test_content_security_benchmark.py --mode service-rps
+    uv run python tests/performance/test_content_security_benchmark.py --mode http-e2e
+    uv run python tests/performance/test_content_security_benchmark.py --mode all
 """
 
 # Standard

@@ -2260,7 +2260,7 @@ class Settings(BaseSettings):
     )
     content_pattern_validation_mode: str = Field(
         default="strict",
-        description="Validation mode for pattern detection (US-3): 'strict' (block), 'moderate' (warn+block), 'lenient' (warn only).",
+        description="Validation mode for pattern detection (US-3): 'strict' (warn+block), 'moderate' (same as strict), 'lenient' (warn only).",
     )
     content_blocked_patterns: List[str] = Field(
         default_factory=lambda: [
