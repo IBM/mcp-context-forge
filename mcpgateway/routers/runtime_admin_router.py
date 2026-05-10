@@ -212,9 +212,10 @@ async def _apply_mode_change(
     except RuntimeStateError as exc:
         # Refusing to allocate a colliding version is preferable to silently
         # losing one of two concurrent flips at peer dedup time.
+        logger.debug("Cannot safely allocate a runtime-mode version: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cannot safely allocate a runtime-mode version: {exc}",
+            detail="Cannot safely allocate a runtime-mode version",
         ) from exc
 
     change = await state.apply_local(runtime, new_mode, initiator_user=user.get("email"), version=next_version)

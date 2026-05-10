@@ -10,7 +10,7 @@ Tests for SSO router endpoints and helpers.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -163,7 +163,7 @@ async def test_initiate_sso_login_invalid_scopes(monkeypatch: pytest.MonkeyPatch
         await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes="admin", db=MagicMock())
 
     assert excinfo.value.status_code == 400
-    assert "Invalid scopes requested: admin" in str(excinfo.value.detail)
+    assert "Invalid OAuth authorization request" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -522,7 +522,7 @@ async def test_create_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyP
         await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 400
-    assert "Issuer is not allowed" in str(excinfo.value.detail)
+    assert "Invalid SSO provider configuration" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -675,7 +675,7 @@ async def test_update_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyP
         await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 400
-    assert "Issuer is not allowed" in str(excinfo.value.detail)
+    assert "Invalid SSO provider configuration" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio

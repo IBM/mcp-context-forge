@@ -338,7 +338,8 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     try:
         auth_context = decode_internal_mcp_auth_context(header_value)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid trusted MCP auth context: {exc}") from exc
+        logger.debug("Invalid trusted MCP auth context: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context") from exc
 
     setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
@@ -1158,12 +1159,14 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
+        logger.debug("Invalid main JSONPath expression: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid JSONPath expression")
 
     try:
         main_matches = main_expr.find(data)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error executing main JSONPath: {e}")
+        logger.debug("Error executing main JSONPath: %s", e)
+        raise HTTPException(status_code=400, detail="Error executing JSONPath expression")
 
     results = [match.value for match in main_matches]
 
@@ -1201,7 +1204,8 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         try:
             parsed_mappings[new_key] = _parse_jsonpath(mapping_expr_str)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+            logger.debug("Invalid mapping JSONPath for key '%s': %s", new_key, e)
+            raise HTTPException(status_code=400, detail=f"Invalid JSONPath expression for key '{new_key}'")
 
     mapped_results = []
     for item in data:
@@ -1210,7 +1214,8 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+                logger.debug("Error executing mapping JSONPath for key '%s': %s", new_key, e)
+                raise HTTPException(status_code=400, detail=f"Error executing JSONPath expression for key '{new_key}'")
 
             if not mapping_matches:
                 mapped_item[new_key] = None
@@ -2402,6 +2407,32 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
             error_details["plugin_name"] = exc.error.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> ORJSONResponse:
+    """Catch-all handler for unhandled exceptions.
+
+    Logs the full exception server-side and returns a generic message to the
+    client so that stack traces and internal details are never exposed in
+    production responses.
+
+    Args:
+        request: The incoming request.
+        _exc: The unhandled exception (unused; logged via logger.exception context).
+
+    Returns:
+        ORJSONResponse: 500 response with a generic error message.
+    """
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method,
+        request.url.path,
+    )
+    return ORJSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please try again."},
+    )
 
 
 @app.exception_handler(ContentTypeError)
@@ -7085,7 +7116,7 @@ async def export_root(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected root export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Root export failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Root export failed")
 
 
 @root_router.get("/changes")
@@ -11461,7 +11492,7 @@ async def list_tags(
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve tags")
 
 
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
@@ -11515,7 +11546,7 @@ async def get_entities_by_tag(
         return entities
     except Exception as e:
         logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve entities")
 
 
 ####################
@@ -11607,7 +11638,7 @@ async def export_configuration(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
@@ -11671,7 +11702,7 @@ async def export_selective_configuration(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected selective export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @export_import_router.post("/import", response_model=Dict[str, Any])
@@ -11734,16 +11765,16 @@ async def import_configuration(
         raise
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+        raise HTTPException(status_code=422, detail="Import validation failed")
     except ImportConflictError as e:
         logger.error(f"Import conflict for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=409, detail=f"Conflict error: {str(e)}")
+        raise HTTPException(status_code=409, detail="Import conflict detected")
     except ImportServiceError as e:
         logger.error(f"Import failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Import failed")
     except Exception as e:
         logger.error(f"Unexpected import error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Import failed")
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
