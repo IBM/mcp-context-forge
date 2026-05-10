@@ -2794,7 +2794,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -3142,7 +3142,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
-    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
+    url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 

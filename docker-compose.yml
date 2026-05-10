@@ -2032,6 +2032,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -e
         echo "Registering fast_test_server with gateway..."
 
         # Generate JWT token
