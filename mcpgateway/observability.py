@@ -12,6 +12,7 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 import base64
 from contextlib import nullcontext
 from dataclasses import dataclass
+import inspect
 from importlib import import_module as _im
 import logging
 import os
@@ -179,6 +180,48 @@ class BaggageSpanAttributePolicy:
 # pylint: disable=invalid-name
 _TRACER = None
 _BAGGAGE_SPAN_ATTRIBUTE_POLICY = BaggageSpanAttributePolicy()
+
+
+def _supports_exporter_kwarg(exporter_cls: Any, kwarg: str) -> bool:
+    """Return whether an exporter constructor accepts a keyword argument.
+
+    Args:
+        exporter_cls: Exporter class or callable.
+        kwarg: Keyword argument name to check.
+
+    Returns:
+        True if the callable explicitly accepts the kwarg or arbitrary kwargs.
+    """
+    try:
+        signature = inspect.signature(exporter_cls)
+    except (TypeError, ValueError):
+        return False
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return kwarg in signature.parameters
+
+
+def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], protocol: str, insecure: bool) -> Dict[str, Any]:
+    """Build OTLP exporter kwargs while preserving exporter-version compatibility.
+
+    Args:
+        exporter_cls: OTLP exporter class.
+        endpoint: Exporter endpoint.
+        headers: Optional request headers.
+        protocol: OTLP transport protocol.
+        insecure: Whether TLS verification/insecure transport is requested.
+
+    Returns:
+        Constructor keyword arguments for the selected exporter.
+    """
+    kwargs: Dict[str, Any] = {"endpoint": endpoint, "headers": headers}
+    if _supports_exporter_kwarg(exporter_cls, "insecure"):
+        kwargs["insecure"] = insecure
+    elif protocol == "http" and insecure and _supports_exporter_kwarg(exporter_cls, "certificate_file"):
+        kwargs["certificate_file"] = False
+    return kwargs
 
 
 def _sanitize_span_exception_message(exc_val: Optional[BaseException]) -> str:
@@ -1043,21 +1086,21 @@ def init_telemetry() -> Optional[Any]:
         exporter: Optional[Any] = None
 
         if exporter_type == "otlp":
-            endpoint = _resolve_otlp_endpoint()
+            endpoint = _resolve_otlp_endpoint() or ""
             protocol = cfg.otel_exporter_otlp_protocol.lower()
             header_dict = _resolve_otlp_headers(endpoint)
+            headers = header_dict or None
             if _is_langfuse_otlp_endpoint(endpoint):
                 protocol = "http"
-            # Note: some versions of OTLP exporters may not accept 'insecure' kwarg; avoid passing it.
-            # Use endpoint scheme or env to control TLS externally.
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
-                exporter = cast(Any, OTLP_SPAN_EXPORTER)(endpoint=endpoint, headers=header_dict or None)
+                exporter_cls = cast(Any, OTLP_SPAN_EXPORTER)
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, protocol="grpc", insecure=cfg.otel_exporter_otlp_insecure))
             elif HTTP_EXPORTER:
                 # Use HTTP exporter as fallback
-                ep = str(endpoint) if endpoint is not None else ""
-                http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
-                exporter = cast(Any, HTTP_EXPORTER)(endpoint=http_ep, headers=header_dict or None)
+                http_ep = (endpoint.replace(":4317", ":4318") + "/v1/traces") if ":4317" in endpoint else endpoint
+                exporter_cls = cast(Any, HTTP_EXPORTER)
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, protocol="http", insecure=cfg.otel_exporter_otlp_insecure))
             else:
                 logger.error("No OTLP exporter available")
                 return None

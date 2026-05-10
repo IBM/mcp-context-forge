@@ -46,6 +46,8 @@ class TestObservability:
             "OTEL_TRACES_EXPORTER",
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_EXPORTER_OTLP_INSECURE",
+            "OTEL_EXPORTER_OTLP_PROTOCOL",
             "OTEL_EMIT_LANGFUSE_ATTRIBUTES",
             "OTEL_CAPTURE_IDENTITY_ATTRIBUTES",
             "OTEL_CAPTURE_INPUT_SPANS",
@@ -151,6 +153,65 @@ class TestObservability:
         assert result is not None
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_grpc_passes_insecure_setting(self, mock_processor, mock_provider):
+        """Test that OTEL_EXPORTER_OTLP_INSECURE is passed to gRPC OTLP exporters."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://collector.example.com:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "false"
+
+        class FakeGrpcExporter:
+            """Exporter with the same insecure constructor kwarg used by gRPC OTLP."""
+
+            calls = []
+
+            def __init__(self, endpoint=None, headers=None, insecure=None):
+                self.__class__.calls.append({"endpoint": endpoint, "headers": headers, "insecure": insecure})
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER", FakeGrpcExporter):
+            result = init_telemetry()
+
+        assert result is not None
+        assert FakeGrpcExporter.calls[-1]["endpoint"] == "https://collector.example.com:4317"
+        assert FakeGrpcExporter.calls[-1]["insecure"] is False
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_http_uses_certificate_file_for_insecure_setting(self, mock_processor, mock_provider):
+        """Test that HTTP OTLP exporters receive certificate_file=False when insecure is enabled."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://collector.example.com/v1/traces"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
+
+        class FakeHttpExporter:
+            """Exporter with the certificate_file constructor kwarg used by HTTP OTLP."""
+
+            calls = []
+
+            def __init__(self, endpoint=None, headers=None, certificate_file=None):
+                self.__class__.calls.append({"endpoint": endpoint, "headers": headers, "certificate_file": certificate_file})
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER", None):
+            with patch("mcpgateway.observability.HTTP_EXPORTER", FakeHttpExporter):
+                result = init_telemetry()
+
+        assert result is not None
+        assert FakeHttpExporter.calls[-1]["endpoint"] == "https://collector.example.com/v1/traces"
+        assert FakeHttpExporter.calls[-1]["certificate_file"] is False
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.SimpleSpanProcessor")
@@ -249,6 +310,7 @@ class TestObservability:
         self._enable_observability()
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "api-key=secret,x-auth=token123"
 
         with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_exporter:
@@ -1780,7 +1842,7 @@ class TestObservability:
     def test_observability_module_imports_otel_symbols_when_dependency_present(self):
         """Test module import path binds OTEL symbols when OpenTelemetry imports succeed."""
         # First-Party
-        import mcpgateway.observability as observability
+        from mcpgateway import observability
 
         fake_trace = object()
         fake_extract = object()
