@@ -3091,6 +3091,30 @@ Disallow: /
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # MCP tool naming per SEP-986
     validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
+    validation_cursor_pattern: str = r"^[a-zA-Z0-9_=+/-]+$"
+    validation_tags_filter_pattern: str = r"^[a-zA-Z0-9_,+ .-]*$"
+    validation_gateway_id_list_pattern: str = r"^[a-zA-Z0-9_,-]*$"
+    validation_render_mode_pattern: str = r"^[a-zA-Z_-]+$"
+    validation_visibility_pattern: str = r"^(private|team|public)$"
+    validation_user_identifier_pattern: str = r"^[a-zA-Z0-9._%+@-]+$"
+    validation_http_method_pattern: str = r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"
+    validation_export_format_pattern: str = r"^(json|csv|ndjson)$"
+    validation_error_code_pattern: str = r"^[a-zA-Z0-9_]+$"
+    validation_trace_status_pattern: str = r"^(ok|error)$"
+    validation_toolops_mode_pattern: str = r"^(generate|query|status)$"
+    validation_hyphen_identifier_pattern: str = r"^[a-zA-Z0-9_-]+$"
+    validation_team_id_pattern: str = r"^[a-zA-Z0-9_-]+$"
+    validation_scope_id_pattern: str = r"^[a-zA-Z0-9_-]+$"
+    validation_gateway_id_pattern: str = r"^[a-zA-Z0-9_-]+$"
+    validation_trace_id_pattern: str = r"^[a-zA-Z0-9_-]+$"
+    validation_resource_name_pattern: str = r"^[a-zA-Z0-9_. /-]+$"
+    validation_relationship_pattern: str = r"^(owner|member|public)$"
+    validation_entity_type_pattern: str = r"^(tools|resources|prompts|servers)$"
+    validation_time_range_pattern: str = r"^(1h|6h|12h|24h|7d|30d)$"
+    validation_status_filter_pattern: str = r"^(all|ok|error)$"
+    validation_period_type_pattern: str = r"^(hourly|daily)$"
+    validation_aggregation_pattern: str = r"^(5m|24h)$"
+    validation_entity_types_pattern: str = r"^[a-zA-Z,]*$"
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
