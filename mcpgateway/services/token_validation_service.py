@@ -120,21 +120,29 @@ def _derive_issuer_from_token_url(token_url: str) -> Optional[str]:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _normalize_scope(scope_str: str) -> set:
-    """Normalize a scope string by stripping resource URI prefixes.
+def _normalize_scope(scope_input: Any) -> set[str]:
+    """Normalize a scope string or list by stripping resource URI prefixes.
 
     IdPs like Entra ID may return scopes as ``api://app-id/Scope.Name``
     while the gateway config stores the full URI form.  We compare both
     the full form and the short form (after the last ``/``).
 
     Args:
-        scope_str: Space-delimited scope string from the token.
+        scope_input: Space-delimited scope string or list of scopes from the token.
 
     Returns:
         Set of normalized scope names (both full and short forms).
     """
     scopes = set()
-    for s in scope_str.split():
+    # Handle both string (space-delimited) and list formats
+    if isinstance(scope_input, list):
+        scope_list = [s for s in scope_input if isinstance(s, str)]
+    elif isinstance(scope_input, str):
+        scope_list = scope_input.split()
+    else:
+        return scopes
+
+    for s in scope_list:
         scopes.add(s)
         # Also add the short form (after last '/')
         if "/" in s:
@@ -186,12 +194,16 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
         return
 
     # Entra ID uses 'scp' claim; standard OAuth uses 'scope'
-    token_scope_str = claims.get("scope") or claims.get("scp") or ""
-    if not token_scope_str:
+    token_scope_value = claims.get("scope")
+    if token_scope_value is None:
+        token_scope_value = claims.get("scp")
+    if token_scope_value is None:
+        token_scope_value = ""
+    if token_scope_value == "":
         logger.debug("OAuth token for gateway %s has no 'scope'/'scp' claim", gateway_name)
         return
 
-    granted_scopes = _normalize_scope(token_scope_str)
+    granted_scopes = _normalize_scope(token_scope_value)
     missing = []
     for cfg_scope in configured_scopes:
         short = cfg_scope.rsplit("/", 1)[-1] if "/" in cfg_scope else cfg_scope
