@@ -134,7 +134,7 @@ _INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
 _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 
-def get_user_email(user):
+def get_user_email(user: Any) -> str:
     """Extract email from user object, handling both string and dict formats.
 
     Args:
@@ -175,11 +175,15 @@ def get_user_email(user):
         >>> get_user_email(False)
         'unknown'
     """
-    if not user:
+    if user is None:
         return "unknown"
     if isinstance(user, dict):
         return user.get("email") or user.get("sub") or "unknown"
-    return str(user) if user else "unknown"
+    if hasattr(user, "email"):
+        return getattr(user, "email") or "unknown"
+    if not user:
+        return "unknown"
+    return str(user)
 
 
 def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
@@ -348,12 +352,10 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         >>> is_admin
         True
     """
-    if hasattr(user, "email"):
-        user_email = getattr(user, "email", None)
-    elif isinstance(user, dict):
-        user_email = user.get("sub") or user.get("email")
-    else:
-        user_email = str(user) if user else None
+    # Use canonical get_user_email for consistent email-over-sub precedence
+    user_email = get_user_email(user)
+    if user_email == "unknown":
+        user_email = None
 
     token_teams = get_token_teams_from_request(request)
 
