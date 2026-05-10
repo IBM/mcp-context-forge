@@ -3932,8 +3932,9 @@ class TestAdminGatewayTestRoute:
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
         monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
 
+        from sqlalchemy.exc import SQLAlchemyError
         mock_db = MagicMock()
-        mock_db.execute.side_effect = Exception("Database connection failed")
+        mock_db.execute.side_effect = SQLAlchemyError("Database connection failed")
 
         request = GatewayTestRequest(
             base_url="https://fallback.example.com",

@@ -1923,13 +1923,13 @@ class TestGatewayTestUrlValidation:
         )
         assert result == "https://api.v2.example.com/test"
 
-        # Should also match the base domain
-        result = SecurityValidator.validate_gateway_test_url(
-            "https://example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
-        assert result == "https://example.com/test"
+        # Should NOT match the base domain itself (only subdomains)
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
 
     def test_wildcard_does_not_match_different_domain(self, mock_dns_public):
         """Test that wildcard patterns don't match unrelated domains."""
@@ -1970,10 +1970,10 @@ class TestGatewayTestUrlValidation:
                 # Error message should be generic
                 assert "Gateway URL" in error_msg
                 # Should NOT contain internal details
-                assert "allowlist" in error_msg.lower() or "not allowed" in error_msg.lower()
+                assert "not allowed" in error_msg.lower()
                 # Should NOT expose specific validation failure reasons in detail
-                assert "private" not in error_msg.lower() or "not allowed" in error_msg.lower()
-                assert "loopback" not in error_msg.lower() or "not allowed" in error_msg.lower()
+                assert "private" not in error_msg.lower()
+                assert "loopback" not in error_msg.lower()
 
     def test_case_insensitive_hostname_matching(self, mock_dns_public):
         """Test that hostname matching is case-insensitive."""
@@ -2015,7 +2015,6 @@ class TestGatewayTestUrlValidation:
             "https://api.example.com/test",
             "https://v1.partner.com/api",
             "https://v2.partner.com/api",
-            "https://partner.com/api",
             "https://legacy.system.net/old",
         ]
 
@@ -2023,13 +2022,14 @@ class TestGatewayTestUrlValidation:
             result = SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
             assert result == url
 
-        # This should be rejected
-        with pytest.raises(ValueError, match="is not allowed"):
-            SecurityValidator.validate_gateway_test_url(
-                "https://evil.com/",
-                allowed_hosts,
-                "Gateway URL"
-            )
+        # These should be rejected
+        rejected_urls = [
+            "https://evil.com/",
+            "https://partner.com/api",  # *.partner.com does not match base domain
+        ]
+        for url in rejected_urls:
+            with pytest.raises(ValueError, match="is not allowed"):
+                SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
 
     def test_empty_url_rejected(self):
         """Test that empty URLs are rejected."""
@@ -2185,13 +2185,13 @@ class TestGatewayTestUrlValidation:
         )
         assert result == "https://sub.example.com/test"
 
-        # Test that base domain matches wildcard pattern
-        result2 = SecurityValidator.validate_gateway_test_url(
-            "https://example.com/test",
-            allowed_hosts,
-            "Gateway URL"
-        )
-        assert result2 == "https://example.com/test"
+        # Test that base domain does NOT match wildcard pattern (only subdomains)
+        with pytest.raises(ValueError, match="is not allowed"):
+            SecurityValidator.validate_gateway_test_url(
+                "https://example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
 
     def test_hostname_not_in_allowlist_rejected(self, monkeypatch):
         """Test that hostnames not in allowlist are rejected with generic message."""

@@ -1656,7 +1656,7 @@ class SecurityValidator:
                     if "is not allowed" in str(e):
                         raise
                     continue
-        except socket.gaierror:
+        except (socket.gaierror, socket.herror):
             # DNS resolution failed - reject with generic message
             raise ValueError(f"{field_name} is not allowed")
 
@@ -1673,8 +1673,9 @@ class SecurityValidator:
 
             if pattern_normalized.startswith("*."):
                 # Wildcard subdomain pattern: *.example.com
+                # Matches subdomains ONLY, not the base domain itself (per DNS conventions)
                 domain_suffix = pattern_normalized[2:]  # Remove "*."
-                if hostname_normalized.endswith("." + domain_suffix) or hostname_normalized == domain_suffix:
+                if hostname_normalized.endswith("." + domain_suffix):
                     allowed = True
                     break
             else:

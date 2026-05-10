@@ -54,7 +54,7 @@ import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
-from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
@@ -14009,7 +14009,7 @@ async def admin_test_gateway(
     start_time: float = time.monotonic()
 
     # Build allowlist for gateway test endpoint
-    allowed_hosts: list[str] = []
+    allowed_hosts_set: set[str] = set()
 
     if settings.gateway_test_allow_registered_only:
         # Mode 1: Only allow testing registered gateway URLs
@@ -14027,26 +14027,28 @@ async def admin_test_gateway(
                     if parsed.hostname:
                         # Normalize: lowercase and strip trailing dots
                         hostname = parsed.hostname.lower().rstrip(".")
-                        if hostname not in allowed_hosts:
-                            allowed_hosts.append(hostname)
+                        allowed_hosts_set.add(hostname)
                 except (ValueError, AttributeError) as e:
                     # Log parse failures to help debug "URL not in allowlist" mysteries
                     LOGGER.debug("Failed to parse registered gateway URL '%s': %s", url, e)
                     continue
-        except Exception as e:
+        except SQLAlchemyError as e:
             LOGGER.warning("Failed to build allowlist from registered gateways: %s", e)
     else:
         # Mode 2: Use configured host patterns from settings
-        allowed_hosts = list(settings.gateway_test_allowed_hosts)
+        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
+
+    allowed_hosts = list(allowed_hosts_set)
 
     # Validate URL with allowlist enforcement
     try:
         validated_base_url = SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
     except ValueError as e:
         # Log the actual error for security monitoring, but return generic message
+        safe_url = sanitize_url_for_logging(str(request.base_url))
         LOGGER.warning(
             "Gateway test URL validation failed for %s by user %s: %s",
-            request.base_url,
+            safe_url,
             get_user_email(user),
             str(e),
         )

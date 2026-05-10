@@ -132,7 +132,7 @@ def configure_gateway_test_allowlist(monkeypatch):
     """
     # Configure allowlist to allow test domains
     monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
-    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["*.example.com", "*.google.com"])
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["example.com", "*.example.com", "google.com", "*.google.com"])
 
     # Mock DNS resolution to return public IP for all test domains
     # Scope to the validator module to avoid affecting other code
