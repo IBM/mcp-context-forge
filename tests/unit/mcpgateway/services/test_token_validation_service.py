@@ -178,6 +178,14 @@ class TestNormalizeScope:
         assert _normalize_scope(123) == set()
         assert _normalize_scope({}) == set()
 
+    def test_list_with_non_string_elements(self):
+        """Test that _normalize_scope filters out non-string list elements safely."""
+        scopes = _normalize_scope(["read", 123, None, "write"])
+        assert "read" in scopes
+        assert "write" in scopes
+        assert 123 not in scopes
+        assert None not in scopes
+
 
 # ---------- validate_oauth_token_claims ----------
 
@@ -310,6 +318,32 @@ class TestValidateOauthTokenClaims:
 
         # Nothing to compare against
         assert result.scopes_sufficient is None
+
+    def test_empty_list_scope_claim(self):
+        """Empty list scope should be treated as insufficient, not skipped."""
+        token = _make_jwt({"scope": []})
+        oauth_config = {"scopes": ["read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_list_scope_mismatch(self):
+        """List-valued scopes with missing required scopes should be flagged."""
+        token = _make_jwt({"scope": ["read", "admin"]})
+        oauth_config = {"scopes": ["write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_list_scope_match(self):
+        """List-valued scopes that satisfy required scopes should pass."""
+        token = _make_jwt({"scope": ["read", "write"]})
+        oauth_config = {"scopes": ["write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
 
     # -- Issuer mismatch --
 

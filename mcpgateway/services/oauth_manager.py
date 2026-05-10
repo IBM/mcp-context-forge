@@ -816,7 +816,7 @@ class OAuthManager:
             # Handle scope as either string or list (OAuth providers vary)
             scope_value = token_response.get("scope", "")
             if isinstance(scope_value, list):
-                scopes_list = scope_value
+                scopes_list = [s for s in scope_value if isinstance(s, str)]
             elif isinstance(scope_value, str):
                 scopes_list = scope_value.split() if scope_value else []
             else:
