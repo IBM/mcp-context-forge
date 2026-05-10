@@ -82,7 +82,7 @@
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
-              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'prompts')">
+              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="prompts">
                 <input type="hidden" name="activate" value="{{ 'false' if prompt.enabled else 'true' }}" />
                 <button
                   type="submit"
@@ -91,7 +91,7 @@
                   class="w-full flex items-center px-4 py-2 text-sm {% if prompt.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
                 >{% if prompt.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
-              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'prompt', {{ prompt_label|tojson_attr }}, 'prompts')">
+              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="prompt" data-arg1="{{ prompt_label|tojson_attr }}" data-arg2="prompts">
                 <button
                   type="submit"
                   role="menuitem"

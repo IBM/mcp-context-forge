@@ -76,7 +76,7 @@
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
               {% if resource.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="resources">
                 <input type="hidden" name="activate" value="false" />
                 <button
                   type="submit"
@@ -86,7 +86,7 @@
                 >Deactivate</button>
               </form>
               {% else %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="resources">
                 <input type="hidden" name="activate" value="true" />
                 <button
                   type="submit"
@@ -96,7 +96,7 @@
                 >Activate</button>
               </form>
               {% endif %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'resource', {{ (resource.name or resource.uri)|tojson_attr }}, 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="resource" data-arg1="{{ (resource.name or resource.uri)|tojson_attr }}" data-arg2="resources">
                 <button
                   type="submit"
                   role="menuitem"
