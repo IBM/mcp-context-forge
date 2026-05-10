@@ -1505,7 +1505,7 @@ class TestOAuthManager:
         _, _, _, _, client_cert, _ = self._make_ca_cert_mocks()
 
         with patch("mcpgateway.services.oauth_manager.get_cached_ssl_context", side_effect=ValueError("mTLS requires both client_cert and client_key")):
-            with patch.object(manager, "_get_client", side_effect=AssertionError("shared client should not be used")):
+            with patch.object(manager, "_get_client", side_effect=RuntimeError("shared client should not be used")):
                 with pytest.raises(ValueError, match="mTLS requires both"):
                     await manager.get_access_token(credentials, client_cert=client_cert)
 

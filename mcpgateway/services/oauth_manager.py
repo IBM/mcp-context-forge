@@ -1424,9 +1424,10 @@ class OAuthManager:
             code: Authorization code from callback
             code_verifier: Optional PKCE code verifier (RFC 7636)
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
-                When provided, creates an isolated HTTP client with custom SSL context
-                instead of using the shared client. This enables OAuth token exchange
-                with self-signed or custom CA upstream OAuth servers.
+                When provided along with ``client_cert``/``client_key``, creates an
+                isolated HTTP client with custom SSL context instead of using the
+                shared client. This enables OAuth token exchange with self-signed or
+                custom CA upstream OAuth servers and/or mTLS authentication.
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
 

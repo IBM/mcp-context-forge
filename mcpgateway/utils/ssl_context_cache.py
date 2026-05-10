@@ -191,14 +191,14 @@ def get_cached_ssl_context(
         _ssl_context_cache.pop(cache_key, None)
         _ssl_context_cache_timestamps.pop(cache_key, None)
 
+    # Validate mTLS: require both or neither
+    if bool(client_cert) != bool(client_key):
+        raise ValueError("mTLS requires both client_cert and client_key; got only one")
+
     # Create new SSL context and configure CA cert
     ctx = ssl.create_default_context()
     if ca_certificate:
         ctx.load_verify_locations(cadata=ca_certificate)
-
-    # Validate mTLS: require both or neither
-    if bool(client_cert) != bool(client_key):
-        raise ValueError("mTLS requires both client_cert and client_key; got only one")
 
     # Load client certificates for mTLS when provided
     if client_cert and client_key:
