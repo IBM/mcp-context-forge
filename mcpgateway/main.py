@@ -70,6 +70,8 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
+
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
@@ -3017,6 +3019,18 @@ app.add_middleware(DocsAuthMiddleware)
 # Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
 # This ensures all /admin/* routes (except login/logout) require admin status
 app.add_middleware(AdminAuthMiddleware)
+
+# Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
+# Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
+# but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
+# This ensures request.base_url reflects the proxy's public host, fixing the
+# OAuth redirect_uri hint and other URL construction throughout the admin UI.
+# Registered alongside ProxyHeadersMiddleware with the same trust model.
+#
+# Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
+# ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
+# already being corrected when deriving the default port for scope["server"].
+app.add_middleware(ForwardedHostMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
