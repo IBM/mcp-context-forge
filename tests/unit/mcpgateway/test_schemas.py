@@ -710,12 +710,12 @@ class TestServerSchemas:
     def test_server_create(self):
         """Test ServerCreate model."""
         # Use valid UUIDs for associations
-        tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
-        tool_id2 = "550e8400-e29b-41d4-a716-446655440002"
-        tool_id3 = "550e8400-e29b-41d4-a716-446655440003"
-        resource_id1 = "550e8400-e29b-41d4-a716-446655440004"
-        resource_id2 = "550e8400-e29b-41d4-a716-446655440005"
-        prompt_id1 = "550e8400-e29b-41d4-a716-446655440006"
+        tool_id1 = "550e8400e29b41d4a716446655440001"
+        tool_id2 = "550e8400e29b41d4a716446655440002"
+        tool_id3 = "550e8400e29b41d4a716446655440003"
+        resource_id1 = "550e8400e29b41d4a716446655440004"
+        resource_id2 = "550e8400e29b41d4a716446655440005"
+        prompt_id1 = "550e8400e29b41d4a716446655440006"
 
         server = ServerCreate(
             name="Test Server",
@@ -762,11 +762,11 @@ class TestServerSchemas:
     def test_server_update(self):
         """Test ServerUpdate model."""
         # Use valid UUIDs for associations
-        tool_id1 = "550e8400-e29b-41d4-a716-446655440010"
-        tool_id2 = "550e8400-e29b-41d4-a716-446655440011"
-        resource_id1 = "550e8400-e29b-41d4-a716-446655440012"
-        resource_id2 = "550e8400-e29b-41d4-a716-446655440013"
-        prompt_id1 = "550e8400-e29b-41d4-a716-446655440014"
+        tool_id1 = "550e8400e29b41d4a716446655440010"
+        tool_id2 = "550e8400e29b41d4a716446655440011"
+        resource_id1 = "550e8400e29b41d4a716446655440012"
+        resource_id2 = "550e8400e29b41d4a716446655440013"
+        prompt_id1 = "550e8400e29b41d4a716446655440014"
 
         update = ServerUpdate(
             name="Updated Server",
@@ -801,12 +801,12 @@ class TestServerSchemas:
     def test_server_create_with_empty_items_in_list(self):
         """Test ServerCreate split_comma_separated validator with empty items in list.
 
-        This test covers lines 4160, 4163 in schemas.py which handle:
-        - Empty/None items in the list (line 4160: if not item: continue)
-        - Empty strings after stripping (line 4163: if not item_str: continue)
+        This test covers the schema handling for:
+        - Empty/None items in the list
+        - Empty strings after stripping
         """
-        tool_id1 = "550e8400-e29b-41d4-a716-446655440010"
-        tool_id2 = "550e8400-e29b-41d4-a716-446655440011"
+        tool_id1 = "550e8400e29b41d4a716446655440010"
+        tool_id2 = "550e8400e29b41d4a716446655440011"
 
         # Test with None items in list
         server_with_none = ServerCreate(
@@ -837,9 +837,9 @@ class TestServerSchemas:
         assert server_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
-        resource_id1 = "550e8400-e29b-41d4-a716-446655440012"
-        prompt_id1 = "550e8400-e29b-41d4-a716-446655440014"
-        agent_id1 = "550e8400-e29b-41d4-a716-446655440015"
+        resource_id1 = "550e8400e29b41d4a716446655440012"
+        prompt_id1 = "550e8400e29b41d4a716446655440014"
+        agent_id1 = "550e8400e29b41d4a716446655440015"
 
         server_all_fields = ServerCreate(
             name="Test Server",
@@ -856,8 +856,7 @@ class TestServerSchemas:
     def test_server_create_with_invalid_uuid_in_list(self):
         """Test ServerCreate split_comma_separated validator with invalid UUID.
 
-        This test covers lines 4169-4170 in schemas.py which handle:
-        - ValueError raised when list contains non-UUID values
+        This test covers the schema handling for non-UUID values in association lists.
         """
         # Test with invalid UUID format (tool name instead of ID)
         with pytest.raises(ValueError) as exc_info:
@@ -866,8 +865,8 @@ class TestServerSchemas:
                 associated_tools=["my-tool-name"]  # Not a valid UUID
             )
         assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
-        assert "Use 'associated_tool_ids'" in str(exc_info.value)
-        assert "IDs must be UUIDs, not names" in str(exc_info.value)
+        assert "associated_tools" in str(exc_info.value)
+        assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
 
         # Test with invalid UUID in associated_resources
         with pytest.raises(ValueError) as exc_info:
@@ -894,7 +893,7 @@ class TestServerSchemas:
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
-        valid_uuid = "550e8400-e29b-41d4-a716-446655440010"
+        valid_uuid = "550e8400e29b41d4a716446655440010"
         with pytest.raises(ValueError) as exc_info:
             ServerCreate(
                 name="Test Server",
@@ -905,12 +904,12 @@ class TestServerSchemas:
     def test_server_update_with_empty_items_in_list(self):
         """Test ServerUpdate split_comma_separated validator with empty items in list.
 
-        This test covers lines 4347 and 4350 in schemas.py which handle:
-        - Empty/None items in the list (line 4347: if not item: continue)
-        - Empty strings after stripping (line 4350: if not item_str: continue)
+        This test covers the schema handling for:
+        - Empty/None items in the list
+        - Empty strings after stripping
         """
-        tool_id1 = "550e8400-e29b-41d4-a716-446655440010"
-        tool_id2 = "550e8400-e29b-41d4-a716-446655440011"
+        tool_id1 = "550e8400e29b41d4a716446655440010"
+        tool_id2 = "550e8400e29b41d4a716446655440011"
 
         # Test with None items in list
         update_with_none = ServerUpdate(
@@ -937,9 +936,9 @@ class TestServerSchemas:
         assert update_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
-        resource_id1 = "550e8400-e29b-41d4-a716-446655440012"
-        prompt_id1 = "550e8400-e29b-41d4-a716-446655440014"
-        agent_id1 = "550e8400-e29b-41d4-a716-446655440015"
+        resource_id1 = "550e8400e29b41d4a716446655440012"
+        prompt_id1 = "550e8400e29b41d4a716446655440014"
+        agent_id1 = "550e8400e29b41d4a716446655440015"
 
         update_all_fields = ServerUpdate(
             associated_tools=[tool_id1, None, ""],
@@ -955,8 +954,7 @@ class TestServerSchemas:
     def test_server_update_with_invalid_uuid_in_list(self):
         """Test ServerUpdate split_comma_separated validator with invalid UUID.
 
-        This test covers lines 4356-4357 in schemas.py which handle:
-        - ValueError raised when list contains non-UUID values
+        This test covers the schema handling for non-UUID values in association lists.
         """
         # Test with invalid UUID format (tool name instead of ID)
         with pytest.raises(ValueError) as exc_info:
@@ -964,8 +962,8 @@ class TestServerSchemas:
                 associated_tools=["my-tool-name"]  # Not a valid UUID
             )
         assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
-        assert "Use 'associated_tool_ids'" in str(exc_info.value)
-        assert "IDs must be UUIDs, not names" in str(exc_info.value)
+        assert "associated_tools" in str(exc_info.value)
+        assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
 
         # Test with invalid UUID in associated_resources
         with pytest.raises(ValueError) as exc_info:
@@ -989,7 +987,7 @@ class TestServerSchemas:
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
-        valid_uuid = "550e8400-e29b-41d4-a716-446655440010"
+        valid_uuid = "550e8400e29b41d4a716446655440010"
         with pytest.raises(ValueError) as exc_info:
             ServerUpdate(
                 associated_tools=[valid_uuid, "invalid-tool"]

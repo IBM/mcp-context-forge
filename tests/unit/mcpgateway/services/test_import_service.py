@@ -2557,8 +2557,8 @@ async def test_gateway_update_auth_conversion_query_param_decode_error(import_se
 @pytest.mark.asyncio
 async def test_convert_to_server_create_resolves_tool_references(import_service, mock_db):
     # Use valid UUIDs for tool IDs
-    tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
-    tool_id2 = "550e8400-e29b-41d4-a716-446655440002"
+    tool_id1 = "550e8400e29b41d4a716446655440001"
+    tool_id2 = "550e8400e29b41d4a716446655440002"
     tools = [SimpleNamespace(id=tool_id1, original_name="orig1", name="name1"), SimpleNamespace(id=tool_id2, original_name="orig2", name="name2")]
     import_service.tool_service.list_tools.return_value = (tools, None)
 
@@ -2570,7 +2570,7 @@ async def test_convert_to_server_create_resolves_tool_references(import_service,
 
 @pytest.mark.asyncio
 async def test_convert_to_server_update_resolves_tool_references(import_service, mock_db):
-    tool_id1 = "550e8400-e29b-41d4-a716-446655440001"
+    tool_id1 = "550e8400e29b41d4a716446655440001"
     tools = [SimpleNamespace(id=tool_id1, original_name="orig1", name="name1")]
     import_service.tool_service.list_tools.return_value = (tools, None)
 

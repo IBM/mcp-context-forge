@@ -936,6 +936,21 @@ class TestServerEndpoints:
         assert response.status_code == 201
         mock_create.assert_called_once()
 
+    def test_create_server_rejects_non_uuid_associated_tools(self, test_client, auth_headers):
+        """Test that POST /servers rejects non-UUID values in associated_tools with 422."""
+        req = {
+            "server": {
+                "name": "test_server",
+                "associated_tools": ["my-tool-name"],
+            },
+            "team_id": None,
+            "visibility": "public",
+        }
+        response = test_client.post("/servers/", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        detail = response.json()["detail"][0]
+        assert "Invalid ID format" in detail["msg"]
+
     @patch("mcpgateway.main.server_service.update_server")
     def test_update_server_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing server."""
