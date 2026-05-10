@@ -287,10 +287,10 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
 
-    # Wait for JS initialization (showTab + HTMX) before any tab clicks
+    # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks
     try:
         page.wait_for_function(
-            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
+            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined' && window.Admin.eventDelegationInitialized === true",
             timeout=30000,
         )
     except PlaywrightTimeoutError:
