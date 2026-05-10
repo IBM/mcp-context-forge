@@ -103,6 +103,7 @@ from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
+from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
@@ -2974,6 +2975,17 @@ else:
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
+if settings.rate_limiting_enabled:
+    app.add_middleware(RateLimitMiddleware)
+    logger.info(
+        f"🚦 Rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+        f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
+        f"HIGH={settings.rate_limit_high_rpm}, "
+        f"MEDIUM={settings.rate_limit_medium_rpm}, "
+        f"LOW={settings.rate_limit_low_rpm}]"
+    )
 
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
