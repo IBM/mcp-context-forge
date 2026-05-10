@@ -6900,7 +6900,7 @@ class TokenResponse(BaseModel):
     id: str = Field(..., description="Token ID")
     name: str = Field(..., description="Token name")
     description: Optional[str] = Field(None, description="Token description")
-    user_email: str = Field(..., description="Token creator's email")
+    user_email: str = Field(..., description="Token owner's email")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     server_id: Optional[str] = Field(None, description="Server scope limitation")
     resource_scopes: List[str] = Field(..., description="Permission scopes")
