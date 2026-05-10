@@ -709,35 +709,43 @@ class TestServerSchemas:
 
     def test_server_create(self):
         """Test ServerCreate model."""
+        # Use valid UUIDs for associations
+        tool_id1 = "550e8400e29b41d4a716446655440001"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440002"  # pragma: allowlist secret
+        tool_id3 = "550e8400e29b41d4a716446655440003"  # pragma: allowlist secret
+        resource_id1 = "550e8400e29b41d4a716446655440004"  # pragma: allowlist secret
+        resource_id2 = "550e8400e29b41d4a716446655440005"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440006"  # pragma: allowlist secret
+
         server = ServerCreate(
             name="Test Server",
             description="Test server instance",
             icon="http://example.com/server.png",
-            associated_tools=["1", "2", "3"],
-            associated_resources=["4", "5"],
-            associated_prompts=["6"],
+            associated_tools=[tool_id1, tool_id2, tool_id3],
+            associated_resources=[resource_id1, resource_id2],
+            associated_prompts=[prompt_id1],
         )
 
         assert server.name == "Test Server"
         assert server.description == "Test server instance"
         assert server.icon == "http://example.com/server.png"
-        assert server.associated_tools == ["1", "2", "3"]
-        assert server.associated_resources == ["4", "5"]
-        assert server.associated_prompts == ["6"]
+        assert server.associated_tools == [tool_id1, tool_id2, tool_id3]
+        assert server.associated_resources == [resource_id1, resource_id2]
+        assert server.associated_prompts == [prompt_id1]
 
         # Test with comma-separated strings for associations
         csv_server = ServerCreate(
             name="CSV Server",
             description="Server with comma-separated values",
-            associated_tools="1,2,3",
-            associated_resources="4,5",
-            associated_prompts="6",
+            associated_tools=f"{tool_id1},{tool_id2},{tool_id3}",
+            associated_resources=f"{resource_id1},{resource_id2}",
+            associated_prompts=prompt_id1,
         )
 
         assert csv_server.name == "CSV Server"
-        assert csv_server.associated_tools == ["1", "2", "3"]
-        assert csv_server.associated_resources == ["4", "5"]
-        assert csv_server.associated_prompts == ["6"]
+        assert csv_server.associated_tools == [tool_id1, tool_id2, tool_id3]
+        assert csv_server.associated_resources == [resource_id1, resource_id2]
+        assert csv_server.associated_prompts == [prompt_id1]
 
         # Minimal server
         minimal = ServerCreate(
@@ -753,35 +761,238 @@ class TestServerSchemas:
 
     def test_server_update(self):
         """Test ServerUpdate model."""
+        # Use valid UUIDs for associations
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        resource_id2 = "550e8400e29b41d4a716446655440013"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
+
         update = ServerUpdate(
             name="Updated Server",
             description="Updated description",
             icon="http://example.com/updated.png",
-            associated_tools=["10", "11"],
-            associated_resources=["12", "13"],
-            associated_prompts=["14"],
+            associated_tools=[tool_id1, tool_id2],
+            associated_resources=[resource_id1, resource_id2],
+            associated_prompts=[prompt_id1],
         )
 
         assert update.name == "Updated Server"
         assert update.description == "Updated description"
         assert update.icon == "http://example.com/updated.png"
-        assert update.associated_tools == ["10", "11"]
-        assert update.associated_resources == ["12", "13"]
-        assert update.associated_prompts == ["14"]
+        assert update.associated_tools == [tool_id1, tool_id2]
+        assert update.associated_resources == [resource_id1, resource_id2]
+        assert update.associated_prompts == [prompt_id1]
 
         # Test with comma-separated strings
         csv_update = ServerUpdate(
-            associated_tools="10,11",
-            associated_resources="12,13",
-            associated_prompts="14",
+            associated_tools=f"{tool_id1},{tool_id2}",
+            associated_resources=f"{resource_id1},{resource_id2}",
+            associated_prompts=prompt_id1,
         )
 
         assert csv_update.name is None
         assert csv_update.description is None
         assert csv_update.icon is None
-        assert csv_update.associated_tools == ["10", "11"]
-        assert csv_update.associated_resources == ["12", "13"]
-        assert csv_update.associated_prompts == ["14"]
+        assert csv_update.associated_tools == [tool_id1, tool_id2]
+        assert csv_update.associated_resources == [resource_id1, resource_id2]
+        assert csv_update.associated_prompts == [prompt_id1]
+
+    def test_server_create_with_empty_items_in_list(self):
+        """Test ServerCreate split_comma_separated validator with empty items in list.
+
+        This test covers the schema handling for:
+        - Empty/None items in the list
+        - Empty strings after stripping
+        """
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
+
+        # Test with None items in list
+        server_with_none = ServerCreate(
+            name="Test Server",
+            associated_tools=[tool_id1, None, tool_id2]
+        )
+        assert server_with_none.associated_tools == [tool_id1, tool_id2]
+
+        # Test with empty string items in list
+        server_with_empty_str = ServerCreate(
+            name="Test Server",
+            associated_tools=[tool_id1, "", tool_id2]
+        )
+        assert server_with_empty_str.associated_tools == [tool_id1, tool_id2]
+
+        # Test with whitespace-only string items in list
+        server_with_whitespace = ServerCreate(
+            name="Test Server",
+            associated_tools=[tool_id1, "   ", tool_id2]
+        )
+        assert server_with_whitespace.associated_tools == [tool_id1, tool_id2]
+
+        # Test with mixed empty items
+        server_with_mixed = ServerCreate(
+            name="Test Server",
+            associated_tools=[tool_id1, None, "", "  ", tool_id2]
+        )
+        assert server_with_mixed.associated_tools == [tool_id1, tool_id2]
+
+        # Test with all fields having empty items
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
+        agent_id1 = "550e8400e29b41d4a716446655440015"  # pragma: allowlist secret
+
+        server_all_fields = ServerCreate(
+            name="Test Server",
+            associated_tools=[tool_id1, None, ""],
+            associated_resources=["", resource_id1, None],
+            associated_prompts=[None, prompt_id1, "  "],
+            associated_a2a_agents=["  ", None, agent_id1]
+        )
+        assert server_all_fields.associated_tools == [tool_id1]
+        assert server_all_fields.associated_resources == [resource_id1]
+        assert server_all_fields.associated_prompts == [prompt_id1]
+        assert server_all_fields.associated_a2a_agents == [agent_id1]
+
+    def test_server_create_with_invalid_uuid_in_list(self):
+        """Test ServerCreate split_comma_separated validator with invalid UUID.
+
+        This test covers the schema handling for non-UUID values in association lists.
+        """
+        # Test with invalid UUID format (tool name instead of ID)
+        with pytest.raises(ValueError) as exc_info:
+            ServerCreate(
+                name="Test Server",
+                associated_tools=["my-tool-name"]  # Not a valid UUID
+            )
+        assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
+        assert "associated_tools" in str(exc_info.value)
+        assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_resources
+        with pytest.raises(ValueError) as exc_info:
+            ServerCreate(
+                name="Test Server",
+                associated_resources=["resource-name"]
+            )
+        assert "Invalid ID format: 'resource-name'" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_prompts
+        with pytest.raises(ValueError) as exc_info:
+            ServerCreate(
+                name="Test Server",
+                associated_prompts=["prompt-name"]
+            )
+        assert "Invalid ID format: 'prompt-name'" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_a2a_agents
+        with pytest.raises(ValueError) as exc_info:
+            ServerCreate(
+                name="Test Server",
+                associated_a2a_agents=["agent-name"]
+            )
+        assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
+
+        # Test with mixed valid and invalid UUIDs
+        valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        with pytest.raises(ValueError) as exc_info:
+            ServerCreate(
+                name="Test Server",
+                associated_tools=[valid_uuid, "invalid-tool"]
+            )
+        assert "Invalid ID format: 'invalid-tool'" in str(exc_info.value)
+
+    def test_server_update_with_empty_items_in_list(self):
+        """Test ServerUpdate split_comma_separated validator with empty items in list.
+
+        This test covers the schema handling for:
+        - Empty/None items in the list
+        - Empty strings after stripping
+        """
+        tool_id1 = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
+
+        # Test with None items in list
+        update_with_none = ServerUpdate(
+            associated_tools=[tool_id1, None, tool_id2]
+        )
+        assert update_with_none.associated_tools == [tool_id1, tool_id2]
+
+        # Test with empty string items in list
+        update_with_empty_str = ServerUpdate(
+            associated_tools=[tool_id1, "", tool_id2]
+        )
+        assert update_with_empty_str.associated_tools == [tool_id1, tool_id2]
+
+        # Test with whitespace-only string items in list
+        update_with_whitespace = ServerUpdate(
+            associated_tools=[tool_id1, "   ", tool_id2]
+        )
+        assert update_with_whitespace.associated_tools == [tool_id1, tool_id2]
+
+        # Test with mixed empty items
+        update_with_mixed = ServerUpdate(
+            associated_tools=[tool_id1, None, "", "  ", tool_id2]
+        )
+        assert update_with_mixed.associated_tools == [tool_id1, tool_id2]
+
+        # Test with all fields having empty items
+        resource_id1 = "550e8400e29b41d4a716446655440012"  # pragma: allowlist secret
+        prompt_id1 = "550e8400e29b41d4a716446655440014"  # pragma: allowlist secret
+        agent_id1 = "550e8400e29b41d4a716446655440015"  # pragma: allowlist secret
+
+        update_all_fields = ServerUpdate(
+            associated_tools=[tool_id1, None, ""],
+            associated_resources=["", resource_id1, None],
+            associated_prompts=[None, prompt_id1, "  "],
+            associated_a2a_agents=["  ", None, agent_id1]
+        )
+        assert update_all_fields.associated_tools == [tool_id1]
+        assert update_all_fields.associated_resources == [resource_id1]
+        assert update_all_fields.associated_prompts == [prompt_id1]
+        assert update_all_fields.associated_a2a_agents == [agent_id1]
+
+    def test_server_update_with_invalid_uuid_in_list(self):
+        """Test ServerUpdate split_comma_separated validator with invalid UUID.
+
+        This test covers the schema handling for non-UUID values in association lists.
+        """
+        # Test with invalid UUID format (tool name instead of ID)
+        with pytest.raises(ValueError) as exc_info:
+            ServerUpdate(
+                associated_tools=["my-tool-name"]  # Not a valid UUID
+            )
+        assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
+        assert "associated_tools" in str(exc_info.value)
+        assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_resources
+        with pytest.raises(ValueError) as exc_info:
+            ServerUpdate(
+                associated_resources=["resource-name"]
+            )
+        assert "Invalid ID format: 'resource-name'" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_prompts
+        with pytest.raises(ValueError) as exc_info:
+            ServerUpdate(
+                associated_prompts=["prompt-name"]
+            )
+        assert "Invalid ID format: 'prompt-name'" in str(exc_info.value)
+
+        # Test with invalid UUID in associated_a2a_agents
+        with pytest.raises(ValueError) as exc_info:
+            ServerUpdate(
+                associated_a2a_agents=["agent-name"]
+            )
+        assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
+
+        # Test with mixed valid and invalid UUIDs
+        valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
+        with pytest.raises(ValueError) as exc_info:
+            ServerUpdate(
+                associated_tools=[valid_uuid, "invalid-tool"]
+            )
+        assert "Invalid ID format: 'invalid-tool'" in str(exc_info.value)
 
     def test_server_read(self):
         """Test ServerRead model."""
@@ -826,7 +1037,7 @@ class TestServerSchemas:
 
         # Test root validator for associated IDs
         server_with_objects = ServerRead(
-            id="f1548803b0ff4bf7833b762b0a8c5c34",
+            id="f1548803b0ff4bf7833b762b0a8c5c34",  # pragma: allowlist secret
             name="Object Server",
             description="Server with object associations",
             icon="http://example.com/object_server.png",

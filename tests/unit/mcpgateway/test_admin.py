@@ -336,9 +336,9 @@ def mock_request():
                 "mime_type": "text/plain",
                 "template": "Template content",
                 "content": "Test content",
-                "associatedTools": ["1", "2", "3"],
-                "associatedResources": "4,5",
-                "associatedPrompts": "6",
+                "associatedTools": ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003"],  # pragma: allowlist secret
+                "associatedResources": "550e8400e29b41d4a716446655440004,550e8400e29b41d4a716446655440005",  # pragma: allowlist secret
+                "associatedPrompts": "550e8400e29b41d4a716446655440006",  # pragma: allowlist secret
                 "requestType": "SSE",
                 "integrationType": "MCP",
                 "headers": '{"X-Test": "value"}',
@@ -515,9 +515,9 @@ class TestAdminServerRoutes:
             data={
                 "name": "srv-1",
                 "visibility": "private",
-                "associatedTools": ["1", "2", "3"],
+                "associatedTools": ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003"],  # pragma: allowlist secret
                 "selectAllTools": "true",
-                "allToolIds": '["1","2","3"]',
+                "allToolIds": '["550e8400e29b41d4a716446655440001","550e8400e29b41d4a716446655440002","550e8400e29b41d4a716446655440003"]',  # pragma: allowlist secret
             },
         )
 
@@ -575,14 +575,14 @@ class TestAdminServerRoutes:
             {
                 "name": "Server_SelectAll",
                 "selectAllTools": "true",
-                "allToolIds": json.dumps(["tool-1", "tool-2"]),
-                "associatedTools": ["tool-x"],
+                "allToolIds": json.dumps(["550e8400e29b41d4a7164466554400b1", "550e8400e29b41d4a7164466554400b2"]),  # pragma: allowlist secret
+                "associatedTools": ["550e8400e29b41d4a71644665544000a"],  # pragma: allowlist secret
                 "selectAllResources": "true",
-                "allResourceIds": json.dumps(["res-1"]),
-                "associatedResources": ["res-x"],
+                "allResourceIds": json.dumps(["550e8400e29b41d4a7164466554400c1"]),  # pragma: allowlist secret
+                "associatedResources": ["550e8400e29b41d4a7164466554400ca"],  # pragma: allowlist secret
                 "selectAllPrompts": "true",
-                "allPromptIds": json.dumps(["prompt-1", "prompt-2"]),
-                "associatedPrompts": ["prompt-x"],
+                "allPromptIds": json.dumps(["550e8400e29b41d4a7164466554400d1", "550e8400e29b41d4a7164466554400d2"]),  # pragma: allowlist secret
+                "associatedPrompts": ["550e8400e29b41d4a7164466554400da"],  # pragma: allowlist secret
                 "oauth_enabled": "on",
                 "oauth_authorization_server": "https://idp.example.com",
                 "oauth_scopes": "openid profile",
@@ -612,9 +612,9 @@ class TestAdminServerRoutes:
 
         server_create = mock_register_server.call_args.args[1]
         # Merge of allToolIds + associatedTools (public items from UI are preserved)
-        assert set(server_create.associated_tools) == {"tool-1", "tool-2", "tool-x"}
-        assert set(server_create.associated_resources) == {"res-1", "res-x"}
-        assert set(server_create.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
+        assert set(server_create.associated_tools) == {"550e8400e29b41d4a7164466554400b1", "550e8400e29b41d4a7164466554400b2", "550e8400e29b41d4a71644665544000a"}  # pragma: allowlist secret
+        assert set(server_create.associated_resources) == {"550e8400e29b41d4a7164466554400c1", "550e8400e29b41d4a7164466554400ca"}  # pragma: allowlist secret
+        assert set(server_create.associated_prompts) == {"550e8400e29b41d4a7164466554400d1", "550e8400e29b41d4a7164466554400d2", "550e8400e29b41d4a7164466554400da"}  # pragma: allowlist secret
         assert server_create.oauth_enabled is True
         assert server_create.oauth_config["authorization_servers"] == ["https://idp.example.com"]
         assert server_create.oauth_config["scopes_supported"] == ["openid", "profile"]
@@ -628,13 +628,13 @@ class TestAdminServerRoutes:
                 "name": "Server_SelectAll_BadJSON",
                 "selectAllTools": "true",
                 "allToolIds": "not-json",
-                "associatedTools": ["tool-x"],
+                "associatedTools": ["550e8400e29b41d4a71644665544000a"],  # pragma: allowlist secret
                 "selectAllResources": "true",
                 "allResourceIds": "{",  # invalid JSON
-                "associatedResources": ["res-x"],
+                "associatedResources": ["550e8400e29b41d4a7164466554400ca"],  # pragma: allowlist secret
                 "selectAllPrompts": "true",
                 "allPromptIds": "[",  # invalid JSON
-                "associatedPrompts": ["prompt-x"],
+                "associatedPrompts": ["550e8400e29b41d4a7164466554400da"],  # pragma: allowlist secret
                 "oauth_enabled": "on",
                 "oauth_authorization_server": "",  # invalid/incomplete config should be disabled
             }
@@ -660,9 +660,9 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_create = mock_register_server.call_args.args[1]
-        assert server_create.associated_tools == ["tool-x"]
-        assert server_create.associated_resources == ["res-x"]
-        assert server_create.associated_prompts == ["prompt-x"]
+        assert server_create.associated_tools == ["550e8400e29b41d4a71644665544000a"]  # pragma: allowlist secret
+        assert server_create.associated_resources == ["550e8400e29b41d4a7164466554400ca"]  # pragma: allowlist secret
+        assert server_create.associated_prompts == ["550e8400e29b41d4a7164466554400da"]  # pragma: allowlist secret
         assert server_create.oauth_enabled is False
         assert server_create.oauth_config is None
 
@@ -856,14 +856,14 @@ class TestAdminServerRoutes:
                 "id": server_id,
                 "name": "Server_Edit_SelectAll",
                 "selectAllTools": "true",
-                "allToolIds": json.dumps(["tool-1", "tool-2"]),
-                "associatedTools": ["tool-x"],
+                "allToolIds": json.dumps(["550e8400e29b41d4a7164466554400b1", "550e8400e29b41d4a7164466554400b2"]),  # pragma: allowlist secret
+                "associatedTools": ["550e8400e29b41d4a71644665544000a"],  # pragma: allowlist secret
                 "selectAllResources": "true",
-                "allResourceIds": json.dumps(["res-1"]),
-                "associatedResources": ["res-x"],
+                "allResourceIds": json.dumps(["550e8400e29b41d4a7164466554400c1"]),  # pragma: allowlist secret
+                "associatedResources": ["550e8400e29b41d4a7164466554400ca"],  # pragma: allowlist secret
                 "selectAllPrompts": "true",
-                "allPromptIds": json.dumps(["prompt-1", "prompt-2"]),
-                "associatedPrompts": ["prompt-x"],
+                "allPromptIds": json.dumps(["550e8400e29b41d4a7164466554400d1", "550e8400e29b41d4a7164466554400d2"]),  # pragma: allowlist secret
+                "associatedPrompts": ["550e8400e29b41d4a7164466554400da"],  # pragma: allowlist secret
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -887,9 +887,9 @@ class TestAdminServerRoutes:
 
         server_update = mock_update_server.call_args[0][2]
         # Merge of allToolIds + associatedTools (public items from UI are preserved)
-        assert set(server_update.associated_tools) == {"tool-1", "tool-2", "tool-x"}
-        assert set(server_update.associated_resources) == {"res-1", "res-x"}
-        assert set(server_update.associated_prompts) == {"prompt-1", "prompt-2", "prompt-x"}
+        assert set(server_update.associated_tools) == {"550e8400e29b41d4a7164466554400b1", "550e8400e29b41d4a7164466554400b2", "550e8400e29b41d4a71644665544000a"}  # pragma: allowlist secret
+        assert set(server_update.associated_resources) == {"550e8400e29b41d4a7164466554400c1", "550e8400e29b41d4a7164466554400ca"}  # pragma: allowlist secret
+        assert set(server_update.associated_prompts) == {"550e8400e29b41d4a7164466554400d1", "550e8400e29b41d4a7164466554400d2", "550e8400e29b41d4a7164466554400da"}  # pragma: allowlist secret
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_select_all_json_decode_error(self, mock_update_server, mock_request, mock_db, monkeypatch):
@@ -901,13 +901,13 @@ class TestAdminServerRoutes:
                 "name": "Server_Edit_SelectAll_BadJSON",
                 "selectAllTools": "true",
                 "allToolIds": "not-json",
-                "associatedTools": ["tool-x"],
+                "associatedTools": ["550e8400e29b41d4a71644665544000a"],  # pragma: allowlist secret
                 "selectAllResources": "true",
                 "allResourceIds": "{",
-                "associatedResources": ["res-x"],
+                "associatedResources": ["550e8400e29b41d4a7164466554400ca"],  # pragma: allowlist secret
                 "selectAllPrompts": "true",
                 "allPromptIds": "[",
-                "associatedPrompts": ["prompt-x"],
+                "associatedPrompts": ["550e8400e29b41d4a7164466554400da"],  # pragma: allowlist secret
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
@@ -929,9 +929,9 @@ class TestAdminServerRoutes:
         assert result.status_code == 200
 
         server_update = mock_update_server.call_args[0][2]
-        assert server_update.associated_tools == ["tool-x"]
-        assert server_update.associated_resources == ["res-x"]
-        assert server_update.associated_prompts == ["prompt-x"]
+        assert server_update.associated_tools == ["550e8400e29b41d4a71644665544000a"]  # pragma: allowlist secret
+        assert server_update.associated_resources == ["550e8400e29b41d4a7164466554400ca"]  # pragma: allowlist secret
+        assert server_update.associated_prompts == ["550e8400e29b41d4a7164466554400da"]  # pragma: allowlist secret
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_error_handlers(self, mock_update_server, mock_request, mock_db, monkeypatch):
@@ -1207,7 +1207,7 @@ class TestAdminServerRoutes:
         response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert "team_id=12345678123456781234567812345678" in response.headers["location"]
+        assert "team_id=12345678123456781234567812345678" in response.headers["location"]  # pragma: allowlist secret
         assert response.headers["location"].endswith("#catalog")
 
     @patch.object(ServerService, "delete_server")
@@ -1308,11 +1308,11 @@ class TestAdminToolRoutes:
     async def test_admin_get_tool_success(self, mock_get_tool, mock_request, mock_db):
         """Cover the successful tool fetch path (model_dump by_alias=True)."""
         tool = MagicMock()
-        tool.model_dump.return_value = {"id": "tool-1"}
+        tool.model_dump.return_value = {"id": "550e8400e29b41d4a7164466554400b1"}  # pragma: allowlist secret
         mock_get_tool.return_value = tool
 
-        result = await admin_get_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        assert result["id"] == "tool-1"
+        result = await admin_get_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
+        assert result["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
         tool.model_dump.assert_called_once_with(by_alias=True)
 
     @patch.object(ToolService, "register_tool")
@@ -1485,7 +1485,7 @@ class TestAdminToolRoutes:
     # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_all_error_paths(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with all possible error paths."""
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
 
         # IntegrityError should return 409 with JSON body
         # Third-Party
@@ -1547,7 +1547,7 @@ class TestAdminToolRoutes:
             )
         )
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
 
@@ -1572,7 +1572,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         # Validate response type and content
         assert isinstance(result, JSONResponse)
@@ -1723,7 +1723,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -1749,7 +1749,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -1778,7 +1778,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -1807,7 +1807,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -1836,7 +1836,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -1866,7 +1866,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -1911,7 +1911,7 @@ class TestAdminToolRoutes:
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
         """Test setting tool state with various activate values."""
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
 
         # Test with "false"
         form_data = FakeForm({"activate": "false"})
@@ -1943,7 +1943,7 @@ class TestAdminToolRoutes:
         # First-Party
         from mcpgateway.services.tool_service import ToolLockConflictError
 
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "false"}))
 
@@ -1963,7 +1963,7 @@ class TestAdminToolRoutes:
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_include_inactive_redirects(self, mock_toggle_status, mock_request, mock_db):
         """Cover include_inactive redirect variants for tool state toggles."""
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
         mock_request.scope = {"root_path": "/root"}
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
@@ -1985,7 +1985,7 @@ class TestAdminToolRoutes:
     async def test_admin_set_tool_state_preserves_team_id_in_redirect(self, mock_toggle_status, mock_request, mock_db):
         """Verify team_id from form data is preserved in toggle redirect URL."""
         uid = "12345678-1234-5678-1234-567812345678"
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true", "team_id": uid}))
 
@@ -1994,7 +1994,7 @@ class TestAdminToolRoutes:
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         location = response.headers["location"]
-        assert "team_id=12345678123456781234567812345678" in location
+        assert "team_id=12345678123456781234567812345678" in location  # pragma: allowlist secret
         assert "include_inactive=true" in location
         assert location.endswith("#tools")
 
@@ -2005,7 +2005,7 @@ class TestAdminToolRoutes:
         from urllib.parse import unquote
 
         uid = "12345678-1234-5678-1234-567812345678"
-        tool_id = "tool-1"
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "false", "team_id": uid}))
 
@@ -2014,7 +2014,7 @@ class TestAdminToolRoutes:
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         location = response.headers["location"]
-        assert "team_id=12345678123456781234567812345678" in location
+        assert "team_id=12345678123456781234567812345678" in location  # pragma: allowlist secret
         assert "nope" in unquote(location)
         assert location.endswith("#tools")
 
@@ -2413,7 +2413,7 @@ class TestAdminResourceRoutes:
 
         # Create a proper ResourceRead Pydantic object
         resource_read = ResourceRead(
-            id="1",
+            id="550e8400e29b41d4a716446655440001",  # pragma: allowlist secret
             uri="complex://resource",
             name="Complex Resource",
             mime_type="application/json",
@@ -2450,7 +2450,7 @@ class TestAdminResourceRoutes:
 
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        result = await admin_get_resource("1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_resource("550e8400e29b41d4a716446655440001", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
         assert result["resource"]["id"] == 1
         mock_read_resource.assert_not_called()
@@ -2465,7 +2465,7 @@ class TestAdminResourceRoutes:
 
         mock_get_resource.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -2688,32 +2688,32 @@ class TestAdminResourceRoutes:
         # Test PermissionError
         mock_update = AsyncMock(side_effect=PermissionError("nope"))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 403
 
         # Test ValidationError
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
         mock_update = AsyncMock(side_effect=ValidationError.from_exception_data("test", error_details))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 422
 
         # Test IntegrityError
         mock_update = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("constraint")))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
 
         # Test ResourceURIConflictError
         mock_update = AsyncMock(side_effect=ResourceURIConflictError("conflict"))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 409
 
         # Test generic Exception
         mock_update = AsyncMock(side_effect=Exception("boom"))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource("550e8400e29b41d4a7164466554400c1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 500
 
     @patch.object(ResourceService, "set_resource_state")
@@ -2773,7 +2773,7 @@ class TestAdminPromptRoutes:
     async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_request, mock_db):
         """Test getting prompt with detailed metrics."""
         mock_get_prompt_details.return_value = {
-            "id": "ca627760127d409080fdefc309147e08",
+            "id": "ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
             "name": "test-prompt",
             "original_name": "test-prompt",
             "custom_name": "test-prompt",
@@ -3542,7 +3542,7 @@ class TestAdminRootRoutes:
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         location = response.headers["location"]
-        assert "team_id=12345678123456781234567812345678" in location
+        assert "team_id=12345678123456781234567812345678" in location  # pragma: allowlist secret
         assert "include_inactive=true" in location
         assert location.endswith("#roots")
 
@@ -5681,7 +5681,7 @@ class TestA2AAgentManagement:
         response = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert "team_id=12345678123456781234567812345678" in response.headers["location"]
+        assert "team_id=12345678123456781234567812345678" in response.headers["location"]  # pragma: allowlist secret
         assert response.headers["location"].endswith("#a2a-agents")
 
     @patch.object(A2AAgentService, "set_agent_state")
@@ -5694,7 +5694,7 @@ class TestA2AAgentManagement:
         response = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
-        assert "team_id=12345678123456781234567812345678" in response.headers["location"]
+        assert "team_id=12345678123456781234567812345678" in response.headers["location"]  # pragma: allowlist secret
         assert response.headers["location"].endswith("#a2a-agents")
 
     @pytest.mark.asyncio
@@ -6082,7 +6082,7 @@ class TestExportImportEndpoints:
 
         mock_export_selective.return_value = {"version": "1.0", "selected_items": []}
 
-        form_data = FakeForm({"entity_selections": json.dumps({"servers": ["server-1"], "tools": ["tool-1", "tool-2"]}), "include_dependencies": "true"})
+        form_data = FakeForm({"entity_selections": json.dumps({"servers": ["server-1"], "tools": ["550e8400e29b41d4a7164466554400b1", "550e8400e29b41d4a7164466554400b2"]}), "include_dependencies": "true"})  # pragma: allowlist secret
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_export_selective(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
@@ -7368,10 +7368,10 @@ class TestEdgeCasesAndErrorHandling:
         "form_field,value",
         [
             ("activate", "yes"),  # Invalid boolean
-            ("activate", "1"),  # Numeric string
+            ("activate", "550e8400e29b41d4a716446655440001"),  # Numeric string  # pragma: allowlist secret
             ("activate", ""),  # Empty string
             ("is_inactive_checked", "YES"),
-            ("is_inactive_checked", "1"),
+            ("is_inactive_checked", "550e8400e29b41d4a716446655440001"),  # pragma: allowlist secret
             ("is_inactive_checked", " true "),  # With spaces
         ],
     )
@@ -10028,7 +10028,7 @@ def test_get_span_entity_performance_postgres_percentiles(monkeypatch):
     monkeypatch.setattr(settings, "use_postgresdb_percentiles", True)
 
     row = SimpleNamespace(
-        entity="tool-x",
+        entity="550e8400e29b41d4a71644665544000a",  # pragma: allowlist secret
         count=3,
         avg_duration_ms=12.3,
         min_duration_ms=1.0,
@@ -10049,7 +10049,7 @@ def test_get_span_entity_performance_postgres_percentiles(monkeypatch):
         json_key="tool.name",
         result_key="tool_name",
     )
-    assert items[0]["tool_name"] == "tool-x"
+    assert items[0]["tool_name"] == "550e8400e29b41d4a71644665544000a"  # pragma: allowlist secret
     assert items[0]["count"] == 3
 
 
@@ -10556,11 +10556,11 @@ async def test_admin_tools_partial_html_renders(monkeypatch, mock_request, mock_
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     tool_service = MagicMock()
-    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    tool_service.convert_tool_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
 
     mock_request.headers = {}
@@ -10617,12 +10617,12 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1", name="Tool 1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
 
     tool_service = MagicMock()
-    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    tool_service.convert_tool_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
 
     mock_request.headers = {}
@@ -10832,12 +10832,12 @@ async def test_admin_prompts_partial_html_renders(monkeypatch, mock_request, moc
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
     prompt_service = MagicMock()
-    prompt_service.convert_prompt_to_read.return_value = {"id": "prompt-1", "name": "Prompt 1"}
+    prompt_service.convert_prompt_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400d1", "name": "Prompt 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.prompt_service", prompt_service)
 
     mock_request.headers = {}
@@ -10894,12 +10894,12 @@ async def test_admin_prompts_partial_html_all_teams_view(monkeypatch, mock_reque
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
     prompt_service = MagicMock()
-    prompt_service.convert_prompt_to_read.return_value = {"id": "prompt-1", "name": "Prompt 1"}
+    prompt_service.convert_prompt_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400d1", "name": "Prompt 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.prompt_service", prompt_service)
 
     mock_request.headers = {}
@@ -10923,7 +10923,7 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1", name="Prompt 1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1", name="Prompt 1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
@@ -10978,12 +10978,12 @@ async def test_admin_resources_partial_html_renders(monkeypatch, mock_request, m
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
     resource_service = MagicMock()
-    resource_service.convert_resource_to_read.return_value = {"id": "res-1", "name": "Resource 1"}
+    resource_service.convert_resource_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400c1", "name": "Resource 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.resource_service", resource_service)
 
     mock_request.headers = {}
@@ -11178,12 +11178,12 @@ async def test_admin_resources_partial_html_all_teams_view(monkeypatch, mock_req
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1", uri="r://1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", team_id="team-1", uri="r://1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
     resource_service = MagicMock()
-    resource_service.convert_resource_to_read.return_value = {"id": "res-1", "name": "Resource 1"}
+    resource_service.convert_resource_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400c1", "name": "Resource 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.resource_service", resource_service)
 
     mock_request.headers = {}
@@ -11207,7 +11207,7 @@ async def test_admin_resources_partial_html_gateway_filters_include_inactive_and
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1", uri="r://1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", team_id="team-1", uri="r://1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
@@ -11406,7 +11406,7 @@ async def test_admin_search_tools_empty_query(mock_db):
 @pytest.mark.asyncio
 async def test_admin_search_tools_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]  # pragma: allowlist secret
     result = await admin_search_tools(
         q="tool",
         include_inactive=False,
@@ -11422,7 +11422,7 @@ async def test_admin_search_tools_returns_matches(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_search_resources_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-1", name="Resource 1", description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", name="Resource 1", description="Desc")]  # pragma: allowlist secret
     result = await admin_search_resources(
         q="res",
         include_inactive=False,
@@ -11438,7 +11438,7 @@ async def test_admin_search_resources_returns_matches(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_search_prompts_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]  # pragma: allowlist secret
     result = await admin_search_prompts(
         q="prompt",
         include_inactive=False,
@@ -11470,7 +11470,7 @@ async def test_admin_get_all_server_ids(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_get_all_tool_ids(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [("tool-1",), ("tool-2",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400b1",), ("550e8400e29b41d4a7164466554400b2",)]  # pragma: allowlist secret
     result = await admin_get_all_tool_ids(
         include_inactive=False,
         gateway_id="gw-1,null",
@@ -11484,7 +11484,7 @@ async def test_admin_get_all_tool_ids(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_get_all_prompt_ids(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [("prompt-1",), ("prompt-2",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400d1",), ("550e8400e29b41d4a7164466554400d2",)]  # pragma: allowlist secret
     result = await admin_get_all_prompt_ids(
         include_inactive=False,
         gateway_id="null",
@@ -11498,7 +11498,7 @@ async def test_admin_get_all_prompt_ids(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_get_all_resource_ids(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [("res-1",), ("res-2",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400c1",), ("res-2",)]  # pragma: allowlist secret
     result = await admin_get_all_resource_ids(
         include_inactive=False,
         gateway_id="null",
@@ -11558,11 +11558,11 @@ async def test_admin_get_all_tool_ids_gateway_and_team_filters(monkeypatch, mock
     """Cover gateway_id null-only/non-null-only branches and team filter membership checks."""
     setup_team_service(monkeypatch, ["team-1"])
 
-    mock_db.execute.return_value.all.return_value = [("tool-1",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400b1",)]  # pragma: allowlist secret
     result = await admin_get_all_tool_ids(include_inactive=False, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
-    mock_db.execute.return_value.all.return_value = [("tool-2",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400b2",)]  # pragma: allowlist secret
     result = await admin_get_all_tool_ids(include_inactive=False, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -11703,11 +11703,11 @@ class TestMergeSelectAllIds:
         form = FakeForm(
             {
                 "selectAllTools": "true",
-                "allToolIds": json.dumps([1, 2, 3]),
+                "allToolIds": json.dumps(["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003"]),  # pragma: allowlist secret
             }
         )
-        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["2", "4"])
-        assert set(result) == {"1", "2", "3", "4"}
+        result = _merge_select_all_ids(form, "selectAllTools", "allToolIds", ["550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440004"])  # pragma: allowlist secret
+        assert set(result) == {"550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002", "550e8400e29b41d4a716446655440003", "550e8400e29b41d4a716446655440004"}  # pragma: allowlist secret
 
     def test_invalid_json_falls_back_to_checked_list(self):
         """If the JSON payload is malformed, fall back to checked list."""
@@ -11743,11 +11743,11 @@ async def test_admin_get_all_prompt_ids_gateway_and_team_filters(monkeypatch, mo
     """Cover non-null gateway filters and team membership checks for prompt IDs helper."""
     setup_team_service(monkeypatch, ["team-1"])
 
-    mock_db.execute.return_value.all.return_value = [("prompt-1",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400d1",)]  # pragma: allowlist secret
     result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
-    mock_db.execute.return_value.all.return_value = [("prompt-2",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400d2",)]  # pragma: allowlist secret
     result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -11765,7 +11765,7 @@ async def test_admin_get_all_resource_ids_gateway_and_team_filters(monkeypatch, 
     """Cover non-null gateway filters and team membership checks for resource IDs helper."""
     setup_team_service(monkeypatch, ["team-1"])
 
-    mock_db.execute.return_value.all.return_value = [("res-1",)]
+    mock_db.execute.return_value.all.return_value = [("550e8400e29b41d4a7164466554400c1",)]  # pragma: allowlist secret
     result = await admin_get_all_resource_ids(include_inactive=False, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -11807,11 +11807,11 @@ async def test_admin_search_tools_gateway_and_team_filters(monkeypatch, mock_db)
     """Cover tool search gateway_id null-only/non-null-only and team membership branches."""
     setup_team_service(monkeypatch, ["team-1"])
 
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]  # pragma: allowlist secret
     result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-2", original_name="Tool 2", display_name="Tool 2", custom_name=None, description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400b2", original_name="Tool 2", display_name="Tool 2", custom_name=None, description="Desc")]  # pragma: allowlist secret
     result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -11831,7 +11831,7 @@ async def test_admin_search_resources_empty_query_and_team_filters(monkeypatch, 
     empty = await admin_search_resources(q=" ", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert empty["count"] == 0
 
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-1", name="Resource 1", description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", name="Resource 1", description="Desc")]  # pragma: allowlist secret
     result = await admin_search_resources(q="res", include_inactive=False, limit=5, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -11855,11 +11855,11 @@ async def test_admin_search_prompts_empty_query_and_team_filters(monkeypatch, mo
     empty = await admin_search_prompts(q=" ", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert empty["count"] == 0
 
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]  # pragma: allowlist secret
     result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-2", original_name="Prompt 2", display_name="Prompt 2", description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400d2", original_name="Prompt 2", display_name="Prompt 2", description="Desc")]  # pragma: allowlist secret
     result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
 
@@ -12085,7 +12085,7 @@ def test_apply_tag_filter_groups_builds_where_clauses(monkeypatch, mock_db):
 async def test_admin_search_tools_supports_tags_without_query(monkeypatch, mock_db, allow_permission):
     setup_team_service(monkeypatch, [])
     monkeypatch.setattr("mcpgateway.admin._apply_tag_filter_groups", lambda query, *_args, **_kwargs: query)
-    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]  # pragma: allowlist secret
 
     result = await admin_search_tools(
         q=" ",
@@ -12098,7 +12098,7 @@ async def test_admin_search_tools_supports_tags_without_query(monkeypatch, mock_
         user={"email": "user@example.com", "db": mock_db},
     )
     assert result["count"] == 1
-    assert result["tools"][0]["id"] == "tool-1"
+    assert result["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
     assert result["filters_applied"]["tag_groups"] == [["alpha", "beta"], ["gamma"]]
 
 
@@ -12134,9 +12134,9 @@ async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mo
 async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [{"id": "srv-1", "name": "Server 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [{"id": "gw-1", "name": "Gateway 1"}], "count": 1}))
-    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
-    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [{"id": "res-1", "name": "Resource 1"}], "count": 1}))
-    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [{"id": "prompt-1", "name": "Prompt 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1}))  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [{"id": "550e8400e29b41d4a7164466554400c1", "name": "Resource 1"}], "count": 1}))  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [{"id": "550e8400e29b41d4a7164466554400d1", "name": "Prompt 1"}], "count": 1}))  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [{"id": "agent-1", "name": "Agent 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [{"id": "team-1", "name": "Team 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_users", AsyncMock(return_value={"users": [{"id": "user-1", "email": "user@example.com"}], "count": 1}))
@@ -12211,7 +12211,7 @@ async def test_admin_unified_search_users_only_requires_admin_user_management(mo
 @pytest.mark.asyncio
 async def test_admin_unified_search_drops_users_when_not_permitted(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr("mcpgateway.admin._has_permission", AsyncMock(return_value=False))
-    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    tools_search = AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1})  # pragma: allowlist secret
     users_search = AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1})
     monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
     monkeypatch.setattr("mcpgateway.admin.admin_search_users", users_search)
@@ -12230,13 +12230,13 @@ async def test_admin_unified_search_drops_users_when_not_permitted(monkeypatch, 
 
     assert result["entity_types"] == ["tools"]
     assert "users" not in result["results"]
-    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["results"]["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
     users_search.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_admin_unified_search_accepts_legacy_team_search_list_shape(monkeypatch, mock_db, allow_permission):
-    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1}))  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value=[{"id": "team-1", "name": "Team 1"}]))
 
     result = await admin_unified_search(
@@ -12253,13 +12253,13 @@ async def test_admin_unified_search_accepts_legacy_team_search_list_shape(monkey
 
     assert result["entity_types"] == ["teams", "tools"]
     assert result["results"]["teams"][0]["id"] == "team-1"
-    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["results"]["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
     assert result["count"] == 2
 
 
 @pytest.mark.asyncio
 async def test_admin_unified_search_entity_types_parses_a2a_alias(monkeypatch, mock_db, allow_permission):
-    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1}))  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [{"id": "agent-1", "name": "Agent 1"}], "count": 1}))
 
     result = await admin_unified_search(
@@ -12277,7 +12277,7 @@ async def test_admin_unified_search_entity_types_parses_a2a_alias(monkeypatch, m
     # a2a should map to agents and de-duplicate with explicit "agents"
     assert result["entity_types"] == ["agents", "tools"]
     assert result["results"]["agents"][0]["id"] == "agent-1"
-    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["results"]["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -12536,7 +12536,7 @@ async def test_admin_unified_search_roots_swallows_http_exception(monkeypatch, m
     unified search must not fail or leak existence of restricted entities when a
     single entity type is gated by a stricter permission than the caller holds.
     """
-    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    tools_search = AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1})  # pragma: allowlist secret
     roots_search = AsyncMock(side_effect=HTTPException(status_code=403, detail="forbidden"))
     monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
     monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
@@ -12560,7 +12560,7 @@ async def test_admin_unified_search_roots_swallows_http_exception(monkeypatch, m
     )
 
     assert result["results"]["roots"] == []
-    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["results"]["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -12598,7 +12598,7 @@ async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_
     Exercises the real permission decorator path through _safe_entity_search rather
     than a mocked HTTPException, proving the silent-suppression contract end-to-end.
     """
-    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    tools_search = AsyncMock(return_value={"tools": [{"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}], "count": 1})  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
     monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
@@ -12630,7 +12630,7 @@ async def test_admin_unified_search_roots_empty_for_non_admin(monkeypatch, mock_
     )
 
     assert result["results"]["roots"] == []
-    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["results"]["tools"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -12878,7 +12878,7 @@ class TestAdminAdditionalCoverage:
                     "timestamp": datetime.now(timezone.utc),
                     "level": "INFO",
                     "entity_type": "tool",
-                    "entity_id": "tool-1",
+                    "entity_id": "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
                     "entity_name": "Tool One",
                     "message": "Hello",
                     "logger": "test",
@@ -13192,7 +13192,7 @@ class TestAdminAdditionalCoverage:
         """Stream logs with filters applied."""
 
         async def _subscribe():
-            yield {"data": {"entity_type": "tool", "entity_id": "tool-1", "level": "INFO"}}
+            yield {"data": {"entity_type": "tool", "entity_id": "550e8400e29b41d4a7164466554400b1", "level": "INFO"}}  # pragma: allowlist secret
 
         storage = MagicMock()
         storage.subscribe = _subscribe
@@ -13251,7 +13251,7 @@ class TestAdminAdditionalCoverage:
 
     async def test_admin_stream_logs_disconnect_breaks(self, monkeypatch, mock_db, allow_permission):
         async def _subscribe():
-            yield {"data": {"entity_type": "tool", "entity_id": "tool-1", "level": "INFO"}}
+            yield {"data": {"entity_type": "tool", "entity_id": "550e8400e29b41d4a7164466554400b1", "level": "INFO"}}  # pragma: allowlist secret
 
         storage = MagicMock()
         storage.subscribe = _subscribe
@@ -13268,8 +13268,8 @@ class TestAdminAdditionalCoverage:
     @pytest.mark.parametrize(
         ("entity_type", "entity_id", "event_data"),
         [
-            ("server", None, {"entity_type": "tool", "entity_id": "tool-1", "level": "INFO"}),  # entity type mismatch
-            (None, "server-1", {"entity_type": "tool", "entity_id": "tool-1", "level": "INFO"}),  # entity id mismatch
+            ("server", None, {"entity_type": "tool", "entity_id": "550e8400e29b41d4a7164466554400b1", "level": "INFO"}),  # entity type mismatch  # pragma: allowlist secret
+            (None, "server-1", {"entity_type": "tool", "entity_id": "550e8400e29b41d4a7164466554400b1", "level": "INFO"}),  # entity id mismatch  # pragma: allowlist secret
         ],
     )
     async def test_admin_stream_logs_entity_filters_skip(self, monkeypatch, mock_db, allow_permission, entity_type, entity_id, event_data):
@@ -13350,11 +13350,11 @@ class TestAdminAdditionalCoverage:
     async def test_admin_export_selective_success(self, monkeypatch, mock_db):
         """Export selective configuration successfully."""
         export_service = MagicMock()
-        export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
+        export_service.export_selective = AsyncMock(return_value={"tools": ["550e8400e29b41d4a7164466554400b1"]})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.admin.export_service", export_service)
 
         request = MagicMock(spec=Request)
-        request.body = AsyncMock(return_value=b'{"entity_selections": {"tools": ["tool-1"]}, "include_dependencies": false}')
+        request.body = AsyncMock(return_value=b'{"entity_selections": {"tools": ["550e8400e29b41d4a7164466554400b1"]}, "include_dependencies": false}')  # pragma: allowlist secret
         request.scope = {"root_path": "/"}
 
         response = await admin_export_selective(
@@ -13363,7 +13363,7 @@ class TestAdminAdditionalCoverage:
             user={"email": "tester@example.com", "username": "tester"},
         )
         assert response.media_type == "application/json"
-        assert b"tool-1" in response.body
+        assert b"550e8400e29b41d4a7164466554400b1" in response.body  # pragma: allowlist secret
 
     async def test_admin_export_configuration_errors(self, monkeypatch, mock_db):
         """Cover ExportError and generic exception branches in admin_export_configuration."""
@@ -13399,7 +13399,7 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.export_service", export_service)
 
         request = MagicMock(spec=Request)
-        request.body = AsyncMock(return_value=b'{"entity_selections": {"tools": ["tool-1"]}, "include_dependencies": false}')
+        request.body = AsyncMock(return_value=b'{"entity_selections": {"tools": ["550e8400e29b41d4a7164466554400b1"]}, "include_dependencies": false}')  # pragma: allowlist secret
         request.scope = {"root_path": "/"}
 
         export_service.export_selective = AsyncMock(side_effect=ExportError("bad export"))
@@ -14991,7 +14991,7 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
     ("body", "expected_data"),
     [
         ("a=1&b=2", "a=1&b=2"),
-        ({"a": "1"}, {"a": "1"}),
+        ({"a": "550e8400e29b41d4a716446655440001"}, {"a": "550e8400e29b41d4a716446655440001"}),  # pragma: allowlist secret
     ],
 )
 @pytest.mark.usefixtures("configure_gateway_test_allowlist")
@@ -15261,7 +15261,7 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_list_tags(monkeypatch, mock_db):
     stats = SimpleNamespace(tools=1, resources=2, prompts=3, servers=4, gateways=5, total=15)
-    entity = SimpleNamespace(id="tool-1", name="Tool", type="tool", description="desc")
+    entity = SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", name="Tool", type="tool", description="desc")  # pragma: allowlist secret
     tag = SimpleNamespace(name="alpha", stats=stats, entities=[entity])
 
     tag_service = MagicMock()
@@ -15270,7 +15270,7 @@ async def test_admin_list_tags(monkeypatch, mock_db):
 
     result = await admin_list_tags(entity_types="tools,resources", include_entities=True, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert result[0]["name"] == "alpha"
-    assert result[0]["entities"][0]["id"] == "tool-1"
+    assert result[0]["entities"][0]["id"] == "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
     tag_service.get_all_tags.assert_awaited_once_with(
         mock_db,
         entity_types=["tools", "resources"],
@@ -15408,10 +15408,10 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#tools"
-    mock_delete.assert_called_once_with(mock_db, "tool-1", user_email="user@example.com", purge_metrics=True)
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True)  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -15422,7 +15422,7 @@ async def test_admin_delete_tool_success_include_inactive(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin/?include_inactive=true#tools"
 
@@ -15435,7 +15435,7 @@ async def test_admin_delete_tool_permission_error(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     location = response.headers["location"]
     assert "error=" in location
     assert "include_inactive=true" in location
@@ -15450,7 +15450,7 @@ async def test_admin_delete_tool_generic_exception_error_redirect(mock_delete, m
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "/root/admin/?" in response.headers["location"]
@@ -15529,10 +15529,10 @@ async def test_admin_delete_resource_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
-    mock_delete.assert_called_once_with(mock_db, "res-1", user_email="user@example.com", purge_metrics=True)
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400c1", user_email="user@example.com", purge_metrics=True)  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -15543,10 +15543,10 @@ async def test_admin_delete_resource_success_inactive_unchecked_redirect(mock_de
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#resources"
-    mock_delete.assert_called_once_with(mock_db, "res-1", user_email="user@example.com", purge_metrics=False)
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400c1", user_email="user@example.com", purge_metrics=False)  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -15566,7 +15566,7 @@ async def test_admin_delete_resource_error_handlers(mock_delete, mock_db):
 
     for exc, expected_msg in cases:
         mock_delete.side_effect = exc
-        response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -15580,7 +15580,7 @@ async def test_admin_delete_resource_error_inactive_checked_redirect(mock_delete
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_resource("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -15593,10 +15593,10 @@ async def test_admin_delete_prompt_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#prompts"
-    mock_delete.assert_called_once_with(mock_db, "prompt-1", user_email="user@example.com", purge_metrics=False)
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400d1", user_email="user@example.com", purge_metrics=False)  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -15607,7 +15607,7 @@ async def test_admin_delete_prompt_success_inactive_checked_redirect(mock_delete
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
 
@@ -15629,7 +15629,7 @@ async def test_admin_delete_prompt_error_handlers(mock_delete, mock_db):
 
     for exc, expected_msg in cases:
         mock_delete.side_effect = exc
-        response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -15643,7 +15643,7 @@ async def test_admin_delete_prompt_error_inactive_checked_redirect(mock_delete, 
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_prompt("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -15666,7 +15666,7 @@ async def test_admin_set_resource_state_error_handlers(mock_set_state, mock_db):
 
     for exc, expected_msg in cases:
         mock_set_state.side_effect = exc
-        response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_set_resource_state("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -15679,7 +15679,7 @@ async def test_admin_set_resource_state_success_inactive_checked_redirect(mock_s
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_set_resource_state("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#resources"
 
@@ -15693,7 +15693,7 @@ async def test_admin_set_resource_state_error_inactive_checked_redirect(mock_set
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_resource_state("550e8400e29b41d4a7164466554400c1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -15716,7 +15716,7 @@ async def test_admin_set_prompt_state_error_handlers(mock_set_state, mock_db):
 
     for exc, expected_msg in cases:
         mock_set_state.side_effect = exc
-        response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_set_prompt_state("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -15729,7 +15729,7 @@ async def test_admin_set_prompt_state_success_inactive_checked_redirect(mock_set
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_set_prompt_state("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
 
@@ -15743,7 +15743,7 @@ async def test_admin_set_prompt_state_error_inactive_checked_redirect(mock_set_s
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_prompt_state("550e8400e29b41d4a7164466554400d1", request, mock_db, user={"email": "user@example.com", "db": mock_db})  # pragma: allowlist secret
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -16812,7 +16812,7 @@ class TestUtilityFunctions:
     def test_normalize_team_id_valid_uuid(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _normalize_team_id(uid)
-        assert result == "12345678123456781234567812345678"
+        assert result == "12345678123456781234567812345678"  # pragma: allowlist secret
 
     def test_normalize_team_id_invalid(self):
         with pytest.raises(ValueError, match="Invalid team ID"):
@@ -16824,7 +16824,7 @@ class TestUtilityFunctions:
     def test_validated_team_id_param_valid(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _validated_team_id_param(uid)
-        assert result == "12345678123456781234567812345678"
+        assert result == "12345678123456781234567812345678"  # pragma: allowlist secret
 
     def test_validated_team_id_param_invalid_raises_http(self):
         with pytest.raises(HTTPException) as exc_info:
@@ -16862,20 +16862,20 @@ class TestUtilityFunctions:
     def test_build_admin_redirect_with_valid_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _build_admin_redirect("", "tools", team_id=uid)
-        assert result == "/admin/?team_id=12345678123456781234567812345678#tools"
+        assert result == "/admin/?team_id=12345678123456781234567812345678#tools"  # pragma: allowlist secret
 
     def test_build_admin_redirect_with_error_and_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _build_admin_redirect("", "tools", error="some error", team_id=uid)
         assert "error=some%20error" in result
-        assert "team_id=12345678123456781234567812345678" in result
+        assert "team_id=12345678123456781234567812345678" in result  # pragma: allowlist secret
         assert result.endswith("#tools")
 
     def test_build_admin_redirect_with_include_inactive_and_team_id(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _build_admin_redirect("/root", "tools", include_inactive=True, team_id=uid)
         assert "include_inactive=true" in result
-        assert "team_id=12345678123456781234567812345678" in result
+        assert "team_id=12345678123456781234567812345678" in result  # pragma: allowlist secret
         assert result.startswith("/root/admin/?")
         assert result.endswith("#tools")
 
@@ -16884,7 +16884,7 @@ class TestUtilityFunctions:
         result = _build_admin_redirect("/root", "catalog", error="fail", include_inactive=True, team_id=uid)
         assert "error=fail" in result
         assert "include_inactive=true" in result
-        assert "team_id=12345678123456781234567812345678" in result
+        assert "team_id=12345678123456781234567812345678" in result  # pragma: allowlist secret
         assert result.startswith("/root/admin/?")
         assert result.endswith("#catalog")
 
@@ -19746,7 +19746,7 @@ class TestTemplateButtonGating:
     @pytest.fixture
     def tool_data(self):
         return {
-            "id": "tool-1",
+            "id": "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
             "name": "Test Tool",
             "ownerEmail": "owner@example.com",
             "teamId": "team-1",
@@ -20001,7 +20001,7 @@ class TestTemplateButtonGating:
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""
         prompt_data = {
-            "id": "prompt-1",
+            "id": "550e8400e29b41d4a7164466554400d1",  # pragma: allowlist secret
             "name": "Test Prompt",
             "ownerEmail": "owner@example.com",
             "owner_email": "owner@example.com",
@@ -20023,7 +20023,7 @@ class TestTemplateButtonGating:
     def test_resources_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editResource in HTML."""
         resource_data = {
-            "id": "res-1",
+            "id": "550e8400e29b41d4a7164466554400c1",  # pragma: allowlist secret
             "name": "Test Resource",
             "ownerEmail": "owner@example.com",
             "teamId": "team-1",
@@ -20174,7 +20174,7 @@ class TestAdminGetToolPassesTeamRoles:
             patch.object(ToolService, "get_tool", new_callable=AsyncMock, return_value=tool_read) as mock_get,
             patch("mcpgateway.admin._get_user_team_roles", return_value={"team-1": "owner"}) as mock_roles,
         ):
-            await admin_get_tool("tool-1", mock_request, mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_get_tool("550e8400e29b41d4a7164466554400b1", mock_request, mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})  # pragma: allowlist secret
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_get.assert_called_once()
@@ -22757,11 +22757,11 @@ async def test_admin_tools_partial_include_public(monkeypatch, mock_request, moc
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     tool_service = MagicMock()
-    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    tool_service.convert_tool_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
 
     mock_request.headers = {}
@@ -22810,11 +22810,11 @@ async def test_admin_tools_selector_template_includes_team_id_and_include_public
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     tool_service = MagicMock()
-    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    tool_service.convert_tool_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400b1", "name": "Tool 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
 
     # Capture what gets passed to TemplateResponse
@@ -22853,11 +22853,11 @@ async def test_admin_resources_selector_template_includes_team_id_and_include_pu
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400c1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     resource_service = MagicMock()
-    resource_service.convert_resource_to_read.return_value = {"id": "res-1", "name": "Resource 1"}
+    resource_service.convert_resource_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400c1", "name": "Resource 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.resource_service", resource_service)
 
     captured_context = {}
@@ -22895,11 +22895,11 @@ async def test_admin_prompts_selector_template_includes_team_id_and_include_publ
     pagination = make_pagination_meta()
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
-        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1")], "pagination": pagination, "links": None}),
+        AsyncMock(return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1")], "pagination": pagination, "links": None}),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
     prompt_service = MagicMock()
-    prompt_service.convert_prompt_to_read.return_value = {"id": "prompt-1", "name": "Prompt 1"}
+    prompt_service.convert_prompt_to_read.return_value = {"id": "550e8400e29b41d4a7164466554400d1", "name": "Prompt 1"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.admin.prompt_service", prompt_service)
 
     captured_context = {}
