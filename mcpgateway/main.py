@@ -1988,9 +1988,9 @@ def validate_security_configuration():
             else:
                 logger.warning(
                     "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                    "Any UAID-based agent can route to any remote gateway endpoint. "
-                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                    + "Any UAID-based agent can route to any remote gateway endpoint. "
+                    + "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    + 'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
                 )
 
         # Audit logging for explicit security overrides in production
@@ -10410,7 +10410,7 @@ async def _handle_tools_list_rpc(
     request: Request,
     db: Session,
     user,
-    tool_service,
+    tool_svc,
     server_id: Optional[str],
     cursor: Optional[str],
     serializer_func,
@@ -10421,7 +10421,7 @@ async def _handle_tools_list_rpc(
         request: The FastAPI request object
         db: Database session
         user: Authenticated user with permissions
-        tool_service: Tool service instance
+        tool_svc: Tool service instance
         server_id: Optional server ID for server-scoped tool listing
         cursor: Optional pagination cursor
         serializer_func: Function to serialize tool definitions (either _serialize_mcp_tool_definitions or _serialize_legacy_tool_payloads)
@@ -10444,7 +10444,7 @@ async def _handle_tools_list_rpc(
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
-        tools = await tool_service.list_server_tools(
+        tools = await tool_svc.list_server_tools(
             db,
             server_id,
             cursor=cursor,
@@ -10459,7 +10459,7 @@ async def _handle_tools_list_rpc(
         db.close()
         result = {"tools": serializer_func(tools)}
     else:
-        tools, next_cursor = await tool_service.list_tools(
+        tools, next_cursor = await tool_svc.list_tools(
             db,
             cursor=cursor,
             limit=0,
@@ -10620,6 +10620,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
+<<<<<<< HEAD
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
@@ -10703,6 +10704,28 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 result = {"tools": _serialize_legacy_tool_payloads(tools)}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
+=======
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_mcp_tool_definitions,
+            )
+        elif method == "list_tools":  # Legacy endpoint
+            await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_svc=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_legacy_tool_payloads,
+            )
+>>>>>>> c9e3adacb (pylint fix)
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
