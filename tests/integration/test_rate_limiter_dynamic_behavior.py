@@ -341,9 +341,16 @@ class TestRateLimiterRedisState:
         plugins = {p["name"]: p for p in state.get("plugins", [])}
         assert PLUGIN_NAME in plugins, "RateLimiterPlugin not in plugin list"
         reported_mode = plugins[PLUGIN_NAME]["mode"]
-        assert reported_mode != "disabled", (
-            f"After PUT mode=enforce, admin API should report a non-disabled mode "
-            f"(framework label, e.g. 'sequential'); got {reported_mode!r}"
+        # TEMP (issue #4709): /admin/plugins reports the framework's internal
+        # mode label ("sequential"), not the operator label ("enforce") that
+        # we PUT. Once the asymmetry between /admin/plugins and
+        # /v1/tools/plugin_bindings/ is resolved (issue #4709), revert this
+        # back to:  assert reported_mode == "enforce"
+        expected_framework_mode = "sequential"
+        assert reported_mode == expected_framework_mode, (
+            f"After PUT mode=enforce, /admin/plugins should report "
+            f"{expected_framework_mode!r} (framework label, see issue #4709); "
+            f"got {reported_mode!r}"
         )
 
     def test_mode_reverts_in_admin_api_after_disable(self, server_and_tool):
