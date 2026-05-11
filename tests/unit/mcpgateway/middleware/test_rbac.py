@@ -20,6 +20,7 @@ from fastapi import HTTPException, Request, status
 import pytest
 
 # First-Party
+from mcpgateway.db import get_db as db_get_db
 from mcpgateway.middleware import rbac
 
 
@@ -57,8 +58,8 @@ def _restore_real_rbac_decorators():
 @pytest.mark.asyncio
 async def test_get_db_yields_and_closes():
     mock_session = MagicMock()
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
-        gen = rbac.get_db()
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
+        gen = db_get_db()
         db = next(gen)
         assert db == mock_session
         gen.close()
@@ -772,8 +773,8 @@ def _make_fresh_db(mock_db):
 async def test_get_db_commit_on_success():
     """get_db() calls commit() after successful generator completion (line 61)."""
     mock_session = MagicMock()
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
-        gen = rbac.get_db()
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
+        gen = db_get_db()
         next(gen)
         try:
             next(gen)
@@ -787,8 +788,8 @@ async def test_get_db_commit_on_success():
 async def test_get_db_rollback_on_exception():
     """get_db() rolls back and re-raises on exception (lines 63-64)."""
     mock_session = MagicMock()
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
-        gen = rbac.get_db()
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
+        gen = db_get_db()
         next(gen)
         with pytest.raises(ValueError, match="boom"):
             gen.throw(ValueError("boom"))
@@ -801,8 +802,8 @@ async def test_get_db_invalidate_when_rollback_fails():
     """get_db() calls invalidate() when rollback fails (lines 65-67)."""
     mock_session = MagicMock()
     mock_session.rollback.side_effect = Exception("rollback fail")
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
-        gen = rbac.get_db()
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
+        gen = db_get_db()
         next(gen)
         with pytest.raises(ValueError, match="boom"):
             gen.throw(ValueError("boom"))
@@ -816,8 +817,8 @@ async def test_get_db_invalidate_fails_silently():
     mock_session = MagicMock()
     mock_session.rollback.side_effect = Exception("rollback fail")
     mock_session.invalidate.side_effect = Exception("invalidate fail")
-    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
-        gen = rbac.get_db()
+    with patch("mcpgateway.db.SessionLocal", return_value=mock_session):
+        gen = db_get_db()
         next(gen)
         with pytest.raises(ValueError, match="boom"):
             gen.throw(ValueError("boom"))
