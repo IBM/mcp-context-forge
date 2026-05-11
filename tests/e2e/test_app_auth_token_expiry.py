@@ -171,4 +171,4 @@ class TestTokenExpirySynchronization:
         # Verify security flags
         assert "httponly" in jwt_cookie.lower(), "JWT cookie must be httpOnly (prevent XSS)"
         assert "samesite=lax" in jwt_cookie.lower(), "JWT cookie should have SameSite=Lax"
-        assert "path=/" in jwt_cookie.lower(), "JWT cookie should be scoped to root path"
+        assert "path=/app" in jwt_cookie.lower(), "JWT cookie should be scoped to /app path"
