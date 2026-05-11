@@ -25,9 +25,9 @@
       <tr data-enabled="{{ agent.enabled|lower }}" data-owner-email="{{ agent.ownerEmail }}" data-team-id="{{ agent.teamId or '' }}" data-visibility="{{ agent.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="relative"
-           x-data="Admin.overflowMenu('agents-table-wrapper')"
+           x-data="overflowMenu('agents-table-wrapper')"
                @click.away="menuOpen = false"
-               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
+               @keydown.escape="closeMenu()">
             <button
               type="button"
               x-ref="trigger"
@@ -54,9 +54,10 @@
               x-transition:leave-start="opacity-100 scale-100"
               x-transition:leave-end="opacity-0 scale-95"
               class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
-              :style="`top: ${menuTop}px; left: ${menuLeft}px; display: ${menuOpen ? 'block' : 'none'}`"
+              :style="{ top: menuTop + 'px', left: menuLeft + 'px', display: menuOpen ? 'block' : 'none' }"
               role="menu"
               aria-orientation="vertical"
+              @click="menuOpen = false"
               @keydown.arrow-down.prevent="navigate(1)"
               @keydown.arrow-up.prevent="navigate(-1)"
             >
@@ -64,7 +65,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.testA2AAgent({{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
+                @click="dispatch('testA2AAgent', {{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡Test this agent with sample arguments'"
               >Test</button>
@@ -72,7 +73,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.viewA2AAgent({{ agent.id|tojson_attr }})"
+                @click="dispatch('viewA2AAgent', {{ agent.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
               {% if can_modify %}
@@ -80,7 +81,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.editA2AAgent({{ agent.id|tojson_attr }})"
+                @click="dispatch('editA2AAgent', {{ agent.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">

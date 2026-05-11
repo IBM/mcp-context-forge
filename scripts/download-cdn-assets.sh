@@ -44,8 +44,8 @@ curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/mono
   -o "${STATIC_DIR}/codemirror/theme/monokai.min.css"
 
 # Download Alpine.js (pinned to 3.15.11 for reproducibility)
-echo "  ⬇️  Alpine.js 3.15.8..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js" \
+echo "  ⬇️  Alpine.js CSP 3.15.11..."
+curl -fsSL "https://cdn.jsdelivr.net/npm/@alpinejs/csp@3.15.11/dist/cdn.min.js" \
   -o "${STATIC_DIR}/alpinejs/alpine.min.js"
 
 # Download Chart.js (pinned to 4.5.1 for reproducibility)

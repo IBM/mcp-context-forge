@@ -303,81 +303,6 @@ describe("navigate", () => {
   });
 });
 
-// ─── Admin namespace wiring ────────────────────────────────────────────────────
-// These tests simulate what overflow-menu action handlers call at runtime to
-// catch regressions where templates reference incorrect Admin method names
-// (e.g. Admin.viewAgent vs Admin.viewA2AAgent, or bare handleToggleSubmit vs
-// Admin.handleToggleSubmit).
-
-describe("Admin namespace wiring for row actions", () => {
-  beforeEach(() => {
-    window.Admin = {
-      viewA2AAgent: vi.fn(),
-      handleToggleSubmit: vi.fn(),
-      handleDeleteSubmit: vi.fn(),
-    };
-  });
-
-  afterEach(() => {
-    delete window.Admin;
-  });
-
-  test("Admin.viewA2AAgent is callable (agents table View action)", () => {
-    expect(typeof window.Admin.viewA2AAgent).toBe("function");
-    expect(() => window.Admin.viewA2AAgent(42)).not.toThrow();
-    expect(window.Admin.viewA2AAgent).toHaveBeenCalledWith(42);
-  });
-
-  test("Admin.viewA2AAgent is defined — not Admin.viewAgent — for agents table", () => {
-    expect(window.Admin.viewA2AAgent).toBeDefined();
-    expect(window.Admin.viewAgent).toBeUndefined();
-  });
-
-  test("Admin.handleToggleSubmit is callable from toggle forms (tools table)", () => {
-    const form = document.createElement("form");
-    form.action = "/admin/tools/1/state";
-    document.body.appendChild(form);
-    const event = { preventDefault: vi.fn(), target: form };
-
-    window.Admin.handleToggleSubmit(event, "tools");
-
-    expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(event, "tools");
-  });
-
-  test("Admin.handleToggleSubmit is callable from toggle forms (prompts table)", () => {
-    const form = document.createElement("form");
-    form.action = "/admin/prompts/1/state";
-    document.body.appendChild(form);
-    const event = { preventDefault: vi.fn(), target: form };
-
-    window.Admin.handleToggleSubmit(event, "prompts");
-
-    expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(event, "prompts");
-  });
-
-  test("Admin.handleToggleSubmit is callable from toggle forms (servers table)", () => {
-    const form = document.createElement("form");
-    form.action = "/admin/servers/1/state";
-    document.body.appendChild(form);
-    const event = { preventDefault: vi.fn(), target: form };
-
-    window.Admin.handleToggleSubmit(event, "servers");
-
-    expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(event, "servers");
-  });
-
-  test("Admin.handleToggleSubmit is callable from toggle forms (a2a-agents table)", () => {
-    const form = document.createElement("form");
-    form.action = "/admin/a2a/1/state";
-    document.body.appendChild(form);
-    const event = { preventDefault: vi.fn(), target: form };
-
-    window.Admin.handleToggleSubmit(event, "a2a-agents");
-
-    expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(event, "a2a-agents");
-  });
-});
-
 // ─── Integration: Menu positioning and viewport clamping ──────────────────────
 
 describe("Integration: Menu positioning with viewport boundaries", () => {
@@ -670,6 +595,120 @@ describe("destroy", () => {
     component.destroy();
 
     expect(main.style.overflow).toBe("auto");
+  });
+});
+
+// ─── closeMenu ────────────────────────────────────────────────────────────────
+
+describe("closeMenu", () => {
+  test("sets menuOpen to false", () => {
+    const component = makeComponent();
+    component.menuOpen = true;
+    component.closeMenu();
+    expect(component.menuOpen).toBe(false);
+  });
+
+  test("focuses the trigger when present", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    const focusSpy = vi.spyOn(trigger, "focus");
+    const component = makeComponent();
+    component.$refs = { trigger };
+    component.menuOpen = true;
+    component.closeMenu();
+    expect(focusSpy).toHaveBeenCalledOnce();
+  });
+
+  test("does not throw when trigger is absent", () => {
+    const component = makeComponent();
+    component.$refs = {};
+    component.menuOpen = true;
+    expect(() => component.closeMenu()).not.toThrow();
+    expect(component.menuOpen).toBe(false);
+  });
+
+  test("closes menu even when trigger focus is null", () => {
+    const component = makeComponent();
+    component.$refs = { trigger: null };
+    component.menuOpen = true;
+    component.closeMenu();
+    expect(component.menuOpen).toBe(false);
+  });
+});
+
+// ─── dispatch ─────────────────────────────────────────────────────────────────
+
+describe("dispatch", () => {
+  afterEach(() => {
+    delete window.Admin;
+  });
+
+  test("calls the named Admin method with provided arguments", () => {
+    const viewTool = vi.fn();
+    window.Admin = { viewTool };
+    const component = makeComponent();
+    component.dispatch("viewTool", "tool-123");
+    expect(viewTool).toHaveBeenCalledWith("tool-123");
+  });
+
+  test("passes multiple arguments correctly", () => {
+    const refreshGatewayTools = vi.fn();
+    window.Admin = { refreshGatewayTools };
+    const component = makeComponent();
+    component.dispatch("refreshGatewayTools", "gw-1", "My Gateway");
+    expect(refreshGatewayTools).toHaveBeenCalledWith("gw-1", "My Gateway");
+  });
+
+  test("passes no arguments when called with only action name", () => {
+    const noArgAction = vi.fn();
+    window.Admin = { noArgAction };
+    const component = makeComponent();
+    component.dispatch("noArgAction");
+    expect(noArgAction).toHaveBeenCalledWith();
+  });
+
+  test("calls the method with Admin as `this`", () => {
+    let capturedThis;
+    window.Admin = {
+      viewGateway: function () {
+        capturedThis = this;
+      },
+    };
+    const component = makeComponent();
+    component.dispatch("viewGateway", "gw-id");
+    expect(capturedThis).toBe(window.Admin);
+  });
+
+  test("does nothing when window.Admin is undefined", () => {
+    delete window.Admin;
+    const component = makeComponent();
+    expect(() => component.dispatch("someAction")).not.toThrow();
+  });
+
+  test("does nothing when window.Admin is null", () => {
+    window.Admin = null;
+    const component = makeComponent();
+    expect(() => component.dispatch("someAction")).not.toThrow();
+  });
+
+  test("does nothing when the named method does not exist on Admin", () => {
+    window.Admin = {};
+    const component = makeComponent();
+    expect(() => component.dispatch("nonexistentAction")).not.toThrow();
+  });
+
+  test("does nothing when Admin property is not a function", () => {
+    window.Admin = { notAFunction: "string value" };
+    const component = makeComponent();
+    expect(() => component.dispatch("notAFunction")).not.toThrow();
+  });
+
+  test("does not call Admin method when action key is missing", () => {
+    const editGateway = vi.fn();
+    window.Admin = { editGateway };
+    const component = makeComponent();
+    component.dispatch("editTool"); // wrong action name
+    expect(editGateway).not.toHaveBeenCalled();
   });
 });
 

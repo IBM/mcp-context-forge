@@ -12,7 +12,7 @@
 -->
 
 <div
-  x-data="Admin.paginationData()"
+  x-data="paginationData"
   data-base-url="{{ base_url }}"
   data-current-page="{{ pagination.page }}"
   data-per-page="{{ pagination.per_page }}"
@@ -48,7 +48,7 @@
   <!-- Page Info -->
   <div class="text-sm text-gray-700 dark:text-gray-300">
     <span
-      x-text="totalItems === 0 ? 'No items found' : `Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${pageItems !== null ? Math.min((currentPage - 1) * perPage + pageItems, totalItems) : Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"
+      x-text="pageInfoText()"
     ></span>
   </div>
 
