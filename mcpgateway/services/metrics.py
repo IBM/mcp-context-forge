@@ -45,7 +45,7 @@ import re
 
 # Third-Party
 from fastapi import Depends, Request, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest, REGISTRY
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, Histogram, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party

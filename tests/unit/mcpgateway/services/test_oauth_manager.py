@@ -221,6 +221,64 @@ async def test_client_credentials_flow_with_scopes(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_prepare_runtime_credentials_validates_oauth_urls(oauth_manager):
+    credentials = {
+        "token_url": "https://issuer.example.com/token",
+        "issuer": "https://issuer.example.com",
+        "authorization_server": "https://issuer.example.com",
+        "authorization_servers": ["https://issuer.example.com", "https://backup.example.com"],
+    }
+
+    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()):
+        runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+    assert runtime_credentials["token_url"] == "https://issuer.example.com/token"
+    assert runtime_credentials["issuer"] == "https://issuer.example.com"
+    assert runtime_credentials["authorization_server"] == "https://issuer.example.com"
+    assert runtime_credentials["authorization_servers"] == ["https://issuer.example.com", "https://backup.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_rejects_blocked_authorization_server_list(oauth_manager):
+    credentials = {
+        "authorization_servers": ["http://169.254.169.254/latest/meta-data/"],
+    }
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(ValueError, match="OAuth config authorization_servers\\[0\\].*SSRF protection"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_rejects_non_list_authorization_servers(oauth_manager):
+    credentials = {
+        "authorization_servers": "https://issuer.example.com",
+    }
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(OAuthError, match="authorization_servers must be a list"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_falls_back_when_decryption_fails(oauth_manager):
+    credentials = {
+        "client_id": "cid",
+        "client_secret": "x" * 60,
+        "token_url": "https://issuer.example.com/token",
+    }
+
+    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, side_effect=RuntimeError("decrypt failed")):
+        runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+    assert runtime_credentials == credentials
+
+
+@pytest.mark.asyncio
 async def test_client_credentials_flow_decrypt_secret(oauth_manager):
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -296,7 +354,7 @@ async def test_client_credentials_flow_no_access_token(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
@@ -320,7 +378,7 @@ async def test_client_credentials_flow_json_parse_failure(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
@@ -1082,14 +1140,11 @@ async def test_exchange_code_for_tokens_omits_resource_for_entra_v2_scope_flow(o
     request_data = mock_client.post.call_args[1]["data"]
     assert "resource" not in request_data
 
+
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
     """Test that complete_authorization_code_flow handles scope returned as list (OAuth providers like Gamma)."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": ["read", "write", "admin"],  # List format
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": ["read", "write", "admin"], "expires_in": 3600}  # List format
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1104,10 +1159,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1120,11 +1172,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
     """Test that complete_authorization_code_flow handles scope as space-separated string (standard OAuth)."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": "read write admin",  # String format
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": "read write admin", "expires_in": 3600}  # String format
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1139,10 +1187,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1155,11 +1200,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager):
     """Test that complete_authorization_code_flow handles empty scope string."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": "",  # Empty string
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": "", "expires_in": 3600}  # Empty string
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1174,10 +1215,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1190,11 +1228,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager):
     """Test that complete_authorization_code_flow handles invalid scope type gracefully."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": 123,  # Invalid type (number)
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": 123, "expires_in": 3600}  # Invalid type (number)
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1209,10 +1243,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1225,11 +1256,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager):
     """Test that complete_authorization_code_flow filters non-string items from list scopes."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": ["read", 123, None, "write"],  # Mixed types
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": ["read", 123, None, "write"], "expires_in": 3600}  # Mixed types
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1244,10 +1271,7 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1559,11 +1583,7 @@ async def test_exchange_code_for_tokens_basic_auth_without_client_secret(oauth_m
             "token_endpoint_auth_method": "client_secret_basic",  # Request Basic Auth
         }
 
-        result = await oauth_manager._exchange_code_for_tokens(
-            credentials=credentials,
-            code="auth_code_123",
-            code_verifier="test_verifier"
-        )
+        result = await oauth_manager._exchange_code_for_tokens(credentials=credentials, code="auth_code_123", code_verifier="test_verifier")
 
     assert result["access_token"] == "test-token"
 
@@ -1603,10 +1623,7 @@ async def test_exchange_code_for_tokens_basic_auth_without_client_secret_logs_wa
         }
 
         with caplog.at_level("WARNING"):
-            await oauth_manager._exchange_code_for_tokens(
-                credentials=credentials,
-                code="auth_code_123"
-            )
+            await oauth_manager._exchange_code_for_tokens(credentials=credentials, code="auth_code_123")
 
     # Verify warning was logged
     assert any("Basic Auth requested but client_secret is missing" in record.message for record in caplog.records)
@@ -1626,11 +1643,7 @@ async def test_refresh_token_basic_auth_without_client_secret(oauth_manager):
     mock_response.status_code = 200
     mock_response.raise_for_status = MagicMock()
     mock_response.headers = {"content-type": "application/json"}
-    mock_response.json.return_value = {
-        "access_token": "refreshed-token",
-        "token_type": "Bearer",
-        "expires_in": 3600
-    }
+    mock_response.json.return_value = {"access_token": "refreshed-token", "token_type": "Bearer", "expires_in": 3600}
 
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
@@ -1643,10 +1656,7 @@ async def test_refresh_token_basic_auth_without_client_secret(oauth_manager):
             "token_endpoint_auth_method": "client_secret_basic",  # Request Basic Auth
         }
 
-        result = await oauth_manager.refresh_token(
-            credentials=credentials,
-            refresh_token="old-refresh-token"
-        )
+        result = await oauth_manager.refresh_token(credentials=credentials, refresh_token="old-refresh-token")
 
     assert result["access_token"] == "refreshed-token"
 
@@ -1685,10 +1695,7 @@ async def test_refresh_token_basic_auth_without_client_secret_logs_warning(oauth
         }
 
         with caplog.at_level("WARNING"):
-            await oauth_manager.refresh_token(
-                credentials=credentials,
-                refresh_token="old-refresh-token"
-            )
+            await oauth_manager.refresh_token(credentials=credentials, refresh_token="old-refresh-token")
 
     # Verify warning was logged
     assert any("Basic Auth requested but client_secret is missing" in record.message for record in caplog.records)
