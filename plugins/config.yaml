@@ -281,7 +281,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "disabled"
+    mode: "enforce"
     priority: 20
     conditions: []
     config:
@@ -294,7 +294,8 @@ plugins:
       algorithm: "fixed_window"
       by_user: "30/m"
       by_tenant: "3000/m"
-      by_tool: {}
+      by_tool:
+        fast-time-sse-get-system-time: "1000/m"
 
   # Schema guard for tool args/results (subset JSONSchema)
   - name: "SchemaGuardPlugin"
