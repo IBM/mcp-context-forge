@@ -152,6 +152,9 @@ export async function fetchWithTimeout(
       ...options.headers,
       "Cache-Control": "no-cache",
       Pragma: "no-cache",
+      ...(getCookie("mcpgateway_csrf_token")
+        ? { "X-CSRF-Token": getCookie("mcpgateway_csrf_token") }
+        : {}),
     },
   })
     .then((response) => {

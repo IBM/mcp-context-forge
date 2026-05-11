@@ -358,21 +358,23 @@ class ComplianceService:
             Dict with event counts, coverage indicators, and sample events
         """
         try:
-            total_events = db.execute(
-                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end)  # pylint: disable=not-callable
-            ).scalar() or 0
-            success_count = db.execute(
-                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.success.is_(True))  # pylint: disable=not-callable
-            ).scalar() or 0
+            total_events = db.execute(select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end)).scalar() or 0  # pylint: disable=not-callable
+            success_count = (
+                db.execute(
+                    select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.success.is_(True))  # pylint: disable=not-callable
+                ).scalar()
+                or 0
+            )
             failure_count = total_events - success_count
-            review_count = db.execute(
-                select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.requires_review.is_(True))  # pylint: disable=not-callable
-            ).scalar() or 0
+            review_count = (
+                db.execute(
+                    select(func.count()).select_from(AuditTrail).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end, AuditTrail.requires_review.is_(True))  # pylint: disable=not-callable
+                ).scalar()
+                or 0
+            )
 
             # Sample resource types (limit to first 20 to avoid memory issues)
-            resource_types_result = db.execute(
-                select(AuditTrail.resource_type).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end).distinct().limit(20)
-            ).scalars().all()
+            resource_types_result = db.execute(select(AuditTrail.resource_type).where(AuditTrail.timestamp >= start, AuditTrail.timestamp <= end).distinct().limit(20)).scalars().all()
             resource_types = [rt or "unknown" for rt in resource_types_result]
 
             return {

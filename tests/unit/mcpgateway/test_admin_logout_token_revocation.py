@@ -96,7 +96,11 @@ class TestAdminLogoutTokenRevocation:
             mock_blocklist.revoke_token.return_value = True
             mock_get_service.return_value = mock_blocklist
 
-            response = client.post("/admin/logout", cookies={"jwt_token": token})
+            client.cookies.set("jwt_token", token)
+            try:
+                response = client.post("/admin/logout")
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code in (302, 303, 307, 200)
             mock_blocklist.revoke_token.assert_called_once()
@@ -126,7 +130,11 @@ class TestAdminLogoutTokenRevocation:
             mock_blocklist = MagicMock()
             mock_get_service.return_value = mock_blocklist
 
-            response = client.post("/admin/logout", cookies={"jwt_token": "not.a.valid.jwt"})
+            client.cookies.set("jwt_token", "not.a.valid.jwt")
+            try:
+                response = client.post("/admin/logout")
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code in (302, 303, 307, 200)
             mock_blocklist.revoke_token.assert_not_called()
@@ -143,7 +151,11 @@ class TestAdminLogoutTokenRevocation:
             mock_blocklist = MagicMock()
             mock_get_service.return_value = mock_blocklist
 
-            response = client.post("/admin/logout", cookies={"jwt_token": token})
+            client.cookies.set("jwt_token", token)
+            try:
+                response = client.post("/admin/logout")
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code in (302, 303, 307, 200)
             mock_blocklist.revoke_token.assert_not_called()
@@ -160,7 +172,11 @@ class TestAdminLogoutTokenRevocation:
             mock_blocklist.revoke_token.side_effect = Exception("Database unavailable")
             mock_get_service.return_value = mock_blocklist
 
-            response = client.post("/admin/logout", cookies={"jwt_token": token})
+            client.cookies.set("jwt_token", token)
+            try:
+                response = client.post("/admin/logout")
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code in (302, 303, 307, 200)
             mock_blocklist.revoke_token.assert_called_once()
@@ -182,7 +198,11 @@ class TestAdminLogoutDenyPaths:
             mock_blocklist = MagicMock()
             mock_get_service.return_value = mock_blocklist
 
-            response = client.post("/admin/logout", cookies={"jwt_token": token})
+            client.cookies.set("jwt_token", token)
+            try:
+                response = client.post("/admin/logout")
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code == 403
             assert "csrf" in response.json().get("detail", "").lower()
@@ -205,10 +225,13 @@ class TestAdminLogoutDenyPaths:
             mock_blocklist.revoke_token.return_value = True
             mock_get_service.return_value = mock_blocklist
 
-            response = client.get(
-                "/admin/logout",
-                cookies={"jwt_token": token},
-                headers={"accept": "application/json"},
-            )
+            client.cookies.set("jwt_token", token)
+            try:
+                response = client.get(
+                    "/admin/logout",
+                    headers={"accept": "application/json"},
+                )
+            finally:
+                del client.cookies["jwt_token"]
 
             assert response.status_code in (200, 302, 303, 307)

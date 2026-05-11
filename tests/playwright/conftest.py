@@ -50,8 +50,8 @@ PLAYWRIGHT_VIEWPORT_SIZE = os.getenv("PLAYWRIGHT_VIEWPORT_SIZE", PLAYWRIGHT_VIDE
 
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
-ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
+ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "5S1Nd8z$Ivb6N%Lsj^okvVF6")
+ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW")
 ADMIN_ACTIVE_PASSWORD = [ADMIN_PASSWORD]
 
 # Ensure UI/Admin are enabled for tests
@@ -525,7 +525,7 @@ def test_user_data():
     return {
         "email": f"test-user-{unique_id}@example.com",
         "full_name": f"Test User {unique_id}",
-        "password": "TestPass123!@#",
+        "password": "TestP@ssw0rd!X9Secure2026",  # pragma: allowlist secret
     }
 
 
@@ -590,7 +590,7 @@ def test_gateway_with_basic_auth_data():
         "visibility": "public",
         "auth_type": "basic",
         "auth_username": "testuser",
-        "auth_password": "testpass123",
+        "auth_password": "TestP@ssw0rd!Test2026X",  # pragma: allowlist secret
     }
 
 

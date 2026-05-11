@@ -18,7 +18,7 @@
       <tr data-enabled="{{ resource.enabled|lower }}" data-owner-email="{{ resource.ownerEmail }}" data-team-id="{{ resource.teamId or '' }}" data-visibility="{{ resource.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                 <div class="relative"
-                     x-data="Admin.overflowMenu('resources-table-wrapper')"
+                     x-data="window.Admin?.overflowMenu?.('resources-table-wrapper')"
                @click.away="menuOpen = false"
                @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                   <button
@@ -56,14 +56,14 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.testResource({{ resource.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.testResource?.({{ resource.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Test</button>
               <button
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.viewResource({{ resource.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.viewResource?.({{ resource.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
               {% if can_modify %}
@@ -71,7 +71,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.editResource({{ resource.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.editResource?.({{ resource.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">

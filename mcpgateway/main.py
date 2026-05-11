@@ -32,7 +32,6 @@ import base64
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
 import html
 import json
 import logging
@@ -75,7 +74,7 @@ from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import TokenValidationError, get_current_user, get_user_team_roles, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -210,7 +209,6 @@ from mcpgateway.utils.verify_credentials import (
     is_proxy_auth_trust_active,
     require_admin_auth,
     require_docs_auth_override,
-    verify_jwt_token,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
@@ -1924,7 +1922,7 @@ def validate_security_configuration():
 
         # Audit logging for explicit security overrides in production
         if current_settings.environment == "production" and not current_settings.require_strong_secrets:
-            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. " + "This override is being logged for audit purposes as per US-1 requirements.")
+            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. This override is being logged for audit purposes as per US-1 requirements.")
 
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:
@@ -2618,6 +2616,18 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return RedirectResponse(url=login_url, status_code=302)
         return ORJSONResponse(status_code=status_code, content={"detail": detail})
 
+    @staticmethod
+    def _auth_error_param(detail: str) -> Optional[str]:
+        """Map TokenValidationError detail to browser redirect error param."""
+        normalized = (detail or "").lower()
+        if "revoked" in normalized:
+            return "token_revoked"
+        if "disabled" in normalized:
+            return "account_disabled"
+        if "expired" in normalized or "idle timeout" in normalized:
+            return "session_expired"
+        return None
+
     async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements
         """
         Check admin privileges for admin routes.
@@ -2656,137 +2666,130 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            token = get_auth_header_value(request.headers)
+            raw_token = None
+            auth_user_email = None
+            auth_user_is_admin = False
+
+            auth_header = get_auth_header_value(request.headers)
             cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
-            # Extract token from header or cookie. Bearer scheme matched
-            # case-insensitively to align with ConfigurableHTTPBearer.
-            jwt_token = None
+            # Preserve existing precedence: cookie first, then Authorization bearer.
             if cookie_token:
-                jwt_token = cookie_token
-            elif token:
-                scheme, _, credentials_value = token.partition(" ")
+                raw_token = cookie_token
+            elif auth_header:
+                scheme, _, credentials_value = auth_header.partition(" ")
                 if scheme.lower() == "bearer" and credentials_value:
-                    jwt_token = credentials_value.strip() or None
+                    raw_token = credentials_value.strip() or None
 
-            username = None
-            token_teams = None
-
-            if jwt_token:
-                # Try JWT authentication first
+            if raw_token:
                 try:
-                    payload = await verify_jwt_token(jwt_token)
-                    username = payload.get("sub") or payload.get("email")
+                    auth_user = await validate_token_user(request, raw_token)
+                except TokenValidationError as exc:
+                    logger.warning(
+                        "Admin auth token validation failed: %s",
+                        SecurityValidator.sanitize_log_message(str(exc.detail)),
+                    )
+                    return self._error_response(
+                        request,
+                        root_path,
+                        exc.status_code,
+                        exc.detail,
+                        self._auth_error_param(exc.detail),
+                    )
 
-                    if not username:
-                        return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
+                auth_user_email = auth_user.email
+                auth_user_is_admin = bool(auth_user.is_admin)
 
-                    # Check if token is revoked (if JTI exists)
-                    jti = payload.get("jti")
-                    if jti:
-                        try:
-                            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
-                            if is_revoked:
-                                logger.warning(f"Admin access denied for revoked token: {SecurityValidator.sanitize_log_message(str(username))}")
-                                return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
-                        except Exception as revoke_error:
-                            logger.warning(f"Token revocation check failed: {revoke_error}")
-                            # Continue - don't fail auth if revocation check fails
-
-                    # SECURITY: Apply token scope semantics for admin paths.
-                    # Use the same token_use-aware resolution as auth.py.
-                    token_use = payload.get("token_use")
-                    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                        is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
-                    else:
-                        # API token or legacy path: embedded teams claim semantics
-                        token_teams = normalize_token_teams(payload)
-                except Exception:
-                    # JWT validation failed, try API token
-                    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
-                    api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
-
-                    if api_token_info:
-                        if api_token_info.get("expired"):
-                            return ORJSONResponse(status_code=401, content={"detail": "API token expired"})
-                        if api_token_info.get("revoked"):
-                            return ORJSONResponse(status_code=401, content={"detail": "API token has been revoked"})
-                        username = api_token_info["user_email"]
-                        logger.debug(f"Admin auth via API token: {SecurityValidator.sanitize_log_message(str(username))}")
-
-            # NOTE: Basic auth is NOT supported for admin UI endpoints.
-            # While AdminAuthMiddleware could validate Basic credentials, the admin
-            # endpoints use get_current_user_with_permissions which requires JWT tokens.
-            # Supporting Basic auth would require passing auth context to routes,
-            # which increases complexity and attack surface. Use JWT or API tokens instead.
-
-            if not username and is_proxy_auth_trust_active(settings):
-                # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
+            elif is_proxy_auth_trust_active(settings):
                 proxy_user = request.headers.get(settings.proxy_user_header)
                 if proxy_user:
-                    username = proxy_user
-                    logger.debug(f"Admin auth via proxy header: {SecurityValidator.sanitize_log_message(str(username))}")
+                    request.state.auth_method = "proxy"
+                    auth_user_email = proxy_user
 
-            if not username:
-                # No authentication method succeeded - redirect to login or return 401
+                    # Preserve existing proxy behavior: DB active/admin check,
+                    # with platform-admin bootstrap when REQUIRE_USER_IN_DB=false.
+                    with SessionLocal() as db:
+                        auth_service = EmailAuthService(db)
+                        proxy_db_user = await auth_service.get_user_by_email(proxy_user)
+
+                        if not proxy_db_user:
+                            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                            if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                                logger.info(
+                                    "Platform admin bootstrap authentication for %s",
+                                    SecurityValidator.sanitize_log_message(str(proxy_user)),
+                                )
+                                auth_user_is_admin = True
+                            else:
+                                return self._error_response(request, root_path, 401, "User not found")
+                        else:
+                            if not proxy_db_user.is_active:
+                                logger.warning(
+                                    "Admin access denied for disabled user: %s",
+                                    SecurityValidator.sanitize_log_message(str(proxy_user)),
+                                )
+                                return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                            auth_user_is_admin = bool(proxy_db_user.is_admin)
+
+            if not auth_user_email:
                 return self._error_response(request, root_path, 401, "Authentication required")
 
-            # SECURITY: Public-only tokens (teams=[]) never grant admin-path access,
-            # even for admin identities. Admin bypass requires explicit teams=null + is_admin=true.
+            token_teams = getattr(request.state, "token_teams", None)
+
+            # Preserve public-only denial invariant.
             if token_teams is not None and len(token_teams) == 0:
-                logger.warning(f"Admin access denied for public-only token: {SecurityValidator.sanitize_log_message(str(username))}")
-                return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+                logger.warning(
+                    "Admin access denied for public-only token: %s",
+                    SecurityValidator.sanitize_log_message(str(auth_user_email)),
+                )
+                return self._error_response(
+                    request,
+                    root_path,
+                    403,
+                    "Admin privileges required",
+                    "admin_required",
+                )
 
-            # Check if user exists, is active, and has admin permissions
-            db = next(get_db())
-            try:
-                auth_service = EmailAuthService(db)
-                user = await auth_service.get_user_by_email(username)
+            # Validate optional team_id against token-visible teams.
+            request_team_id = request.query_params.get("team_id")
+            if request_team_id:
+                try:
+                    request_team_id = uuid.UUID(request_team_id).hex
+                except (ValueError, AttributeError):
+                    pass
 
-                if not user:
-                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
-                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
-                    if not settings.require_user_in_db and username == platform_admin_email:
-                        logger.info(f"Platform admin bootstrap authentication for {SecurityValidator.sanitize_log_message(str(username))}")
-                        # Allow platform admin through - they have implicit admin privileges
-                    else:
-                        return self._error_response(request, root_path, 401, "User not found")
-                else:
-                    # User exists in DB - check active status
-                    if not user.is_active:
-                        logger.warning(f"Admin access denied for disabled user: {SecurityValidator.sanitize_log_message(str(username))}")
-                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+            validated_team_id = request_team_id if token_teams and request_team_id and request_team_id in token_teams else None
 
-                    # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
-                    # This allows granular admin access for users with specific admin permissions.
-                    # When the request is team-scoped (?team_id=...), include team-scoped roles
-                    # so that developer/viewer roles with admin.dashboard can access the UI.
+            # validate_token_user already returned DB-authoritative is_admin,
+            # including platform-admin bootstrap.
+            if not auth_user_is_admin:
+                with SessionLocal() as db:
                     permission_service = PermissionService(db)
-                    request_team_id = request.query_params.get("team_id")
-                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
-                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
-                    if request_team_id:
-                        try:
-                            request_team_id = uuid.UUID(request_team_id).hex
-                        except (ValueError, AttributeError):
-                            pass  # keep raw value for non-UUID token_teams
-                    # Only trust team_id if it is in the user's DB-resolved teams
-                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
-                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id, token_teams=token_teams)
-                    if not has_admin_access:
-                        logger.warning(f"Admin access denied for user without admin permissions: {SecurityValidator.sanitize_log_message(str(username))}")
-                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
-            finally:
-                db.close()
+                    has_admin_access = await permission_service.has_admin_permission(
+                        auth_user_email,
+                        team_id=validated_team_id,
+                        token_teams=token_teams,
+                    )
 
-        except HTTPException as e:
-            return self._error_response(request, root_path, e.status_code, e.detail)
-        except Exception as e:
-            logger.error(f"Admin auth middleware error: {e}")
+                if not has_admin_access:
+                    logger.warning(
+                        "Admin access denied for user without admin permissions: %s",
+                        SecurityValidator.sanitize_log_message(str(auth_user_email)),
+                    )
+                    return self._error_response(
+                        request,
+                        root_path,
+                        403,
+                        "Admin privileges required",
+                        "admin_required",
+                    )
+
+        except HTTPException as exc:
+            return self._error_response(request, root_path, exc.status_code, exc.detail)
+        except Exception as exc:
+            logger.error("Admin auth middleware error: %s", exc)
             return ORJSONResponse(status_code=500, content={"detail": "Authentication error"})
 
-        # Proceed to next middleware or route
         return await call_next(request)
 
 
@@ -6494,7 +6497,7 @@ async def get_prompt_no_args(
     except PromptNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PromptError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
@@ -11869,6 +11872,7 @@ app.include_router(export_import_router)
 if settings.mcpgateway_admin_api_enabled:
     try:
         from mcpgateway.routers.compliance_router import router as compliance_router
+
         app.include_router(compliance_router)
         logger.info("Compliance router included")
     except ImportError as e:  # pragma: no cover - optional import guard

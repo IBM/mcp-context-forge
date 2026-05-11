@@ -23,7 +23,7 @@
       <tr data-enabled="{{ prompt.enabled|lower }}" data-owner-email="{{ prompt.ownerEmail or prompt.owner_email }}" data-team-id="{{ prompt.teamId or prompt.team_id or '' }}" data-visibility="{{ prompt.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                 <div class="relative"
-                     x-data="Admin.overflowMenu('prompts-table-wrapper')"
+                     x-data="window.Admin?.overflowMenu?.('prompts-table-wrapper')"
                @click.away="menuOpen = false"
                @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                   <button
@@ -62,7 +62,7 @@
                 role="menuitem"
                 tabindex="0"
                 data-test-prompt-id="{{ prompt.id }}"
-                @click="menuOpen = false; Admin.testPrompt({{ prompt.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.testPrompt?.({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡Test this Prompt with sample arguments'"
               >Test</button>
@@ -70,7 +70,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.viewPrompt({{ prompt.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.viewPrompt?.({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
               {% if can_modify %}
@@ -78,7 +78,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.editPrompt({{ prompt.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.editPrompt?.({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">

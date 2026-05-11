@@ -164,9 +164,7 @@ class ForwardedHostMiddleware:
                     scope["server"] = (server_host, port)
 
                     # Replace the ``host`` header so Starlette sees the proxy host.
-                    new_headers: list[tuple[bytes, bytes]] = [
-                        (name, value) for name, value in scope["headers"] if name != b"host"
-                    ]
+                    new_headers: list[tuple[bytes, bytes]] = [(name, value) for name, value in scope["headers"] if name != b"host"]
                     new_headers.append((b"host", host_header_value.encode("latin1")))
                     scope["headers"] = new_headers
 

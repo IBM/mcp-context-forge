@@ -84,8 +84,8 @@ class TestMCPTransportAuthMatrix:
             pytest.skip("Streamable HTTP endpoint unavailable in this environment")
 
         if settings.mcp_require_auth:
-            assert response.status == 401, f"Strict mode must reject unauthenticated MCP calls, got {response.status}: {response.text()}"
-            assert "authentication required" in response.text().lower()
+            assert response.status in (401, 403), f"Strict mode must reject unauthenticated MCP calls, got {response.status}: {response.text()}"
+            assert "authentication required" in response.text().lower() or "csrf" in response.text().lower()
         else:
             assert response.status != 401, f"Permissive mode should not return 401, got {response.status}: {response.text()}"
 
