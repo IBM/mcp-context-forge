@@ -45,7 +45,6 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
-from alembic.migration import MigrationContext
 from filelock import FileLock
 from sqlalchemy import create_engine, inspect, or_, text
 from sqlalchemy.engine import Connection
