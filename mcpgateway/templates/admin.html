@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { Admin?.logRestrictedContext(e); return false } })() }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { window.Admin?.logRestrictedContext?.(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { Admin?.logRestrictedContext(e); } })"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { window.Admin?.logRestrictedContext?.(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -233,7 +233,7 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        Admin?.safeReplaceState?.({}, '', newUrl);
+        window.Admin?.safeReplaceState?.({}, '', newUrl);
       }
     </script>
 
@@ -847,12 +847,12 @@
                         // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
                         const cleanUrl = new URL(window.location.href);
                         cleanUrl.searchParams.delete('team_id');
-                        Admin.safeReplaceState({}, '', cleanUrl);
+                        window.Admin?.safeReplaceState?.({}, '', cleanUrl);
                       }
                     }
                   },
                   loadTeams() {
-                    if (this.open) { Admin.loadTeamSelectorDropdown(); }
+                    if (this.open) { window.Admin?.loadTeamSelectorDropdown?.(); }
                   }
                 }"
                 @click.away="open = false"
@@ -2996,7 +2996,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on:htmx:after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3068,7 +3068,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3135,7 +3135,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -8004,7 +8004,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="relative"
-                         x-data="Admin.overflowMenu('roots-table-wrapper')"
+                         x-data="window.Admin?.overflowMenu?.('roots-table-wrapper')"
                          @click.away="menuOpen = false"
                          @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                       <button
@@ -8043,7 +8043,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.viewRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.viewRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡View root directory details and configuration'"
                         >View</button>
@@ -8051,7 +8051,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.editRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.editRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡Edit root directory settings and configuration'"
                         >Edit</button>
@@ -8059,7 +8059,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.exportRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.exportRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡Export root directory configuration'"
                         >Export</button>
@@ -11413,7 +11413,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11488,7 +11488,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11555,7 +11555,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -12129,19 +12129,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
-      Admin.toolMapping = {};
+      window.Admin = window.Admin || {};
+      window.Admin.toolMapping = {};
       {% for tool in tools %}
-      Admin.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
+      window.Admin.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
       {% endfor %}
 
-      Admin.resourceMapping = {};
+      window.Admin.resourceMapping = {};
       {% for resource in resources %}
-      Admin.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
+      window.Admin.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
       {% endfor %}
 
-      Admin.promptMapping = {};
+      window.Admin.promptMapping = {};
       {% for prompt in prompts %}
-      Admin.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
+      window.Admin.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
@@ -12183,7 +12184,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            Admin.safeReplaceState({}, '', cleanUrl);
+            window.Admin?.safeReplaceState?.({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -12378,7 +12379,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { Admin.logRestrictedContext(e); }
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { window.Admin?.logRestrictedContext?.(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12661,7 +12662,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         try {
           // Use the same auth approach as other admin endpoints
           const headers = {};
-          const token = Admin.getAuthToken();
+          const token = window.Admin?.getAuthToken?.();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -12712,7 +12713,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function showLogFiles() {
         try {
           const headers = {};
-          const token = Admin.getAuthToken();
+          const token = window.Admin?.getAuthToken?.();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -12810,7 +12811,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           if (element) {
             element.addEventListener("change", () => {
               currentLogPage = 0;
-              Admin.refreshLogs();
+              window.Admin?.refreshLogs?.();
             });
 
             // For search input, debounce
@@ -12820,7 +12821,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 clearTimeout(timeout);
                 timeout = setTimeout(() => {
                   currentLogPage = 0;
-                  Admin.refreshLogs();
+                  window.Admin?.refreshLogs?.();
                 }, 500);
               });
             }
@@ -12831,7 +12832,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const logsTab = document.getElementById("tab-logs");
         if (logsTab) {
           logsTab.addEventListener("click", () => {
-            setTimeout(Admin.refreshLogs, 100);
+            setTimeout(() => window.Admin?.refreshLogs?.(), 100);
           });
         }
 
@@ -15048,27 +15049,29 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.Admin.closeRoleAssignmentModal = closeRoleAssignmentModal;
       window.Admin.toggleEmailInput = toggleEmailInput;
       window.Admin.validateNewUserPassword = validateNewUserPassword;
-      window.Admin.openBulkImportModal = openBulkImportModal;
-      window.Admin.closeBulkImportModal = closeBulkImportModal;
-      window.Admin.toggleImportMethod = toggleImportMethod;
-      window.Admin.handleFileSelect = handleFileSelect;
-      window.Admin.validateJsonInput = validateJsonInput;
-      window.Admin.toggleValidationGuide = toggleValidationGuide;
-      window.Admin.togglePreviewDetails = togglePreviewDetails;
-      window.Admin.submitBulkImport = submitBulkImport;
-      window.Admin.toggleBulkImportDropdown = toggleBulkImportDropdown;
-      window.Admin.toggleDropdownImportMethod = toggleDropdownImportMethod;
-      window.Admin.handleDropdownFileSelect = handleDropdownFileSelect;
-      window.Admin.validateDropdownJson = validateDropdownJson;
-      window.Admin.validateDropdownData = validateDropdownData;
-      window.Admin.showDropdownStatus = showDropdownStatus;
-      window.Admin.showDropdownResults = showDropdownResults;
-      window.Admin.showDropdownFailedTools = showDropdownFailedTools;
-      window.Admin.showDropdownActionButtons = showDropdownActionButtons;
-      window.Admin.resetDropdownImport = resetDropdownImport;
-      window.Admin.submitDropdownImport = submitDropdownImport;
-      window.Admin.performDropdownImport = performDropdownImport;
-      window.Admin.downloadSampleJSON = downloadSampleJSON;
+      if (typeof openBulkImportModal !== 'undefined') window.Admin.openBulkImportModal = openBulkImportModal;
+      if (typeof closeBulkImportModal !== 'undefined') window.Admin.closeBulkImportModal = closeBulkImportModal;
+      if (typeof toggleImportMethod !== 'undefined') window.Admin.toggleImportMethod = toggleImportMethod;
+      if (typeof handleFileSelect !== 'undefined') window.Admin.handleFileSelect = handleFileSelect;
+      if (typeof validateJsonInput !== 'undefined') window.Admin.validateJsonInput = validateJsonInput;
+      if (typeof toggleValidationGuide !== 'undefined') window.Admin.toggleValidationGuide = toggleValidationGuide;
+      if (typeof togglePreviewDetails !== 'undefined') window.Admin.togglePreviewDetails = togglePreviewDetails;
+      if (typeof submitBulkImport !== 'undefined') window.Admin.submitBulkImport = submitBulkImport;
+      if (typeof toggleBulkImportDropdown !== 'undefined') window.Admin.toggleBulkImportDropdown = toggleBulkImportDropdown;
+      if (typeof toggleDropdownImportMethod !== 'undefined') window.Admin.toggleDropdownImportMethod = toggleDropdownImportMethod;
+      if (typeof handleDropdownFileSelect !== 'undefined') window.Admin.handleDropdownFileSelect = handleDropdownFileSelect;
+      if (typeof validateDropdownJson !== 'undefined') window.Admin.validateDropdownJson = validateDropdownJson;
+      if (typeof validateDropdownData !== 'undefined') window.Admin.validateDropdownData = validateDropdownData;
+      if (typeof showDropdownStatus !== 'undefined') window.Admin.showDropdownStatus = showDropdownStatus;
+      if (typeof showDropdownResults !== 'undefined') window.Admin.showDropdownResults = showDropdownResults;
+      if (typeof showDropdownFailedTools !== 'undefined') window.Admin.showDropdownFailedTools = showDropdownFailedTools;
+      if (typeof showDropdownActionButtons !== 'undefined') window.Admin.showDropdownActionButtons = showDropdownActionButtons;
+      if (typeof resetDropdownImport !== 'undefined') window.Admin.resetDropdownImport = resetDropdownImport;
+      if (typeof submitDropdownImport !== 'undefined') window.Admin.submitDropdownImport = submitDropdownImport;
+      if (typeof performDropdownImport !== 'undefined') window.Admin.performDropdownImport = performDropdownImport;
+      if (typeof downloadSampleJSON !== 'undefined') window.Admin.downloadSampleJSON = downloadSampleJSON;
+      if (typeof openCreateTeamModal !== 'undefined') window.Admin.openCreateTeamModal = openCreateTeamModal;
+      if (typeof closeCreateTeamModal !== 'undefined') window.Admin.closeCreateTeamModal = closeCreateTeamModal;
     </script>
         </main>
       </div>

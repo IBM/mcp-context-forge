@@ -100,8 +100,10 @@ from mcpgateway.utils.verify_credentials import (
 
 __all__ = [
     "ConfigurableHTTPBearer",
+    "TokenValidationError",
     "security",
     "get_current_user",
+    "validate_token_user",
     "get_user_team_roles",
     "normalize_token_teams",
     "resolve_session_teams",
@@ -1105,6 +1107,67 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
         updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
     )
+
+
+class TokenValidationError(Exception):
+    """Exception raised when token validation fails.
+
+    Used by validate_token_user to wrap HTTPExceptions from get_current_user
+    into a uniform exception type that callers can handle without importing
+    FastAPI-specific classes.
+    """
+
+    def __init__(self, detail: str, *, status_code: int = 401, original: Optional[Exception] = None) -> None:
+        """Initialize with validation failure detail and optional status code.
+
+        Args:
+            detail: Human-readable error message.
+            status_code: HTTP status code to return (default 401).
+            original: The original exception that caused this error, if any.
+        """
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+        self.original = original
+
+
+async def validate_token_user(request: Request, token: str) -> EmailUser:
+    """Validate a bearer token through the full get_current_user() stack.
+
+    This is the single shared validation path for all admin-token checks.
+    Both /admin/login (redirect-to-dashboard) and /admin (dashboard itself)
+    should call this so they agree on whether a token is acceptable.
+
+    Args:
+        request: FastAPI request object (for request-level caching and state).
+        token: Raw JWT token string (from cookie or header).
+
+    Returns:
+        EmailUser: The fully validated, authenticated user.
+
+    Raises:
+        TokenValidationError: If the token is missing, invalid, expired,
+            revoked, or the user is inactive / not found.
+    """
+    if not token:
+        raise TokenValidationError("Authentication token required", status_code=401)
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    try:
+        return await get_current_user(credentials, request=request)
+    except HTTPException as exc:
+        raise TokenValidationError(
+            str(exc.detail),
+            status_code=exc.status_code,
+            original=exc,
+        ) from exc
+    except Exception as exc:
+        raise TokenValidationError(
+            "Token validation failed",
+            status_code=401,
+            original=exc,
+        ) from exc
 
 
 async def get_current_user(

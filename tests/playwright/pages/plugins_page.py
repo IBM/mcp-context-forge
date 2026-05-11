@@ -100,4 +100,4 @@ class PluginsPage(BasePage):
 
     def close_detail_modal(self) -> None:
         self.modal_close_btn.click()
-        self.page.wait_for_selector("#plugin-details-modal.hidden", timeout=5000)
+        self.page.wait_for_selector("#plugin-details-modal.hidden", state="attached", timeout=5000)

@@ -430,7 +430,7 @@ export const leaveTeam = async function (teamId, teamName) {
     showSuccessMessage(`Successfully left ${teamName}`);
 
     // Refresh teams list
-    const teamsList = safeGetElement("teams-list");
+    const teamsList = safeGetElement("unified-teams-list");
     if (teamsList && window.htmx) {
       window.htmx.trigger(teamsList, "load");
     }
@@ -487,7 +487,7 @@ export const approveJoinRequest = async function (teamId, requestId) {
     );
 
     // Refresh teams list
-    const teamsList = safeGetElement("teams-list");
+    const teamsList = safeGetElement("unified-teams-list");
     if (teamsList && window.htmx) {
       window.htmx.trigger(teamsList, "load");
     }
@@ -538,7 +538,7 @@ export const rejectJoinRequest = async function (teamId, requestId) {
     showSuccessMessage("Join request rejected.");
 
     // Refresh teams list
-    const teamsList = safeGetElement("teams-list");
+    const teamsList = safeGetElement("unified-teams-list");
     if (teamsList && window.htmx) {
       window.htmx.trigger(teamsList, "load");
     }

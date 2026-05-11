@@ -17048,10 +17048,15 @@ class TestAuthLogin:
         request.scope = {"root_path": ""}
         request.query_params = {}
         request.cookies = {"jwt_token": "valid-jwt-token"}
+        request.state = SimpleNamespace(token_teams=None)
 
-        # Mock verify_jwt_token_cached to return a valid payload
-        mock_verify = AsyncMock(return_value={"sub": "admin@test.com", "is_admin": True})
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        # Mock validate_token_user to return a valid user
+        mock_user = MagicMock()
+        mock_user.email = "admin@test.com"
+        mock_user.is_admin = True
+        mock_user.full_name = "Admin"
+        mock_verify = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
 
         result = await admin_login_page(request)
 
@@ -17082,9 +17087,9 @@ class TestAuthLogin:
         mock_template_response = HTMLResponse("<html>Login</html>")
         request.app.state.templates.TemplateResponse.return_value = mock_template_response
 
-        # Mock verify_jwt_token_cached to raise exception (invalid token)
+        # Mock validate_token_user to raise exception (invalid token)
         mock_verify = AsyncMock(side_effect=jwt.PyJWTError("Invalid token"))
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
 
         # Mock load_sri_hashes
         monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
@@ -17101,9 +17106,9 @@ class TestAuthLogin:
 
     @pytest.mark.asyncio
     async def test_admin_login_page_shows_form_for_expired_token_http_exception(self, monkeypatch):
-        """Test that HTTPException from verify_jwt_token_cached shows login form.
+        """Test that HTTPException from validate_token_user shows login form.
 
-        verify_jwt_token_cached raises HTTPException (not jwt.PyJWTError) for expired/invalid tokens,
+        validate_token_user raises HTTPException for expired/invalid tokens,
         so this tests the primary real-world error path.
         """
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
@@ -17122,7 +17127,7 @@ class TestAuthLogin:
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
 
         mock_verify = AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has expired"))
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
         monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
 
         result = await admin_login_page(request)
@@ -17150,10 +17155,15 @@ class TestAuthLogin:
         request.scope = {"root_path": ""}
         request.query_params = {}
         request.cookies = {"access_token": "valid-access-token"}
+        request.state = SimpleNamespace(token_teams=None)
 
-        # Mock verify_jwt_token_cached to return a valid payload
-        mock_verify = AsyncMock(return_value={"sub": "admin@test.com", "is_admin": True})
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        # Mock validate_token_user to return a valid user
+        mock_user = MagicMock()
+        mock_user.email = "admin@test.com"
+        mock_user.is_admin = True
+        mock_user.full_name = "Admin"
+        mock_verify = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
 
         result = await admin_login_page(request)
 
@@ -17181,9 +17191,9 @@ class TestAuthLogin:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
 
-        # Mock verify_jwt_token_cached to raise exception
+        # Mock validate_token_user to raise exception
         mock_verify = AsyncMock(side_effect=jwt.PyJWTError("Invalid token"))
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
 
         # Mock load_sri_hashes
         monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
@@ -17196,7 +17206,7 @@ class TestAuthLogin:
 
     @pytest.mark.asyncio
     async def test_admin_login_page_verify_returns_none_shows_form(self, monkeypatch):
-        """Test that None/empty payload from verify_jwt_token_cached shows login form."""
+        """Test that None/empty payload from validate_token_user shows login form."""
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.app_root_path", "/app", raising=False)
         monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
@@ -17213,9 +17223,9 @@ class TestAuthLogin:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Login</html>")
 
-        # Mock verify_jwt_token_cached to return None (falsy payload)
+        # Mock validate_token_user to return None (falsy payload)
         mock_verify = AsyncMock(return_value=None)
-        monkeypatch.setattr("mcpgateway.admin.verify_jwt_token_cached", mock_verify)
+        monkeypatch.setattr("mcpgateway.auth.validate_token_user", mock_verify)
 
         # Mock load_sri_hashes
         monkeypatch.setattr("mcpgateway.admin.load_sri_hashes", lambda: {})
