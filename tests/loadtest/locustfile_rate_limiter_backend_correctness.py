@@ -100,6 +100,11 @@ JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
 ADMIN_EMAIL = _cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
 
+# Canonical MCP protocol version — matches tests/helpers/mcp_session.py and
+# tests/loadtest/locustfile_echo_delay.py. Kept inline so the locustfile
+# stays runnable as a standalone script (no PYTHONPATH gymnastics needed).
+MCP_PROTOCOL_VERSION = "2025-11-25"
+
 # Rate limit as configured in plugins/config.yaml — only used for the banner.
 RL_LIMIT_PER_MIN = int(_cfg("RL_LIMIT_PER_MIN", "30"))
 
@@ -204,7 +209,7 @@ def _auto_detect(host: str) -> None:
                     "id": "init",
                     "method": "initialize",
                     "params": {
-                        "protocolVersion": "2025-06-18",
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
                         "capabilities": {},
                         "clientInfo": {"name": "rate-limiter-loadtest-detect", "version": "0"},
                     },
@@ -218,6 +223,19 @@ def _auto_detect(host: str) -> None:
             logger.warning("MCP initialize for tool auto-detect failed: %s", exc)
 
         if sid:
+            # Complete the MCP handshake before any non-initialize calls so
+            # the gateway treats the session as fully initialized (matches
+            # what the integration tests do via tests/helpers/mcp_session.py).
+            try:
+                requests.post(
+                    f"{host}/servers/{_server_id}/mcp",
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    headers={**sse_headers, "Mcp-Session-Id": sid},
+                    timeout=5,
+                )
+            except Exception as exc:
+                logger.warning("MCP notifications/initialized for tool auto-detect failed: %s", exc)
+
             try:
                 payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
                 resp = requests.post(
@@ -431,7 +449,7 @@ class RateLimitedUser(FastHttpUser):
         result = self._mcp_post(
             "initialize",
             {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "locust-rate-limiter-test", "version": "1.0.0"},
             },

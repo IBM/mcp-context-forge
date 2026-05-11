@@ -37,6 +37,7 @@ import pytest
 import requests
 
 from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+from tests.helpers.mcp_session import initialize_mcp_session
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -131,49 +132,6 @@ def _get_plugin_state() -> dict:
     return resp.json()
 
 
-def _mcp_initialize_session(server_id: str) -> str | None:
-    """Run the MCP streamable-HTTP initialize + initialized handshake.
-
-    The current gateway requires a Mcp-Session-Id header on every
-    ``POST /servers/<id>/mcp`` non-initialize call. Returns the session
-    id from the gateway's response, or None on handshake failure.
-    """
-    sse_headers = {**_fresh_headers(), "Accept": "application/json, text/event-stream"}
-    try:
-        resp = requests.post(
-            f"{GATEWAY_URL}/servers/{server_id}/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": "init",
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "rate-limiter-dynamic-test", "version": "0"},
-                },
-            },
-            headers=sse_headers,
-            timeout=10,
-        )
-    except requests.RequestException:
-        return None
-    if resp.status_code != 200:
-        return None
-    sid = resp.headers.get("mcp-session-id")
-    if not sid:
-        return None
-    try:
-        requests.post(
-            f"{GATEWAY_URL}/servers/{server_id}/mcp",
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            headers={**sse_headers, "Mcp-Session-Id": sid},
-            timeout=5,
-        )
-    except requests.RequestException:
-        pass
-    return sid
-
-
 def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
     """Send a burst of tool calls and return counts of allowed vs rate-limited.
 
@@ -188,7 +146,10 @@ def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
     rate_limited = 0
     errors = 0
 
-    sid = _mcp_initialize_session(server_id)
+    sid = initialize_mcp_session(
+        GATEWAY_URL, server_id, _fresh_headers(),
+        client_name="rate-limiter-dynamic-test",
+    )
     if sid is None:
         return {"allowed": 0, "rate_limited": 0, "errors": count, "total": count}
 
