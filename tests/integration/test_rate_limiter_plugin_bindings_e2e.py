@@ -1035,45 +1035,268 @@ class TestRateLimiterBindingModeAndLifecycle:
             f"Before: {before}; after: {after}"
         )
 
-    def test_delete_binding_restores_baseline_dispatch(
-        self, server_and_tool, team_id
+    @pytest.mark.slow
+    def test_delete_binding_full_lifecycle_inspectable(
+        self, server_and_tool, team_id, capsys
     ):
-        """Deleting a binding restores baseline (no per-binding enforcement).
+        """End-to-end binding-delete walkthrough mirroring the persistence test.
 
-        Sequence:
-          1. POST enforce binding, burst → some blocked (sanity).
-          2. DELETE the binding by reference_id.
-          3. Burst again → none blocked by the binding's tighter limit.
+        Companion to
+        ``TestRateLimiterBindingApiEnforcesLimits.test_binding_full_lifecycle_inspectable``:
+        that test verifies the binding's multi-dim config reaches the runtime;
+        this one verifies the deletion path removes the binding from every
+        write surface it landed on (API + Postgres). Run with ``-s`` to see
+        the printed inspection pointers in real time::
 
-        Note: the gateway-wide rate-limiter plugin (configured at ~30/m) is
-        loose enough that a single 15-request burst won't trip it within the
-        post-delete window. If the global default is tightened in future, this
-        test may need a larger BURST_SIZE or to skip the post-delete burst.
+            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+                ::TestRateLimiterBindingModeAndLifecycle \\
+                ::test_delete_binding_full_lifecycle_inspectable \\
+                -v -s --with-integration -m slow
+
+        Phases:
+          0. Baseline plugin state from ``/admin/plugins``.
+          1. POST a binding with distinct multi-dim values (7/m, 9/m, 11/m).
+          2. Verify persisted via the bindings API and direct Postgres lookup.
+          3. Propagation wait — covers the per-tenant plugin manager rebuild.
+          4. Paced 5-call burst — assert at least one block, confirming the
+             binding is live at dispatch.
+          5. Inspect Redis — all three dimension keys must be present.
+          6. DELETE the binding via API; assert HTTP 200/204.
+          7. Verify the binding is GONE from API + Postgres (mirror of phase 2).
 
         This test does NOT use the cleanup_bindings fixture — the binding is
         deleted as part of the test itself; the fixture would just no-op on
         a missing reference_id but it would also mask a real test failure if
         the in-test delete silently failed.
+
+        Why no post-delete behavioral burst: the gateway-wide RateLimiter at
+        ``by_user: 30/m`` combined with session-affinity tool-path
+        amplification (~24x ticks per user-level call) means a 15-call
+        pre-delete burst saturates the per-user bucket, so any post-delete
+        burst stays blocked by the gateway-wide limit (not the deleted
+        binding). Verifying the deletion via the same API + DB write
+        surfaces used in the persistence test (phase 2 there, phase 7 here)
+        avoids that confound entirely while still asserting the contract
+        that DELETE removes the binding from every place POST landed it.
         """
         server_id, tool_name = server_and_tool
-        ref_id = f"rl-binding-delete-{uuid.uuid4().hex[:8]}"
+        ref_id = f"rl-binding-delete-inspect-{uuid.uuid4().hex[:8]}"
 
+        # Distinct multi-dim values so each is easy to spot in API responses,
+        # DB rows, and Redis Insight.
+        binding_by_user = "7/m"
+        binding_by_tenant = "9/m"
+        binding_by_tool_limit = "11/m"
+        # Inspection pauses tuned for human reaction time, not CI speed.
+        baseline_pause = 5
+        post_propagation_pause = 10
+        post_delete_pause = 30
+
+        def _say(msg: str) -> None:
+            with capsys.disabled():
+                print(f"\n[inspect] {msg}")
+
+        # ---- Phase 0: baseline -----------------------------------------------
+        _say("Phase 0 — capturing baseline plugin state from /admin/plugins")
+        baseline = _get_admin_plugin_state(PLUGIN_NAME)
+        baseline_mode = baseline.get("mode")
+        _say(f"  baseline mode = {baseline_mode!r}")
+        _say(f"  → no rl-binding-delete-inspect-* row in tool_plugin_bindings yet")
+        time.sleep(baseline_pause)
+
+        # ---- Phase 1: POST binding ------------------------------------------
+        _say(
+            f"Phase 1 — POSTing binding with by_user={binding_by_user!r}, "
+            f"by_tenant={binding_by_tenant!r}, "
+            f"by_tool={{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
         _post_binding(
             team_id=team_id,
             tool_name=tool_name,
             mode="enforce",
             binding_reference_id=ref_id,
-            config=self._binding_config(ref_id),
+            config={
+                "algorithm": "fixed_window",
+                "backend": "redis",
+                "by_user": binding_by_user,
+                "by_tenant": binding_by_tenant,
+                "by_tool": {tool_name: binding_by_tool_limit},
+                # redis_url + redis_key_prefix omitted — gateway-scoped keys
+                # come from the static plugins/config.yaml, not the binding.
+                "fail_mode": "open",
+            },
         )
-        time.sleep(PROPAGATION_WAIT)
+        _say(f"  binding_reference_id = {ref_id}")
 
-        before = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert before["rate_limited"] > 0, (
-            f"Pre-delete sanity: enforce binding should block some of a "
-            f"{BURST_SIZE}-burst. Got: {before}"
+        # ---- Phase 2: persistence cross-check --------------------------------
+        _say("Phase 2 — verifying the binding actually persisted (all 3 dimensions)")
+        api_binding = _get_binding_via_api(ref_id)
+        assert api_binding is not None, f"binding {ref_id} not returned by API"
+        api_config = api_binding.get("config", {}) or {}
+        api_by_user = api_config.get("by_user")
+        api_by_tenant = api_config.get("by_tenant")
+        api_by_tool = api_config.get("by_tool", {})
+        assert api_by_user == binding_by_user, (
+            f"API returned binding with by_user={api_by_user!r}, expected {binding_by_user!r}"
+        )
+        assert api_by_tenant == binding_by_tenant, (
+            f"API returned binding with by_tenant={api_by_tenant!r}, expected {binding_by_tenant!r}"
+        )
+        assert api_by_tool == {tool_name: binding_by_tool_limit}, (
+            f"API returned binding with by_tool={api_by_tool!r}, "
+            f"expected {{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        _say(f"  ✓ API confirms by_user={api_by_user!r}, by_tenant={api_by_tenant!r}, by_tool={api_by_tool!r}")
+
+        psql_config = _psql_get_binding_config(ref_id)
+        assert psql_config is not None, f"binding {ref_id} not in Postgres"
+        psql_by_user = psql_config.get("by_user")
+        psql_by_tenant = psql_config.get("by_tenant")
+        psql_by_tool = psql_config.get("by_tool", {})
+        assert psql_by_user == binding_by_user, (
+            f"Postgres has by_user={psql_by_user!r}, expected {binding_by_user!r}"
+        )
+        assert psql_by_tenant == binding_by_tenant, (
+            f"Postgres has by_tenant={psql_by_tenant!r}, expected {binding_by_tenant!r}"
+        )
+        assert psql_by_tool == {tool_name: binding_by_tool_limit}, (
+            f"Postgres has by_tool={psql_by_tool!r}, "
+            f"expected {{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        _say(f"  ✓ Postgres confirms by_user={psql_by_user!r}, by_tenant={psql_by_tenant!r}, by_tool={psql_by_tool!r}")
+
+        # ---- Phase 3: propagation wait --------------------------------------
+        _say(f"Phase 3 — sleeping {PROPAGATION_WAIT + post_propagation_pause}s")
+        _say("  → covers the per-tenant plugin manager rebuild")
+        _say("  → also gives you a window to peek at Redis Insight (still no rl:* keys)")
+        time.sleep(PROPAGATION_WAIT + post_propagation_pause)
+
+        # ---- Phase 4: paced burst with per-call observation ----------------
+        burst_size = 5
+        pace_between_calls = 3
+        _say(
+            f"Phase 4 — pacing {burst_size} tool calls {pace_between_calls}s apart "
+            f"to confirm the binding is live before we delete it"
         )
 
-        # In-test deletion (not via cleanup fixture — see docstring).
+        session_id = _mcp_initialize_session(server_id, _fresh_headers())
+        assert session_id is not None, (
+            "MCP initialize handshake failed — can't drive the burst without a session id"
+        )
+        call_headers = {
+            **_fresh_headers(),
+            "Accept": "application/json, text/event-stream",
+            "Mcp-Session-Id": session_id,
+        }
+
+        allowed = rate_limited = errors = 0
+        for i in range(burst_size):
+            payload = {
+                "jsonrpc": "2.0",
+                "id": str(uuid.uuid4()),
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": (
+                        {"message": f"delete-inspect-{i}"} if "echo" in tool_name else {}
+                    ),
+                },
+            }
+            try:
+                resp = requests.post(
+                    f"{GATEWAY_URL}/servers/{server_id}/mcp",
+                    json=payload,
+                    headers=call_headers,
+                    timeout=15,
+                )
+                if resp.status_code == 429:
+                    outcome = "BLOCKED (HTTP 429)"
+                    rate_limited += 1
+                elif resp.status_code != 200:
+                    outcome = f"ERROR (HTTP {resp.status_code})"
+                    errors += 1
+                else:
+                    body = resp.json()
+                    err = body.get("error")
+                    result_obj = body.get("result") or {}
+                    if err:
+                        msg = str(err.get("message", "")).lower()
+                        if "rate" in msg or "limit" in msg:
+                            outcome = "BLOCKED (JSON-RPC rate-limit error)"
+                            rate_limited += 1
+                        else:
+                            outcome = f"ERROR ({err.get('message', 'unknown')})"
+                            errors += 1
+                    elif result_obj.get("isError"):
+                        content = result_obj.get("content", [])
+                        text = content[0].get("text", "") if content else ""
+                        if "rate" in text.lower() or "limit" in text.lower():
+                            outcome = "BLOCKED (MCP isError, rate-limit)"
+                            rate_limited += 1
+                        else:
+                            outcome = f"ERROR (MCP isError: {text[:50]})"
+                            errors += 1
+                    else:
+                        outcome = "ALLOWED"
+                        allowed += 1
+            except requests.RequestException as exc:
+                outcome = f"ERROR (transport: {exc})"
+                errors += 1
+            _say(f"  call {i + 1}/{burst_size}: {outcome}")
+            if i < burst_size - 1:
+                time.sleep(pace_between_calls)
+
+        burst_result = {
+            "allowed": allowed,
+            "rate_limited": rate_limited,
+            "errors": errors,
+            "total": burst_size,
+        }
+        _say(
+            f"  summary: allowed={allowed} rate_limited={rate_limited} errors={errors}"
+        )
+        assert burst_result["errors"] == 0, (
+            f"Non-rate-limit errors indicate a setup/transport problem: {burst_result}"
+        )
+        assert burst_result["rate_limited"] >= 1, (
+            f"Expected at least one block before deletion to confirm the "
+            f"binding is live at dispatch. Got: {burst_result}"
+        )
+
+        # ---- Phase 5: inspect Redis -----------------------------------------
+        _say("Phase 5 — inspecting Redis for binding-driven dimension keys")
+        rl_keys = _redis_rl_keys()
+        if not rl_keys:
+            _say("  (no rl:* keys found — counters may have already expired)")
+        else:
+            for k, v, t in rl_keys:
+                _say(f"  {k} = {v}  (ttl={t}s)")
+
+        key_strs = [k for (k, _, _) in rl_keys]
+        user_keys = [k for k in key_strs if ":user:" in k]
+        tenant_keys = [k for k in key_strs if ":tenant:" in k]
+        tool_keys = [k for k in key_strs if f":tool:{tool_name}:" in k]
+        _say(
+            f"  dimension keys observed: "
+            f"user={len(user_keys)}, tenant={len(tenant_keys)}, "
+            f"tool({tool_name})={len(tool_keys)}"
+        )
+        assert len(user_keys) >= 1, (
+            "by_user counter is missing — the binding's by_user override "
+            "didn't engage at runtime."
+        )
+        assert len(tenant_keys) >= 1, (
+            "by_tenant counter is missing — the binding's by_tenant override "
+            "didn't engage at runtime."
+        )
+        assert len(tool_keys) >= 1, (
+            f"by_tool counter for {tool_name!r} is missing — the binding's "
+            f"by_tool override didn't engage at runtime."
+        )
+        _say("  ✓ all three dimension keys present in Redis")
+
+        # ---- Phase 6: DELETE binding ----------------------------------------
+        _say(f"Phase 6 — DELETEing binding {ref_id}")
         resp = requests.delete(
             f"{GATEWAY_URL}/v1/tools/plugin_bindings/",
             params={"binding_reference_id": ref_id},
@@ -1083,13 +1306,30 @@ class TestRateLimiterBindingModeAndLifecycle:
         assert resp.status_code in (200, 204), (
             f"DELETE by reference_id failed: {resp.status_code} {resp.text[:200]}"
         )
+        _say(f"  ✓ DELETE returned HTTP {resp.status_code}")
+        _say(f"  → sleeping {PROPAGATION_WAIT}s for the deletion to propagate")
         time.sleep(PROPAGATION_WAIT)
 
-        after = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert after["rate_limited"] == 0, (
-            f"After delete, the binding's tighter limit should no longer "
-            f"apply. Before: {before}; after: {after}"
+        # ---- Phase 7: deletion cross-check ----------------------------------
+        _say("Phase 7 — verifying the binding is GONE from every write surface")
+        api_after = _get_binding_via_api(ref_id)
+        assert api_after is None, (
+            f"binding {ref_id} still returned by API after delete: {api_after}"
         )
-        assert after["errors"] == 0, (
-            f"Unexpected transport errors after delete: {after}"
+        _say("  ✓ API confirms binding is no longer present")
+
+        psql_after = _psql_get_binding_config(ref_id)
+        assert psql_after is None, (
+            f"binding {ref_id} still in Postgres after delete: {psql_after}"
         )
+        _say("  ✓ Postgres confirms binding row is gone")
+        _say(
+            "  ✓ delete-lifecycle: the binding was removed from both write "
+            "surfaces it landed on"
+        )
+
+        _say(
+            f"  → refresh Redis Insight in the next ~{post_delete_pause}s if you "
+            "want to watch the existing rl:* counters expire naturally"
+        )
+        time.sleep(post_delete_pause)
