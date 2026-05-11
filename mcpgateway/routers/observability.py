@@ -9,6 +9,7 @@ Provides REST endpoints for querying traces, spans, events, and metrics.
 """
 
 # Standard
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -19,10 +20,21 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.query_params import (
+    QueryExportFormat,
+    QueryHttpMethod,
+    QueryResourceName,
+    QueryResourceType,
+    QueryTraceId,
+    QueryTraceStatus,
+    QueryUserIdentifier,
+)
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 
@@ -63,10 +75,10 @@ async def list_traces(
     end_time: Optional[datetime] = Query(None, description="Filter traces before this time"),
     min_duration_ms: Optional[float] = Query(None, ge=0, description="Minimum duration in milliseconds"),
     max_duration_ms: Optional[float] = Query(None, ge=0, description="Maximum duration in milliseconds"),
-    status: Optional[str] = Query(None, pattern=r"^(ok|error)$", description="Filter by status (ok, error)"),
+    status: QueryTraceStatus = None,
     http_status_code: Optional[int] = Query(None, description="Filter by HTTP status code"),
-    http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$", description="Filter by HTTP method"),
-    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$", description="Filter by user email or service-account identifier"),
+    http_method: QueryHttpMethod = None,
+    user_email: QueryUserIdentifier = None,
     attribute_search: Optional[str] = Query(None, max_length=500, description="Free-text search within trace attributes"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
@@ -253,7 +265,8 @@ async def query_traces_advanced(
         )
         return traces
     except (ValidationError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+        logger.debug("Invalid observability request body: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid request body")
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
@@ -309,9 +322,9 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
 @require_permission("admin.system_config")
 async def list_spans(
-    trace_id: Optional[str] = Query(None, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by trace ID"),
-    resource_type: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by resource type"),
-    resource_name: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9_. /-]+$", description="Filter by resource name"),
+    trace_id: QueryTraceId = None,
+    resource_type: QueryResourceType = None,
+    resource_name: QueryResourceName = None,
     start_time: Optional[datetime] = Query(None, description="Filter spans after this time"),
     end_time: Optional[datetime] = Query(None, description="Filter spans before this time"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
@@ -474,7 +487,7 @@ async def get_stats(
 @require_permission("admin.system_config")
 async def export_traces(
     request_body: dict,
-    format: str = Query("json", pattern=r"^(json|csv|ndjson)$", description="Export format (json, csv, ndjson)"),
+    format: QueryExportFormat = "json",
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ):
@@ -645,8 +658,12 @@ async def export_traces(
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
-    except (ValueError, Exception) as e:
-        raise HTTPException(status_code=400, detail=f"Export failed: {e}")
+    except ValueError:
+        logger.exception("Trace export failed")
+        raise HTTPException(status_code=400, detail="Export failed")
+    except Exception:
+        logger.exception("Trace export failed")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @router.get("/analytics/query-performance")

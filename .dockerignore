@@ -268,10 +268,20 @@ jwt/
 
 # Generated files
 public/
-static/
 media/
 
-# Test harnesses (should not ship in container images)
+# Exclude generated CSS (built during Docker build)
+mcpgateway/static/css/tailwind.min.css
+
+# Exclude vendor directory (downloaded during Docker build via download-cdn-assets.sh)
+# This ensures fresh CDN assets are downloaded for each build
+mcpgateway/static/vendor/
+
+# Exclude generated/temporary files in static/
+mcpgateway/static/**/*.map
+mcpgateway/static/**/*.tmp
+
+# Exclude test harnesses (should not ship in container images)
 mcpgateway/static/iframe-test-harness.html
 
 # Application instances

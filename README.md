@@ -760,32 +760,47 @@ Content size limits prevent DoS attacks and ensure system stability:
 
 ### 🌐 UAID Cross-Gateway Routing Security
 
-⚠️ **Security Warning:** UAID-based cross-gateway routing enables zero-config agent federation but **does not implement authentication** for outbound HTTP calls to remote gateways.
+#### UAID Security Configuration
 
-**Security Implications:**
+**Production Requirements:**
 
-1. **Remote Gateway Authentication:** Target gateways receive unauthenticated requests. They MUST enforce `AUTH_REQUIRED=true` to protect their resources.
-2. **No Authorization Context:** Cross-gateway calls execute with the target gateway's public access level. RBAC from the originating user is not preserved.
-3. **Trust Boundary:** Your gateway trusts the remote gateway's access control. Compromised remote gateways can become security vectors.
+Cross-gateway UAID routing requires explicit security configuration:
 
-**Configuration:**
+1. **Configure Domain Allowlist:**
+   ```bash
+   UAID_ALLOWED_DOMAINS=["gateway1.example.com", "gateway2.example.com"]
+   ```
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `UAID_ALLOWED_DOMAINS` | JSON array of trusted domain suffixes for cross-gateway routing | `[]` (allow all) |
-| `UAID_MAX_LENGTH` | Maximum UAID string length (DoS protection) | `2048` |
+2. **Ensure JWT Trust:**
+   - Both gateways must trust the same JWT issuer
+   - Option A: Shared secret (same `JWT_SECRET_KEY` on all gateways)
+   - Option B: Federated SSO (Google, GitHub, Entra ID)
 
-**Recommended Actions:**
+3. **Enable Authentication:**
+   ```bash
+   AUTH_REQUIRED=true
+   UAID_FORWARD_AUTH=true
+   ```
 
-- Set `UAID_ALLOWED_DOMAINS=["trusted.example.com"]` to allowlist trusted gateways
-- Set `UAID_ALLOWED_DOMAINS=["your-trusted.domain"]` to **restrict to trusted gateways only** (most secure)
-- Ensure `AUTH_REQUIRED=true` on ALL gateways in your federation
-- Monitor cross-gateway calls via correlation IDs in observability logs
+**Authentication Flow:**
 
-**Future Security Enhancements (Roadmap):**
-- Bearer token forwarding (gateway-to-gateway trust)
-- Mutual TLS authentication
-- Trusted gateway registry with signature verification
+Cross-gateway calls forward the user's bearer token via the `Authorization` header.
+Remote gateways validate tokens through existing auth middleware, preserving RBAC context.
+
+**Security Features:**
+
+- ✅ Fail-closed default: Empty allowlist blocks all cross-gateway routing
+- ✅ Bearer token forwarding: User authentication preserved across hops
+- ✅ Audit trail: Source gateway and user tracked in headers
+- ✅ Clear error messages: Misconfigurations caught at startup and runtime
+
+**Troubleshooting:**
+
+- **"UAID_ALLOWED_DOMAINS not configured" error:** Add trusted domains to allowlist in .env
+- **401/403 from remote gateway:** Verify both gateways trust same JWT issuer
+- **"proceeding without authentication token" warning:** Check auth middleware extracts token to `request.state.bearer_token`
+
+For detailed security architecture, see `docs/security/uaid-cross-gateway-auth.md`.
 
 ### ⚙️ Project Defaults (Dev Setup)
 

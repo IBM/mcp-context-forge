@@ -54,7 +54,7 @@ import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
-from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError
+from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
@@ -67,9 +67,30 @@ from mcpgateway import version as version_module
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.auth_context import get_scoped_resource_access_context
+# Re-export canonical get_user_email from auth_context for backward compatibility.
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.query_params import (
+    QueryEntityType,
+    QueryEntityTypes,
+    QueryExportFormatAliased,
+    QueryGatewayIdList,
+    QueryHttpMethod,
+    QueryPeriodType,
+    QueryRelationship,
+    QueryRenderMode,
+    QueryRenderModeControls,
+    QueryRenderModeUserSelector,
+    QueryStatusFilter,
+    QueryTagsFilter,
+    QueryTimeRange,
+    QueryToolName,
+    QueryUserIdentifierNoDescription,
+    QueryVisibility,
+    QueryVisibilityCompact,
+)
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -164,6 +185,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
@@ -1033,61 +1055,6 @@ def rate_limit(requests_per_minute: Optional[int] = None):
     return decorator
 
 
-def get_user_email(user: Union[str, dict, object] = None) -> str:
-    """Return the user email from a JWT payload, user object, or string.
-
-    Args:
-        user (Union[str, dict, object], optional): User object from JWT token
-            (from get_current_user_with_permissions). Can be:
-            - dict: representing JWT payload
-            - object: with an `email` attribute
-            - str: an email string
-            - None: will return "unknown"
-            Defaults to None.
-
-    Returns:
-        str: User email address, or "unknown" if no email can be determined.
-             - If `user` is a dict, returns `sub` if present, else `email`, else "unknown".
-             - If `user` has an `email` attribute, returns that.
-             - If `user` is a string, returns it.
-             - If `user` is None, returns "unknown".
-             - Otherwise, returns str(user).
-
-    Examples:
-        >>> get_user_email({'sub': 'alice@example.com'})
-        'alice@example.com'
-        >>> get_user_email({'email': 'bob@company.com'})
-        'bob@company.com'
-        >>> get_user_email({'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'})
-        'charlie@primary.com'
-        >>> get_user_email({'username': 'dave'})
-        'unknown'
-        >>> class MockUser:
-        ...     def __init__(self, email):
-        ...         self.email = email
-        >>> get_user_email(MockUser('eve@test.com'))
-        'eve@test.com'
-        >>> get_user_email(None)
-        'unknown'
-        >>> get_user_email('grace@example.org')
-        'grace@example.org'
-        >>> get_user_email({})
-        'unknown'
-        >>> get_user_email(12345)
-        '12345'
-    """
-    if isinstance(user, dict):
-        return user.get("sub") or user.get("email") or "unknown"
-
-    if hasattr(user, "email"):
-        return user.email
-
-    if user is None:
-        return "unknown"
-
-    return str(user)
-
-
 def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     """Return a {team_id: role} mapping for a user's active memberships.
 
@@ -1382,14 +1349,19 @@ def serialize_datetime(obj):
     return obj
 
 
-def validate_password_strength(password: str) -> tuple[bool, str]:
+def validate_password_strength(password: str, email: str = "", is_admin: bool = False) -> tuple[bool, str]:
     """Validate password meets strength requirements.
 
-    Uses configurable settings from config.py for password policy.
+    Delegates to PasswordPolicyService for comprehensive validation including
+    complexity, common password detection, sequential character detection,
+    and username-based validation.
+
     Respects password_policy_enabled toggle - if disabled, all passwords pass.
 
     Args:
         password: Password to validate
+        email: User's email address (for username-based validation)
+        is_admin: Whether this is an admin account (requires longer password)
 
     Returns:
         tuple: (is_valid, error_message)
@@ -1398,30 +1370,16 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
-    min_length = getattr(settings, "password_min_length", 8)
-    require_uppercase = getattr(settings, "password_require_uppercase", False)
-    require_lowercase = getattr(settings, "password_require_lowercase", False)
-    require_numbers = getattr(settings, "password_require_numbers", False)
-    require_special = getattr(settings, "password_require_special", False)
+    from mcpgateway.db import SessionLocal
+    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
-    if len(password) < min_length:
-        return False, f"Password must be at least {min_length} characters long"
-
-    if require_uppercase and not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter (A-Z)"
-
-    if require_lowercase and not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter (a-z)"
-
-    if require_numbers and not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one number (0-9)"
-
-    # Match the special character set used in EmailAuthService
-    special_chars = '!@#$%^&*(),.?":{}|<>'
-    if require_special and not any(c in special_chars for c in password):
-        return False, f"Password must contain at least one special character ({special_chars})"
-
-    return True, ""
+    with SessionLocal() as db:
+        policy = PasswordPolicyService(db)
+        try:
+            policy.validate_user_password(password, email or None, is_admin)
+            return True, ""
+        except PasswordPolicyError as e:
+            return False, str(e)
 
 
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
@@ -1436,10 +1394,11 @@ def _admin_cookie_path(request: Request) -> str:
         request: Incoming request used to read ASGI ``root_path``.
 
     Returns:
-        Admin cookie path scoped under the deployed app root.
+        Cookie path scoped to the deployed app root so admin-originated
+        non-/admin mutations can carry the same double-submit token.
     """
     root_path = _resolve_root_path(request)
-    return f"{root_path}/admin" if root_path else "/admin"
+    return root_path or "/"
 
 
 def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
@@ -2251,7 +2210,8 @@ async def update_global_passthrough_headers(
         raise HTTPException(status_code=422, detail="Invalid passthrough headers format") from e
     except PassthroughHeadersError as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        LOGGER.error(f"Passthrough headers error: {e}")
+        raise HTTPException(status_code=500, detail="Passthrough headers error") from e
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
@@ -2615,9 +2575,9 @@ async def admin_servers_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = True,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user_with_permissions),
@@ -3967,6 +3927,7 @@ async def admin_ui(
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
+            "auth_header_name": settings.auth_header_name,
             "selected_team_id": selected_team_id,
             "admin_viewing_non_member_team": admin_viewing_non_member_team,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
@@ -4716,6 +4677,11 @@ async def _admin_logout(request: Request) -> Response:
 
     # Always clear local JWT session cookie.
     clear_auth_cookie(response)
+
+    # Clear CSRF token cookie
+    from mcpgateway.services.csrf_service import clear_csrf_cookie
+    clear_csrf_cookie(response, settings)
+
     use_secure = (settings.environment == "production") or settings.secure_cookies
     response.delete_cookie(
         key="sso_id_token_hint",
@@ -5152,7 +5118,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 @require_permission("teams.read", allow_admin_bypass=False)
 async def admin_get_all_team_ids(
     include_inactive: bool = False,
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    visibility: QueryVisibilityCompact = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5222,7 +5188,7 @@ async def admin_search_teams(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Max results"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
+    visibility: QueryVisibility = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5295,10 +5261,10 @@ async def admin_teams_partial_html(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = Query(False, description="Include inactive teams"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility"),
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
+    visibility: QueryVisibilityCompact = None,
+    render: QueryRenderModeControls = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query"),
-    relationship: Optional[str] = Query(None, pattern=r"^(owner|member|public)$", description="Filter by relationship: owner, member, public"),
+    relationship: QueryRelationship = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -5354,12 +5320,8 @@ async def admin_teams_partial_html(
     # consider implementing SQL-level pagination for non-admin users.
     public_teams_limit = 500
     public_teams = await team_service.discover_public_teams(user_email, limit=public_teams_limit)
-    public_team_ids = {str(t.id) for t in public_teams}
     if len(public_teams) >= public_teams_limit:
         LOGGER.warning(f"Public teams discovery hit limit of {public_teams_limit} for user {user_email}. Some teams may not be visible.")
-
-    # Get pending join requests for public teams
-    pending_requests = team_service.get_pending_join_requests_batch(user_email, list(public_team_ids))
 
     if current_user.is_admin and not relationship:
         # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
@@ -5469,14 +5431,24 @@ async def admin_teams_partial_html(
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-        elif current_user.is_admin:
-            # Admins get admin controls for teams they're not members of
-            t.relationship = "none"  # Falls through to admin controls in template
-        elif team_id in public_team_ids:
+        elif t.visibility == "public" and t.is_active:
+            # Public teams show join button for ALL non-members (including admins)
+            # This ensures platform admins go through the normal join request workflow
+            # for public teams, respecting team ownership boundaries. Issue #3488
             t.relationship = "public"
-            t.pending_request = pending_requests.get(team_id)
+        elif current_user.is_admin:
+            # Admins get admin controls ONLY for non-public teams they're not members of
+            # This allows emergency access to private teams for platform maintenance
+            t.relationship = "none"  # Falls through to admin controls in template
 
         enriched_data.append(t)
+
+    # Get pending join requests for all public teams on current page
+    public_team_ids_on_page = [str(t.id) for t in enriched_data if t.relationship == "public"]
+    pending_requests = team_service.get_pending_join_requests_batch(user_email, public_team_ids_on_page)
+    for t in enriched_data:
+        if t.relationship == "public":
+            t.pending_request = pending_requests.get(str(t.id))
 
     # Build query params dict for pagination controls
     query_params_dict = {}
@@ -7347,7 +7319,7 @@ async def admin_users_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
+    render: QueryRenderModeUserSelector = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7777,8 +7749,10 @@ async def admin_create_user(
 
         # Validate password strength
         password = str(form.get("password", ""))
+        email_val = str(form.get("email", ""))
+        is_admin_val = form.get("is_admin") == "on"
         if password:
-            is_valid, error_msg = validate_password_strength(password)
+            is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
@@ -7788,10 +7762,10 @@ async def admin_create_user(
 
         # Create new user
         new_user = await auth_service.create_user(
-            email=str(form.get("email", "")),
+            email=email_val,
             password=password,
             full_name=str(form.get("full_name", "")),
-            is_admin=form.get("is_admin") == "on",
+            is_admin=is_admin_val,
             auth_provider="local",
             granted_by=get_user_email(user),  # Pass current admin user for audit trail
         )
@@ -8038,7 +8012,7 @@ async def admin_update_user(
 
         # Validate password if provided
         if password:
-            is_valid, error_msg = validate_password_strength(password)
+            is_valid, error_msg = validate_password_strength(password, decoded_email, is_admin)
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
@@ -8388,10 +8362,10 @@ async def admin_tools_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderModeControls = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8630,7 +8604,7 @@ async def admin_tool_ops_partial(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8746,7 +8720,7 @@ async def admin_tool_ops_partial(
 async def admin_get_all_tool_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8847,10 +8821,10 @@ async def admin_get_all_tool_ids(
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_search_tools(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -8985,10 +8959,10 @@ async def admin_prompts_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderMode = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9223,9 +9197,9 @@ async def admin_gateways_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = True,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -9483,7 +9457,7 @@ async def admin_get_all_gateways_ids(
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_search_gateways(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9658,7 +9632,7 @@ async def admin_get_all_server_ids(
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_search_servers(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9768,10 +9742,10 @@ async def admin_resources_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$", description="Render mode: 'controls' for pagination controls only"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderModeControls = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10006,7 +9980,7 @@ async def admin_resources_partial_html(
 async def admin_get_all_prompt_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10104,7 +10078,7 @@ async def admin_get_all_prompt_ids(
 async def admin_get_all_resource_ids(
     q: str = Query("", max_length=500, description="Search query"),
     include_inactive: bool = False,
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10201,10 +10175,10 @@ async def admin_get_all_resource_ids(
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_search_resources(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10326,10 +10300,10 @@ async def admin_search_resources(
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_search_prompts(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_public: bool = False,
     db: Session = Depends(get_db),
@@ -10463,7 +10437,7 @@ async def admin_tokens_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
+    render: QueryRenderMode = None,
     q: Optional[str] = Query(None, max_length=500, description="Search query for token name"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
@@ -10709,10 +10683,10 @@ async def admin_a2a_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
-    render: Optional[str] = Query(None, max_length=50, pattern=r"^[a-zA-Z_-]+$"),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    render: QueryRenderMode = None,
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -10980,7 +10954,7 @@ async def admin_get_all_agent_ids(
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_search_a2a_agents(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
+    tags: QueryTagsFilter = None,
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -11088,13 +11062,8 @@ async def admin_search_a2a_agents(
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
     q: str = Query("", max_length=500, description="Search query"),
-    tags: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_,+ .-]*$", description="Tag filter expression (comma=OR, plus=AND)"),
-    entity_types: Optional[str] = Query(
-        None,
-        max_length=200,
-        pattern=r"^[a-zA-Z,]*$",
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users,roots)",
-    ),
+    tags: QueryTagsFilter = None,
+    entity_types: QueryEntityTypes = None,
     include_inactive: bool = False,
     limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
     limit_per_type: Optional[int] = Query(
@@ -11103,7 +11072,7 @@ async def admin_unified_search(
         le=settings.pagination_max_page_size,
         description="Optional alias for per-entity result limit",
     ),
-    gateway_id: Optional[str] = Query(None, max_length=1000, pattern=r"^[a-zA-Z0-9_,-]*$", description="Filter by gateway ID(s), comma-separated"),
+    gateway_id: QueryGatewayIdList = None,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -12038,6 +12007,95 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
     except Exception as e:
         LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
         raise e
+
+
+@admin_router.post("/gateways/discover-oauth")
+@require_permission("gateways.create", allow_admin_bypass=False)
+async def admin_discover_oauth(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+) -> JSONResponse:
+    """Discover OAuth/OIDC endpoints from an issuer URL (RFC 8414 / OIDC discovery).
+
+    Args:
+        request: FastAPI request containing JSON body with 'issuer' field.
+        user: Authenticated user.
+
+    Returns:
+        JSONResponse with discovered endpoints or error message.
+
+    Examples:
+        >>> callable(admin_discover_oauth)
+        True
+    """
+    # First-Party
+    from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.url_auth import sanitize_exception_message  # pylint: disable=import-outside-toplevel
+
+    try:
+        body = await request.json()
+    except Exception as _e:
+        LOGGER.warning("OAuth discovery failed: invalid JSON body")
+        return JSONResponse(
+            {"success": False, "error": "Invalid JSON body"},
+            status_code=400,
+        )
+
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"success": False, "error": "Request body must be a JSON object"},
+            status_code=400,
+        )
+
+    issuer = body.get("issuer", "").strip()
+    if not issuer:
+        return JSONResponse(
+            {"success": False, "error": "issuer is required"},
+            status_code=400,
+        )
+
+    try:
+        SecurityValidator.validate_url(issuer, "OAuth issuer URL")
+    except ValueError as _e:
+        return JSONResponse(
+            {"success": False, "error": f"Invalid issuer URL: {_e}"},
+            status_code=400,
+        )
+
+    try:
+        dcr = DcrService()
+        metadata = await dcr.discover_as_metadata(issuer)
+
+        def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            if not raw:
+                return None
+            try:
+                SecurityValidator.validate_url(raw, name)
+                return raw
+            except ValueError:
+                return None
+
+        return JSONResponse({
+            "success": True,
+            "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+            "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+            "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
+            "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
+            "dcr_available": bool(metadata.get("registration_endpoint")),
+            "scopes_supported": metadata.get("scopes_supported", []),
+            "grant_types_supported": metadata.get("grant_types_supported", []),
+        })
+    except Exception as e:
+        LOGGER.warning("OAuth discovery failed: %s", e)
+        sanitized = sanitize_exception_message(str(e))
+        return JSONResponse(
+            {
+                "success": False,
+                "error": sanitized,
+                "message": "Discovery failed. Please configure token and authorization endpoints manually.",
+            },
+            status_code=502,
+        )
 
 
 @admin_router.post("/gateways")
@@ -13506,7 +13564,7 @@ async def admin_export_root(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Root export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Root export failed")
 
 
 @admin_router.get("/roots/{uri:path}")
@@ -13778,7 +13836,7 @@ async def get_aggregated_metrics(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_metrics_partial_html(
     request: Request,
-    entity_type: str = Query("tools", pattern=r"^(tools|resources|prompts|servers)$", description="Entity type: tools, resources, prompts, or servers"),
+    entity_type: QueryEntityType = "tools",
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     db: Session = Depends(get_db),
@@ -13910,16 +13968,65 @@ async def admin_test_gateway(
         'admin_test_gateway'
     """
     start_time: float = time.monotonic()
+
+    # Build allowlist for gateway test endpoint
+    allowed_hosts_set: set[str] = set()
+
+    if settings.gateway_test_allow_registered_only:
+        # Mode 1: Only allow testing registered gateway URLs
+        # Query all enabled gateways to build allowlist from their base URLs
+        try:
+            query = select(DbGateway.url).where(DbGateway.enabled)
+            if team_id:
+                query = query.where(DbGateway.team_id == team_id)
+            registered_urls = db.execute(query).scalars().all()
+
+            # Extract hostnames from registered gateway URLs
+            for url in registered_urls:
+                try:
+                    parsed = urllib.parse.urlparse(url)
+                    if parsed.hostname:
+                        # Normalize: lowercase and strip trailing dots
+                        hostname = parsed.hostname.lower().rstrip(".")
+                        allowed_hosts_set.add(hostname)
+                except (ValueError, AttributeError) as e:
+                    # Log parse failures to help debug "URL not in allowlist" mysteries
+                    LOGGER.debug("Failed to parse registered gateway URL '%s': %s", url, e)
+                    continue
+        except SQLAlchemyError as e:
+            LOGGER.warning("Failed to build allowlist from registered gateways: %s", e)
+    else:
+        # Mode 2: Use configured host patterns from settings
+        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
+
+    allowed_hosts = list(allowed_hosts_set)
+
+    # Validate URL with allowlist enforcement
     try:
-        validated_base_url = SecurityValidator.validate_url(str(request.base_url), "Gateway test URL")
+        validated_base_url = SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
     except ValueError as e:
-        LOGGER.warning("Gateway test URL validation failed for %s: %s", request.base_url, e)
+        # Log the actual error for security monitoring, but return generic message
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        LOGGER.warning(
+            "Gateway test URL validation failed for %s by user %s: %s",
+            safe_url,
+            get_user_email(user),
+            str(e),
+        )
         latency_ms = int((time.monotonic() - start_time) * 1000)
+        # Generic error message - don't expose allowlist or validation details
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
     full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {validated_base_url}.")
+    safe_validated_url = sanitize_url_for_logging(validated_base_url)
+    LOGGER.debug(f"User {get_user_email(user)} testing server at {safe_validated_url}.")
+
+    # TODO(ICACF-15): DNS rebinding risk — allowlist and SSRF checks resolve DNS, but the
+    # actual ResilientHttpClient request resolves DNS a third time. An attacker-controlled DNS
+    # server could return a public IP during validation and a private IP during the actual
+    # request. Consider pinning the resolved IP for outbound requests (custom transport) or
+    # caching DNS resolution across validation and request phases.
     headers = request.headers or {}
 
     # Attempt to find a registered gateway matching this URL and team.
@@ -14010,7 +14117,7 @@ async def admin_test_gateway(
         structured_logger = get_structured_logger("gateway_service")
         structured_logger.log(
             level="INFO",
-            message=f"Gateway test completed: {request.base_url}",
+            message=f"Gateway test completed: {safe_validated_url}",
             event_type="gateway_tested",
             component="gateway_service",
             user_email=get_user_email(user),
@@ -14019,7 +14126,7 @@ async def admin_test_gateway(
             resource_id=gateway.id if gateway else None,
             custom_fields={
                 "gateway_name": gateway.name if gateway else None,
-                "gateway_url": str(request.base_url),
+                "gateway_url": safe_validated_url,
                 "test_method": request.method,
                 "test_path": request.path,
                 "status_code": response.status_code,
@@ -14030,14 +14137,15 @@ async def admin_test_gateway(
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
-        LOGGER.warning(f"Gateway test failed: {e}")
+        safe_url = sanitize_url_for_logging(str(request.base_url))
+        LOGGER.warning("Gateway test failed for %s: %s", safe_url, e)
         latency_ms = int((time.monotonic() - start_time) * 1000)
 
         # Structured logging: Log failed gateway test
         structured_logger = get_structured_logger("gateway_service")
         structured_logger.log(
             level="ERROR",
-            message=f"Gateway test failed: {request.base_url}",
+            message=f"Gateway test failed: {safe_url}",
             event_type="gateway_test_failed",
             component="gateway_service",
             user_email=get_user_email(user),
@@ -14047,7 +14155,7 @@ async def admin_test_gateway(
             error=e,
             custom_fields={
                 "gateway_name": gateway.name if gateway else None,
-                "gateway_url": str(request.base_url),
+                "gateway_url": safe_url,
                 "test_method": request.method,
                 "test_path": request.path,
                 "latency_ms": latency_ms,
@@ -14362,7 +14470,7 @@ async def admin_list_tags(
         return result
     except Exception as e:
         LOGGER.error(f"Failed to retrieve tags for admin: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve tags")
 
 
 async def _read_request_json(request: Request) -> Any:
@@ -14857,7 +14965,7 @@ async def admin_get_log_file(
 @admin_router.get("/logs/export")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_logs(
-    export_format: str = Query("json", alias="format", pattern=r"^(json|csv|ndjson)$"),
+    export_format: QueryExportFormatAliased = "json",
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -15070,7 +15178,7 @@ async def admin_export_configuration(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @admin_router.post("/export/selective")
@@ -15134,7 +15242,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @admin_router.post("/import/preview")
@@ -15166,8 +15274,8 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         # Parse request data
         try:
             data = await _read_request_json(request)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
 
         # Extract import data
         import_data = data.get("data")
@@ -15185,12 +15293,12 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
     except ImportValidationError as e:
         LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid import data: {str(e)}")
+        raise HTTPException(status_code=400, detail="Invalid import data")
     except HTTPException:
         raise
     except Exception as e:
         LOGGER.error(f"Import preview failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Preview failed")
 
 
 @admin_router.post("/import/configuration")
@@ -15251,12 +15359,12 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
     except ImportServiceError as e:
         LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Import failed")
     except HTTPException:
         raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Import failed")
 
 
 @admin_router.get("/import/status/{import_id}")
@@ -15558,6 +15666,7 @@ async def admin_add_a2a_agent(
         generate_uaid = form.get("generate_uaid") == "true"  # Checkbox sends "true" string
         uaid_registry = str(form.get("uaid_registry", "context-forge"))
         uaid_protocol = str(form.get("uaid_protocol", "a2a"))
+        uaid_native_id_override = form.get("uaid_native_id_override") or None
 
         agent_data = A2AAgentCreate(
             name=form["name"],
@@ -15584,6 +15693,7 @@ async def admin_add_a2a_agent(
             generate_uaid=generate_uaid,
             uaid_registry=uaid_registry if generate_uaid else None,
             uaid_protocol=uaid_protocol if generate_uaid else None,
+            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -15815,6 +15925,7 @@ async def admin_edit_a2a_agent(
         generate_uaid = form.get("generate_uaid") == "true"
         uaid_registry = str(form.get("uaid_registry", "")) if generate_uaid else None
         uaid_protocol = str(form.get("uaid_protocol", "")) if generate_uaid else None
+        uaid_native_id_override = form.get("uaid_native_id_override") or None
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
@@ -15849,6 +15960,7 @@ async def admin_edit_a2a_agent(
             generate_uaid=generate_uaid,
             uaid_registry=uaid_registry,
             uaid_protocol=uaid_protocol,
+            uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
@@ -16189,7 +16301,7 @@ async def admin_create_grpc_service(
         raise HTTPException(status_code=409, detail=str(e))
     except GrpcServiceError as e:
         LOGGER.error(f"gRPC service error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="gRPC service error")
 
 
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
@@ -16261,7 +16373,7 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=409, detail=str(e))
     except GrpcServiceError as e:
         LOGGER.error(f"gRPC service error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="gRPC service error")
 
 
 @admin_router.post("/grpc/{service_id}/state")
@@ -16360,7 +16472,7 @@ async def admin_reflect_grpc_service(
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceError as e:
         LOGGER.error(f"gRPC service error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="gRPC service error")
 
 
 @admin_router.get("/grpc/{service_id}/methods")
@@ -16799,7 +16911,7 @@ async def list_plugins(
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
         structured_logger.error("Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list plugins")
 
 
 @admin_router.put("/plugins", response_model=PluginToggleResponse)
@@ -16915,7 +17027,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         structured_logger.error(
             "Failed to get plugin marketplace statistics", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve plugin statistics")
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
@@ -16995,7 +17107,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         structured_logger.error(
             f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve plugin details")
 
 
 @admin_router.put("/plugins/{name}", response_model=PluginModeUpdateResponse)
@@ -17437,7 +17549,7 @@ async def get_system_stats(
 
     except Exception as e:
         LOGGER.error(f"System metrics retrieval failed for user {user}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve system metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve system metrics")
 
 
 # ===================================
@@ -17518,7 +17630,7 @@ async def admin_generate_support_bundle(
 
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate support bundle")
 
 
 # ============================================================================
@@ -17659,18 +17771,18 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_observability_traces(
     request: Request,
-    time_range: str = Query("24h", pattern=r"^(1h|6h|12h|24h|7d|30d)$"),
-    status_filter: str = Query("all", pattern=r"^(all|ok|error)$"),
+    time_range: QueryTimeRange = "24h",
+    status_filter: QueryStatusFilter = "all",
     limit: int = Query(50, ge=1, le=1000),
     min_duration: Optional[float] = Query(None, ge=0),
     max_duration: Optional[float] = Query(None, ge=0),
-    http_method: Optional[str] = Query(None, pattern=r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"),
-    user_email: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
+    http_method: QueryHttpMethod = None,
+    user_email: QueryUserIdentifierNoDescription = None,
     name_search: Optional[str] = Query(None, max_length=500),
     attribute_search: Optional[str] = Query(None, max_length=500),
     # tool_name pattern follows MCP SEP-986 (Specify Format for Tool Names), matching
     # mcpgateway.config.Settings.validation_tool_name_pattern. Allows namespacing via '/'.
-    tool_name: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"),
+    tool_name: QueryToolName = None,
     _user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -18137,7 +18249,7 @@ async def get_latency_percentiles(
         return _get_latency_percentiles_python(db, cutoff_time, interval_minutes)
     except Exception as e:
         LOGGER.error(f"Failed to calculate latency percentiles: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to calculate latency percentiles")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18299,7 +18411,7 @@ async def get_timeseries_metrics(
         return _get_timeseries_metrics_python(db, cutoff_time, interval_minutes)
     except Exception as e:
         LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to calculate timeseries metrics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18645,7 +18757,7 @@ async def get_top_slow_endpoints(
         return {"endpoints": endpoints}
     except Exception as e:
         LOGGER.error(f"Failed to get top slow endpoints: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve slow endpoints")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18712,7 +18824,7 @@ async def get_top_volume_endpoints(
         return {"endpoints": endpoints}
     except Exception as e:
         LOGGER.error(f"Failed to get top volume endpoints: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve volume endpoints")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18782,7 +18894,7 @@ async def get_top_error_endpoints(
         return {"endpoints": endpoints}
     except Exception as e:
         LOGGER.error(f"Failed to get top error endpoints: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve error endpoints")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18831,7 +18943,7 @@ async def get_latency_heatmap(
         return _get_latency_heatmap_python(db, cutoff_time, hours, time_buckets, latency_buckets)
     except Exception as e:
         LOGGER.error(f"Failed to generate latency heatmap: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate latency heatmap")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18904,7 +19016,7 @@ async def get_tool_usage(
         return {"tools": tools, "total_invocations": total_invocations, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get tool usage statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool usage statistics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -18956,7 +19068,7 @@ async def get_tool_performance(
         return {"tools": tools, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get tool performance metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool performance metrics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19028,7 +19140,7 @@ async def get_tool_errors(
         return {"tools": tools, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get tool error statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool error statistics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19108,7 +19220,7 @@ async def get_tool_chains(
         return {"chains": chains, "total_traces_with_tools": len(trace_tools), "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get tool chain statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve tool chain statistics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19214,7 +19326,7 @@ async def get_prompt_usage(
         return {"prompts": prompts, "total_renders": total_renders, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get prompt usage statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve prompt usage statistics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19266,7 +19378,7 @@ async def get_prompt_performance(
         return {"prompts": prompts, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get prompt performance metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve prompt performance metrics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19436,7 +19548,7 @@ async def get_resource_usage(
         return {"resources": resources, "total_fetches": total_fetches, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get resource usage statistics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve resource usage statistics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19488,7 +19600,7 @@ async def get_resource_performance(
         return {"resources": resources, "time_range_hours": hours}
     except Exception as e:
         LOGGER.error(f"Failed to get resource performance metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve resource performance metrics")
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -19654,7 +19766,7 @@ async def get_performance_stats(
 
     except Exception as e:
         LOGGER.error(f"Performance metrics retrieval failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve performance metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve performance metrics")
 
 
 @admin_router.get("/performance/system")
@@ -19764,7 +19876,7 @@ async def get_performance_cache(
 @admin_router.get("/performance/history")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_performance_history(
-    period_type: str = Query("hourly", pattern=r"^(hourly|daily)$", description="Aggregation period: hourly or daily"),
+    period_type: QueryPeriodType = "hourly",
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),

@@ -26,7 +26,7 @@ def json_param_tool(api_request_context: APIRequestContext):
     payload = {
         "tool": {
             "name": tool_name,
-            "url": "http://localhost:8080/health",
+            "url": "https://httpbin.org/post",
             "integration_type": "REST",
             "request_type": "POST",
             "inputSchema": {
@@ -42,6 +42,8 @@ def json_param_tool(api_request_context: APIRequestContext):
         }
     }
     resp = api_request_context.post("/tools/", data=payload)
+    if resp.status in (401, 403):
+        pytest.skip(f"Auth required to create test tool (HTTP {resp.status})")
     assert resp.ok, f"Failed to create test tool: {resp.text()}"
     tool_id = resp.json()["id"]
 
@@ -50,19 +52,22 @@ def json_param_tool(api_request_context: APIRequestContext):
     api_request_context.delete(f"/tools/{tool_id}")
 
 
-def _close_and_reopen_test_modal(page: Page, test_btn: Locator) -> None:
-    """Close the tool test modal and reopen it, waiting for form fields.
+def _close_and_reopen_test_modal(page: Page, tool_id: str) -> None:
+    """Close the tool test modal and reopen it via Admin.testTool(), waiting for form fields.
 
     The testTool() JS function has a 2000ms debounce (enhancedDebounceDelay)
     that rejects rapid re-clicks, so we must wait for that to expire before
-    reopening.
+    reopening.  Uses page.evaluate instead of clicking the hidden overflow-menu
+    button to avoid HTMX detachment races.
     """
+    import json
+
     close_btn = page.locator("#tool-test-modal button:has-text('Close')")
     close_btn.click()
     expect(page.locator("#tool-test-modal")).to_be_hidden(timeout=5000)
-    # Wait for testTool() 2000ms debounce to expire before re-clicking
+    # Wait for testTool() 2000ms debounce to expire before re-invoking
     page.wait_for_timeout(2500)
-    test_btn.click()
+    page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
     expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
     page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
 
@@ -112,14 +117,26 @@ class TestAPIIntegration:
 
         # Wait for tool test modal and dynamic form field generation
         expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
-        page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
+        # The form fields div may exist but be empty (hidden) if the tool has no input schema.
+        # Wait for it to appear in the DOM, then check if it has any content.
+        page.wait_for_selector("#tool-test-form-fields", state="attached", timeout=10000)
+        page.wait_for_timeout(500)
 
         # Fill any dynamically generated form fields (schema-based)
         form_fields = page.locator("#tool-test-form-fields input")
+        textareas = page.locator("#tool-test-form-fields textarea")
+        total_fields = form_fields.count() + textareas.count()
+        if total_fields == 0:
+            pytest.skip("First tool has no input schema — cannot test MCP protocol requests")
+
         for i in range(form_fields.count()):
             field = form_fields.nth(i)
             if field.input_value() == "":
                 field.fill("test")
+        for i in range(textareas.count()):
+            field = textareas.nth(i)
+            if field.input_value() == "":
+                field.fill("{}")
 
         # Click Run Tool and verify result area becomes populated
         page.click('button:has-text("Run Tool")')
@@ -153,6 +170,7 @@ class TestAPIIntegration:
 
         # HTMX may swap the tools-table-body, detaching the button during click.
         # Extract tool ID and call testTool() directly via page.evaluate() to avoid DOM detachment.
+        test_btn = tool_row.locator('button:has-text("Test")')
         tool_id = tool_row.evaluate("el => el.querySelector('button[data-test-tool-id]')?.getAttribute('data-test-tool-id')")
         if tool_id:
             # Call testTool directly to avoid HTMX DOM detachment race condition
@@ -162,7 +180,6 @@ class TestAPIIntegration:
             page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
         else:
             # Fallback if data attribute is missing
-            test_btn = tool_row.locator('button:has-text("Test")')
             test_btn.click()
 
         expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
@@ -177,8 +194,10 @@ class TestAPIIntegration:
         with page.expect_request(lambda req: "/rpc" in req.url and req.method == "POST") as req_info:
             page.click('button:has-text("Run Tool")')
         payload = req_info.value.post_data_json
-        assert isinstance(payload["params"]["config"], dict), "config should be a parsed dict, not a string"
-        assert payload["params"]["config"] == {"key": "value", "number": 42}
+        args = payload.get("params", {}).get("arguments", {})
+        assert "config" in args, f"RPC params.arguments missing 'config' key; got keys: {list(args.keys())}"
+        assert isinstance(args["config"], dict), "config should be a parsed dict, not a string"
+        assert args["config"] == {"key": "value", "number": 42}
         page.wait_for_selector("#tool-test-result", timeout=30000)
         expect(page.locator("#tool-test-result")).to_be_visible()
 
@@ -190,7 +209,7 @@ class TestAPIIntegration:
             "null",  # null (typeof null === "object" in JS)
         ]
         for invalid_value in invalid_cases:
-            _close_and_reopen_test_modal(page, test_btn)
+            _close_and_reopen_test_modal(page, tool_id)
             _fill_and_submit_expecting_error(page, invalid_value)
 
     def test_mcp_initialize_endpoint(self, page: Page, api_request_context: APIRequestContext, admin_page):

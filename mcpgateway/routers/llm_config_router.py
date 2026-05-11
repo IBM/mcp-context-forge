@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.common.query_params import QueryProviderId
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.llm_schemas import (
@@ -103,7 +104,7 @@ async def create_provider(
         logger.error(f"Failed to create LLM provider: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create provider: {str(e)}",
+            detail="Failed to create provider",
         )
 
 
@@ -390,7 +391,7 @@ async def create_model(
 )
 @require_permission("admin.system_config")
 async def list_models(
-    provider_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by provider ID"),
+    provider_id: QueryProviderId = None,
     enabled_only: bool = Query(False, description="Only return enabled models"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),

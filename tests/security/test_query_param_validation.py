@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_query_param_validation.py
-Copyright 2026
+Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jonathan Springer
 
@@ -10,17 +10,17 @@ Regression tests for FastAPI Query-parameter regex patterns added by PR #4337
 These tests validate the **pattern strings** directly rather than spinning up
 the full FastAPI app. This is intentional:
 
-* The patterns are embedded in function signatures (not importable); the test
-  mirrors them and the test doc comment pins each one to router:line so a drift
-  becomes visible when this file is updated alongside the router.
+* The patterns are centralized in shared query-parameter aliases and validator
+  settings; this test imports them directly so any drift is caught at the single
+  source of truth.
 * It catches the specific real-world breakage classes the review identified
   (Google-style OAuth codes, session-bound state, service-account identifiers,
   MCP tool namespacing, etc.) without flaky auth/DB setup.
 * FastAPI and Pydantic evaluate query patterns with ``re.fullmatch`` on the raw
   input, which is the same semantics exercised here.
 
-If a router's pattern changes, update the mirror below and add test vectors
-covering the expanded or restricted set.
+If a router's pattern changes, update the shared alias or validator source and
+add test vectors covering the expanded or restricted set.
 
 Run with::
 
@@ -33,13 +33,15 @@ import re
 # Third-Party
 import pytest
 
+# First-Party
+from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.config import settings
+
 # ---------------------------------------------------------------------------
-# Pattern mirrors (keep in sync with the router:line references).
+# Shared validation sources under test.
 # ---------------------------------------------------------------------------
 
-# mcpgateway/routers/sso.py:313 - OAuth error code (RFC 6749 Section 4.1.2.1
-# / 5.2 enum-like snake_case tokens)
-SSO_ERROR = r"^[a-zA-Z0-9_]+$"
+SSO_ERROR = settings.validation_error_code_pattern
 
 # mcpgateway/routers/sso.py (scopes/code/state) deliberately have NO pattern
 # after the B1/B2/B3 fix; they are bounded only by max_length. No regex to
@@ -51,54 +53,43 @@ SSO_ERROR = r"^[a-zA-Z0-9_]+$"
 SSO_CODE_MAX_LENGTH = 4096
 SSO_STATE_MAX_LENGTH = 128
 
-# mcpgateway/routers/log_search.py:629 - user_id (email OR service account)
-# mcpgateway/routers/observability.py:69 - user_email (email OR service account)
-# mcpgateway/admin.py:17572 - user_email (email OR service account)
-USER_IDENTIFIER = r"^[a-zA-Z0-9._%+@-]+$"
+USER_IDENTIFIER = settings.validation_user_identifier_pattern
+TRACE_STATUS = settings.validation_trace_status_pattern
+HTTP_METHOD = settings.validation_http_method_pattern
+ID_HYPHEN = settings.validation_hyphen_identifier_pattern
+ID_DOTTED = SecurityValidator.IDENTIFIER_PATTERN
+RESOURCE_NAME = settings.validation_resource_name_pattern
+EXPORT_FORMAT = settings.validation_export_format_pattern
 
-# mcpgateway/routers/observability.py:66 - status
-TRACE_STATUS = r"^(ok|error)$"
+# teams/email_auth/main pagination cursors (base64.urlsafe_b64encode from
+# mcpgateway/utils/pagination.py)
+CURSOR = settings.validation_cursor_pattern
 
-# mcpgateway/routers/observability.py:68 - http_method
-HTTP_METHOD = r"^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)$"
-
-# mcpgateway/routers/observability.py:312 / rbac.py:scope_id, team_id - UUID-hex style IDs
-ID_HYPHEN = r"^[a-zA-Z0-9_-]+$"
-
-# mcpgateway/routers/observability.py:313 - resource_type / common tool / provider IDs
-ID_DOTTED = r"^[a-zA-Z0-9_.-]+$"
-
-# mcpgateway/routers/observability.py:314 - resource_name (allows space + slash)
-RESOURCE_NAME = r"^[a-zA-Z0-9_. /-]+$"
-
-# mcpgateway/routers/observability.py:477 / admin.py:14760 - export format enum
-EXPORT_FORMAT = r"^(json|csv|ndjson)$"
-
-# mcpgateway/routers/teams.py & email_auth.py & main.py - pagination cursors
-# (base64.urlsafe_b64encode from mcpgateway/utils/pagination.py)
-CURSOR = r"^[a-zA-Z0-9_=+/-]+$"
-
-# mcpgateway/routers/toolops_router.py - mode enum
-TOOL_OPS_MODE = r"^(generate|query|status)$"
-
-# mcpgateway/admin.py:17575 - tool_name filter (MCP SEP-986, mirrors
-# config.Settings.validation_tool_name_pattern)
-MCP_TOOL_NAME = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"
-
-# mcpgateway/main.py - visibility enum (3 endpoints) + admin.py
-VISIBILITY = r"^(private|team|public)$"
+TOOL_OPS_MODE = settings.validation_toolops_mode_pattern
+MCP_TOOL_NAME = SecurityValidator.TOOL_NAME_PATTERN
+VISIBILITY = settings.validation_visibility_pattern
 
 # mcpgateway/admin.py - relationship enum
-RELATIONSHIP = r"^(owner|member|public)$"
+RELATIONSHIP = settings.validation_relationship_pattern
 
 # mcpgateway/admin.py:13681 - entity_type enum
-ENTITY_TYPE = r"^(tools|resources|prompts|servers)$"
+ENTITY_TYPE = settings.validation_entity_type_pattern
 
 # mcpgateway/admin.py - observability dashboard guessed enums (values verified
 # against templates/observability_partial.html options)
-TIME_RANGE = r"^(1h|6h|12h|24h|7d|30d)$"
-STATUS_FILTER = r"^(all|ok|error)$"
-PERIOD_TYPE = r"^(hourly|daily)$"
+TIME_RANGE = settings.validation_time_range_pattern
+STATUS_FILTER = settings.validation_status_filter_pattern
+PERIOD_TYPE = settings.validation_period_type_pattern
+
+# Newly centralized patterns (smoke-tested below)
+GATEWAY_ID_LIST = settings.validation_gateway_id_list_pattern
+RENDER_MODE = settings.validation_render_mode_pattern
+TAGS_FILTER = settings.validation_tags_filter_pattern
+TRACE_ID = settings.validation_trace_id_pattern
+TEAM_ID = settings.validation_team_id_pattern
+SCOPE_ID = settings.validation_scope_id_pattern
+GATEWAY_ID = settings.validation_gateway_id_pattern
+AGGREGATION = settings.validation_aggregation_pattern
 
 
 def _matches(pattern: str, value: str) -> bool:
@@ -310,6 +301,30 @@ def test_cursor_pattern(value: str, expected: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Newly centralized pattern smoke tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("pattern", "good", "bad"),
+    [
+        (GATEWAY_ID_LIST, "gw1,gw2", "gw1;gw2"),
+        (RENDER_MODE, "controls", "controls123"),
+        (TAGS_FILTER, "tag1,tag2", "tag1\ttag2"),
+        (TRACE_ID, "trace_123-abc", "trace 123"),
+        (TEAM_ID, "team-123", "team 123"),
+        (SCOPE_ID, "scope_123", "scope 123"),
+        (GATEWAY_ID, "gw_123", "gw 123"),
+        (AGGREGATION, "5m", "5min"),
+    ],
+)
+def test_newly_centralized_patterns(pattern: str, good: str, bad: str) -> None:
+    """Smoke tests for patterns moved to query_params.py in this PR."""
+    assert _matches(pattern, good), f"expected {good!r} to match {pattern}"
+    assert not _matches(pattern, bad), f"expected {bad!r} to NOT match {pattern}"
+
+
+# ---------------------------------------------------------------------------
 # Enum family smoke tests.
 # ---------------------------------------------------------------------------
 
@@ -369,6 +384,14 @@ CRLF_INJECTION_CASES = [
         TIME_RANGE,
         STATUS_FILTER,
         PERIOD_TYPE,
+        GATEWAY_ID_LIST,
+        RENDER_MODE,
+        TAGS_FILTER,
+        TRACE_ID,
+        TEAM_ID,
+        SCOPE_ID,
+        GATEWAY_ID,
+        AGGREGATION,
     ],
 )
 @pytest.mark.parametrize("injection", CRLF_INJECTION_CASES)

@@ -549,6 +549,7 @@ services:
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
       - TOOL_RATE_LIMIT=60000         # Max tool invocations per minute
       - TOOL_CONCURRENT_LIMIT=1000    # Max concurrent tool invocations
+      - RATE_LIMITING_ENABLED=${RATE_LIMITING_ENABLED:-false}  # Enable Redis-backed rate limiting middleware
       - FEDERATION_TIMEOUT=30
       # ═══════════════════════════════════════════════════════════════════════════
       # HTTPX Client Connection Pool Configuration
@@ -2032,6 +2033,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        set -e
         echo "Registering fast_test_server with gateway..."
 
         # Generate JWT token

@@ -287,10 +287,10 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
 
-    # Wait for JS initialization (showTab + HTMX) before any tab clicks
+    # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks
     try:
         page.wait_for_function(
-            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
+            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined' && window.Admin.eventDelegationInitialized === true",
             timeout=30000,
         )
     except PlaywrightTimeoutError:
@@ -477,7 +477,7 @@ def test_tool_data():
     return {
         "name": f"test-api-tool-{unique_id}",
         "description": "Test API tool for automation",
-        "url": "https://api.example.com/test",
+        "url": "https://httpbin.org/post",
         "integrationType": "REST",
         "requestType": "GET",
         "headers": '{"Authorization": "Bearer test-token"}',
@@ -491,7 +491,7 @@ def test_server_data():
     unique_id = uuid.uuid4()
     return {
         "name": f"test-server-{unique_id}",
-        "icon": "http://localhost:9000/icon.png",
+        "icon": "https://httpbin.org/icon.png",
     }
 
 
@@ -535,7 +535,7 @@ def test_agent_data():
     unique_id = uuid.uuid4()
     return {
         "name": f"test-agent-{unique_id}",
-        "endpoint_url": "https://api.example.com/agent",
+        "endpoint_url": "https://httpbin.org/post",
         "agent_type": "generic",
         "description": "A test A2A agent created by automation",
         "tags": "test,automation,ai",

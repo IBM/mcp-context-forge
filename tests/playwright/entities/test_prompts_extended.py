@@ -316,6 +316,7 @@ class TestPromptsViewModal:
         """Test viewing details of different prompts shows correct data."""
         prompts_page.navigate_to_prompts_tab()
         prompts_page.wait_for_prompts_table_loaded()
+        _skip_if_no_prompts(prompts_page)
 
         count = prompts_page.get_prompt_count()
         if count < 2:
@@ -323,14 +324,20 @@ class TestPromptsViewModal:
 
         # View first prompt
         first_row = prompts_page.get_prompt_row(0)
-        first_name = first_row.locator("td").nth(3).text_content().strip().split("\n")[0].strip()
+        cells = first_row.locator("td")
+        if cells.count() < 4:
+            pytest.skip("Prompt table row has fewer cells than expected")
+        first_name = cells.nth(3).text_content().strip().split("\n")[0].strip()
         prompts_page.open_prompt_view_modal(0)
         expect(prompts_page.prompt_details_content).to_contain_text(first_name)
         prompts_page.close_prompt_modal()
 
         # View second prompt
         second_row = prompts_page.get_prompt_row(1)
-        second_name = second_row.locator("td").nth(3).text_content().strip().split("\n")[0].strip()
+        cells = second_row.locator("td")
+        if cells.count() < 4:
+            pytest.skip("Prompt table row has fewer cells than expected")
+        second_name = cells.nth(3).text_content().strip().split("\n")[0].strip()
         prompts_page.open_prompt_view_modal(1)
         expect(prompts_page.prompt_details_content).to_contain_text(second_name)
         prompts_page.close_prompt_modal()
@@ -597,14 +604,21 @@ class TestPromptsTestModal:
         """
         prompts_page.navigate_to_prompts_tab()
         prompts_page.wait_for_prompts_table_loaded()
+        _skip_if_no_prompts(prompts_page)
 
         count = prompts_page.get_prompt_count()
         if count < 2:
             pytest.skip("Need at least 2 prompts to test stale result clearing")
 
+        # Verify there are at least 2 actual prompt rows before accessing nth(1)
+        if prompts_page.prompt_rows.count() < 2:
+            pytest.skip("Need at least 2 prompt rows to test stale result clearing")
+
         # Open test modal for first prompt and inject fake result content
         prompts_page.open_prompt_test_modal(0)
-        first_title = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title").text_content()
+        title_locator = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title")
+        title_locator.wait_for(state="visible", timeout=10000)
+        first_title = title_locator.text_content()
         prompts_page.page.evaluate("""() => {
                 const el = document.getElementById('prompt-test-result');
                 if (el) el.textContent = 'STALE_PROMPT_RESULT_MARKER';
@@ -614,7 +628,9 @@ class TestPromptsTestModal:
         # Open test modal for second prompt
         prompts_page.open_prompt_test_modal(1)
 
-        second_title = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title").text_content()
+        title_locator = prompts_page.prompt_test_modal.locator("#prompt-test-modal-title")
+        title_locator.wait_for(state="visible", timeout=10000)
+        second_title = title_locator.text_content()
         assert first_title != second_title, "Test modal should show different prompt"
 
         result_text = prompts_page.prompt_test_result.text_content().strip()

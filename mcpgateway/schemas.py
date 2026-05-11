@@ -47,6 +47,50 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# Shared validation helpers
+# ============================================================================
+
+def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
+    """Validate and normalize server association IDs (tools, resources, prompts, agents).
+
+    Accepts a comma-separated string or a list of strings, validates each item
+    as a UUID using SecurityValidator, and returns the normalized hex form.
+    Empty or None items are silently skipped.
+
+    Args:
+        v: Input string or list of IDs.
+        field_name: Human-readable name of the association field (for errors).
+
+    Returns:
+        List of validated, normalized UUID strings, or the original value.
+
+    Raises:
+        ValueError: If any item is not a valid UUID.
+    """
+    if isinstance(v, str):
+        v = [item.strip() for item in v.split(",") if item.strip()]
+    if isinstance(v, list):
+        validated: list[str] = []
+        for item in v:
+            if not item:
+                continue
+            item_str = str(item).strip()
+            if not item_str:
+                continue
+            try:
+                validated.append(SecurityValidator.validate_uuid(item_str, field_name))
+            except ValueError:
+                raise ValueError(
+                    f"Invalid ID format: '{item_str}'. "
+                    f"{field_name} must contain UUID values, not names. "
+                    f"Use UUIDs from the respective entity listings."
+                )
+        return validated
+    return v
+
+
 # ============================================================================
 # Precompiled regex patterns (compiled once at module load for performance)
 # ============================================================================
@@ -2789,7 +2833,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -3143,7 +3187,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
-    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
+    url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
@@ -4191,19 +4235,17 @@ class ServerCreate(BaseModel):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
     @field_validator("team_id")
     @classmethod
@@ -4352,19 +4394,17 @@ class ServerUpdate(BaseModelWithConfigDict):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
 
 class ServerRead(BaseModelWithConfigDict):
@@ -4626,6 +4666,7 @@ class A2AAgentCreate(BaseModel):
     uaid_protocol: Optional[str] = Field(default="a2a", description="Protocol for UAID (a2a, mcp, rest, grpc)")
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod
@@ -4949,6 +4990,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod
@@ -6813,7 +6855,9 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        team_id: Optional team ID for team-scoped tokens
         is_active: Token active status (defaults to True)
+        user_email: Optional email of user to create token for (admin only)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6833,6 +6877,7 @@ class TokenCreateRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     is_active: bool = Field(default=True, description="Token active status")
+    user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -6906,7 +6951,7 @@ class TokenResponse(BaseModel):
     id: str = Field(..., description="Token ID")
     name: str = Field(..., description="Token name")
     description: Optional[str] = Field(None, description="Token description")
-    user_email: str = Field(..., description="Token creator's email")
+    user_email: str = Field(..., description="Token owner's email")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     server_id: Optional[str] = Field(None, description="Server scope limitation")
     resource_scopes: List[str] = Field(..., description="Permission scopes")

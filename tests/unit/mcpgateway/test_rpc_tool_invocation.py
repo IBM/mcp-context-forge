@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.main import app
 from mcpgateway.common.models import Tool
+from mcpgateway.services.tool_service import ToolNotFoundError
 from mcpgateway.services.tool_service import ToolService
 
 
@@ -77,19 +78,22 @@ class TestRPCToolInvocation:
                     assert call_args.kwargs["arguments"] == {"query": "test", "limit": 5}
 
     def test_direct_tool_invocation_fails(self, client, mock_db):
-        """Test that direct tool invocation (old format) now fails with 'Invalid method'."""
+        """Test that direct tool invocation (old format) now fails with 'Method not found'."""
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
-                request_body = {"jsonrpc": "2.0", "method": "test_tool", "params": {"query": "test", "limit": 5}, "id": 1}  # Direct tool name as method (old format)
+                with patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock) as mock_invoke:
+                    mock_invoke.side_effect = ToolNotFoundError("Tool not found: test_tool")
 
-                response = client.post("/rpc", json=request_body)
+                    request_body = {"jsonrpc": "2.0", "method": "test_tool", "params": {"query": "test", "limit": 5}, "id": 1}  # Direct tool name as method (old format)
 
-                assert response.status_code == 200
-                result = response.json()
-                assert result["jsonrpc"] == "2.0"
-                assert "error" in result
-                assert result["error"]["code"] == -32603
-                assert result["id"] == 1
+                    response = client.post("/rpc", json=request_body)
+
+                    assert response.status_code == 200
+                    result = response.json()
+                    assert result["jsonrpc"] == "2.0"
+                    assert "error" in result
+                    assert result["error"]["code"] == -32601
+                    assert result["id"] == 1
 
     def test_tools_list_method(self, client, mock_db):
         """Test the tools/list method."""

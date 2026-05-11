@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.query_params import QueryPaginationCursor, QueryPaginationCursorGeneric
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
@@ -49,6 +50,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
@@ -96,7 +98,12 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         True
     """
     try:
-        is_admin = bool(current_user_ctx.get("is_admin"))
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user_ctx["email"],
+            token_teams=current_user_ctx.get("token_teams"),
+        )
 
         if not settings.allow_team_creation and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
@@ -144,7 +151,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
     limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Pagination cursor"),
+    cursor: QueryPaginationCursorGeneric = None,
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -175,7 +182,14 @@ async def list_teams(
         next_cursor = None
         total = 0
 
-        if current_user_ctx.get("is_admin"):
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        permission_service = PermissionService(db)
+        has_admin_team_access = await permission_service.check_platform_admin_permission(
+            current_user_ctx["email"],
+            token_teams=current_user_ctx.get("token_teams"),
+        )
+
+        if has_admin_team_access:
             # Use updated list_teams logic
             # If current request uses offset (skip), mapped to offset.
             # If cursor, mapped to cursor.
@@ -314,7 +328,12 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
 
         # Check if user has access to the team
         user_role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if not user_role:
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
+        if not user_role and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         team_obj = cast(Any, team)
@@ -361,12 +380,18 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         HTTPException: If team not found, access denied, or update fails
     """
     try:
-        is_admin = bool(current_user.get("is_admin"))
+        # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
+
         service = TeamManagementService(db)
 
-        # Check if user is team owner
+        # Check if user is team owner or platform admin
         role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if role != "owner":
+        if role != "owner" and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         # Only pass max_members when explicitly provided in the request body
@@ -433,10 +458,15 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
     try:
         service = TeamManagementService(db)
 
-        # Check if user is team owner
+        # Check if user is team owner or platform admin
         role = await service.get_user_role_in_team(current_user["email"], team_id)
-        if role != "owner":
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can delete teams")
+        permission_service = PermissionService(db)
+        is_admin = await permission_service.check_platform_admin_permission(
+            current_user["email"],
+            token_teams=current_user.get("token_teams"),
+        )
+        if role != "owner" and not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
         success = await service.delete_team(team_id, current_user["email"])
         if not success:
@@ -461,7 +491,7 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
 @require_permission("teams.read")
 async def list_team_members(
     team_id: str,
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    cursor: QueryPaginationCursor = None,
     limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user: dict = Depends(get_current_user_with_permissions),

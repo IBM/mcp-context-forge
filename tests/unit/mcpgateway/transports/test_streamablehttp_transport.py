@@ -1654,7 +1654,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 
     # Verify the service was called with admin unrestricted access
     assert len(captured_calls) == 1
-    assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
+    assert captured_calls[0]["user_email"] == "admin@example.com"  # Admin bypass preserves email
     assert captured_calls[0]["token_teams"] is None  # Unrestricted
     assert captured_calls[0]["server_id"] == "test-server"
 
@@ -3825,7 +3825,7 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_tool_admin_bypass(monkeypatch):
-    """Test call_tool admin bypass sets user_email=None for unrestricted admin."""
+    """Test call_tool admin bypass preserves user_email for unrestricted admin."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
 
@@ -3858,8 +3858,8 @@ async def test_call_tool_admin_bypass(monkeypatch):
     try:
         result = await call_tool("mytool", {"arg": "val"})
         assert isinstance(result, list)
-        # Admin bypass: user_email should be None
-        assert captured_kwargs["user_email"] is None
+        # Admin bypass: user_email preserved for downstream RBAC
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None  # Unrestricted
     finally:
         user_context_var.reset(token)
@@ -3982,8 +3982,8 @@ async def test_list_tools_admin_bypass(monkeypatch):
         result = await list_tools()
         assert len(result) == 1
         assert result[0].name == "admin_tool"
-        # Admin bypass: user_email should be None, token_teams should be None
-        assert captured_kwargs["user_email"] is None
+        # Admin bypass: user_email preserved, token_teams should be None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4066,7 +4066,7 @@ async def test_list_prompts_admin_bypass(monkeypatch):
     try:
         result = await list_prompts()
         assert len(result) == 1
-        assert captured_kwargs["user_email"] is None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4110,7 +4110,7 @@ async def test_get_prompt_admin_bypass(monkeypatch):
     try:
         result = await get_prompt("test_prompt", {"arg1": "val1"})
         assert isinstance(result, types.GetPromptResult)
-        assert captured_kwargs["user"] is None  # Admin bypass
+        assert captured_kwargs["user"] == "admin@test.com"  # Admin bypass preserves email
         assert captured_kwargs["token_teams"] is None
     finally:
         user_context_var.reset(user_token)
@@ -4190,7 +4190,7 @@ async def test_list_resources_admin_bypass(monkeypatch):
     try:
         result = await list_resources()
         assert len(result) == 1
-        assert captured_kwargs["user_email"] is None
+        assert captured_kwargs["user_email"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         server_id_var.reset(server_token)
@@ -4234,7 +4234,7 @@ async def test_read_resource_admin_bypass(monkeypatch):
         test_uri = AnyUrl("file:///admin.txt")
         result = await read_resource(test_uri)
         assert result == "admin resource content"
-        assert captured_kwargs["user"] is None
+        assert captured_kwargs["user"] == "admin@test.com"
         assert captured_kwargs["token_teams"] is None
     finally:
         user_context_var.reset(user_token)
@@ -4602,7 +4602,7 @@ async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatc
         result = await complete(ref, argument)
         assert isinstance(result, mcp_types.Completion)
         assert result.values == ["all"]
-        assert mock_cs.handle_completion.await_args.kwargs["user_email"] is None
+        assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "admin@example.com"
         assert mock_cs.handle_completion.await_args.kwargs["token_teams"] is None
 
 
@@ -14795,7 +14795,7 @@ async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
 
     assert result is True
     ctx = user_context_var.get()
-    assert ctx["teams"] == ["team-a"]
+    assert ctx["teams"] is None  # Admin bypass: effective_is_admin=True overrides cached team list
     assert ctx["permission_is_admin"] is True
     assert ctx["scoped_server_id"] == "srv-1"
     assert ctx["auth_method"] == "jwt"
@@ -14883,7 +14883,7 @@ async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypat
 
     assert result is True
     ctx = user_context_var.get()
-    assert ctx["teams"] == ["team-a"]
+    assert ctx["teams"] is None  # Admin bypass: effective_is_admin=True overrides batched team list
     assert ctx["permission_is_admin"] is True
 
 
@@ -16687,3 +16687,290 @@ async def test_post_notification_short_circuit_returns_202(monkeypatch):
     assert not sdk.called, "SDK must not be reached on a short-circuited notification"
     starts = [m for m in messages if m["type"] == "http.response.start"]
     assert starts and starts[0]["status"] == 202
+
+
+
+# ---------------------------------------------------------------------------
+# Layer-1 Visibility Filter Tests (Issue #4452)
+# Tests for get_scoped_visibility_from_user_context helper and effective admin
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_visibility_from_user_context_empty_context_returns_public_only():
+    """Empty user_context must return (None, []) for public-only access, not admin bypass."""
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    # Test None context
+    user_email, token_teams = get_scoped_visibility_from_user_context(None)
+    assert user_email is None
+    assert token_teams == []  # Public-only, not admin bypass
+
+    # Test empty dict context
+    user_email, token_teams = get_scoped_visibility_from_user_context({})
+    assert user_email is None
+    assert token_teams == []  # Public-only, not admin bypass
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_visibility_from_user_context_admin_bypass():
+    """Admin with teams=None gets admin bypass (email, None)."""
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_context = {
+        "email": "admin@example.com",
+        "teams": None,
+        "is_admin": True,
+    }
+
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+    assert user_email == "admin@example.com"
+    assert token_teams is None  # Admin bypass
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_visibility_from_user_context_non_admin_missing_teams():
+    """Non-admin with teams=None gets public-only access (secure default)."""
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_context = {
+        "email": "user@example.com",
+        "teams": None,
+        "is_admin": False,
+    }
+
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+    assert user_email == "user@example.com"
+    assert token_teams == []  # Public-only secure default
+
+
+@pytest.mark.asyncio
+async def test_get_scoped_visibility_from_user_context_team_scoped():
+    """User with specific teams gets team-scoped access."""
+    # First-Party
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_context = {
+        "email": "user@example.com",
+        "teams": ["team1", "team2"],
+        "is_admin": False,
+    }
+
+    user_email, token_teams = get_scoped_visibility_from_user_context(user_context)
+    assert user_email == "user@example.com"
+    assert token_teams == ["team1", "team2"]
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_sso_platform_admin_gets_admin_bypass(monkeypatch):
+    """SSO platform_admin (DB is_admin=True) gets Layer-1 admin bypass via _auth_jwt path.
+
+    Regression test for issue #4070: SSO users with platform_admin RBAC role must get
+    admin bypass on StreamableHTTP transport, matching REST API behavior.
+    """
+    # Standard
+    from unittest.mock import MagicMock, patch
+
+    # JWT payload: is_admin=False (SSO user without DB flag)
+    async def fake_verify(token):
+        return {
+            "sub": "sso_admin@example.com",
+            "teams": None,  # Unrestricted token
+            "user": {"is_admin": False},  # No JWT admin flag
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    # Mock _get_user_by_email_sync to return a user with is_admin=True
+    mock_user = MagicMock()
+    mock_user.email = "sso_admin@example.com"
+    mock_user.is_admin = True
+    mock_user.is_active = True
+
+    def mock_get_user(email):
+        return mock_user
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer sso-admin-token")])
+
+    async def send(msg):
+        pass
+
+    with patch("mcpgateway.auth._get_user_by_email_sync", mock_get_user):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    # Verify effective admin status was set correctly
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") == "sso_admin@example.com"
+    assert user_ctx.get("is_admin") is True  # Effective admin (DB is_admin OR JWT is_admin)
+    assert user_ctx.get("permission_is_admin") is True
+    # Note: teams=None in JWT gets normalized to [] by normalize_token_teams,
+    # but Layer-1 visibility filter will convert (is_admin=True, teams=[]) to admin bypass (None, None)
+    assert user_ctx.get("teams") == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_basic_auth_admin_gets_admin_bypass(monkeypatch):
+    """Basic-auth/dev-mode admin (JWT is_admin=True) gets Layer-1 admin bypass.
+
+    Regression test: basic-auth admins must continue to get admin bypass even when
+    not in the database (dev mode scenario).
+    """
+    # Standard
+    from unittest.mock import patch
+
+    # JWT payload: is_admin=True (basic-auth admin)
+    async def fake_verify(token):
+        return {
+            "sub": "dev_admin@example.com",
+            "teams": None,
+            "user": {"is_admin": True},  # JWT admin flag set
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    # Mock _get_user_by_email_sync to return None (user NOT in database)
+    def mock_get_user(email):
+        return None
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer dev-admin-token")])
+
+    async def send(msg):
+        pass
+
+    with patch("mcpgateway.auth._get_user_by_email_sync", mock_get_user):
+        result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+
+    # Verify effective admin status was set correctly
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") == "dev_admin@example.com"
+    assert user_ctx.get("is_admin") is True  # Effective admin from JWT
+    assert user_ctx.get("permission_is_admin") is True
+    # Note: For API tokens (non-session), teams=None in JWT stays as None (not normalized)
+    # Layer-1 visibility filter will convert (is_admin=True, teams=None) to admin bypass (None, None)
+    assert user_ctx.get("teams") is None
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_sso_platform_admin_gets_effective_admin(monkeypatch):
+    """_normalize_jwt_payload fallback path: SSO platform_admin gets effective admin status.
+
+    Tests the stateful session fallback path (_normalize_jwt_payload) to ensure
+    SSO platform_admins get admin bypass there too, matching the primary _auth_jwt path.
+    """
+    # Standard
+    from unittest.mock import patch
+
+    # Mock is_user_admin to return True (user has platform_admin via RBAC)
+    def mock_is_user_admin(db, email):
+        return True
+
+    # JWT payload: is_admin=False (SSO user)
+    payload = {
+        "sub": "sso_admin@example.com",
+        "teams": ["team1"],
+        "user": {"is_admin": False},
+        "token_use": "session",
+    }
+
+    with patch("mcpgateway.utils.admin_check.is_user_admin", mock_is_user_admin):
+        with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.return_value = ["team1"]
+
+            result = await tr._normalize_jwt_payload(payload)
+
+    # Verify effective admin was computed correctly
+    assert result["is_admin"] is True  # Effective admin (DB is_admin OR JWT is_admin)
+    assert result["email"] == "sso_admin@example.com"
+    assert result["teams"] == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_non_admin_without_db_record():
+    """_normalize_jwt_payload: non-admin without DB record gets is_admin=False."""
+    # Standard
+    from unittest.mock import patch
+
+    # Mock is_user_admin to return False (user NOT in database)
+    def mock_is_user_admin(db, email):
+        return False
+
+    # JWT payload: is_admin=False, no DB record
+    payload = {
+        "sub": "regular_user@example.com",
+        "teams": ["team1"],
+        "user": {"is_admin": False},
+        "token_use": "session",
+    }
+
+    with patch("mcpgateway.utils.admin_check.is_user_admin", mock_is_user_admin):
+        with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock) as mock_resolve:
+            mock_resolve.return_value = ["team1"]
+
+            result = await tr._normalize_jwt_payload(payload)
+
+    # Verify non-admin status
+    assert result["is_admin"] is False
+    assert result["email"] == "regular_user@example.com"
+    assert result["teams"] == ["team1"]
+
+
+def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == []
+
+
+def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": []})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == []
+
+
+def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
+    from mcpgateway.auth_context import get_scoped_visibility_from_user_context
+
+    user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": ["team1"]})
+
+    assert user_email == "admin@x.com"
+    assert token_teams == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypatch):
+    user_context = {"email": "sso_admin@example.com", "is_admin": True, "teams": []}
+    monkeypatch.setattr(tr, "_get_request_context_or_default", AsyncMock(return_value=(None, {}, user_context)))
+
+    called = {}
+
+    def fake_get_scoped_visibility(_ctx):
+        return None, None
+
+    async def fake_list_tools(db, include_inactive, limit, user_email, token_teams, _request_headers):
+        called["args"] = (user_email, token_teams)
+        return [], 0
+
+    monkeypatch.setattr("mcpgateway.auth_context.get_scoped_visibility_from_user_context", fake_get_scoped_visibility)
+    monkeypatch.setattr(tr.tool_service, "list_tools", fake_list_tools)
+
+    @asynccontextmanager
+    async def dummy_db():
+        yield object()
+
+    monkeypatch.setattr(tr, "get_db", dummy_db)
+
+    await list_tools()
+
+    assert called["args"] == (None, None)

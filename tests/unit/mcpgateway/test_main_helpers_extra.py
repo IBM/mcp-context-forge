@@ -78,8 +78,10 @@ def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: 
         environment="production",
         uaid_allowed_domains=["trusted.example.com"],
         auth_required=True,
+        database_url="sqlite:///./mcp.db",
     )
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
+
 
     caplog.set_level("WARNING", logger="mcpgateway")
 
@@ -99,10 +101,11 @@ def test_validate_security_configuration_logs_insecure_uaid_config(monkeypatch: 
         environment="production",
         uaid_allowed_domains=[],
         auth_required=False,
+        database_url="sqlite:///./mcp.db",
     )
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
 
-    caplog.set_level("ERROR")
+    caplog.set_level("ERROR", logger="mcpgateway")
 
     main.validate_security_configuration()
 
@@ -123,7 +126,7 @@ def test_validate_security_configuration_security_error_exits(monkeypatch: pytes
     monkeypatch.setattr(main, "get_settings", _raise_security_error)
     monkeypatch.setattr(main.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
 
-    caplog.set_level("CRITICAL")
+    caplog.set_level("CRITICAL", logger="mcpgateway")
 
     with pytest.raises(SystemExit) as excinfo:
         main.validate_security_configuration()

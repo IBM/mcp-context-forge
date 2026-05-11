@@ -2556,24 +2556,28 @@ async def test_gateway_update_auth_conversion_query_param_decode_error(import_se
 
 @pytest.mark.asyncio
 async def test_convert_to_server_create_resolves_tool_references(import_service, mock_db):
-    tools = [SimpleNamespace(id="t1", original_name="orig1", name="name1"), SimpleNamespace(id="t2", original_name="orig2", name="name2")]
+    # Use valid UUIDs for tool IDs
+    tool_id1 = "550e8400e29b41d4a716446655440001"  # pragma: allowlist secret
+    tool_id2 = "550e8400e29b41d4a716446655440002"  # pragma: allowlist secret
+    tools = [SimpleNamespace(id=tool_id1, original_name="orig1", name="name1"), SimpleNamespace(id=tool_id2, original_name="orig2", name="name2")]
     import_service.tool_service.list_tools.return_value = (tools, None)
 
-    server_data = {"name": "srv", "tool_ids": ["t1", "orig2", "name1"]}
+    server_data = {"name": "srv", "tool_ids": [tool_id1, "orig2", "name1"]}
     create = await import_service._convert_to_server_create(mock_db, server_data)
 
-    assert create.associated_tools == ["t1", "t2", "t1"]
+    assert create.associated_tools == [tool_id1, tool_id2, tool_id1]
 
 
 @pytest.mark.asyncio
 async def test_convert_to_server_update_resolves_tool_references(import_service, mock_db):
-    tools = [SimpleNamespace(id="t1", original_name="orig1", name="name1")]
+    tool_id1 = "550e8400e29b41d4a716446655440001"  # pragma: allowlist secret
+    tools = [SimpleNamespace(id=tool_id1, original_name="orig1", name="name1")]
     import_service.tool_service.list_tools.return_value = (tools, None)
 
     server_data = {"name": "srv", "tool_ids": ["orig1"]}
     update = await import_service._convert_to_server_update(mock_db, server_data)
 
-    assert update.associated_tools == ["t1"]
+    assert update.associated_tools == [tool_id1]
 
 
 @pytest.mark.asyncio

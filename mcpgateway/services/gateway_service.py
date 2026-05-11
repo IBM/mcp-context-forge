@@ -105,6 +105,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.pagination import unified_paginate
@@ -599,6 +600,60 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._file_lock = FileLock(self._lock_path)
 
     @staticmethod
+    async def _auto_discover_oauth_endpoints(raw_oauth_config: dict) -> dict:
+        """Auto-discover OAuth endpoints from issuer metadata if needed.
+
+        Args:
+            raw_oauth_config: The raw OAuth config dict with potential 'issuer' key.
+
+        Returns:
+            The (possibly mutated) raw_oauth_config dict.
+        """
+        if not raw_oauth_config:
+            return raw_oauth_config
+        issuer = raw_oauth_config.get("issuer")
+        has_token_url = raw_oauth_config.get("token_url")
+        has_authz_url = raw_oauth_config.get("authorization_url")
+        if not issuer or (has_token_url and has_authz_url):
+            return raw_oauth_config
+
+        # First-Party
+        from mcpgateway.services.dcr_service import DcrService  # pylint: disable=import-outside-toplevel
+
+        try:
+            SecurityValidator.validate_url(issuer, "OAuth issuer URL")
+        except ValueError as _e:
+            logger.warning("OAuth endpoint discovery skipped for issuer %s: %s", issuer, _e)
+            return raw_oauth_config
+
+        def _validate_discovered(url: str, name: str) -> bool:
+            try:
+                SecurityValidator.validate_url(url, name)
+                return True
+            except ValueError as _e:
+                logger.warning("Discovered %s rejected for issuer %s: %s", name, issuer, _e)
+                return False
+
+        try:
+            _dcr = DcrService()
+            _metadata = await _dcr.discover_as_metadata(issuer)
+            token_endpoint = _metadata.get("token_endpoint")
+            if token_endpoint and not raw_oauth_config.get("token_url") and _validate_discovered(token_endpoint, "token_endpoint"):
+                raw_oauth_config["token_url"] = token_endpoint
+            authz_endpoint = _metadata.get("authorization_endpoint")
+            if authz_endpoint and not raw_oauth_config.get("authorization_url") and _validate_discovered(authz_endpoint, "authorization_endpoint"):
+                raw_oauth_config["authorization_url"] = authz_endpoint
+            jwks_uri = _metadata.get("jwks_uri")
+            if jwks_uri and not raw_oauth_config.get("jwks_uri") and _validate_discovered(jwks_uri, "jwks_uri"):
+                raw_oauth_config["jwks_uri"] = jwks_uri
+            raw_oauth_config["dcr_available"] = bool(_metadata.get("registration_endpoint"))
+            raw_oauth_config["endpoints_discovered"] = True
+            logger.info("Auto-discovered OAuth endpoints for issuer %s", issuer)
+        except Exception as _e:  # pylint: disable=broad-except
+            logger.warning("OAuth endpoint discovery failed for issuer %s: %s", issuer, _e)
+        return raw_oauth_config
+
+    @staticmethod
     def normalize_url(url: str) -> str:
         """
         Normalize a URL by ensuring it's properly formatted.
@@ -1033,7 +1088,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 authentication_headers = None
 
-            oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
+            raw_oauth_config = getattr(gateway, "oauth_config", None)
+            raw_oauth_config = await self._auto_discover_oauth_endpoints(raw_oauth_config)
+            oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
             ca_certificate = getattr(gateway, "ca_certificate", None)
             init_client_cert = getattr(gateway, "client_cert", None)
             init_client_key = getattr(gateway, "client_key", None)
@@ -2253,7 +2310,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
-                    gateway.oauth_config = await protect_oauth_config_for_storage(gateway_update.oauth_config, existing_oauth_config=gateway.oauth_config)
+                    raw_oauth_update = dict(gateway_update.oauth_config)
+                    raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
+                    gateway.oauth_config = await protect_oauth_config_for_storage(raw_oauth_update, existing_oauth_config=gateway.oauth_config)
 
                 # Handle auth_value updates (both existing and new auth values)
                 token = gateway_update.auth_token
@@ -2737,7 +2796,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if visibility == "public":
             return True
 
-        if token_teams is None and user_email is None:
+        if is_admin_bypass_granted(db, user_email, token_teams):
             return visibility != "private"
 
         if not user_email:
@@ -2856,7 +2915,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 user_email=user_email,
                 custom_fields={
                     "visibility": getattr(gateway, "visibility", None),
-                    "admin_bypass": user_email is None and token_teams is None,
+                    "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                 },
             )
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")

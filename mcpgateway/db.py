@@ -1322,6 +1322,7 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_COMPLIANCE = "admin.compliance"
     ADMIN_OVERVIEW = "admin.overview"
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"
@@ -1835,6 +1836,31 @@ class PasswordResetToken(Base):
             bool: True when `used_at` is set.
         """
         return self.used_at is not None
+
+
+class PasswordHistory(Base):
+    """Password history tracking for preventing password reuse.
+
+    Stores hashed passwords to enforce password history policy,
+    preventing users from reusing their last N passwords.
+
+    Attributes:
+        id (str): Primary key UUID
+        user_email (str): Email of the user
+        password_hash (str): Argon2id hash of the password
+        changed_at (datetime): When the password was changed
+    """
+
+    __tablename__ = "password_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_history_user_email_changed_at", "user_email", "changed_at"),)
 
 
 class EmailTeam(Base):

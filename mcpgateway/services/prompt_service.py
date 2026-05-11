@@ -62,7 +62,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -2748,7 +2748,7 @@ class PromptService(BaseService):
                 user_email=user_email,
                 custom_fields={
                     "visibility": getattr(prompt, "visibility", None),
-                    "admin_bypass": user_email is None and token_teams is None,
+                    "admin_bypass": is_admin_bypass_granted(db, user_email, token_teams),
                 },
             )
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")

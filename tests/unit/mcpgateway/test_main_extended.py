@@ -230,6 +230,21 @@ def _import_fresh_main_module(
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
 
+    def test_import_logs_csrf_disabled_when_setting_is_false(self, monkeypatch, caplog):
+        """Import-time CSRF middleware setup should log the disabled branch when CSRF is off."""
+        caplog.set_level("INFO")
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "csrf_enabled": False,
+            },
+        )
+
+        assert any(
+            "CSRF protection middleware disabled" in rec.message for rec in caplog.records
+        )
+
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
         """When boot mode is edge, the ingress mount selects rust-internal by default."""
         module = _import_fresh_main_module(
@@ -339,6 +354,33 @@ class TestConditionalPaths:
 
         assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
         assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
+
+    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+        """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        include_calls = []
+        from fastapi.applications import FastAPI
+
+        original_include_router = FastAPI.include_router
+
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+            include_calls.append((router, kwargs.get("dependencies")))
+            return original_include_router(self, router, *args, **kwargs)
+
+        monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "mcpgateway_admin_api_enabled": True,
+                "siem_export_enabled": True,
+            },
+        )
+
+        assert any(
+            deps
+            and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps)
+            for _, deps in include_calls
+        )
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
@@ -1529,7 +1571,7 @@ class TestJsonPathHelpers:
     def test_jsonpath_modifier_invalid_expression(self):
         with pytest.raises(HTTPException) as excinfo:
             jsonpath_modifier({"a": 1}, "$[")
-        assert "Invalid main JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression" in excinfo.value.detail
 
     def test_jsonpath_modifier_execution_error(self):
         class DummyPath:
@@ -1539,7 +1581,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", return_value=DummyPath()):
             with pytest.raises(HTTPException) as excinfo:
                 jsonpath_modifier({"a": 1}, "$.a")
-        assert "Error executing main JSONPath" in excinfo.value.detail
+        assert "Error executing JSONPath expression" in excinfo.value.detail
 
     def test_transform_data_with_mappings_multi_and_empty(self):
         data = [{"items": [{"id": 1}, {"id": 2}]}, {"items": []}]
@@ -1551,7 +1593,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", side_effect=Exception("bad mapping")):
             with pytest.raises(HTTPException) as excinfo:
                 transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
-        assert "Invalid mapping JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression for key" in excinfo.value.detail
 
     def test_jsonpath_modifier_debug_logging_with_list(self, monkeypatch):
         """Test jsonpath_modifier debug logging with list data (lines 789-790)."""
@@ -8720,7 +8762,7 @@ class TestRpcHandling:
         missing_name_result = await handle_internal_mcp_tools_call(missing_name_request)
         assert missing_name_result["error"]["code"] == -32602
 
-    async def test_handle_internal_mcp_tools_call_generates_id_and_reraises_plugin_error_while_ignoring_close_failures(self):
+    async def test_handle_internal_mcp_tools_call_generates_id_and_returns_jsonrpc_plugin_error_while_ignoring_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
@@ -8737,8 +8779,15 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main._execute_rpc_tools_call", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call(request)
+            result = await handle_internal_mcp_tools_call(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert result["jsonrpc"] == "2.0"
+            assert "error" in result
+            assert result["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in result["error"]["message"]
+            assert result["id"] is not None  # Generated ID
+            # Verify close() was called twice (once succeeded, once failed but ignored)
+            assert mock_db.close.call_count == 2
 
     async def test_handle_internal_mcp_tools_call_resolve_rejects_parse_error_invalid_method_missing_name_and_tool_error(self):
         base_headers = {
@@ -8824,7 +8873,7 @@ class TestRpcHandling:
                 await handle_internal_mcp_tools_call_resolve(request_no_scope)
         public_db.invalidate.assert_called_once()
 
-    async def test_internal_mcp_tools_call_resolve_re_raises_plugin_errors_and_ignores_close_failures(self):
+    async def test_internal_mcp_tools_call_resolve_returns_jsonrpc_plugin_errors_and_ignores_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "plugin-err", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
@@ -8839,8 +8888,17 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call_resolve(request)
+            response = await handle_internal_mcp_tools_call_resolve(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert response.status_code == 500  # PluginError defaults to 500
+            content = json.loads(response.body)
+            assert content["jsonrpc"] == "2.0"
+            assert "error" in content
+            assert content["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in content["error"]["message"]
+            assert content["id"] == "plugin-err"  # ID from request
+            # Verify close() was called (and failure was ignored)
+            assert mock_db.close.call_count == 1
 
     async def test_server_scoped_authz_missing_server_scope_and_jsonrpc_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})
