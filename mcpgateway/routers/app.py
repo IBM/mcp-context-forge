@@ -36,7 +36,7 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 logger = logging.getLogger(__name__)
 
 # Module-level constants
-JWT_COOKIE_PATH = "/"
+JWT_COOKIE_PATH = "/app"
 
 
 def _validate_csrf_token_length() -> None:
