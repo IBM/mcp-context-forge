@@ -35,6 +35,7 @@ from functools import lru_cache
 import html
 import json
 import logging
+import os
 import re
 import signal
 import sys
@@ -1627,6 +1628,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about per-worker database connection pool multiplication
+        if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
+            workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+            total_pool = settings.db_pool_size + settings.db_max_overflow
+            total_connections = workers * total_pool
+            logger.warning(
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
+                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
+                "Ensure PostgreSQL max_connections >= %d. ",
+                workers,
+                workers,
+                workers,
+                total_pool,
+                total_connections,
+                total_connections,
+            )
+
         # Warn about unsafe UAID configuration if A2A is enabled
         if settings.mcpgateway_a2a_enabled:
             uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
@@ -1963,7 +1981,7 @@ def validate_security_configuration():
 
         # Audit logging for explicit security overrides in production
         if current_settings.environment == "production" and not current_settings.require_strong_secrets:
-            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. This override is being logged for audit purposes as per US-1 requirements.")
+            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. " "This override is being logged for audit purposes as per US-1 requirements.")
 
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:

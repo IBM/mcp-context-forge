@@ -174,7 +174,48 @@ def test_write_span_to_db_when_span_row_missing():
 
     mock_service.start_span.assert_called_once()
     mock_service.end_span.assert_called_once()
-    mock_db.commit.assert_not_called()
+    # Commit is called once (single session pattern)
+    mock_db.commit.assert_called_once()
+
+
+def test_write_span_to_db_commit_error_triggers_rollback(caplog):
+    """Test that commit errors trigger rollback in single-session pattern."""
+    import logging
+    caplog.set_level(logging.WARNING)
+
+    span_data = {
+        "trace_id": "t1",
+        "name": "db.query.select",
+        "kind": "client",
+        "resource_type": "database",
+        "resource_name": "SELECT",
+        "start_attributes": {},
+        "end_attributes": {},
+        "status": "ok",
+        "duration_ms": 10.0,
+        "row_count": 1,
+    }
+    mock_service = MagicMock()
+    mock_db = MagicMock()
+    mock_span = MagicMock()
+    mock_db.query().filter_by().first.return_value = mock_span
+    # Simulate commit error
+    mock_db.commit.side_effect = Exception("Commit failed")
+
+    with (
+        patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
+        patch("mcpgateway.db.SessionLocal", return_value=mock_db),
+        patch("mcpgateway.db.ObservabilitySpan", MagicMock()),
+    ):
+        # The outer try/except catches and logs the error, so no exception is raised
+        sa._write_span_to_db(span_data)
+
+    # Verify rollback was called
+    mock_db.rollback.assert_called_once()
+    # Verify close was called in finally block
+    mock_db.close.assert_called_once()
+    # Verify warning was logged
+    assert "Failed to write query span" in caplog.text
 
 
 def test_write_span_to_db_exception_logs_warning(caplog):
