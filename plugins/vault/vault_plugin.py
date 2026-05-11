@@ -175,7 +175,7 @@ class Vault(Plugin):
             logger.warning("System cannot be determined from gateway metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
             if payload.headers:
-                safe_headers = payload.headers.model_dump()
+                safe_headers = {k.lower(): v for k, v in payload.headers.root.items()}
                 if self._vault_header_key in safe_headers:
                     del safe_headers[self._vault_header_key]
                     payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
@@ -183,11 +183,11 @@ class Vault(Plugin):
             return ToolPreInvokeResult()
 
         modified = False
-        headers: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
+        headers: dict[str, str] = {k.lower(): v for k, v in payload.headers.root.items()} if payload.headers else {}
 
         # Check if vault header exists
         if self._vault_header_key not in headers:
-            logger.debug("Vault header '%s' not found in headers", self._sconfig.vault_header_name)
+            logger.debug("Vault header '%s' not found in headers", self._vault_header_key)
             return ToolPreInvokeResult()
 
         try:
@@ -207,7 +207,7 @@ class Vault(Plugin):
             logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
             payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
-        logger.debug("Removed vault header '%s' from headers", self._sconfig.vault_header_name)
+        logger.debug("Removed vault header '%s' from headers", self._vault_header_key)
 
         vault_handling = self._sconfig.vault_handling
 
