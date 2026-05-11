@@ -246,7 +246,7 @@ async def test_prepare_runtime_credentials_rejects_blocked_authorization_server_
 
     with (
         patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
-        pytest.raises(OAuthError, match="Invalid runtime OAuth configuration for client_credentials flow"),
+        pytest.raises(ValueError, match="OAuth config authorization_servers\\[0\\].*SSRF protection"),
     ):
         await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
 
@@ -259,9 +259,23 @@ async def test_prepare_runtime_credentials_rejects_non_list_authorization_server
 
     with (
         patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
-        pytest.raises(OAuthError, match="Invalid runtime OAuth configuration for client_credentials flow"),
+        pytest.raises(OAuthError, match="authorization_servers must be a list"),
     ):
         await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_falls_back_when_decryption_fails(oauth_manager):
+    credentials = {
+        "client_id": "cid",
+        "client_secret": "x" * 60,
+        "token_url": "https://issuer.example.com/token",
+    }
+
+    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, side_effect=RuntimeError("decrypt failed")):
+        runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+    assert runtime_credentials == credentials
 
 
 @pytest.mark.asyncio
