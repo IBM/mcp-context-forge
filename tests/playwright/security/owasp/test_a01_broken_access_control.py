@@ -240,7 +240,11 @@ class TestVerticalPrivilegeEscalation:
     def test_non_admin_cannot_create_user(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.post(
             "/admin/users",
-            data={"email": f"injected-{uuid.uuid4().hex[:8]}@example.com", "password": "Pass123!", "full_name": "Injected"},
+            data={
+                "email": f"injected-{uuid.uuid4().hex[:8]}@example.com",
+                "password": "TestP@ssw0rd!Test2026X",  # pragma: allowlist secret
+                "full_name": "Injected"
+            },
         )
         assert resp.status == 403, f"Non-admin should be denied user creation, got {resp.status}: {resp.text()}"
 

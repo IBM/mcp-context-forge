@@ -308,3 +308,26 @@ async def test_unknown_x_frame_options():
         assert "frame-ancestors 'none'" in csp
     finally:
         mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_root_path_is_stripped_from_path_for_csp_skip_check():
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/app/docs",
+                "root_path": "/app",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, _call_next)
+
+        assert response.status_code == 200
+    finally:
+        mock.stop()

@@ -24,7 +24,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user, get_db, get_user_team_roles
+from mcpgateway.auth import TokenValidationError, get_current_user, get_db, get_user_team_roles, validate_token_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser
 from mcpgateway.transports.streamablehttp_transport import (
@@ -258,6 +258,23 @@ class TestGetCurrentUser:
 
                         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
                         assert "Token revocation check failed for JTI token_id_456" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_validate_token_user_empty_token_raises_token_validation_error(self):
+        with pytest.raises(TokenValidationError) as exc_info:
+            await validate_token_user(SimpleNamespace(), "")
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_validate_token_user_generic_exception_wrapped(self):
+        request = SimpleNamespace()
+        with patch("mcpgateway.auth.get_current_user", side_effect=RuntimeError("boom")):
+            with pytest.raises(TokenValidationError) as exc_info:
+                await validate_token_user(request, "valid-token")
+
+        assert exc_info.value.status_code == 401
+        assert "Token validation failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_expired_jwt_token_raises_401(self):

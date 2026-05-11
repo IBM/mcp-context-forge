@@ -33,6 +33,7 @@ vi.mock("../../../mcpgateway/admin_ui/tokens", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
+  getCookie: vi.fn(() => ""),
   handleFetchError: vi.fn((e) => e.message),
   isInactiveChecked: vi.fn(() => false),
   makeCopyIdButton: vi.fn(() => document.createElement("button")),

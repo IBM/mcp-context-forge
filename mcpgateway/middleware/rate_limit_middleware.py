@@ -345,9 +345,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         violation_key = f"ratelimit:violations:{dimension}"
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                self.executor, self._should_lockout_sync, violation_key, tier_name, dimension
-            )
+            return await loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key, tier_name, dimension)
         except Exception:
             return self._should_lockout_memory(dimension, tier_name)
 
@@ -383,9 +381,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         violation_key = f"ratelimit:violations:{dimension}"
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                self.executor, self._increment_violation_sync, violation_key, dimension
-            )
+            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key, dimension)
         except Exception:
             self._increment_violation_memory(dimension)
 

@@ -113,6 +113,14 @@ class TestPluginsPageModeUI:
         plugins_page.open_plugin_detail(plugin_name)
 
         expect(plugins_page.details_modal).not_to_have_class("hidden")
+        # Wait for async plugin detail fetch to complete (content swaps "Loading..." for rendered HTML)
+        plugins_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('modal-plugin-content');
+                return el && !el.textContent.includes('Loading');
+            }""",
+            timeout=10000,
+        )
         modal_text = plugins_page.modal_content.text_content()
 
         found = any(label in modal_text for label in UNIFIED_MODE_LABELS)

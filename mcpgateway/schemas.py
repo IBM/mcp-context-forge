@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 # Shared validation helpers
 # ============================================================================
 
+
 def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
     """Validate and normalize server association IDs (tools, resources, prompts, agents).
 
@@ -82,11 +83,7 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
             try:
                 validated.append(SecurityValidator.validate_uuid(item_str, field_name))
             except ValueError:
-                raise ValueError(
-                    f"Invalid ID format: '{item_str}'. "
-                    f"{field_name} must contain UUID values, not names. "
-                    f"Use UUIDs from the respective entity listings."
-                )
+                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
         return validated
     return v
 

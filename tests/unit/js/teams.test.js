@@ -804,7 +804,7 @@ describe("approveJoinRequest", () => {
     });
 
     const teamsList = document.createElement("div");
-    teamsList.id = "teams-list";
+    teamsList.id = "unified-teams-list";
     document.body.appendChild(teamsList);
 
     await approveJoinRequest("team-123", "request-456");
@@ -883,7 +883,7 @@ describe("rejectJoinRequest", () => {
     });
 
     const teamsList = document.createElement("div");
-    teamsList.id = "teams-list";
+    teamsList.id = "unified-teams-list";
     document.body.appendChild(teamsList);
 
     await rejectJoinRequest("team-123", "request-456");

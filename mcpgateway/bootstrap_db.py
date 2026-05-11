@@ -449,14 +449,23 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 except Exception as e:
                     logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
 
-            # Create default roles
+            # Create or converge default roles
             created_roles = []
             for role_def in default_roles:
                 try:
                     # Check if role already exists
                     existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
-                        logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
+                        # Converge permissions for system roles so schema changes are applied
+                        expected_perms = set(cast(list[str], role_def["permissions"]))
+                        current_perms = set(existing_role.permissions or [])
+                        if existing_role.is_system_role and expected_perms != current_perms:
+                            logger.info(f"Updating system role {SecurityValidator.sanitize_log_message(str(role_def['name']))} permissions")
+                            existing_role.permissions = sorted(expected_perms)
+                            db.commit()
+                            db.refresh(existing_role)
+                        else:
+                            logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 

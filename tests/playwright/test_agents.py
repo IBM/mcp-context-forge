@@ -232,12 +232,12 @@ class TestAgentsUI:
         agents_page.navigate_to_agents_tab()
 
         # Use helper to fill basic auth
-        agents_page.fill_basic_auth("testuser", "testpass")
+        agents_page.fill_basic_auth("testuser", "TestP@ssw0rd!Test2026X")
 
         # Verify fields are filled and visible
         expect(agents_page.auth_basic_fields).to_be_visible()
         expect(agents_page.auth_username_input).to_have_value("testuser")
-        expect(agents_page.auth_password_input).to_have_value("testpass")
+        expect(agents_page.auth_password_input).to_have_value("TestP@ssw0rd!Test2026X")
 
     def test_fill_bearer_auth_helper(self, agents_page: AgentsPage):
         """Test the fill_bearer_auth helper method."""

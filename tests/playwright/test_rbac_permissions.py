@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 RBAC_TEST_PREFIX = "rbac-e2e"
 RBAC_DEVELOPER_EMAIL = f"{RBAC_TEST_PREFIX}-dev-{uuid.uuid4().hex[:8]}@test.example.com"
 RBAC_VIEWER_EMAIL = f"{RBAC_TEST_PREFIX}-viewer-{uuid.uuid4().hex[:8]}@test.example.com"
-RBAC_TEST_PASSWORD = "Changeme123!"
+RBAC_TEST_PASSWORD = "RbacP@ssw0rd!Test2026X"  # pragma: allowlist secret
 RBAC_TEAM_NAME = f"{RBAC_TEST_PREFIX}-team-{uuid.uuid4().hex[:8]}"
 
 
