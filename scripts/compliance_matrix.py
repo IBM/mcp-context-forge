@@ -45,7 +45,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_DIR = REPO_ROOT / "artifacts" / "compliance"
-COMPLIANCE_GAPS_PATH = REPO_ROOT / "tests" / "protocol_compliance" / "COMPLIANCE_GAPS.md"
+COMPLIANCE_GAPS_PATH = REPO_ROOT / "tests" / "live_gateway" / "protocol_compliance" / "COMPLIANCE_GAPS.md"
 
 # Engines, in display order. "reference" is stdio against the in-process FastMCP
 # reference server; it's not a gateway engine but including it here keeps the
@@ -285,7 +285,7 @@ def _run_slice(engine: str, keyword: str, junit_path: Path, xpass_log: Path, ext
         sys.executable,
         "-m",
         "pytest",
-        "tests/protocol_compliance",
+        "tests/live_gateway/protocol_compliance",
         "-k",
         keyword,
         f"--junitxml={junit_path}",

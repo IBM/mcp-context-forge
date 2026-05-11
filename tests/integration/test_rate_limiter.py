@@ -30,19 +30,21 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
+pytest.importorskip("cpex_rate_limiter", reason="cpex-rate-limiter plugin not installed")
+
 # First-Party
 from mcpgateway.main import app
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
     PromptPrehookPayload,
     ToolPreInvokePayload,
 )
-from mcpgateway.plugins.framework.base import HookRef, PluginRef
-from mcpgateway.plugins.framework.errors import PluginViolationError
-from mcpgateway.plugins.framework.manager import PluginExecutor
-from mcpgateway.plugins.framework.models import PluginMode
+from cpex.framework.base import HookRef, PluginRef
+from cpex.framework.errors import PluginViolationError
+from cpex.framework.manager import PluginExecutor
+from cpex.framework.models import PluginMode
 from cpex_rate_limiter.rate_limiter import RateLimiterPlugin
 
 # API Endpoints
@@ -690,7 +692,7 @@ class TestPermissiveMode:
             kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
-            mode=PluginMode.PERMISSIVE,
+            mode=PluginMode.TRANSFORM,
             config={"by_user": limit},
         )
         plugin = RateLimiterPlugin(config)
@@ -740,7 +742,7 @@ class TestPermissiveMode:
             kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_user": "1/s"},
-            mode=PluginMode.ENFORCE,
+            mode=PluginMode.SEQUENTIAL,
         )
         enforce_plugin = RateLimiterPlugin(enforce_config)
         enforce_ref = HookRef("tool_pre_invoke", PluginRef(enforce_plugin))

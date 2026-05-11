@@ -23,7 +23,7 @@ from cedarpy import AuthzResult, Decision, is_authorized, is_authorized_batch
 
 # First-Party
 from cedarpolicyplugin.schema import CedarConfig, CedarInput
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

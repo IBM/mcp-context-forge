@@ -24,8 +24,8 @@ from typing import Any, Optional, Pattern
 # Third-Party
 from pydantic import BaseModel, ConfigDict, field_validator
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -224,7 +224,7 @@ class SQLSanitizerPlugin(Plugin):
             )
         if scanned:
             new_args = {**(payload.args or {}), **scanned}
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=new_args), metadata={"sql_sanitized": True})
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args), metadata={"sql_sanitized": True})
         return PromptPrehookResult(metadata={"sql_issues": issues} if issues else {})
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:

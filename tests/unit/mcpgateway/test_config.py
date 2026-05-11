@@ -109,6 +109,71 @@ def test_uaid_max_federation_hops_accepts_bounds(good_value):
     assert settings.uaid_max_federation_hops == good_value
 
 
+def test_parse_siem_destinations_input_variants(monkeypatch):
+    """siem_destinations parser should normalize supported value shapes."""
+    assert Settings.parse_siem_destinations(None) == []
+    assert Settings.parse_siem_destinations(123) == []
+    assert Settings.parse_siem_destinations("   ") == []
+
+    from_list = Settings.parse_siem_destinations([{"name": "d1"}, "skip"])
+    assert from_list == [{"name": "d1"}]
+
+    from_dict = Settings.parse_siem_destinations({"destinations": [{"name": "d2"}]})
+    assert from_dict == [{"name": "d2"}]
+    assert Settings.parse_siem_destinations({"unexpected": "value"}) == []
+
+    from_json_list = Settings.parse_siem_destinations('[{"name":"d3"}]')
+    assert from_json_list == [{"name": "d3"}]
+
+    from_json_dict = Settings.parse_siem_destinations('{"destinations":[{"name":"d4"}]}')
+    assert from_json_dict == [{"name": "d4"}]
+    assert Settings.parse_siem_destinations("{}") == []
+
+    from_nested_json = Settings.parse_siem_destinations('{"siem_export":{"destinations":[{"name":"d5"}]}}')
+    assert from_nested_json == [{"name": "d5"}]
+
+    from_yaml = Settings.parse_siem_destinations("- name: d6\n  type: webhook\n")
+    assert from_yaml == [{"name": "d6", "type": "webhook"}]
+
+    from_yaml_dict = Settings.parse_siem_destinations("destinations:\n  - name: d7\n    type: webhook\n")
+    assert from_yaml_dict == [{"name": "d7", "type": "webhook"}]
+
+    from_yaml_nested = Settings.parse_siem_destinations("siem_export:\n  destinations:\n    - name: d8\n      type: webhook\n")
+    assert from_yaml_nested == [{"name": "d8", "type": "webhook"}]
+
+    # Force YAML parser failure after JSON parsing fails.
+    import yaml
+
+    monkeypatch.setattr(yaml, "safe_load", lambda _raw: (_ for _ in ()).throw(ValueError("bad yaml")))
+    assert Settings.parse_siem_destinations("{not valid json or yaml}") == []
+
+
+def test_load_siem_destinations_from_file(tmp_path: Path):
+    """Settings should load SIEM destinations from the configured file."""
+    cfg = tmp_path / "siem.json"
+    cfg.write_text('[{"name":"file-dest","type":"webhook","url":"https://example.com/hook"}]', encoding="utf-8")
+
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(cfg),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == [{"name": "file-dest", "type": "webhook", "url": "https://example.com/hook"}]
+
+
+def test_load_siem_destinations_missing_file(tmp_path: Path):
+    """Missing SIEM destination config file should not raise."""
+    missing = tmp_path / "does-not-exist.json"
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(missing),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == []
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
@@ -1322,3 +1387,139 @@ def test_hot_server_check_interval_property():
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
+
+
+# --------------------------------------------------------------------------- #
+#                    UAID Security Configuration                               #
+# --------------------------------------------------------------------------- #
+def test_uaid_allow_all_domains_defaults_false():
+    """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_allow_all_domains is False
+
+
+def test_uaid_forward_auth_defaults_true():
+    """Verify UAID_FORWARD_AUTH defaults to True (auth forwarding enabled)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_forward_auth is True
+
+
+def test_uaid_allow_all_domains_can_be_enabled():
+    """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
+    settings = Settings(uaid_allow_all_domains=True, _env_file=None)
+    assert settings.uaid_allow_all_domains is True
+
+
+# UAID Domain Allowlist Validation Tests
+def test_uaid_allowed_domains_rejects_localhost():
+    """Verify validator rejects localhost in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["example.com", "localhost"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_127_0_0_1():
+    """Verify validator rejects 127.0.0.1 in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["127.0.0.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local():
+    """Verify validator rejects link-local addresses (169.254.x.x)."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_private_ips():
+    """Verify validator rejects private IP ranges."""
+    # Test various private IP ranges
+    private_ips = ["10.0.0.1", "192.168.1.1", "172.16.0.1"]
+    for ip in private_ips:
+        with pytest.raises(ValueError, match="private IP range"):
+            Settings(uaid_allowed_domains=[ip], _env_file=None)
+
+
+def test_uaid_allowed_domains_172_range_boundary():
+    """Verify only the private 172.16/12 range is rejected."""
+    with pytest.raises(ValueError, match="private IP range"):
+        Settings(uaid_allowed_domains=["172.20.1.1"], _env_file=None)
+
+    settings = Settings(uaid_allowed_domains=["172.32.1.1"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["172.32.1.1"]
+
+
+def test_uaid_allowed_domains_rejects_whitespace():
+    """Verify validator rejects domains with whitespace."""
+    with pytest.raises(ValueError, match="contains whitespace"):
+        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_domains():
+    """Verify validator accepts valid public domain names."""
+    valid_domains = ["example.com", "gateway.acme.org", "api.partner.io"]
+    settings = Settings(uaid_allowed_domains=valid_domains, _env_file=None)
+    assert settings.uaid_allowed_domains == valid_domains
+
+
+def test_uaid_allowed_domains_accepts_empty_list():
+    """Verify validator accepts empty list (fail-closed default)."""
+    settings = Settings(uaid_allowed_domains=[], _env_file=None)
+    assert settings.uaid_allowed_domains == []
+
+
+def test_uaid_config_warns_on_contradictory_settings(caplog):
+    """Verify warning when both allow_all and allowlist are set."""
+    import logging
+
+    # Capture warnings from the config logger
+    with caplog.at_level(logging.WARNING, logger='mcpgateway.config'):
+        settings = Settings(
+            uaid_allow_all_domains=True,
+            uaid_allowed_domains=["example.com"],
+            _env_file=None
+        )
+
+    # Should create settings successfully but log warning
+    assert settings.uaid_allow_all_domains is True
+    assert settings.uaid_allowed_domains == ["example.com"]
+
+    # Check warning was logged in config module
+    assert any("Configuration conflict" in record.message for record in caplog.records), \
+        f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
+
+
+def test_uaid_allowed_domains_rejects_ipv6_with_brackets():
+    """Verify validator rejects IPv6 loopback with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::1]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_ipv6_zero_with_brackets():
+    """Verify validator rejects IPv6 zero address with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::0]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_multiple_invalid():
+    """Verify validator reports all invalid domains when multiple are present."""
+    with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
+        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_loopback_with_port():
+    """Verify validator rejects loopback addresses with ports."""
+    loopback_with_ports = ["localhost:4444", "127.0.0.1:4444", "[::1]:8080"]
+    for domain in loopback_with_ports:
+        with pytest.raises(ValueError, match="loopback address"):
+            Settings(uaid_allowed_domains=[domain], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local_with_port():
+    """Verify validator rejects link-local addresses with ports."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1:8080"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_with_port():
+    """Verify validator accepts valid public domains with ports."""
+    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]

@@ -18,7 +18,7 @@ import pytest
 
 # First-Party
 from mcpgateway.middleware import rbac as rbac_module
-import mcpgateway.plugins.framework as plugin_framework
+import cpex.framework as plugin_framework
 from mcpgateway.routers import log_search
 
 

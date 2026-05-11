@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -394,7 +394,7 @@ class TestWebhookNotificationPlugin:
         # Test post-hook with mock notification
         plugin._notify_webhooks = AsyncMock()
 
-        from mcpgateway.plugins.framework import PromptPosthookPayload
+        from cpex.framework import PromptPosthookPayload
         from mcpgateway.common.models import PromptResult
 
         post_payload = PromptPosthookPayload(prompt_id="test_prompt", result=PromptResult(messages=[]))

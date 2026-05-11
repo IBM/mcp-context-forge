@@ -15,9 +15,9 @@ from typing import Dict
 import orjson
 
 # First-Party
-from mcpgateway.plugins.framework import get_attr, Plugin, PluginConfig, PluginContext
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
+from cpex.framework import get_attr, Plugin, PluginConfig, PluginContext
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from cpex.framework.hooks.tools import ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

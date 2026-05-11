@@ -8,7 +8,7 @@ This guide walks you through setting up Azure resources and running fully automa
 
 ## Overview
 
-The E2E tests in `tests/e2e/test_entra_id_integration.py` are **fully self-contained**:
+The E2E tests in `tests/live_gateway/sso/test_entra_id_integration.py` are **fully self-contained**:
 
 - **Create** test users and groups in Azure AD before tests
 - **Execute** SSO role mapping tests against real Azure infrastructure
@@ -193,32 +193,32 @@ export TEST_ENTRA_DOMAIN="yourcompany.onmicrosoft.com"
 source .env.test
 
 # Run the tests
-uv run pytest tests/e2e/test_entra_id_integration.py -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py -v
 ```
 
 ### Run Specific Test Classes
 
 ```bash
 # Test role mapping only
-uv run pytest tests/e2e/test_entra_id_integration.py::TestEntraIDRoleMapping -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py::TestEntraIDRoleMapping -v
 
 # Test HTTP endpoints
-uv run pytest tests/e2e/test_entra_id_integration.py::TestEntraIDEndToEndHTTP -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py::TestEntraIDEndToEndHTTP -v
 
 # Test admin role retention behavior
-uv run pytest tests/e2e/test_entra_id_integration.py::TestEntraIDAdminRoleRetention -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py::TestEntraIDAdminRoleRetention -v
 
 # Test multiple admin groups
-uv run pytest tests/e2e/test_entra_id_integration.py::TestEntraIDMultipleAdminGroups -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py::TestEntraIDMultipleAdminGroups -v
 
 # Test token validation
-uv run pytest tests/e2e/test_entra_id_integration.py::TestEntraIDTokenValidation -v
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py::TestEntraIDTokenValidation -v
 ```
 
 ### Run with Debug Output
 
 ```bash
-uv run pytest tests/e2e/test_entra_id_integration.py -v -s --log-cli-level=INFO
+uv run pytest tests/live_gateway/sso/test_entra_id_integration.py -v -s --log-cli-level=INFO
 ```
 
 ---
@@ -437,7 +437,7 @@ jobs:
           TEST_ENTRA_USER_PASSWORD: ${{ secrets.TEST_ENTRA_USER_PASSWORD }}
           TEST_ENTRA_DOMAIN: ${{ secrets.TEST_ENTRA_DOMAIN }}
         run: |
-          uv run pytest tests/e2e/test_entra_id_integration.py -v
+          uv run pytest tests/live_gateway/sso/test_entra_id_integration.py -v
 ```
 
 ---
@@ -472,7 +472,7 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 | 4 | Grant admin consent |
 | 5 | (Optional) Enable public client flows for ROPC |
 | 6 | Configure environment variables |
-| 7 | Run tests with `uv run pytest tests/e2e/test_entra_id_integration.py -v` |
+| 7 | Run tests with `uv run pytest tests/live_gateway/sso/test_entra_id_integration.py -v` |
 
 ---
 

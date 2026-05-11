@@ -35,6 +35,7 @@ from mcpgateway.schemas import (
     ToolPluginBindingResponse,
 )
 from mcpgateway.services.tool_plugin_binding_service import (
+    ToolPluginBindingForbiddenError,
     ToolPluginBindingNotFoundError,
     ToolPluginBindingService,
     get_bindings_for_tool,
@@ -96,6 +97,7 @@ def _make_binding(
     mode="enforce",
     priority=50,
     config=None,
+    on_error=None,
     binding_reference_id=None,
     created_by="admin@example.com",
     updated_by="admin@example.com",
@@ -109,6 +111,7 @@ def _make_binding(
     b.mode = mode
     b.priority = priority
     b.config = config if config is not None else dict(_OLG)
+    b.on_error = on_error
     b.binding_reference_id = binding_reference_id
     b.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     b.created_by = created_by
@@ -157,6 +160,7 @@ def simple_request():
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -212,6 +216,7 @@ class TestUpsertBindings:
         assert r.tool_name == "tool_x"
         assert r.plugin_id == "OutputLengthGuardPlugin"
         assert r.mode == "enforce"
+
         assert r.priority == 50
         assert r.config == dict(_OLG)
         assert r.created_by == "admin@example.com"
@@ -235,6 +240,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=10,
                             config=cfg_v1,
                         )
@@ -253,6 +259,7 @@ class TestUpsertBindings:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=50,
                             config=cfg_v2,
                         )
@@ -297,6 +304,7 @@ class TestUpsertBindings:
                             tool_names=["tool_a", "tool_b"],
                             plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=20,
                             config=cfg,
                         )
@@ -316,6 +324,7 @@ class TestUpsertBindings:
         assert tool_a.team_id == "team-a"
         assert tool_a.plugin_id == "RateLimiterPlugin"
         assert tool_a.mode == "permissive"
+
         assert tool_a.priority == 20
         assert tool_a.config == cfg
 
@@ -323,6 +332,7 @@ class TestUpsertBindings:
         assert tool_b.team_id == "team-a"
         assert tool_b.plugin_id == "RateLimiterPlugin"
         assert tool_b.mode == "permissive"
+
         assert tool_b.priority == 20
         assert tool_b.config == cfg
 
@@ -503,6 +513,58 @@ class TestDeleteBinding:
         """delete_binding raises ToolPluginBindingNotFoundError for an unknown ID."""
         with pytest.raises(ToolPluginBindingNotFoundError, match="not found"):
             service.delete_binding(db_session, "nonexistent-id")
+
+    def test_delete_binding_foreign_team_raises_forbidden(self, service, db_session):
+        """delete_binding raises ToolPluginBindingForbiddenError when allowed_teams
+        is set and the binding's team_id is not in the set."""
+        r = ToolPluginBindingRequest(
+            teams={"team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL))])}
+        )
+        inserted = service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+        binding_id = inserted[0].id
+
+        with pytest.raises(ToolPluginBindingForbiddenError, match="team-a"):
+            service.delete_binding(db_session, binding_id, allowed_teams={"team-b"})
+
+        # Row must still exist
+        assert db_session.query(ToolPluginBinding).filter_by(id=binding_id).first() is not None
+
+    def test_delete_bindings_by_reference_scoped_to_allowed_teams(self, service, db_session):
+        """delete_bindings_by_reference only removes bindings whose team_id is in allowed_teams."""
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL), binding_reference_id="ref-123")]
+                ),
+                "team-b": TeamPolicies(
+                    policies=[PluginPolicyItem(tool_names=["tool_y"], plugin_id="RateLimiterPlugin", config=dict(_RL), binding_reference_id="ref-123")]
+                ),
+            }
+        )
+        service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+
+        deleted = service.delete_bindings_by_reference(db_session, "ref-123", allowed_teams={"team-a"})
+
+        assert len(deleted) == 1
+        assert deleted[0].team_id == "team-a"
+        # team-b binding still present
+        remaining = db_session.query(ToolPluginBinding).filter_by(binding_reference_id="ref-123").all()
+        assert len(remaining) == 1
+        assert remaining[0].team_id == "team-b"
+
+    def test_delete_binding_empty_allowed_teams_blocks_own_team(self, service, db_session):
+        """allowed_teams=set() (public-only / empty token) blocks deletion even for the binding's own team."""
+        r = ToolPluginBindingRequest(
+            teams={"team-a": TeamPolicies(policies=[PluginPolicyItem(tool_names=["tool_x"], plugin_id="RateLimiterPlugin", config=dict(_RL))])}
+        )
+        inserted = service.upsert_bindings(db_session, r, caller_email="admin@example.com")
+        binding_id = inserted[0].id
+
+        with pytest.raises(ToolPluginBindingForbiddenError, match="team-a"):
+            service.delete_binding(db_session, binding_id, allowed_teams=set())
+
+        # Row must still exist
+        assert db_session.query(ToolPluginBinding).filter_by(id=binding_id).first() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +756,7 @@ class TestGetBindingsForTool:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=50,
                             config=dict(_OLG),
                         )
@@ -712,6 +775,7 @@ class TestGetBindingsForTool:
                             tool_names=["*"],
                             plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=10,
                             config={**_RL, "by_user": "100/m", "by_tenant": "1000/m"},
                         )
@@ -750,6 +814,7 @@ class TestGetBindingsForTool:
                             tool_names=["*"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=1,
                             config={**_OLG, "max_chars": 100},
                         )
@@ -768,6 +833,7 @@ class TestGetBindingsForTool:
                             tool_names=["tool_z"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
+
                             priority=99,
                             config={**_OLG, "max_chars": 9999},
                         )

@@ -38,7 +38,7 @@ open http://localhost:3100
 # Verify that fresh MCP traffic lands in Langfuse
 LANGFUSE_PUBLIC_KEY=pk-lf-contextforge \
 LANGFUSE_SECRET_KEY=sk-lf-contextforge \
-uv run pytest tests/e2e/test_langfuse_traces.py -q
+uv run pytest tests/live_gateway/mcp/test_langfuse_traces.py -q
 ```
 
 ### Option 2: Standalone Langfuse

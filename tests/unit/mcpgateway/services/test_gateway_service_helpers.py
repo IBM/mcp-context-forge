@@ -186,13 +186,13 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
 
     service = GatewayService()
     service._check_gateway_uniqueness = MagicMock(return_value=None)
-    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], []))
+    service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [fake_tool], [], [], []))
     service._notify_gateway_added = AsyncMock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "mcpgateway.services.gateway_service.GatewayRead.model_validate",
-        lambda x: MagicMock(masked=lambda: x),
+        lambda x: MagicMock(),
     )
 
     db = MagicMock()

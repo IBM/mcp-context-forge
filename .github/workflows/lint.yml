@@ -118,7 +118,6 @@ jobs:
             setup: "true"
             cmd: |
               find . -type f -name '*.toml' \
-                -not -path './plugin_templates/*' \
                 -not -path './mcp-servers/templates/*' \
                 -print0 |
                 xargs -0 -I{} uv tool run tomlcheck==$TOMLCHECK_VERSION "{}"

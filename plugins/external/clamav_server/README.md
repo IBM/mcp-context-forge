@@ -17,7 +17,7 @@ External MCP server plugin that scans files and text content using ClamAV.
 - `tool_post_invoke`: Recursively scans string fields in tool outputs.
 
 ## Server Launch
-- Use the gateway runtime: `mcpgateway.plugins.framework.external.mcp.server.runtime`.
+- Use the gateway runtime: `cpex.framework.external.mcp.server.runtime`.
 - Provide `PLUGINS_CONFIG_PATH` pointing to this project's `resources/plugins/config.yaml`.
 
 Example run script is created at `plugins/external/clamav_server/run.sh`.

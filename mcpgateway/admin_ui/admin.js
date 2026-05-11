@@ -12,6 +12,12 @@
 import htmx from 'htmx.org';
 window.htmx = htmx;
 
+// Configure HTMX to use CSP nonce for inline event handlers
+// The nonce is set in the template via window.htmxConfig before this bundle loads
+if (window.htmxConfig && window.htmxConfig.inlineScriptNonce) {
+  htmx.config.inlineScriptNonce = window.htmxConfig.inlineScriptNonce;
+}
+
 // Bootstrap MUST be first - initializes window.Admin before any modules run
 import "./bootstrap.js";
 

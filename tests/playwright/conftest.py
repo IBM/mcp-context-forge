@@ -31,6 +31,7 @@ from .pages.gateways_page import GatewaysPage
 from .pages.login_page import LoginPage
 from .pages.mcp_registry_page import MCPRegistryPage
 from .pages.metrics_page import MetricsPage
+from .pages.plugins_page import PluginsPage
 from .pages.prompts_page import PromptsPage
 from .pages.resources_page import ResourcesPage
 from .pages.servers_page import ServersPage
@@ -286,10 +287,10 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
 
-    # Wait for JS initialization (showTab + HTMX) before any tab clicks
+    # Wait for JS initialization (showTab + HTMX + event delegation) before any tab clicks
     try:
         page.wait_for_function(
-            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
+            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined' && window.Admin.eventDelegationInitialized === true",
             timeout=30000,
         )
     except PlaywrightTimeoutError:
@@ -414,6 +415,13 @@ def resources_page(page: Page, base_url: str) -> ResourcesPage:
 
 
 @pytest.fixture
+def plugins_page(page: Page, base_url: str) -> PluginsPage:
+    """Provide a logged-in PluginsPage instance for plugin tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return PluginsPage(page)
+
+
+@pytest.fixture
 def prompts_page(page: Page, base_url: str) -> PromptsPage:
     """Provide a logged-in PromptsPage instance for prompt tests."""
     _ensure_admin_logged_in(page, base_url)
@@ -469,7 +477,7 @@ def test_tool_data():
     return {
         "name": f"test-api-tool-{unique_id}",
         "description": "Test API tool for automation",
-        "url": "https://api.example.com/test",
+        "url": "https://httpbin.org/post",
         "integrationType": "REST",
         "requestType": "GET",
         "headers": '{"Authorization": "Bearer test-token"}',
@@ -483,7 +491,7 @@ def test_server_data():
     unique_id = uuid.uuid4()
     return {
         "name": f"test-server-{unique_id}",
-        "icon": "http://localhost:9000/icon.png",
+        "icon": "https://httpbin.org/icon.png",
     }
 
 
@@ -527,7 +535,7 @@ def test_agent_data():
     unique_id = uuid.uuid4()
     return {
         "name": f"test-agent-{unique_id}",
-        "endpoint_url": "https://api.example.com/agent",
+        "endpoint_url": "https://httpbin.org/post",
         "agent_type": "generic",
         "description": "A test A2A agent created by automation",
         "tags": "test,automation,ai",

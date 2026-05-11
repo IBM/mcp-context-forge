@@ -115,19 +115,19 @@ async def chat_completions(
         logger.error(f"Authentication error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
+            detail="Authentication failed",
         )
     except LLMProxyRequestError as e:
         logger.error(f"Proxy request error: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(e),
+            detail="Upstream request failed",
         )
     except Exception as e:
         logger.error(f"Unexpected error in chat completion: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal error: {str(e)}",
+            detail="Internal error",
         )
 
 

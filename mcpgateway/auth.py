@@ -71,8 +71,9 @@ from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -80,7 +81,8 @@ from starlette.requests import Request
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError, UserContext
+from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
@@ -90,10 +92,20 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    security,
+    verify_jwt_token_cached,
+)
 
-# Security scheme
-security = HTTPBearer(auto_error=False)
+__all__ = [
+    "ConfigurableHTTPBearer",
+    "security",
+    "get_current_user",
+    "get_user_team_roles",
+    "normalize_token_teams",
+    "resolve_session_teams",
+]
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
@@ -1840,7 +1852,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     """Inject user identity into the plugin_global_context.
 
     Always populates both the legacy ``global_context.user`` dict (for backward
-    compatibility) and the new structured ``global_context.user_context``
+    compatibility) and the structured ``global_context.user_context``
     (:class:`UserContext`).
 
     Args:

@@ -347,9 +347,11 @@ class TestHTMXInteractions:
         dialog_seen = {"value": False}
         tools_page.page.on("dialog", lambda dialog: (dialog.dismiss(), dialog_seen.__setitem__("value", True)))
 
-        delete_form = tool_row.locator('form[action*="/delete"]')
-        if delete_form.count() > 0:
-            delete_form.locator('button[type="submit"]').click()
+        # Open the action dropdown — delete button is inside the Alpine overflow menu
+        tools_page.open_action_dropdown(tool_row)
+        delete_btn = tool_row.locator('button[role="menuitem"]:has-text("Delete")')
+        if delete_btn.count() > 0:
+            delete_btn.click()
 
         # Wait a moment for dialog handling
         tools_page.page.wait_for_timeout(500)

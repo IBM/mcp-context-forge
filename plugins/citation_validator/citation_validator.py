@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

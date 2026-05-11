@@ -19,7 +19,7 @@ plugins:
     author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [normalize, inputs, whitespace, unicode, dates, numbers]
-    mode: permissive
+    mode: transform
     priority: 40
     conditions: []
     config:
@@ -63,7 +63,7 @@ plugins:
       - tool_pre_invoke
       - tool_post_invoke
     tags: [security, pii, compliance, filter, gdpr, hipaa]
-    mode: permissive  # enforce | permissive | disabled
+    mode: transform  # sequential | transform | disabled
     priority: 50  # Lower number = higher priority (runs first)
     conditions:
       - prompts: []  # Empty list = apply to all prompts
@@ -102,7 +102,7 @@ plugins:
       - tool_pre_invoke
       - tool_post_invoke
     tags: [plugin, transformer, regex, search-and-replace, pre-post]
-    mode: permissive  # enforce | permissive | disabled
+    mode: transform  # sequential | transform | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -124,7 +124,7 @@ plugins:
     author: Mihai Criveti
     hooks: [prompt_pre_fetch]
     tags: [plugin, filter, denylist, pre-post]
-    mode: permissive  # enforce | permissive | disabled
+    mode: transform  # sequential | transform | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers
@@ -145,7 +145,7 @@ plugins:
     author: ContextForge Team
     hooks: [resource_pre_fetch, resource_post_fetch]
     tags: [resource, filter, security, example]
-    mode: permissive  # Block resources that violate rules
+    mode: transform  # Block resources that violate rules
     priority: 75
     conditions: []  # Apply to all resources
     config:
@@ -179,7 +179,7 @@ plugins:
     author: ContextForge
     hooks: [resource_post_fetch]
     tags: [security, html, xss, sanitize]
-    mode: permissive
+    mode: transform
     priority: 119
     conditions: []
     config:
@@ -231,7 +231,7 @@ plugins:
     author: Mihai Criveti
     hooks: [resource_post_fetch]
     tags: [transform, markdown, html]
-    mode: permissive
+    mode: transform
     priority: 120
     conditions: []
     config: {}
@@ -361,7 +361,7 @@ plugins:
     author: Mihai Criveti
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [schema, validation]
-    mode: permissive
+    mode: transform
     priority: 110
     conditions: []
     config:
@@ -379,7 +379,7 @@ plugins:
     author: Osher Elhadad
     hooks: [tool_pre_invoke]
     tags: [validation, sparc, altk, static, schema, type-checking]
-    mode: permissive    # Enable with "enforce" or "permissive"
+    mode: transform    # Enable with "sequential" or "transform"
     priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
     conditions: []
     config:
@@ -409,7 +409,7 @@ plugins:
     author: Mihai Criveti
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [cache, performance]
-    mode: permissive
+    mode: transform
     priority: 130
     conditions: []
     config:
@@ -425,7 +425,7 @@ plugins:
     author: ContextForge
     hooks: [resource_pre_fetch]
     tags: [security, url, reputation]
-    mode: permissive
+    mode: transform
     priority: 60
     conditions: []
     config:
@@ -440,7 +440,7 @@ plugins:
     author: Mihai Criveti
     hooks: [resource_pre_fetch, resource_post_fetch]
     tags: [security, content, mime]
-    mode: permissive
+    mode: transform
     priority: 65
     conditions: []
     config:
@@ -479,7 +479,7 @@ plugins:
     author: Mihai Criveti
     hooks: [prompt_post_fetch, resource_post_fetch]
     tags: [markdown, format]
-    mode: permissive
+    mode: transform
     priority: 140
     conditions: []
     config: {}
@@ -492,7 +492,7 @@ plugins:
     author: Mihai Criveti
     hooks: [tool_post_invoke]
     tags: [json, repair]
-    mode: permissive
+    mode: transform
     priority: 145
     conditions: []
     config: {}
@@ -510,7 +510,7 @@ plugins:
       - prompt_post_fetch
       - tool_post_invoke
     tags: [security, threat]
-    mode: permissive
+    mode: transform
     priority: 61
     conditions: []
     config:
@@ -557,7 +557,7 @@ plugins:
     author: ContextForge
     hooks: [tool_post_invoke]
     tags: [security, code]
-    mode: permissive
+    mode: transform
     priority: 155
     conditions: []
     config:
@@ -568,7 +568,7 @@ plugins:
         - \bsubprocess\.(Popen|call|run)\s*\(
         - \brm\s+-rf\b
 
-  # Output Length Guard - enforce bounds or truncate tool outputs
+  # Output Length Guard - sequential bounds or truncate tool outputs
   - name: OutputLengthGuardPlugin
     kind: plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin
     description: Guards tool outputs by enforcing min/max length; block or truncate
@@ -576,7 +576,7 @@ plugins:
     author: ContextForge
     hooks: [tool_post_invoke]
     tags: [guard, length, outputs, truncate, block]
-    mode: permissive  # use "enforce" with strategy: block for strict behavior
+    mode: transform  # use "sequential" with strategy: block for strict behavior
     priority: 160  # run after other transformers
     conditions: []
     config:
@@ -593,7 +593,7 @@ plugins:
     author: ContextForge
     hooks: [resource_post_fetch, tool_post_invoke]
     tags: [summarize, llm, content]
-    mode: permissive
+    mode: transform
     priority: 170
     conditions: []
     config:
@@ -630,7 +630,7 @@ plugins:
   #   author: "Mihai Criveti"
   #   hooks: ["resource_pre_fetch", "resource_post_fetch"]
   #   tags: ["security", "malware", "clamav"]
-  #   mode: "permissive"
+  #   mode: "transform"
   #   priority: 62
   #   mcp:
   #     proto: STDIO
@@ -638,7 +638,7 @@ plugins:
 
   # - name: "OPAPluginFilter"
   #   kind: "external"
-  #   mode: "permissive"  # Don't fail if the server is unavailable
+  #   mode: "transform"  # Don't fail if the server is unavailable
   #   priority: 10  # adjust the priority
   #   mcp:
   #     proto: STREAMABLEHTTP
@@ -656,8 +656,8 @@ plugins:
     author: ContextForge
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [reliability, sre]
-    # mode: "enforce_ignore_error"
-    mode: permissive
+    # mode: "sequential"  # on_error: ignore
+    mode: transform
     priority: 70
     conditions: []
     config:
@@ -668,7 +668,7 @@ plugins:
       cooldown_seconds: 60
       tool_overrides: {}
 
-  # Watchdog - enforce per-tool execution SLOs
+  # Watchdog - sequential per-tool execution SLOs
   - name: Watchdog
     kind: plugins.watchdog.watchdog.WatchdogPlugin
     description: Enforce max runtime per tool; warn or block
@@ -676,8 +676,8 @@ plugins:
     author: ContextForge
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [latency, slo]
-    # mode: "enforce_ignore_error"
-    mode: permissive
+    # mode: "sequential"  # on_error: ignore
+    mode: transform
     priority: 85
     conditions: []
     config:
@@ -693,7 +693,7 @@ plugins:
     author: ContextForge
     hooks: [resource_pre_fetch, resource_post_fetch]
     tags: [compliance, robots, license]
-    mode: permissive
+    mode: transform
     priority: 63
     conditions: []
     config:
@@ -711,7 +711,7 @@ plugins:
     author: ContextForge
     hooks: [prompt_pre_fetch, tool_post_invoke]
     tags: [safety, moderation]
-    mode: permissive
+    mode: transform
     priority: 96
     conditions: []
     config:
@@ -738,8 +738,8 @@ plugins:
     author: ContextForge
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [localization, timezone]
-    # mode: "permissive"
-    mode: permissive
+    # mode: "transform"
+    mode: transform
     priority: 175
     conditions: []
     config:
@@ -756,7 +756,7 @@ plugins:
   #   author: "ContextForge"
   #   hooks: ["prompt_pre_fetch", "resource_post_fetch", "tool_post_invoke"]
   #   tags: ["normalize", "unicode", "safety"]
-  #   mode: "permissive"
+  #   mode: "transform"
   #   priority: 138
   #   conditions: []
   #   config:
@@ -775,8 +775,8 @@ plugins:
     author: ContextForge
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [security, sql, validation]
-    # mode: "permissive"
-    mode: permissive
+    # mode: "transform"
+    mode: transform
     priority: 45
     conditions: []
     config:
@@ -801,8 +801,8 @@ plugins:
     author: ContextForge
     hooks: [prompt_pre_fetch, tool_post_invoke, resource_post_fetch]
     tags: [security, secrets, dlp]
-    # mode: "permissive"
-    mode: permissive
+    # mode: "transform"
+    mode: transform
     priority: 51
     conditions: []
     config:
@@ -828,7 +828,7 @@ plugins:
     author: ContextForge
     hooks: [resource_pre_fetch]
     tags: [headers, network, enhancement]
-    mode: permissive
+    mode: transform
     priority: 58
     conditions: []
     config:
@@ -861,7 +861,7 @@ plugins:
     author: ContextForge
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [performance, cache, similarity]
-    mode: permissive
+    mode: transform
     priority: 128
     conditions: []
     config:
@@ -880,7 +880,7 @@ plugins:
     author: ContextForge
     hooks: [tool_post_invoke, resource_post_fetch]
     tags: [format, enhancement, postprocess]
-    mode: permissive
+    mode: transform
     priority: 180
     conditions: []
     config:
@@ -908,7 +908,7 @@ plugins:
     author: ContextForge
     hooks: [tool_post_invoke, resource_post_fetch]
     tags: [compliance, license, format]
-    mode: permissive
+    mode: transform
     priority: 185
     conditions: []
     config:
@@ -934,7 +934,7 @@ plugins:
     author: ContextForge
     hooks: [resource_post_fetch, tool_post_invoke]
     tags: [citation, links, validation]
-    mode: permissive
+    mode: transform
     priority: 122
     conditions: []
     config:
@@ -1062,7 +1062,7 @@ plugins:
     author: Jason Tsay
     hooks: [tool_post_invoke]
     tags: [plugin]
-    mode: disabled  # enforce | permissive | disabled
+    mode: disabled  # sequential | transform | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -1092,7 +1092,7 @@ plugins:
     author: Bar Haim
     hooks: [tool_pre_invoke, tool_post_invoke]
     tags: [telemetry, observability, opentelemetry, monitoring]
-    mode: disabled  # enforce | permissive | disabled
+    mode: disabled  # sequential | transform | disabled
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:

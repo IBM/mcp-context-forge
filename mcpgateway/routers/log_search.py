@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
 # First-Party
+from mcpgateway.common.query_params import QueryAggregation, QueryIdentifierDottedComponent, QueryUserIdentifierNoDescription
 from mcpgateway.config import settings
 from mcpgateway.db import (
     AuditTrail,
@@ -539,7 +540,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
 
     except Exception as e:
         logger.error(f"Correlation trace failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Correlation trace failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Correlation trace failed")
 
 
 @router.get("/security-events", response_model=List[SecurityEventResponse])
@@ -615,7 +616,7 @@ async def get_security_events(
 
     except Exception as e:
         logger.error(f"Security events query failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Security events query failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Security events query failed")
 
 
 @router.get("/audit-trails", response_model=List[AuditTrailResponse])
@@ -627,7 +628,7 @@ async def get_audit_trails(
     # trail stores fallback strings like "unknown", str(user), and JWT `sub` claims
     # (see mcpgateway/main.py:get_user_email and services/audit_trail_service.py);
     # an email-only regex would reject legitimate platform events.
-    user_id: Optional[str] = Query(None, max_length=255, pattern=r"^[a-zA-Z0-9._%+@-]+$"),
+    user_id: QueryUserIdentifierNoDescription = None,
     requires_review: Optional[bool] = Query(None),
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None),
@@ -700,16 +701,16 @@ async def get_audit_trails(
 
     except Exception as e:
         logger.error(f"Audit trails query failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Audit trails query failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Audit trails query failed")
 
 
 @router.get("/performance-metrics", response_model=List[PerformanceMetricResponse])
 @require_permission("metrics:read")
 async def get_performance_metrics(
-    component: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$"),
-    operation: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$"),
+    component: QueryIdentifierDottedComponent = None,
+    operation: QueryIdentifierDottedComponent = None,
     hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
-    aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, pattern="^(5m|24h)$", description="Aggregation level for metrics"),
+    aggregation: QueryAggregation = _DEFAULT_AGGREGATION_KEY,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> List[PerformanceMetricResponse]:

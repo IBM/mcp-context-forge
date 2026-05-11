@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -98,7 +98,7 @@ class PrivacyNoticeInjectorPlugin(Plugin):
             # Insert a dedicated user message at the end
             msg = Message(role=Role.USER, content=TextContent(type="text", text=f"{marker} {notice}"))
             new_messages = [*result.messages, msg]
-            new_payload = PromptPosthookPayload(name=payload.name, result=type(result)(messages=new_messages, description=result.description))
+            new_payload = PromptPosthookPayload(prompt_id=payload.prompt_id, result=type(result)(messages=new_messages, description=result.description))
             return PromptPosthookResult(modified_payload=new_payload)
 
         # Find first user message to modify
@@ -109,10 +109,10 @@ class PrivacyNoticeInjectorPlugin(Plugin):
                     new_msg = Message(role=m.role, content=TextContent(type="text", text=new_text))
                     new_msgs = result.messages.copy()
                     new_msgs[idx] = new_msg
-                    new_payload = PromptPosthookPayload(name=payload.name, result=type(result)(messages=new_msgs, description=result.description))
+                    new_payload = PromptPosthookPayload(prompt_id=payload.prompt_id, result=type(result)(messages=new_msgs, description=result.description))
                     return PromptPosthookResult(modified_payload=new_payload)
         # If no user message, append a separate one
         msg = Message(role=Role.USER, content=TextContent(type="text", text=f"{marker} {notice}"))
         new_messages = [*result.messages, msg]
-        new_payload = PromptPosthookPayload(name=payload.name, result=type(result)(messages=new_messages, description=result.description))
+        new_payload = PromptPosthookPayload(prompt_id=payload.prompt_id, result=type(result)(messages=new_messages, description=result.description))
         return PromptPosthookResult(modified_payload=new_payload)

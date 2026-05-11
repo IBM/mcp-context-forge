@@ -562,7 +562,7 @@ repos:
 
       - id: check-migration-patterns
         name: 🔐 Check Migration Patterns
-        description: Verifies Alembic migration naming, hashes, and source patterns.
+        description: Verifies Alembic migration naming, revision IDs, duplicates, and single-head chain.
         entry: python3 scripts/pre-commit/check_migration_patterns.py
         language: system
         files: ^mcpgateway/alembic/versions/.*\.py$

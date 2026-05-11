@@ -33,6 +33,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
 | `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
+|`REQUIRE_STRONG_SECRETS`|Enforces strong secret validation. Automatically defaults to true in production to ensure fail-safe deployments.|`true` (prod) / `false` (dev)|
 
 ### ⚙️ Project Defaults (Dev Setup)
 

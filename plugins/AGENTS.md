@@ -19,13 +19,13 @@ plugins/
 
 ## Plugin Framework
 
-Location: `mcpgateway/plugins/framework/`
+The plugin framework is provided by the [`cpex`](https://github.com/contextforge-org/contextforge-plugins-framework) package (ContextForge Plugin Extensions).
 
 ### Core Interfaces
 
 ```python
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
-from mcpgateway.plugins.framework import (
+from cpex.framework import Plugin, PluginConfig, PluginContext
+from cpex.framework import (
     PromptPrehookPayload, PromptPrehookResult,
     ToolPreInvokePayload, ToolPreInvokeResult,
     ResourcePreFetchPayload, ResourcePreFetchResult,
@@ -44,9 +44,8 @@ Plugins execute in priority order (ascending). Lower priority runs first.
 
 ### Plugin Modes
 
-- `enforce` - Block on violation
-- `enforce_ignore_error` - Block violations, but errors don't block
-- `permissive` - Log violations, continue processing
+- `sequential` - Block on violation (use `on_error: ignore` to block violations but allow errors to pass)
+- `transform` - Log violations, continue processing
 - `disabled` - Loaded but not executed
 
 ## Creating a Plugin
@@ -61,8 +60,8 @@ mcpplugins bootstrap --destination plugins/my_plugin --type native
 
 ```python
 # plugins/my_plugin/my_plugin.py
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
-from mcpgateway.plugins.framework import PromptPrehookPayload, PromptPrehookResult, PluginViolation
+from cpex.framework import Plugin, PluginConfig, PluginContext
+from cpex.framework import PromptPrehookPayload, PromptPrehookResult, PluginViolation
 
 class MyPlugin(Plugin):
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -88,7 +87,7 @@ plugins:
   - name: "MyPlugin"
     kind: "plugins.my_plugin.my_plugin.MyPlugin"
     hooks: ["prompt_pre_fetch"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 100
     config:
       # Plugin-specific configuration
@@ -152,7 +151,7 @@ Required tools on external server:
 
 ```python
 import pytest
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HookType, PluginConfig, PluginContext, GlobalContext,
     PromptPrehookPayload,
 )
@@ -194,9 +193,6 @@ make doctest test
 
 ## Key Files
 
-- `mcpgateway/plugins/framework/base.py` - Plugin base class
-- `mcpgateway/plugins/framework/models.py` - Pydantic models for payloads/results
-- `mcpgateway/plugins/framework/manager.py` - Plugin execution manager
-- `mcpgateway/plugins/framework/registry.py` - Plugin instance registry
 - `plugins/config.yaml` - Plugin configuration
-- `plugin_templates/` - Bootstrap templates
+- Plugin base class, models, manager, and registry are provided by the `cpex` package (see `cpex.framework`)
+- Bootstrap templates are provided by the `cpex` package via the `mcpplugins bootstrap` CLI command

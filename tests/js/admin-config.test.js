@@ -228,7 +228,7 @@ describe("admin template security hardening", () => {
     expect(html).toContain("window.fetch = function(resource, init = {})");
   });
 
-  test("all Tailwind CDN templates use pinned Tailwind Play CDN without SRI", () => {
+  test("all templates reference locally compiled Tailwind CSS", () => {
     const templates = [
       "admin.html",
       "login.html",
@@ -244,8 +244,8 @@ describe("admin template security hardening", () => {
         templateName
       );
       const html = fs.readFileSync(templatePath, "utf8");
-      expect(html).toContain('src="https://cdn.tailwindcss.com/3.4.17"');
-      expect(html).not.toContain('integrity="{{ sri_hashes.tailwindcss }}"');
+      expect(html).toContain('href="{{ root_path }}/static/css/tailwind.min.css"');
+      expect(html).not.toContain('cdn.tailwindcss.com');
     }
   });
 });

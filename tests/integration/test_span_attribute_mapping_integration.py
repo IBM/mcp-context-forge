@@ -10,15 +10,15 @@ Integration tests for SpanAttributeCustomizer attribute mapping feature.
 import pytest
 from unittest.mock import MagicMock, patch
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
     ToolHookType,
 )
-from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.utils import apply_attribute_mapping
+from cpex.framework import ToolPreInvokePayload
+from cpex.framework.manager import PluginManager
+from mcpgateway.plugins.utils import apply_attribute_mapping
 from mcpgateway.services.observability_service import ObservabilityService
 from plugins.span_attribute_customizer.span_attribute_customizer import SpanAttributeCustomizerPlugin
 

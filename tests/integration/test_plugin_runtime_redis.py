@@ -127,7 +127,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_enable_plugins_shared_writes_true(self, async_redis, sync_redis):
         """enable_plugins_shared(True) writes 'true' to real Redis."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         await enable_plugins_shared(True)
 
@@ -137,7 +137,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_enable_plugins_shared_writes_false(self, async_redis, sync_redis):
         """enable_plugins_shared(False) writes 'false' to real Redis."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         await enable_plugins_shared(False)
 
@@ -147,7 +147,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_are_plugins_enabled_shared_reads_true(self, async_redis, sync_redis):
         """are_plugins_enabled_shared() reads 'true' from real Redis."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared
 
         sync_redis.set("plugin:global:enabled", "true")
 
@@ -157,7 +157,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_are_plugins_enabled_shared_reads_false(self, async_redis, sync_redis):
         """are_plugins_enabled_shared() reads 'false' from real Redis."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared
 
         sync_redis.set("plugin:global:enabled", "false")
 
@@ -167,7 +167,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_roundtrip_toggle(self, async_redis, sync_redis):
         """Write via enable_plugins_shared, read via are_plugins_enabled_shared."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins_shared
 
         await enable_plugins_shared(False)
         assert await are_plugins_enabled_shared() is False
@@ -178,7 +178,7 @@ class TestGlobalToggleRedis:
     @pytest.mark.asyncio
     async def test_fallback_when_key_missing(self, async_redis, sync_redis):
         """Falls back to in-memory flag when Redis key doesn't exist."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins
 
         sync_redis.delete("plugin:global:enabled")
         enable_plugins(True)
@@ -198,7 +198,7 @@ class TestPluginModeOverrideRedis:
     @pytest.mark.asyncio
     async def test_get_plugin_mode_override_reads_value(self, async_redis, sync_redis):
         """get_plugin_mode_override reads mode from real Redis."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         sync_redis.set("plugin:RateLimiterPlugin:mode", "enforce")
 
@@ -208,7 +208,7 @@ class TestPluginModeOverrideRedis:
     @pytest.mark.asyncio
     async def test_get_plugin_mode_override_returns_none_when_missing(self, async_redis, sync_redis):
         """Returns None when no Redis key exists."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         sync_redis.delete("plugin:RateLimiterPlugin:mode")
 
@@ -218,7 +218,7 @@ class TestPluginModeOverrideRedis:
     @pytest.mark.asyncio
     async def test_multiple_plugin_modes(self, async_redis, sync_redis):
         """Multiple plugins can have independent mode overrides."""
-        from mcpgateway.plugins.framework import get_plugin_mode_override
+        from mcpgateway.plugins import get_plugin_mode_override
 
         sync_redis.set("plugin:RateLimiterPlugin:mode", "enforce")
         sync_redis.set("plugin:SecretsDetection:mode", "disabled")
@@ -248,7 +248,7 @@ class TestPubSubRedis:
         pubsub.get_message(timeout=1)
 
         # Toggle
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         await enable_plugins_shared(False)
 
@@ -266,7 +266,7 @@ class TestPubSubRedis:
     @pytest.mark.asyncio
     async def test_handler_updates_flag_on_global_toggle(self, async_redis):
         """_handle_invalidation_message updates in-memory flag."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, are_plugins_enabled, enable_plugins
+        from mcpgateway.plugins import _handle_invalidation_message, are_plugins_enabled, enable_plugins
 
         enable_plugins(True)
         assert are_plugins_enabled() is True
@@ -282,7 +282,7 @@ class TestPubSubRedis:
     @pytest.mark.asyncio
     async def test_handler_ignores_subscribe_messages(self, async_redis):
         """Handler ignores non-message types."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, are_plugins_enabled, enable_plugins
+        from mcpgateway.plugins import _handle_invalidation_message, are_plugins_enabled, enable_plugins
 
         enable_plugins(True)
         message = {"type": "subscribe", "data": None}
@@ -292,7 +292,7 @@ class TestPubSubRedis:
     @pytest.mark.asyncio
     async def test_handler_handles_malformed_json(self, async_redis):
         """Handler doesn't crash on malformed JSON."""
-        from mcpgateway.plugins.framework import _handle_invalidation_message, are_plugins_enabled, enable_plugins
+        from mcpgateway.plugins import _handle_invalidation_message, are_plugins_enabled, enable_plugins
 
         enable_plugins(True)
         message = {"type": "message", "data": "not valid json {{{"}
@@ -311,7 +311,7 @@ class TestGetPluginManagerRedis:
     @pytest.mark.asyncio
     async def test_disabled_toggle_returns_none(self, async_redis, sync_redis):
         """When Redis has global toggle = false, get_plugin_manager returns None."""
-        from mcpgateway.plugins.framework import get_plugin_manager, enable_plugins_shared
+        from mcpgateway.plugins import get_plugin_manager, enable_plugins_shared
 
         await enable_plugins_shared(False)
 
@@ -321,8 +321,8 @@ class TestGetPluginManagerRedis:
     @pytest.mark.asyncio
     async def test_enabled_toggle_returns_manager_or_none_no_factory(self, async_redis, sync_redis):
         """When Redis has global toggle = true but no factory, returns None (no crash)."""
-        from mcpgateway.plugins.framework import get_plugin_manager, enable_plugins_shared
-        import mcpgateway.plugins.framework as framework
+        from mcpgateway.plugins import get_plugin_manager, enable_plugins_shared
+        import mcpgateway.plugins as framework
 
         await enable_plugins_shared(True)
 
@@ -338,7 +338,7 @@ class TestGetPluginManagerRedis:
     @pytest.mark.asyncio
     async def test_toggle_cycle_via_redis(self, async_redis, sync_redis):
         """Toggle disable → enable via Redis, verify get_plugin_manager responds correctly."""
-        from mcpgateway.plugins.framework import get_plugin_manager, enable_plugins_shared
+        from mcpgateway.plugins import get_plugin_manager, enable_plugins_shared
 
         # Disable
         await enable_plugins_shared(False)
@@ -361,7 +361,7 @@ class TestTTLCacheExpiryRedis:
     @pytest.mark.asyncio
     async def test_cache_expires_after_ttl(self, async_redis, sync_redis):
         """Manager cache entry expires after TTL and triggers rebuild."""
-        from mcpgateway.plugins.framework.manager import TenantPluginManagerFactory
+        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
         # Create a factory with very short TTL (1 second)
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
@@ -409,7 +409,7 @@ class TestPubSubEvictionRedis:
     @pytest.mark.asyncio
     async def test_mode_change_message_evicts_all_managers(self, async_redis, sync_redis):
         """mode_change message evicts all cached managers."""
-        import mcpgateway.plugins.framework as framework
+        import mcpgateway.plugins as framework
 
         mock_factory = AsyncMock()
         mock_factory._lock = asyncio.Lock()
@@ -438,7 +438,7 @@ class TestPubSubEvictionRedis:
     @pytest.mark.asyncio
     async def test_binding_change_message_evicts_specific_context(self, async_redis, sync_redis):
         """binding_change message evicts only the specified context."""
-        import mcpgateway.plugins.framework as framework
+        import mcpgateway.plugins as framework
 
         mock_factory = AsyncMock()
         mock_factory._lock = asyncio.Lock()
@@ -466,7 +466,7 @@ class TestPubSubEvictionRedis:
     @pytest.mark.asyncio
     async def test_pubsub_roundtrip_with_real_redis(self, async_redis, sync_redis):
         """Full pub/sub roundtrip: publish via enable_plugins_shared, receive via subscriber."""
-        from mcpgateway.plugins.framework import enable_plugins_shared
+        from mcpgateway.plugins import enable_plugins_shared
 
         # Subscribe
         pubsub = sync_redis.pubsub()
@@ -516,7 +516,7 @@ class TestDBErrorFallbackRedis:
     @pytest.mark.asyncio
     async def test_db_error_does_not_affect_redis_toggle(self, async_redis, sync_redis):
         """Redis global toggle still works even when DB is broken."""
-        from mcpgateway.plugins.framework import are_plugins_enabled_shared, enable_plugins_shared
+        from mcpgateway.plugins import are_plugins_enabled_shared, enable_plugins_shared
 
         # Set toggle via Redis
         await enable_plugins_shared(False)

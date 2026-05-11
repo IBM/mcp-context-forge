@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework import GlobalContext
+from cpex.framework.manager import PluginManager
+from cpex.framework import GlobalContext
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     PromptHookType,
     ToolHookType,
     PromptPrehookPayload,

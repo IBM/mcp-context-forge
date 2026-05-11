@@ -30,7 +30,7 @@ import pytest
 
 # First-Party
 import mcpgateway.admin as admin_module
-import mcpgateway.plugins.framework as fw
+import mcpgateway.plugins as fw
 from mcpgateway.schemas import PluginModeUpdateRequest, PluginToggleRequest
 
 
@@ -166,7 +166,7 @@ def mock_plugin_service(monkeypatch: pytest.MonkeyPatch):
     # ``update_plugin_mode`` validates against the configured plugin set rather
     # than the live manager so freshly-disabled nodes can still pre-stage per-
     # plugin overrides. Stub the helper here so tests exercise the real path.
-    monkeypatch.setattr("mcpgateway.plugins.framework.list_configured_plugin_names", lambda: ["RateLimiterPlugin", "OtherPlugin"])
+    monkeypatch.setattr("mcpgateway.plugins.list_configured_plugin_names", lambda: ["RateLimiterPlugin", "OtherPlugin"])
     return service
 
 
@@ -260,7 +260,7 @@ class TestToggleGlobalPluginsAdminCacheSync:
         async def fake_get_plugin_manager(*_, **__):
             return fake_manager
 
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", fake_get_plugin_manager)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", fake_get_plugin_manager)
 
         await admin_module.toggle_plugins_global(payload=PluginToggleRequest(enabled=True), request=mock_request, user=admin_user)
 
@@ -331,7 +331,7 @@ class TestAdminCacheSelfHeal:
         async def fake_get_plugin_manager(*_, **__):
             return fake_manager
 
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", fake_get_plugin_manager)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", fake_get_plugin_manager)
 
         await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
 
@@ -357,7 +357,7 @@ class TestAdminCacheSelfHeal:
             # Framework returns None because the shared toggle is now ``false``.
             return None
 
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", fake_get_plugin_manager)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", fake_get_plugin_manager)
 
         await admin_module._sync_plugin_service_from_runtime(req, plugin_service)
 
@@ -378,7 +378,7 @@ class TestAdminCacheSelfHeal:
             called["exploding"] = True
             raise RuntimeError("factory unavailable")
 
-        monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", exploding)
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", exploding)
 
         # Must return without raising — the try/except around the helper body
         # is what stops a framework failure from turning into a 500. We also
@@ -459,7 +459,7 @@ class TestUpdatePluginModeConfiguredValidation:
         stub_service = MagicMock()
         stub_service.get_all_plugins = MagicMock(return_value=[])
         monkeypatch.setattr(admin_module, "get_plugin_service", lambda: stub_service)
-        monkeypatch.setattr("mcpgateway.plugins.framework.list_configured_plugin_names", lambda: ["PreStagePlugin"])
+        monkeypatch.setattr("mcpgateway.plugins.list_configured_plugin_names", lambda: ["PreStagePlugin"])
 
         response = await admin_module.update_plugin_mode(
             name="PreStagePlugin",
@@ -514,7 +514,7 @@ class TestUpdatePluginModeHandler:
         async def _fail_invalidate():
             raise RuntimeError("cache sweep blew up")
 
-        monkeypatch.setattr("mcpgateway.plugins.framework.invalidate_all_plugin_managers", _fail_invalidate)
+        monkeypatch.setattr("mcpgateway.plugins.invalidate_all_plugin_managers", _fail_invalidate)
 
         with _capture_admin_logger_records() as records:
             response = await admin_module.update_plugin_mode(

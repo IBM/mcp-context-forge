@@ -47,7 +47,7 @@ sys.path.insert(0, ROOT_DIR)
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent  # noqa: E402
-from mcpgateway.plugins.framework import (  # noqa: E402
+from cpex.framework import (  # noqa: E402
     GlobalContext,
     PluginManager,
     PromptHookType,

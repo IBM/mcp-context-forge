@@ -19,7 +19,7 @@ on:
     paths:
       - "mcpgateway/**"
       - "tests/**"
-      - "!tests/e2e_rust/**"
+      - "!tests/live_gateway/e2e_rust/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/pytest.yml"
@@ -90,7 +90,6 @@ jobs:
           uv run --extra plugins pytest -n auto \
             --durations=10 \
             --ignore=tests/fuzz \
-            --ignore=tests/e2e/test_entra_id_integration.py \
             --cov=mcpgateway \
             --cov-report=xml \
             --cov-report=html \

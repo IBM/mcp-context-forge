@@ -13,7 +13,7 @@ import threading
 from typing import Any, Dict, Optional
 
 from mcpgateway.config import settings
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

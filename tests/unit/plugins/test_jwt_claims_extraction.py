@@ -15,12 +15,12 @@ import jwt
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
 )
-from mcpgateway.plugins.framework.hooks.http import (
+from cpex.framework.hooks.http import (
     HttpAuthResolveUserPayload,
     HttpHeaderPayload,
 )

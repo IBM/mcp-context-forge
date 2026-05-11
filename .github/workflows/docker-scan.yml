@@ -109,8 +109,8 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:scan
-          cache-from: type=gha,scope=scan-build-amd64
-          cache-to: type=gha,mode=max,scope=scan-build-amd64
+          cache-from: type=gha,scope=containerfile-lite-amd64
+          cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
       - name: Generate SBOM (Syft)
         run: |

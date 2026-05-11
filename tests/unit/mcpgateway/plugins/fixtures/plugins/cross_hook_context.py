@@ -17,7 +17,7 @@ This plugin demonstrates sharing context across different hook types:
 
 import logging
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResult,
     HttpPreRequestPayload,

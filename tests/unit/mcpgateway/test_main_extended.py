@@ -111,7 +111,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from mcpgateway.plugins.framework import PluginError, PromptHookType, ResourceHookType
+from cpex.framework import PluginError, PromptHookType, ResourceHookType
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -204,7 +204,7 @@ def _import_fresh_main_module(
         def has_hooks_for(self, server_id):
             return False
 
-    monkeypatch.setattr("mcpgateway.plugins.framework.TenantPluginManager", _DummyPluginManager)
+    monkeypatch.setattr("cpex.framework.TenantPluginManager", _DummyPluginManager)
 
     # Force selected module imports to fail to cover defensive ImportError paths.
     if force_import_error:
@@ -229,6 +229,21 @@ def _import_fresh_main_module(
 
 class TestConditionalPaths:
     """Test conditional code paths to improve coverage."""
+
+    def test_import_logs_csrf_disabled_when_setting_is_false(self, monkeypatch, caplog):
+        """Import-time CSRF middleware setup should log the disabled branch when CSRF is off."""
+        caplog.set_level("INFO")
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "csrf_enabled": False,
+            },
+        )
+
+        assert any(
+            "CSRF protection middleware disabled" in rec.message for rec in caplog.records
+        )
 
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
         """When boot mode is edge, the ingress mount selects rust-internal by default."""
@@ -339,6 +354,33 @@ class TestConditionalPaths:
 
         assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
         assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
+
+    def test_import_includes_siem_router_with_admin_csrf_dependency(self, monkeypatch):
+        """When SIEM export and admin API are enabled, the SIEM router is mounted with admin CSRF enforcement."""
+        include_calls = []
+        from fastapi.applications import FastAPI
+
+        original_include_router = FastAPI.include_router
+
+        def _capture_include_router(self, router, *args, **kwargs):  # noqa: ANN001
+            include_calls.append((router, kwargs.get("dependencies")))
+            return original_include_router(self, router, *args, **kwargs)
+
+        monkeypatch.setattr(FastAPI, "include_router", _capture_include_router)
+
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "mcpgateway_admin_api_enabled": True,
+                "siem_export_enabled": True,
+            },
+        )
+
+        assert any(
+            deps
+            and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps)
+            for _, deps in include_calls
+        )
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
@@ -858,7 +900,7 @@ class TestInternalTrustedMcpTransportBridge:
         """HTTP_PRE_REQUEST plugin hooks should transform headers before auth runs."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.plugins.framework import HttpHookType
+        from cpex.framework import HttpHookType
 
         async def _fake_streamable_http_auth(_scope, _receive, _send):
             user_context_var.set({"email": "hook-user@example.com", "teams": [], "is_authenticated": True})
@@ -1529,7 +1571,7 @@ class TestJsonPathHelpers:
     def test_jsonpath_modifier_invalid_expression(self):
         with pytest.raises(HTTPException) as excinfo:
             jsonpath_modifier({"a": 1}, "$[")
-        assert "Invalid main JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression" in excinfo.value.detail
 
     def test_jsonpath_modifier_execution_error(self):
         class DummyPath:
@@ -1539,7 +1581,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", return_value=DummyPath()):
             with pytest.raises(HTTPException) as excinfo:
                 jsonpath_modifier({"a": 1}, "$.a")
-        assert "Error executing main JSONPath" in excinfo.value.detail
+        assert "Error executing JSONPath expression" in excinfo.value.detail
 
     def test_transform_data_with_mappings_multi_and_empty(self):
         data = [{"items": [{"id": 1}, {"id": 2}]}, {"items": []}]
@@ -1551,7 +1593,7 @@ class TestJsonPathHelpers:
         with patch("mcpgateway.main._parse_jsonpath", side_effect=Exception("bad mapping")):
             with pytest.raises(HTTPException) as excinfo:
                 transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
-        assert "Invalid mapping JSONPath" in excinfo.value.detail
+        assert "Invalid JSONPath expression for key" in excinfo.value.detail
 
     def test_jsonpath_modifier_debug_logging_with_list(self, monkeypatch):
         """Test jsonpath_modifier debug logging with list data (lines 789-790)."""
@@ -4489,7 +4531,7 @@ class TestGetPromptEndpointCoverage:
 
         # PluginViolationError -> 422 with plugin message.
         # First-Party
-        from mcpgateway.plugins.framework.errors import PluginViolationError
+        from cpex.framework.errors import PluginViolationError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PluginViolationError("blocked", violation=SimpleNamespace(code="c"))))
         response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
@@ -4984,7 +5026,7 @@ class TestLifespanAdvanced:
         """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
         # First-Party
         import mcpgateway.main as main_mod
-        from mcpgateway.plugins.framework import _state as plugin_state
+        from mcpgateway.plugins import _state as plugin_state
 
         await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
         monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock(side_effect=RuntimeError("bad YAML")))
@@ -8720,7 +8762,7 @@ class TestRpcHandling:
         missing_name_result = await handle_internal_mcp_tools_call(missing_name_request)
         assert missing_name_result["error"]["code"] == -32602
 
-    async def test_handle_internal_mcp_tools_call_generates_id_and_reraises_plugin_error_while_ignoring_close_failures(self):
+    async def test_handle_internal_mcp_tools_call_generates_id_and_returns_jsonrpc_plugin_error_while_ignoring_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
@@ -8737,8 +8779,15 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main._execute_rpc_tools_call", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call(request)
+            result = await handle_internal_mcp_tools_call(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert result["jsonrpc"] == "2.0"
+            assert "error" in result
+            assert result["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in result["error"]["message"]
+            assert result["id"] is not None  # Generated ID
+            # Verify close() was called twice (once succeeded, once failed but ignored)
+            assert mock_db.close.call_count == 2
 
     async def test_handle_internal_mcp_tools_call_resolve_rejects_parse_error_invalid_method_missing_name_and_tool_error(self):
         base_headers = {
@@ -8824,7 +8873,7 @@ class TestRpcHandling:
                 await handle_internal_mcp_tools_call_resolve(request_no_scope)
         public_db.invalidate.assert_called_once()
 
-    async def test_internal_mcp_tools_call_resolve_re_raises_plugin_errors_and_ignores_close_failures(self):
+    async def test_internal_mcp_tools_call_resolve_returns_jsonrpc_plugin_errors_and_ignores_close_failures(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "plugin-err", "method": "tools/call", "params": {"name": "echo"}})
         request.headers = {
             "x-contextforge-mcp-runtime": "rust",
@@ -8839,8 +8888,17 @@ class TestRpcHandling:
             patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
             patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
         ):
-            with pytest.raises(PluginError):
-                await handle_internal_mcp_tools_call_resolve(request)
+            response = await handle_internal_mcp_tools_call_resolve(request)
+            # Verify JSON-RPC format is returned (not exception re-raised)
+            assert response.status_code == 500  # PluginError defaults to 500
+            content = json.loads(response.body)
+            assert content["jsonrpc"] == "2.0"
+            assert "error" in content
+            assert content["error"]["code"] == -32603  # Internal error for PluginError
+            assert "plugin boom" in content["error"]["message"]
+            assert content["id"] == "plugin-err"  # ID from request
+            # Verify close() was called (and failure was ignored)
+            assert mock_db.close.call_count == 1
 
     async def test_server_scoped_authz_missing_server_scope_and_jsonrpc_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})
@@ -9535,7 +9593,7 @@ class TestRpcHandling:
             assert result["result"]["ok"] is True
 
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginErrorModel
+        from cpex.framework.models import PluginErrorModel
 
         with (
             patch(
@@ -12605,11 +12663,11 @@ class TestRemainingCoverageGaps:
 
     async def test_module_level_skips_plugin_settings_validation_when_plugins_disabled(self, monkeypatch):
         # First-Party
-        import mcpgateway.plugins.framework as plugin_framework
+        import mcpgateway.plugins as plugin_module
 
         # Reset plugin state before test
-        plugin_framework.enable_plugins(False)
-        plugin_framework.reset_plugin_manager_factory()
+        plugin_module.enable_plugins(False)
+        plugin_module.reset_plugin_manager_factory()
 
         _import_fresh_main_module(
             monkeypatch,
@@ -12619,25 +12677,12 @@ class TestRemainingCoverageGaps:
             },
         )
         # settings.enabled is False → get_plugin_manager() short-circuits to None
-        result = await plugin_framework.get_plugin_manager()
+        result = await plugin_module.get_plugin_manager()
         assert result is None
 
     async def test_module_level_uses_settings_backed_plugin_enablement(self, monkeypatch):
         # First-Party
-        import mcpgateway.plugins.framework as plugin_framework
-        import mcpgateway.plugins.framework.settings as plugin_settings_mod
-
-        monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_enabled_settings",
-            lambda **_kwargs: SimpleNamespace(enabled=True),
-        )
-        monkeypatch.setattr(
-            plugin_settings_mod,
-            "get_startup_settings",
-            lambda **_kwargs: SimpleNamespace(config_file="plugins/config.yaml", plugin_timeout=30),
-        )
+        import mcpgateway.plugins as plugin_module
 
         class _DummyFactory:
             def __init__(self, *_a, **_k):
@@ -12646,19 +12691,19 @@ class TestRemainingCoverageGaps:
             async def get_manager(self, server_id=None):
                 return SimpleNamespace(plugin_count=0)
 
-        monkeypatch.setattr(plugin_framework, "TenantPluginManagerFactory", _DummyFactory)
-        plugin_framework.reset_plugin_manager_factory()
-        plugin_framework.enable_plugins(True)
+        monkeypatch.delenv("PLUGINS_ENABLED", raising=False)
+        plugin_module.reset_plugin_manager_factory()
+        plugin_module.enable_plugins(True)
 
         # Create the factory instance
-        plugin_framework._plugin_manager_factory = _DummyFactory()
+        plugin_module._plugin_manager_factory = _DummyFactory()
 
         _import_fresh_main_module(monkeypatch)
         # settings.enabled is True → get_plugin_manager() returns a manager
-        result = await plugin_framework.get_plugin_manager()
+        result = await plugin_module.get_plugin_manager()
         assert result is not None
         # Clean up the global factory to avoid polluting subsequent tests
-        plugin_framework.reset_plugin_manager_factory()
+        plugin_module.reset_plugin_manager_factory()
 
 
 class TestHardeningHelperCoverage:

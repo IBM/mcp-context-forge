@@ -35,7 +35,7 @@ def _create_tool_via_api(api_request_context: APIRequestContext, suffix: str) ->
     payload = {
         "tool": {
             "name": f"team-redirect-tool-{suffix}",
-            "url": "https://api.example.com/test",
+            "url": "https://httpbin.org/post",
             "description": "Temporary tool for team redirect test",
             "integration_type": "REST",
             "request_type": "GET",

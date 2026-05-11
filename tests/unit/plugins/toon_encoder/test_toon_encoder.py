@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from mcpgateway.plugins.framework import GlobalContext, ToolHookType, PluginConfig, PluginContext
-from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload
+from cpex.framework import GlobalContext, ToolHookType, PluginConfig, PluginContext
+from cpex.framework.hooks.tools import ToolPostInvokePayload
 
 from plugins.toon_encoder.toon_encoder import ToonEncoderPlugin
 

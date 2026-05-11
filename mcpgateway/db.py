@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -1322,6 +1322,7 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_COMPLIANCE = "admin.compliance"
     ADMIN_OVERVIEW = "admin.overview"
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"
@@ -1835,6 +1836,31 @@ class PasswordResetToken(Base):
             bool: True when `used_at` is set.
         """
         return self.used_at is not None
+
+
+class PasswordHistory(Base):
+    """Password history tracking for preventing password reuse.
+
+    Stores hashed passwords to enforce password history policy,
+    preventing users from reusing their last N passwords.
+
+    Attributes:
+        id (str): Primary key UUID
+        user_email (str): Email of the user
+        password_hash (str): Argon2id hash of the password
+        changed_at (datetime): When the password was changed
+    """
+
+    __tablename__ = "password_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_history_user_email_changed_at", "user_email", "changed_at"),)
 
 
 class EmailTeam(Base):
@@ -2430,24 +2456,24 @@ class PendingUserApproval(Base):
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", String(36), ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("tool_id", String(36), ForeignKey("tools.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and resources
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and prompts
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -2491,7 +2517,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False, index=True)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2517,7 +2543,7 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2569,7 +2595,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -3262,6 +3288,10 @@ class Tool(Base):
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
     gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
+
+    # Federation relationship with a gRPC service
+    grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"))
+    grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_tool_association, back_populates="tools")
@@ -5169,6 +5199,9 @@ class GrpcService(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # Relationship with tools discovered from this gRPC service
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="grpc_service", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
         """Return a string representation of the GrpcService instance.
 
@@ -6796,6 +6829,7 @@ class ToolPluginBinding(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    on_error: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -6809,6 +6843,7 @@ class ToolPluginBinding(Base):
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
         Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_tool_plugin_bindings_on_error_valid"),
     )
 
     def __repr__(self) -> str:

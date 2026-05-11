@@ -723,7 +723,7 @@ def _submit_tool_form_and_get_status(tools_page: ToolsPage, name: str) -> int:
         HTTP status code of the POST response.
         200/201 = success, 403 = RBAC denied.
     """
-    tools_page.fill_tool_form(name=name, url="https://example.com/api/tool", description="RBAC test tool", integration_type="REST")
+    tools_page.fill_tool_form(name=name, url="https://httpbin.org/post", description="RBAC test tool", integration_type="REST")
     try:
         with tools_page.page.expect_response(
             lambda r: "/admin/tools" in r.url and r.request.method == "POST",
@@ -1224,7 +1224,7 @@ class TestRPCToolExecutionRBAC:
                     "tool": {
                         "name": tool_name,
                         "description": "RPC RBAC regression test tool (#3515)",
-                        "url": f"{BASE_URL}/health",
+                        "url": "https://httpbin.org/get",
                         "integration_type": "REST",
                         "input_schema": {},
                         "visibility": "team",
@@ -1275,7 +1275,7 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
                 }
             ),
@@ -1323,7 +1323,7 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
                 }
             ),
@@ -1382,7 +1382,7 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
                 }
             ),
@@ -1425,7 +1425,7 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
                 }
             ),
@@ -1500,7 +1500,7 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": other_team_id,
                 }
             ),

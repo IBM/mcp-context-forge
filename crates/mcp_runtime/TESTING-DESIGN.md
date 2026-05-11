@@ -15,7 +15,7 @@ contamination is a release blocker for the fast Rust public path.
 
 The first end-to-end implementation is already in place:
 
-- `tests/e2e_rust/test_mcp_session_isolation.py`
+- `tests/live_gateway/e2e_rust/test_mcp_session_isolation.py`
 - `make test-mcp-session-isolation`
 
 Current compose-backed validation on this branch:
@@ -107,7 +107,7 @@ The following invariants should stay explicit and testable:
 
 Useful existing coverage already lives in:
 
-- [tests/e2e/test_mcp_rbac_transport.py](../../tests/e2e/test_mcp_rbac_transport.py)
+- [tests/live_gateway/mcp/test_mcp_rbac_transport.py](../../tests/live_gateway/mcp/test_mcp_rbac_transport.py)
 - [tests/integration/test_streamable_http_redis.py](../../tests/integration/test_streamable_http_redis.py)
 - [tests/e2e/test_session_pool_e2e.py](../../tests/e2e/test_session_pool_e2e.py)
 - [tests/loadtest/locustfile_mcp_protocol.py](../../tests/loadtest/locustfile_mcp_protocol.py)
@@ -214,7 +214,7 @@ Required outcome:
 Current status:
 
 - implemented as a bounded TTL contract in
-  `tests/e2e_rust/test_mcp_session_isolation.py`
+  `tests/live_gateway/e2e_rust/test_mcp_session_isolation.py`
 
 ### 2. Team membership / role change after initialize
 
@@ -231,7 +231,7 @@ Required outcome:
 Current status:
 
 - implemented for both membership removal and role revocation in
-  `tests/e2e_rust/test_mcp_session_isolation.py`
+  `tests/live_gateway/e2e_rust/test_mcp_session_isolation.py`
 
 ### 3. Forced cross-worker affinity ownership
 
