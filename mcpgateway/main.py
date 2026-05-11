@@ -1924,10 +1924,7 @@ def validate_security_configuration():
 
         # Audit logging for explicit security overrides in production
         if current_settings.environment == "production" and not current_settings.require_strong_secrets:
-            logger.warning(
-                "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
-                "This override is being logged for audit purposes as per US-1 requirements."
-            )
+            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. " + "This override is being logged for audit purposes as per US-1 requirements.")
 
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:

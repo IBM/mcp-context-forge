@@ -654,7 +654,7 @@ class TestOAuthManagerClientCredentialsFlow:
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
 
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await manager._client_credentials_flow(credentials)
 
     @pytest.mark.asyncio

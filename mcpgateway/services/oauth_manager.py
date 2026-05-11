@@ -28,7 +28,7 @@ import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
@@ -235,11 +235,38 @@ class OAuthManager:
             settings = get_settings()
             encryption = get_encryption_service(settings.auth_encryption_secret)
             runtime_credentials = await decrypt_oauth_config_for_runtime(credentials, encryption=encryption)
-            if isinstance(runtime_credentials, dict):
-                return runtime_credentials
         except Exception as exc:
-            logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
-        return credentials
+            logger.warning("Failed to decrypt runtime OAuth credentials for %s flow; falling back to stored values: %s", flow_name, exc)
+            return credentials
+
+        if not isinstance(runtime_credentials, dict):
+            raise OAuthError(f"Invalid runtime OAuth configuration for {flow_name} flow")
+
+        token_url = runtime_credentials.get("token_url")
+        if isinstance(token_url, str) and token_url:
+            runtime_credentials["token_url"] = validate_core_url(token_url, "OAuth config token_url")
+
+        auth_server = runtime_credentials.get("authorization_server")
+        if isinstance(auth_server, str) and auth_server:
+            runtime_credentials["authorization_server"] = validate_core_url(auth_server, "OAuth config authorization_server")
+
+        issuer = runtime_credentials.get("issuer")
+        if isinstance(issuer, str) and issuer:
+            runtime_credentials["issuer"] = validate_core_url(issuer, "OAuth config issuer")
+
+        auth_servers = runtime_credentials.get("authorization_servers")
+        if auth_servers not in (None, ""):
+            if not isinstance(auth_servers, list):
+                raise OAuthError("OAuth configuration authorization_servers must be a list")
+            validated_servers = []
+            for idx, server_url in enumerate(auth_servers):
+                if not isinstance(server_url, str):
+                    raise OAuthError(f"OAuth configuration authorization_servers[{idx}] must be a string URL")
+                if server_url:
+                    validated_servers.append(validate_core_url(server_url, f"OAuth config authorization_servers[{idx}]"))
+            runtime_credentials["authorization_servers"] = validated_servers
+
+        return runtime_credentials
 
     async def _post_token_request(
         self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
@@ -448,6 +475,8 @@ class OAuthManager:
         client_id = runtime_credentials["client_id"]
         client_secret = runtime_credentials["client_secret"]
         token_url = runtime_credentials["token_url"]
+        if not isinstance(token_url, str):
+            raise OAuthError("OAuth configuration missing valid token_url")
         scopes = runtime_credentials.get("scopes", [])
 
         # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
@@ -479,7 +508,7 @@ class OAuthManager:
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
