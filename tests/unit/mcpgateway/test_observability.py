@@ -156,7 +156,7 @@ class TestObservability:
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
     def test_init_telemetry_otlp_grpc_passes_insecure_setting(self, mock_processor, mock_provider):
-        """Test that OTEL_EXPORTER_OTLP_INSECURE is passed to gRPC OTLP exporters."""
+        """Test that explicit OTEL_EXPORTER_OTLP_INSECURE is passed to gRPC OTLP exporters."""
         self._enable_observability()
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://collector.example.com:4317"
@@ -184,8 +184,51 @@ class TestObservability:
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
-    def test_init_telemetry_otlp_http_uses_certificate_file_for_insecure_setting(self, mock_processor, mock_provider):
-        """Test that HTTP OTLP exporters receive certificate_file=False when insecure is enabled."""
+    def test_init_telemetry_otlp_grpc_preserves_default_insecure_setting(self, mock_processor, mock_provider):
+        """Test that default OTLP insecure config does not override exporter defaults."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "collector.example.com:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+
+        class FakeGrpcExporter:
+            """Exporter accepting arbitrary kwargs like older/newer OTLP exporters."""
+
+            calls = []
+
+            def __init__(self, endpoint=None, headers=None, **kwargs):
+                self.__class__.calls.append({"endpoint": endpoint, "headers": headers, "kwargs": kwargs})
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER", FakeGrpcExporter):
+            result = init_telemetry()
+
+        assert result is not None
+        assert FakeGrpcExporter.calls[-1]["endpoint"] == "collector.example.com:4317"
+        assert "insecure" not in FakeGrpcExporter.calls[-1]["kwargs"]
+
+    def test_otlp_http_exporter_kwargs_preserve_real_exporter_certificate_defaults(self):
+        """Test that HTTP OTLP exporter kwargs do not pass unsupported insecure TLS flags."""
+        http_exporter_mod = pytest.importorskip("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+        exporter_cls = http_exporter_mod.OTLPSpanExporter
+
+        kwargs = observability._otlp_exporter_kwargs(
+            exporter_cls,
+            endpoint="https://collector.example.com/v1/traces",
+            headers=None,
+            protocol="http",
+            insecure=True,
+        )
+
+        assert kwargs == {"endpoint": "https://collector.example.com/v1/traces", "headers": None}
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_http_keeps_certificate_file_unset_for_insecure_setting(self, mock_processor, mock_provider):
+        """Test that HTTP OTLP exporters do not receive an ineffective certificate_file flag."""
         self._enable_observability()
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://collector.example.com/v1/traces"
@@ -197,7 +240,7 @@ class TestObservability:
 
             calls = []
 
-            def __init__(self, endpoint=None, headers=None, certificate_file=None):
+            def __init__(self, endpoint=None, headers=None, certificate_file="unset"):
                 self.__class__.calls.append({"endpoint": endpoint, "headers": headers, "certificate_file": certificate_file})
 
         provider_instance = MagicMock()
@@ -209,7 +252,7 @@ class TestObservability:
 
         assert result is not None
         assert FakeHttpExporter.calls[-1]["endpoint"] == "https://collector.example.com/v1/traces"
-        assert FakeHttpExporter.calls[-1]["certificate_file"] is False
+        assert FakeHttpExporter.calls[-1]["certificate_file"] == "unset"
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.ConsoleSpanExporter")

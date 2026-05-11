@@ -203,7 +203,21 @@ def _supports_exporter_kwarg(exporter_cls: Any, kwarg: str) -> bool:
     return kwarg in signature.parameters
 
 
-def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], protocol: str, insecure: bool) -> Dict[str, Any]:
+def _configured_otlp_insecure(cfg: Any) -> Optional[bool]:
+    """Return the OTLP insecure setting only when it was explicitly configured.
+
+    Args:
+        cfg: Application settings instance.
+
+    Returns:
+        Configured insecure value, or ``None`` when only the Settings default applies.
+    """
+    if "otel_exporter_otlp_insecure" not in getattr(cfg, "model_fields_set", set()):
+        return None
+    return cfg.otel_exporter_otlp_insecure
+
+
+def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], protocol: str, insecure: Optional[bool]) -> Dict[str, Any]:
     """Build OTLP exporter kwargs while preserving exporter-version compatibility.
 
     Args:
@@ -211,16 +225,14 @@ def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional
         endpoint: Exporter endpoint.
         headers: Optional request headers.
         protocol: OTLP transport protocol.
-        insecure: Whether TLS verification/insecure transport is requested.
+        insecure: Explicit insecure transport setting, or ``None`` to keep exporter defaults.
 
     Returns:
         Constructor keyword arguments for the selected exporter.
     """
     kwargs: Dict[str, Any] = {"endpoint": endpoint, "headers": headers}
-    if _supports_exporter_kwarg(exporter_cls, "insecure"):
+    if insecure is not None and _supports_exporter_kwarg(exporter_cls, "insecure"):
         kwargs["insecure"] = insecure
-    elif protocol == "http" and insecure and _supports_exporter_kwarg(exporter_cls, "certificate_file"):
-        kwargs["certificate_file"] = False
     return kwargs
 
 
@@ -1090,17 +1102,18 @@ def init_telemetry() -> Optional[Any]:
             protocol = cfg.otel_exporter_otlp_protocol.lower()
             header_dict = _resolve_otlp_headers(endpoint)
             headers = header_dict or None
+            insecure = _configured_otlp_insecure(cfg)
             if _is_langfuse_otlp_endpoint(endpoint):
                 protocol = "http"
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
                 exporter_cls = cast(Any, OTLP_SPAN_EXPORTER)
-                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, protocol="grpc", insecure=cfg.otel_exporter_otlp_insecure))
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, protocol="grpc", insecure=insecure))
             elif HTTP_EXPORTER:
                 # Use HTTP exporter as fallback
                 http_ep = (endpoint.replace(":4317", ":4318") + "/v1/traces") if ":4317" in endpoint else endpoint
                 exporter_cls = cast(Any, HTTP_EXPORTER)
-                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, protocol="http", insecure=cfg.otel_exporter_otlp_insecure))
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, protocol="http", insecure=insecure))
             else:
                 logger.error("No OTLP exporter available")
                 return None
