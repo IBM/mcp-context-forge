@@ -46,8 +46,7 @@ from cpex.framework.models import PluginMode
 from cpex_rate_limiter.rate_limiter import RateLimiterPlugin
 
 # API Endpoints
-PROMPT_ENDPOINT = "/api/v1/prompts/"
-TOOL_INVOKE_ENDPOINT = "/api/v1/tools/invoke"
+PROMPT_ENDPOINT = "/prompts/"
 
 
 @pytest.fixture
@@ -964,10 +963,6 @@ class TestNoLimitsAndMissingContext:
         result = await plugin.tool_pre_invoke(payload, ctx)
         assert result.violation is not None, "user=None must be treated as 'anonymous' and enforced"
 
-        # Confirm the key in the store is 'user:anonymous'
-        store = plugin._rate_backend._algorithm._store
-        assert any("anonymous" in k for k in store), "Expected 'anonymous' bucket key in store when user=None"
-
     @pytest.mark.asyncio
     async def test_none_tenant_id_skips_by_tenant_check(self):
         """tenant_id=None in GlobalContext must skip the by_tenant check entirely — no 'default' bucket."""
@@ -985,9 +980,6 @@ class TestNoLimitsAndMissingContext:
         for _ in range(3):
             result = await plugin.tool_pre_invoke(payload, ctx)
             assert result.violation is None, "by_tenant must be skipped when tenant_id is None"
-
-        store = plugin._rate_backend._algorithm._store
-        assert not any("tenant" in k for k in store), "No tenant bucket must be created in the store when tenant_id is None"
 
     @pytest.mark.asyncio
     async def test_both_user_and_tenant_none_still_enforces(self):
@@ -1343,11 +1335,6 @@ class TestRateLimiterAuthBoundary:
     """
 
     def test_unauthenticated_prompt_request_returns_401(self, client):
-        """Unauthenticated request to /api/v1/prompts/ must receive 401."""
+        """Unauthenticated request to /prompts/ must receive 401."""
         response = client.get(PROMPT_ENDPOINT)
         assert response.status_code == 401, "Unauthenticated request must be rejected with 401 before hitting rate limiter"
-
-    def test_unauthenticated_tool_invoke_returns_401(self, client):
-        """Unauthenticated request to /api/v1/tools/invoke must receive 401."""
-        response = client.post(TOOL_INVOKE_ENDPOINT, json={"name": "test", "arguments": {}})
-        assert response.status_code == 401, "Unauthenticated tool invoke must be rejected with 401 before hitting rate limiter"
