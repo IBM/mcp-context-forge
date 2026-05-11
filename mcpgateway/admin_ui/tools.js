@@ -18,6 +18,7 @@ import { applyVisibilityRestrictions, isTeamScopedView } from "./teams.js";
 import {
   decodeHtml,
   fetchWithTimeout,
+  getCookie,
   getCurrentTeamId,
   handleFetchError,
   isInactiveChecked,
@@ -2927,6 +2928,12 @@ export const runToolValidation = async function (testIndex) {
     const requestHeaders = {
       "Content-Type": "application/json",
     };
+
+    // Add CSRF token from cookie to headers
+    const csrfToken = getCookie("mcpgateway_csrf_token");
+    if (csrfToken) {
+      requestHeaders["x-csrf-token"] = csrfToken;
+    }
 
     // Authentication will be handled automatically by the JWT cookie
     // that was set when the admin UI loaded. The credentials header
