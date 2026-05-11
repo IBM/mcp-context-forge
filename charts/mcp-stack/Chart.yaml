@@ -19,8 +19,8 @@ type: application
 # Versioning
 # * version      - chart package version (SemVer).  Bump on *any* chart
 #                  change, even if the app container tag is the same.
-# * appVersion   - upstream application version; shown in UIs but not
-#                  used for upgrade logic.
+# * appVersion   - upstream application version; also the default
+#                  ContextForge image tag when values do not override it.
 # --------------------------------------------------------------------
 version: 1.0.0
 appVersion: "1.0.0"

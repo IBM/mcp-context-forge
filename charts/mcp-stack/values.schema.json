@@ -1535,8 +1535,8 @@
             },
             "tag": {
               "type": "string",
-              "description": "Image tag",
-              "default": "latest"
+              "description": "Image tag (defaults to chart appVersion when empty)",
+              "default": ""
             }
           },
           "description": "Container image configuration"
@@ -2529,8 +2529,8 @@
             },
             "tag": {
               "type": "string",
-              "description": "Image tag",
-              "default": "latest"
+              "description": "Image tag (defaults to mcpContextForge.image.tag, then chart appVersion when empty)",
+              "default": ""
             }
           },
           "description": "Migration image configuration"

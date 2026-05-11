@@ -68,7 +68,7 @@
   {{- end }}
 
 🏗️ **Infrastructure Stack**
-  - ContextForge    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
+  - ContextForge    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag | default .Chart.AppVersion }}
   {{- if .Values.mcpFastTimeServer.enabled }}
   - Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
   {{- end }}
