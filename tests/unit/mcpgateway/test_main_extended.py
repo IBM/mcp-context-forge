@@ -2057,6 +2057,72 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 401
 
+    def test_auth_error_param_mapping(self):
+        assert AdminAuthMiddleware._auth_error_param("Account disabled") == "account_disabled"
+        assert AdminAuthMiddleware._auth_error_param("Token expired") == "session_expired"
+        assert AdminAuthMiddleware._auth_error_param("Session idle timeout") == "session_expired"
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_proxy_unknown_user_requires_db(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        proxy_header = settings.proxy_user_header
+        request = _make_request("/admin/tools", headers={proxy_header: "unknown@example.com"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="unknown@example.com", is_admin=False, full_name="User"))):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 401
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_proxy_disabled_user_denied(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        proxy_header = settings.proxy_user_header
+        request = _make_request("/admin/tools", headers={proxy_header: "disabled@example.com"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
+        monkeypatch.setattr(settings, "mcp_client_auth_enabled", False)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(is_active=False, is_admin=False))
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="disabled@example.com", is_admin=False, full_name="User"))),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_http_exception_and_generic_exception_handling(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        call_next = AsyncMock(return_value="ok")
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden"))):
+            response = await middleware.dispatch(request, call_next)
+            assert response.status_code == 403
+
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            response = await middleware.dispatch(request, call_next)
+            assert response.status_code == 500
+
     @pytest.mark.asyncio
     async def test_admin_auth_proxy_user_allows_access(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
