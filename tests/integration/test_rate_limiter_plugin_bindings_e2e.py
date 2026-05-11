@@ -89,11 +89,6 @@ PROPAGATION_WAIT = int(
     os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS))
 )
 
-# Burst size and configured limit — burst must clearly exceed the limit so
-# enforcement is observable even with mild clock jitter.
-BURST_SIZE = 15
-BURST_LIMIT_PER_SEC = 5
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -457,77 +452,6 @@ def _mcp_initialize_session(
     except requests.RequestException:
         pass
     return session_id
-
-
-def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
-    """Fire ``count`` JSON-RPC tool calls via ``/servers/<id>/mcp`` over a
-    single MCP session and tally allowed / rate-limited / errors.
-
-    Uses the per-server MCP route, not the session-less ``/rpc``: per-tenant
-    plugin bindings are scoped (team, server, tool) and only the session-aware
-    route carries the ``server_id`` context the plugin manager needs to
-    resolve binding overrides at request time.
-
-    The MCP initialize + initialized handshake runs once; the resulting
-    session id is reused for all ``count`` tool calls. Burst counters
-    accumulate against a single user identity so per-user rate limits
-    accumulate the way bindings expect.
-    """
-    counters = {"allowed": 0, "rate_limited": 0, "errors": 0, "total": count}
-    headers = _fresh_headers()
-
-    session_id = _mcp_initialize_session(server_id, headers)
-    if session_id is None:
-        counters["errors"] = count
-        return counters
-
-    call_headers = {
-        **headers,
-        "Accept": "application/json, text/event-stream",
-        "Mcp-Session-Id": session_id,
-    }
-
-    for i in range(count):
-        payload = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": (
-                    {"message": f"binding-test-{i}"} if "echo" in tool_name else {}
-                ),
-            },
-        }
-        try:
-            resp = requests.post(
-                f"{GATEWAY_URL}/servers/{server_id}/mcp",
-                json=payload,
-                headers=call_headers,
-                timeout=15,
-            )
-            if resp.status_code == 429:
-                counters["rate_limited"] += 1
-                continue
-            if resp.status_code != 200:
-                counters["errors"] += 1
-                continue
-
-            data = resp.json()
-            result = data.get("result", {})
-            if result.get("isError"):
-                content = result.get("content", [])
-                text = content[0].get("text", "") if content else ""
-                if "rate" in text.lower() or "limit" in text.lower():
-                    counters["rate_limited"] += 1
-                else:
-                    counters["errors"] += 1
-            else:
-                counters["allowed"] += 1
-        except requests.RequestException:
-            counters["errors"] += 1
-
-    return counters
 
 
 # ---------------------------------------------------------------------------
@@ -916,124 +840,353 @@ class TestRateLimiterBindingApiEnforcesLimits:
 
 
 class TestRateLimiterBindingModeAndLifecycle:
-    """The binding's ``mode`` field and lifecycle operations (upsert, delete)
-    propagate to the gateway plugin manager and change tool-dispatch behaviour.
+    """The binding's lifecycle operations (upsert, delete) propagate to the
+    gateway plugin manager and change tool-dispatch behaviour."""
 
-    Shares the same burst shape as the enforcement test above so the contrast
-    is unambiguous: a 15-request burst against a 5/s limit that *would* block
-    in enforce mode must NOT block in disabled / permissive / post-delete
-    states.
-    """
+    @pytest.mark.slow
+    def test_upsert_binding_full_lifecycle_inspectable(
+        self, server_and_tool, team_id, cleanup_bindings, capsys
+    ):
+        """End-to-end binding-upsert walkthrough mirroring the persistence test.
 
-    @staticmethod
-    def _binding_config(ref_id: str) -> dict:
-        """Return the standard rate-limiter config used across these tests.
+        Companion to
+        ``TestRateLimiterBindingApiEnforcesLimits.test_binding_full_lifecycle_inspectable``
+        (POST happy path) and
+        ``test_delete_binding_full_lifecycle_inspectable``
+        (DELETE lifecycle): this one verifies the UPSERT path. Specifically,
+        a second POST with the same ``(team_id, tool_name, plugin_id)`` triple
+        UPDATES the existing row in place rather than failing with a
+        duplicate-key error or creating a second row, AND the new mode
+        propagates past the DB into the plugin manager so it actually
+        changes dispatch behaviour. Run with ``-s`` to see the inspection
+        pointers in real time::
 
-        Probe for #4665: gateway-scoped keys (``redis_url``,
-        ``redis_key_prefix``) intentionally omitted from the binding payload.
-        Both flow from the static ``plugins/config.yaml``. If the binding's
-        per-tenant ``by_user`` reaches the runtime now, it's evidence that
-        sending gateway-scoped keys in the binding's config dict was poisoning
-        the per-tenant merge for ``RateLimiterPlugin``.
+            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+                ::TestRateLimiterBindingModeAndLifecycle \\
+                ::test_upsert_binding_full_lifecycle_inspectable \\
+                -v -s --with-integration -m slow
+
+        Phases:
+          0. Baseline plugin state from ``/admin/plugins``.
+          1. POST binding with ``mode: enforce`` + multi-dim (7/m, 9/m, 11/m).
+          2. Verify persisted via API + Postgres; capture API mode field.
+          3. Propagation wait — covers the per-tenant plugin manager rebuild.
+          4. Paced 5-call burst — assert ``rate_limited >= 1`` (enforce live).
+          5. Inspect Redis — all three dimension keys must be present.
+          6. UPSERT: POST same triple with ``mode: disabled`` (config preserved).
+          7. Verify via API that one row still exists for this
+             ``binding_reference_id`` with ``mode`` flipped vs phase 2;
+             Postgres confirms the config dict is unchanged.
+          8. Propagation wait — covers the per-tenant manager rebuild after
+             the upsert.
+          9. Paced 5-call burst — assert ``rate_limited == 0`` and
+             ``allowed == burst_size``.
+
+        Why ``rate_limited == 0`` is reliable here despite session-affinity
+        amplification: ``mode: disabled`` causes the cpex framework to skip
+        the plugin's hooks entirely for this tenant manager. No Redis writes
+        happen and no thresholds are evaluated, so amplification is moot.
+        Contrast with the delete-binding test, where DELETE falls back to
+        the gateway-wide static config (still enforcing at 30/m), making a
+        post-delete behavioural assertion unsafe.
         """
-        return {
+        server_id, tool_name = server_and_tool
+        ref_id = f"rl-binding-upsert-inspect-{uuid.uuid4().hex[:8]}"
+        cleanup_bindings.append(ref_id)
+
+        # Distinct multi-dim values so each is easy to spot in API responses,
+        # DB rows, and Redis Insight.
+        binding_by_user = "7/m"
+        binding_by_tenant = "9/m"
+        binding_by_tool_limit = "11/m"
+        # Inspection pauses tuned for human reaction time, not CI speed.
+        baseline_pause = 5
+        post_propagation_pause = 10
+        post_burst_pause = 30
+
+        def _say(msg: str) -> None:
+            with capsys.disabled():
+                print(f"\n[inspect] {msg}")
+
+        # Same multi-dim config used for both the initial POST and the
+        # mode-flip upsert — only the mode field changes between the two.
+        binding_config = {
             "algorithm": "fixed_window",
             "backend": "redis",
-            "by_user": f"{BURST_LIMIT_PER_SEC}/s",
-            "by_tenant": None,
-            "by_tool": {},
+            "by_user": binding_by_user,
+            "by_tenant": binding_by_tenant,
+            "by_tool": {tool_name: binding_by_tool_limit},
+            # redis_url + redis_key_prefix omitted — gateway-scoped keys
+            # come from the static plugins/config.yaml, not the binding.
             "fail_mode": "open",
         }
+        burst_size = 5
+        pace_between_calls = 3
 
-    def test_disabled_mode_allows_burst_through(
-        self, server_and_tool, team_id, cleanup_bindings
-    ):
-        """A binding with ``mode: disabled`` does not enforce its limit.
+        def _paced_burst(phase_label: str) -> dict:
+            """Run a paced burst over a fresh MCP session; tally outcomes."""
+            session_id = _mcp_initialize_session(server_id, _fresh_headers())
+            assert session_id is not None, (
+                f"{phase_label}: MCP initialize failed — can't drive the burst"
+            )
+            call_headers = {
+                **_fresh_headers(),
+                "Accept": "application/json, text/event-stream",
+                "Mcp-Session-Id": session_id,
+            }
+            allowed = rate_limited = errors = 0
+            for i in range(burst_size):
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": str(uuid.uuid4()),
+                    "method": "tools/call",
+                    "params": {
+                        "name": tool_name,
+                        "arguments": (
+                            {"message": f"upsert-{phase_label}-{i}"}
+                            if "echo" in tool_name
+                            else {}
+                        ),
+                    },
+                }
+                try:
+                    resp = requests.post(
+                        f"{GATEWAY_URL}/servers/{server_id}/mcp",
+                        json=payload,
+                        headers=call_headers,
+                        timeout=15,
+                    )
+                    if resp.status_code == 429:
+                        outcome = "BLOCKED (HTTP 429)"
+                        rate_limited += 1
+                    elif resp.status_code != 200:
+                        outcome = f"ERROR (HTTP {resp.status_code})"
+                        errors += 1
+                    else:
+                        body = resp.json()
+                        err = body.get("error")
+                        result_obj = body.get("result") or {}
+                        if err:
+                            msg = str(err.get("message", "")).lower()
+                            if "rate" in msg or "limit" in msg:
+                                outcome = "BLOCKED (JSON-RPC rate-limit error)"
+                                rate_limited += 1
+                            else:
+                                outcome = f"ERROR ({err.get('message', 'unknown')})"
+                                errors += 1
+                        elif result_obj.get("isError"):
+                            content = result_obj.get("content", [])
+                            text = content[0].get("text", "") if content else ""
+                            if "rate" in text.lower() or "limit" in text.lower():
+                                outcome = "BLOCKED (MCP isError, rate-limit)"
+                                rate_limited += 1
+                            else:
+                                outcome = f"ERROR (MCP isError: {text[:50]})"
+                                errors += 1
+                        else:
+                            outcome = "ALLOWED"
+                            allowed += 1
+                except requests.RequestException as exc:
+                    outcome = f"ERROR (transport: {exc})"
+                    errors += 1
+                _say(f"  {phase_label} call {i + 1}/{burst_size}: {outcome}")
+                if i < burst_size - 1:
+                    time.sleep(pace_between_calls)
+            return {
+                "allowed": allowed,
+                "rate_limited": rate_limited,
+                "errors": errors,
+                "total": burst_size,
+            }
 
-        Same tight 5/s by_user limit as the enforce test; with mode=disabled
-        the plugin's hook should short-circuit and let the full burst through.
-        Proves the binding-payload ``mode`` field reaches the plugin manager
-        and is honoured at dispatch.
-        """
-        server_id, tool_name = server_and_tool
-        ref_id = f"rl-binding-disabled-{uuid.uuid4().hex[:8]}"
-        cleanup_bindings.append(ref_id)
+        # ---- Phase 0: baseline -----------------------------------------------
+        _say("Phase 0 — capturing baseline plugin state from /admin/plugins")
+        baseline = _get_admin_plugin_state(PLUGIN_NAME)
+        baseline_mode = baseline.get("mode")
+        _say(f"  baseline mode = {baseline_mode!r}")
+        _say("  → no rl-binding-upsert-inspect-* row in tool_plugin_bindings yet")
+        time.sleep(baseline_pause)
 
-        _post_binding(
-            team_id=team_id,
-            tool_name=tool_name,
-            mode="disabled",
-            binding_reference_id=ref_id,
-            config=self._binding_config(ref_id),
+        # ---- Phase 1: POST enforce binding ----------------------------------
+        _say(
+            f"Phase 1 — POSTing binding (mode=enforce) with by_user={binding_by_user!r}, "
+            f"by_tenant={binding_by_tenant!r}, "
+            f"by_tool={{{tool_name!r}: {binding_by_tool_limit!r}}}"
         )
-        time.sleep(PROPAGATION_WAIT)
-
-        result = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-
-        assert result["rate_limited"] == 0, (
-            f"mode=disabled must not enforce — no requests should have been "
-            f"rate-limited, got: {result}"
-        )
-        assert result["allowed"] == BURST_SIZE, (
-            f"All {BURST_SIZE} requests should pass when the binding is "
-            f"disabled. Got: {result}"
-        )
-        assert result["errors"] == 0, f"Unexpected transport errors: {result}"
-
-    def test_upsert_from_enforce_to_disabled_stops_blocking(
-        self, server_and_tool, team_id, cleanup_bindings
-    ):
-        """Upserting an existing binding from ``enforce`` to ``disabled``
-        propagates to the plugin manager and stops further blocking.
-
-        Sequence:
-          1. POST enforce binding, burst → some blocked (sanity).
-          2. POST same triple with mode=disabled (upsert).
-          3. Burst again → none blocked.
-
-        Asserts the upsert path triggers a manager rebuild and the new mode
-        actually takes effect — not just that the row was updated in the DB.
-        """
-        server_id, tool_name = server_and_tool
-        ref_id = f"rl-binding-upsert-{uuid.uuid4().hex[:8]}"
-        cleanup_bindings.append(ref_id)
-
-        # Phase 1 — enforce.
         _post_binding(
             team_id=team_id,
             tool_name=tool_name,
             mode="enforce",
             binding_reference_id=ref_id,
-            config=self._binding_config(ref_id),
+            config=binding_config,
         )
-        time.sleep(PROPAGATION_WAIT)
+        _say(f"  binding_reference_id = {ref_id}")
 
-        before = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert before["rate_limited"] > 0, (
-            f"Pre-upsert sanity: enforce binding should rate-limit some of a "
-            f"{BURST_SIZE}-request burst against {BURST_LIMIT_PER_SEC}/s. "
-            f"Got: {before}"
+        # ---- Phase 2: persistence cross-check (post-INSERT) -----------------
+        _say("Phase 2 — verifying the enforce binding actually persisted")
+        api_binding = _get_binding_via_api(ref_id)
+        assert api_binding is not None, f"binding {ref_id} not returned by API"
+        api_config = api_binding.get("config", {}) or {}
+        assert api_config.get("by_user") == binding_by_user, (
+            f"API has by_user={api_config.get('by_user')!r}, expected {binding_by_user!r}"
+        )
+        assert api_config.get("by_tenant") == binding_by_tenant, (
+            f"API has by_tenant={api_config.get('by_tenant')!r}, expected {binding_by_tenant!r}"
+        )
+        assert api_config.get("by_tool", {}) == {tool_name: binding_by_tool_limit}, (
+            f"API has by_tool={api_config.get('by_tool')!r}, "
+            f"expected {{{tool_name!r}: {binding_by_tool_limit!r}}}"
+        )
+        enforce_api_mode = api_binding.get("mode")
+        _say(
+            f"  ✓ API confirms binding row (mode={enforce_api_mode!r}, "
+            f"by_user={api_config.get('by_user')!r})"
         )
 
-        # Phase 2 — upsert to disabled (same team_id + tool_name + plugin_id).
+        psql_config = _psql_get_binding_config(ref_id)
+        assert psql_config is not None, f"binding {ref_id} not in Postgres"
+        assert psql_config.get("by_user") == binding_by_user, (
+            f"Postgres has by_user={psql_config.get('by_user')!r}, expected {binding_by_user!r}"
+        )
+        _say("  ✓ Postgres confirms config column persisted")
+
+        # ---- Phase 3: propagation wait --------------------------------------
+        _say(f"Phase 3 — sleeping {PROPAGATION_WAIT + post_propagation_pause}s")
+        _say("  → covers the per-tenant plugin manager rebuild")
+        time.sleep(PROPAGATION_WAIT + post_propagation_pause)
+
+        # ---- Phase 4: paced enforce-burst -----------------------------------
+        _say(
+            f"Phase 4 — pacing {burst_size} tool calls {pace_between_calls}s apart "
+            f"to confirm the enforce binding is live before we upsert it"
+        )
+        enforce_result = _paced_burst("enforce")
+        _say(
+            f"  summary: allowed={enforce_result['allowed']} "
+            f"rate_limited={enforce_result['rate_limited']} "
+            f"errors={enforce_result['errors']}"
+        )
+        assert enforce_result["errors"] == 0, (
+            f"Non-rate-limit errors indicate a setup/transport problem: {enforce_result}"
+        )
+        assert enforce_result["rate_limited"] >= 1, (
+            f"Expected at least one block under mode=enforce. Got: {enforce_result}"
+        )
+
+        # ---- Phase 5: inspect Redis -----------------------------------------
+        _say("Phase 5 — inspecting Redis for binding-driven dimension keys")
+        rl_keys = _redis_rl_keys()
+        for k, v, t in rl_keys:
+            _say(f"  {k} = {v}  (ttl={t}s)")
+        key_strs = [k for (k, _, _) in rl_keys]
+        user_keys = [k for k in key_strs if ":user:" in k]
+        tenant_keys = [k for k in key_strs if ":tenant:" in k]
+        tool_keys = [k for k in key_strs if f":tool:{tool_name}:" in k]
+        _say(
+            f"  dimension keys observed: "
+            f"user={len(user_keys)}, tenant={len(tenant_keys)}, "
+            f"tool({tool_name})={len(tool_keys)}"
+        )
+        assert len(user_keys) >= 1, (
+            "by_user counter is missing — the enforce binding's by_user "
+            "override didn't engage at runtime."
+        )
+        assert len(tenant_keys) >= 1, "by_tenant counter is missing"
+        assert len(tool_keys) >= 1, (
+            f"by_tool counter for {tool_name!r} is missing"
+        )
+        _say("  ✓ all three dimension keys present in Redis")
+
+        # ---- Phase 6: UPSERT to mode=disabled -------------------------------
+        _say(
+            f"Phase 6 — UPSERTing same (team={team_id!r}, tool={tool_name!r}, "
+            f"plugin=RateLimiterPlugin) triple with mode=disabled"
+        )
         _post_binding(
             team_id=team_id,
             tool_name=tool_name,
             mode="disabled",
             binding_reference_id=ref_id,
-            config=self._binding_config(ref_id),
+            config=binding_config,  # same multi-dim config — only mode changes
         )
-        time.sleep(PROPAGATION_WAIT)
 
-        after = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-        assert after["rate_limited"] == 0, (
-            f"After upserting to disabled, no requests should be rate-limited. "
-            f"Before: {before}; after: {after}"
+        # ---- Phase 7: persistence cross-check (post-UPSERT) -----------------
+        _say("Phase 7 — verifying the upsert updated the existing row in place")
+        api_after = _get_binding_via_api(ref_id)
+        assert api_after is not None, (
+            f"binding {ref_id} disappeared after upsert — UPSERT looks like "
+            f"DELETE-then-INSERT-failed, not in-place UPDATE"
         )
-        assert after["allowed"] == BURST_SIZE, (
-            f"All {BURST_SIZE} requests should pass after upsert to disabled. "
-            f"Before: {before}; after: {after}"
+        disabled_api_mode = api_after.get("mode")
+        assert disabled_api_mode != enforce_api_mode, (
+            f"Upsert should have flipped the mode field; both phase 2 and "
+            f"phase 7 reported mode={disabled_api_mode!r}"
         )
+        _say(
+            f"  ✓ API confirms mode flipped: enforce={enforce_api_mode!r} "
+            f"→ disabled={disabled_api_mode!r}"
+        )
+        api_after_config = api_after.get("config", {}) or {}
+        assert api_after_config.get("by_user") == binding_by_user, (
+            f"by_user changed across upsert (was {binding_by_user!r}, "
+            f"now {api_after_config.get('by_user')!r})"
+        )
+        assert api_after_config.get("by_tenant") == binding_by_tenant, (
+            f"by_tenant changed across upsert (was {binding_by_tenant!r}, "
+            f"now {api_after_config.get('by_tenant')!r})"
+        )
+        assert api_after_config.get("by_tool", {}) == {tool_name: binding_by_tool_limit}, (
+            f"by_tool changed across upsert"
+        )
+        _say("  ✓ API confirms config dict preserved across upsert (only mode flipped)")
+
+        psql_after_config = _psql_get_binding_config(ref_id)
+        assert psql_after_config is not None, (
+            f"binding {ref_id} disappeared from Postgres after upsert"
+        )
+        assert psql_after_config == psql_config, (
+            f"Postgres config column changed across upsert. "
+            f"before={psql_config}, after={psql_after_config}"
+        )
+        _say("  ✓ Postgres confirms config column unchanged across upsert")
+
+        # ---- Phase 8: propagation wait --------------------------------------
+        _say(f"Phase 8 — sleeping {PROPAGATION_WAIT + post_propagation_pause}s")
+        _say("  → covers the per-tenant manager rebuild after the mode flip")
+        time.sleep(PROPAGATION_WAIT + post_propagation_pause)
+
+        # ---- Phase 9: paced disabled-burst ----------------------------------
+        _say(
+            f"Phase 9 — pacing {burst_size} tool calls {pace_between_calls}s apart "
+            f"to confirm mode=disabled propagated past the DB into the plugin "
+            f"manager (and skips the plugin entirely, including gateway-wide limits)"
+        )
+        disabled_result = _paced_burst("disabled")
+        _say(
+            f"  summary: allowed={disabled_result['allowed']} "
+            f"rate_limited={disabled_result['rate_limited']} "
+            f"errors={disabled_result['errors']}"
+        )
+        assert disabled_result["errors"] == 0, (
+            f"Non-rate-limit errors after upsert: {disabled_result}"
+        )
+        assert disabled_result["rate_limited"] == 0, (
+            f"After upsert to mode=disabled, no calls should be blocked. "
+            f"Got: {disabled_result}"
+        )
+        assert disabled_result["allowed"] == burst_size, (
+            f"After upsert to mode=disabled, all {burst_size} calls should "
+            f"pass. Got: {disabled_result}"
+        )
+        _say(
+            f"  ✓ {burst_size}/{burst_size} calls allowed after upsert — the "
+            f"new mode reached the plugin manager and skipped dispatch entirely"
+        )
+        _say(
+            f"  → refresh Redis Insight in the next ~{post_burst_pause}s; "
+            "no new rl:* keys should appear from this disabled-binding burst"
+        )
+        time.sleep(post_burst_pause)
 
     @pytest.mark.slow
     def test_delete_binding_full_lifecycle_inspectable(
