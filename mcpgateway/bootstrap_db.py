@@ -53,7 +53,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool  # noqa: F401
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -697,8 +697,8 @@ async def main() -> None:
     """
     Bootstrap or upgrade the database schema, then log readiness.
 
-    Runs `create_all()` + `alembic stamp head` on an empty DB, otherwise just
-    executes `alembic upgrade head`, leaving application data intact.
+    Runs `alembic upgrade head` for empty and existing databases, leaving
+    application data intact.
     Also creates the platform admin user if email authentication is enabled.
 
     Uses distributed advisory locks (PG) or file locking (SQLite)
@@ -736,9 +736,8 @@ async def main() -> None:
                 table_names = insp.get_table_names()
 
                 if "gateways" not in table_names:
-                    logger.info("Empty DB detected - creating baseline schema")
-                    Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
+                    logger.info("Empty DB detected - running Alembic migrations to create baseline schema")
+                    command.upgrade(cfg, "head")
                 else:
                     versions: list[str] = []
                     if "alembic_version" in table_names:
