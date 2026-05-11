@@ -25,7 +25,7 @@
       <tr data-enabled="{{ tool.enabled|lower }}" data-owner-email="{{ tool.ownerEmail }}" data-team-id="{{ tool.teamId or '' }}" data-visibility="{{ tool.visibility }}">
         <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
           <div class="relative"
-               x-data="Admin.overflowMenu('tools-table-wrapper')"
+               x-data="window.Admin?.overflowMenu?.('tools-table-wrapper')"
                @click.away="menuOpen = false"
                @keydown.escape="menuOpen = false; $refs.trigger.focus()">
             <button
@@ -65,7 +65,7 @@
                 role="menuitem"
                 tabindex="0"
                 data-test-tool-id="{{ tool.id }}"
-                @click="menuOpen = false; Admin.testTool({{ tool.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.testTool?.({{ tool.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡Execute this Tool with sample inputs'"
               >Test</button>
@@ -73,7 +73,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.viewTool({{ tool.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.viewTool?.({{ tool.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡View tool details and configuration'"
               >View</button>
@@ -82,7 +82,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.editTool({{ tool.id|tojson_attr }})"
+                @click="menuOpen = false; window.Admin?.editTool?.({{ tool.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡Edit tool settings and configuration'"
               >Edit</button>

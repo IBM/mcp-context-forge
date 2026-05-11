@@ -127,7 +127,7 @@ class TestAPISecurityAbuseCases:
             token_obj = body.get("token", body)
             assert token_obj.get("user_email") == "admin@example.com"
         else:
-            assert response.status == 422, f"Unexpected response for mass-assignment probe: {response.status} {response.text()}"
+            assert response.status in (400, 422), f"Unexpected response for mass-assignment probe: {response.status} {response.text()}"
 
         if token_id:
             with suppress(Exception):

@@ -49,7 +49,6 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
-import jwt
 import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -67,6 +66,7 @@ from mcpgateway import version as version_module
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.auth_context import get_scoped_resource_access_context
+
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
@@ -96,7 +96,7 @@ from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECT
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace, SessionLocal
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
@@ -1370,7 +1370,6 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
-    from mcpgateway.db import SessionLocal
     from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
     with SessionLocal() as db:
@@ -4095,16 +4094,29 @@ async def admin_login_page(request: Request) -> Response:
         jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if jwt_token:
             try:
-                payload = await verify_jwt_token_cached(jwt_token, request)
-                if payload:
-                    # Only redirect if the token indicates admin privileges;
-                    # otherwise the middleware will reject and redirect back here,
-                    # creating an infinite redirect loop.
-                    is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                    if is_admin:
-                        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
-            except (HTTPException, jwt.PyJWTError):
-                # Token is invalid or expired - mark for clearing to prevent redirect loop
+                from mcpgateway.auth import validate_token_user
+
+                auth_user = await validate_token_user(request, jwt_token)
+                token_teams = getattr(request.state, "token_teams", None)
+
+                # Preserve public-only denial invariant — same as AdminAuthMiddleware
+                if token_teams is not None and len(token_teams) == 0:
+                    pass  # Render login page; do not redirect to /admin
+                elif auth_user.is_admin:
+                    return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                else:
+                    # Non-admin with valid token: check RBAC admin permission
+                    with SessionLocal() as db:
+                        permission_service = PermissionService(db)
+                        has_admin_access = await permission_service.has_admin_permission(
+                            auth_user.email,
+                            team_id=None,
+                            token_teams=token_teams,
+                        )
+                        if has_admin_access:
+                            return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                        # else: render login page; token is valid but lacks admin access
+            except Exception:
                 clear_invalid_cookies = True
 
     # Only show secure cookie warning if there's a login error AND problematic config
@@ -4680,6 +4692,7 @@ async def _admin_logout(request: Request) -> Response:
 
     # Clear CSRF token cookie
     from mcpgateway.services.csrf_service import clear_csrf_cookie
+
     clear_csrf_cookie(response, settings)
 
     use_secure = (settings.environment == "production") or settings.secure_cookies
@@ -5431,6 +5444,10 @@ async def admin_teams_partial_html(
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
+        elif getattr(t, "created_by", None) == user_email:
+            # Safety net: creator should always see owner controls even if
+            # membership cache lags behind team creation (Issue #3883)
+            t.relationship = "owner"
         elif t.visibility == "public" and t.is_active:
             # Public teams show join button for ALL non-members (including admins)
             # This ensures platform admins go through the normal join request workflow
@@ -10676,6 +10693,30 @@ async def admin_search_tokens(
     return token_data
 
 
+@admin_router.delete("/tokens/{token_id}", status_code=204)
+@require_permission("tokens.revoke", allow_admin_bypass=False)
+async def admin_revoke_token(
+    token_id: str,
+    current_user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> None:
+    """Revoke a token from the admin UI.
+
+    This endpoint uses the admin CSRF protection already enforced by the admin router.
+    """
+    token_service = TokenCatalogService(db)
+    success = await token_service.revoke_token(
+        token_id=token_id,
+        user_email=current_user["email"],
+        revoked_by=current_user["email"],
+        reason="Revoked by user via admin interface",
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    db.commit()
+
+
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_a2a_partial_html(
@@ -12075,16 +12116,18 @@ async def admin_discover_oauth(
             except ValueError:
                 return None
 
-        return JSONResponse({
-            "success": True,
-            "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
-            "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
-            "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
-            "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
-            "dcr_available": bool(metadata.get("registration_endpoint")),
-            "scopes_supported": metadata.get("scopes_supported", []),
-            "grant_types_supported": metadata.get("grant_types_supported", []),
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "token_endpoint": _safe_endpoint(metadata.get("token_endpoint"), "token_endpoint"),
+                "authorization_endpoint": _safe_endpoint(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+                "jwks_uri": _safe_endpoint(metadata.get("jwks_uri"), "jwks_uri"),
+                "registration_endpoint": _safe_endpoint(metadata.get("registration_endpoint"), "registration_endpoint"),
+                "dcr_available": bool(metadata.get("registration_endpoint")),
+                "scopes_supported": metadata.get("scopes_supported", []),
+                "grant_types_supported": metadata.get("grant_types_supported", []),
+            }
+        )
     except Exception as e:
         LOGGER.warning("OAuth discovery failed: %s", e)
         sanitized = sanitize_exception_message(str(e))

@@ -12,7 +12,7 @@ import {
   getAuthToken,
   fetchWithAuth,
 } from "../../mcpgateway/admin_ui/tokens.js";
-import { fetchWithTimeout } from "../../mcpgateway/admin_ui/utils.js";
+import { fetchWithTimeout, getCookie } from "../../mcpgateway/admin_ui/utils.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create a mock Response-like object
@@ -316,6 +316,10 @@ async function getAuthHeaders(includeContentType = false) {
   }
   if (includeContentType) {
     headers["Content-Type"] = "application/json";
+  }
+  const csrfToken = getCookie("mcpgateway_csrf_token");
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
   }
   return headers;
 }

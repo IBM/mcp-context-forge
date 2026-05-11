@@ -384,7 +384,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         root_path = request.scope.get("root_path", "")
         if root_path and path.startswith(root_path):
-            path = path[len(root_path):]
+            path = path[len(root_path) :]
 
         # FastAPI's built-in /docs and /redoc pages use inline scripts without nonces
         # to initialise SwaggerUIBundle.  Skipping CSP on these endpoints lets the

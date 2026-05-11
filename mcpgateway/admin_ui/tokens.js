@@ -651,7 +651,7 @@ const revokeToken = async function (tokenId, tokenName) {
   try {
     const requestHeaders = await getAuthHeaders(true);
     const response = await fetchWithTimeout(
-      `${window.ROOT_PATH}/tokens/${tokenId}`,
+      `${window.ROOT_PATH}/admin/tokens/${tokenId}`,
       {
         method: "DELETE",
         headers: requestHeaders,
