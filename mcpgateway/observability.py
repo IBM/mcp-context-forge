@@ -157,6 +157,13 @@ logger = logging.getLogger(__name__)
 _LANGFUSE_OTEL_PATH_FRAGMENT = "/api/public/otel"
 _MAX_SPAN_EXCEPTION_MESSAGE_LENGTH = 1024
 _IDENTITY_ATTRIBUTE_KEYS = frozenset({"user.email", "user.is_admin", "team.scope", "team.name", "langfuse.user.id"})
+_SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_NAMES = frozenset({"SpanAttributeCustomizer", "span_attribute_customizer"})
+_SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_KINDS = frozenset(
+    {
+        "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+        "span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+    }
+)
 
 
 # Global tracer instance - using UPPER_CASE for module-level constant
@@ -390,6 +397,94 @@ def _should_emit_span_attribute(attribute_name: str) -> bool:
     if attribute_name in _IDENTITY_ATTRIBUTE_KEYS and not _should_capture_identity_attributes():
         return False
     return True
+
+
+def extract_span_attribute_mapping(plugin_manager_factory: Any) -> Dict[str, str]:
+    """Extract validated span attribute mappings from SpanAttributeCustomizer config.
+
+    Option A semantics are used: mappings target existing OTEL span attribute
+    names such as ``baggage.tenant.id`` and duplicate them to the configured
+    destination key.
+
+    Args:
+        plugin_manager_factory: Active plugin manager factory with loaded base config.
+
+    Returns:
+        Mapping of source span attribute key to destination span attribute key.
+    """
+    if plugin_manager_factory is None:
+        return {}
+
+    base_config = getattr(plugin_manager_factory, "_base_config", None)
+    plugins = getattr(base_config, "plugins", None) or []
+
+    for plugin in plugins:
+        plugin_name = getattr(plugin, "name", None)
+        plugin_kind = getattr(plugin, "kind", None)
+        if plugin_name not in _SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_NAMES and plugin_kind not in _SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_KINDS:
+            continue
+
+        config = getattr(plugin, "config", None) or {}
+        raw_mapping = config.get("attribute_mapping") or {}
+        if not isinstance(raw_mapping, dict):
+            logger.warning("SpanAttributeCustomizer attribute_mapping must be a mapping; got %s", type(raw_mapping).__name__)
+            return {}
+
+        extracted: Dict[str, str] = {}
+        for source_key, target_key in raw_mapping.items():
+            if not isinstance(source_key, str) or not isinstance(target_key, str):
+                logger.warning("Skipping malformed SpanAttributeCustomizer mapping entry with non-string key/value: %r -> %r", source_key, target_key)
+                continue
+            normalized_source = source_key.strip()
+            normalized_target = target_key.strip()
+            if not normalized_source or not normalized_target:
+                logger.warning("Skipping malformed SpanAttributeCustomizer mapping entry with empty key/value: %r -> %r", source_key, target_key)
+                continue
+            extracted[normalized_source] = normalized_target
+        return extracted
+
+    return {}
+
+
+class BaggageAttributeSpanProcessor:
+    """Duplicate configured baggage-derived span attributes onto mapped keys."""
+
+    def __init__(self, span_attribute_mapping: Mapping[str, str]):
+        """Initialize the processor with validated mapping configuration.
+
+        Args:
+            span_attribute_mapping: Mapping from source span attribute names to destination names.
+        """
+        self.span_attribute_mapping = dict(span_attribute_mapping)
+
+    def on_start(self, span, _parent_context=None):
+        """Copy mapped baggage-derived attributes when a span starts.
+
+        Args:
+            span: The span being started.
+            _parent_context: Parent context required by SpanProcessor interface.
+        """
+        if not self.span_attribute_mapping or span is None:
+            return
+
+        attributes = getattr(span, "attributes", None) or {}
+        for source_key, target_key in self.span_attribute_mapping.items():
+            if not source_key.startswith("baggage."):
+                continue
+            if source_key not in attributes:
+                continue
+            value = attributes[source_key]
+            if value is None:
+                continue
+            span.set_attribute(target_key, value)
+
+    def on_end(self, span):
+        """Handle span end event.
+
+        Args:
+            span: The span being ended.
+        """
+        return None
 
 
 def set_span_attribute(span: Any, attribute_name: str, value: Any) -> None:
@@ -796,7 +891,7 @@ class OpenTelemetryRequestMiddleware:
                 raise
 
 
-def init_telemetry() -> Optional[Any]:
+def init_telemetry(span_attribute_mapping: Optional[Mapping[str, str]] = None) -> Optional[Any]:
     """Initialize OpenTelemetry with configurable backend.
 
     Supports multiple backends via environment variables:
@@ -805,6 +900,10 @@ def init_telemetry() -> Optional[Any]:
     - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger endpoint (for jaeger exporter)
     - OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin endpoint (for zipkin exporter)
     - OTEL_ENABLE_OBSERVABILITY: Set to 'true' to enable (disabled by default)
+
+    Args:
+        span_attribute_mapping: Optional startup-loaded mapping for remapping
+            existing span attribute names such as ``baggage.*`` to exported aliases.
 
     Returns:
         The initialized tracer instance or None if disabled.
@@ -921,6 +1020,10 @@ def init_telemetry() -> Optional[Any]:
         if resource is not None and copy_resource_attrs:
             logger.info("Adding ResourceAttributeSpanProcessor to copy resource attributes to spans")
             provider.add_span_processor(ResourceAttributeSpanProcessor())
+
+        if span_attribute_mapping:
+            logger.info("Adding BaggageAttributeSpanProcessor with %d configured mapping(s)", len(span_attribute_mapping))
+            provider.add_span_processor(BaggageAttributeSpanProcessor(span_attribute_mapping))
 
         # Configure the appropriate exporter based on type
         exporter: Optional[Any] = None

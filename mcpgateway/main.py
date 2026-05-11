@@ -111,10 +111,11 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.observability import extract_span_attribute_mapping, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
+    get_plugin_manager_factory,
     init_plugin_manager_factory,
     shutdown_plugin_manager_factory,
     start_plugin_invalidation_listener,
@@ -1428,10 +1429,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await init_llmchat_redis()
 
-    # Initialize observability (Phoenix tracing)
-    init_telemetry()
-    logger.info("Observability initialized")
-
     try:
         # Validate security configuration
         validate_security_configuration()
@@ -1480,6 +1477,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             from mcpgateway.plugins import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
 
             mark_factory_init_degraded()
+
+        span_attribute_mapping = extract_span_attribute_mapping(get_plugin_manager_factory())
+        init_telemetry(span_attribute_mapping=span_attribute_mapping)
+        logger.info("Observability initialized")
 
         try:
             plugin_manager = await get_plugin_manager()

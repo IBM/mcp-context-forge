@@ -18,7 +18,17 @@ import pytest
 # First-Party
 from mcpgateway import observability
 from mcpgateway.config import get_settings
-from mcpgateway.observability import OpenTelemetryRequestMiddleware, create_span, inject_trace_context_headers, init_telemetry, otel_context_active, otel_tracing_enabled, trace_operation
+from mcpgateway.observability import (
+    BaggageAttributeSpanProcessor,
+    OpenTelemetryRequestMiddleware,
+    create_span,
+    extract_span_attribute_mapping,
+    inject_trace_context_headers,
+    init_telemetry,
+    otel_context_active,
+    otel_tracing_enabled,
+    trace_operation,
+)
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
 
@@ -177,6 +187,42 @@ class TestObservability:
 
         # Verify 2 span processors: ResourceAttributeSpanProcessor + SimpleSpanProcessor
         assert provider_instance.add_span_processor.call_count == 2
+        assert result is not None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_registers_baggage_attribute_processor(self, mock_processor, mock_provider, mock_exporter):
+        """init_telemetry should register the Option A baggage remapping processor when mapping exists."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        result = init_telemetry(span_attribute_mapping={"baggage.tenant.id": "tenant.id"})
+
+        assert provider_instance.add_span_processor.call_count == 2
+        baggage_processor = provider_instance.add_span_processor.call_args_list[0][0][0]
+        assert isinstance(baggage_processor, BaggageAttributeSpanProcessor)
+        assert result is not None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_skips_baggage_attribute_processor_when_mapping_absent(self, mock_processor, mock_provider, mock_exporter):
+        """init_telemetry should remain a no-op for baggage remapping when no mapping exists."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        result = init_telemetry(span_attribute_mapping={})
+
+        assert provider_instance.add_span_processor.call_count == 1
         assert result is not None
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
@@ -835,6 +881,100 @@ class TestObservability:
         span_no_resource = MagicMock()
         span_no_resource.resource = None
         processor.on_start(span_no_resource)
+
+    def test_extract_span_attribute_mapping_returns_option_a_mapping(self):
+        """Startup extraction should return SpanAttributeCustomizer mapping unchanged for Option A."""
+        plugin = MagicMock(
+            name="SpanAttributeCustomizer",
+            kind="plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            config={"attribute_mapping": {"baggage.tenant.id": "tenant.id", "baggage.user.email": "user.email"}},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        mapping = extract_span_attribute_mapping(plugin_manager_factory)
+
+        assert mapping == {
+            "baggage.tenant.id": "tenant.id",
+            "baggage.user.email": "user.email",
+        }
+
+    def test_extract_span_attribute_mapping_handles_malformed_config_safely(self):
+        """Startup extraction should fail closed when attribute_mapping is malformed."""
+        plugin = MagicMock(
+            name="SpanAttributeCustomizer",
+            kind="plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            config={"attribute_mapping": ["not-a-dict"]},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        mapping = extract_span_attribute_mapping(plugin_manager_factory)
+
+        assert mapping == {}
+
+    def test_extract_span_attribute_mapping_skips_invalid_entries(self):
+        """Startup extraction should ignore malformed mapping entries and preserve valid ones."""
+        plugin = MagicMock(
+            name="SpanAttributeCustomizer",
+            kind="plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            config={"attribute_mapping": {" baggage.tenant.id ": " tenant.id ", "baggage.user.id": "", 7: "tenant.bad"}},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        mapping = extract_span_attribute_mapping(plugin_manager_factory)
+
+        assert mapping == {"baggage.tenant.id": "tenant.id"}
+
+    def test_extract_span_attribute_mapping_returns_empty_when_plugin_missing(self):
+        """Startup extraction should no-op when SpanAttributeCustomizer is not configured."""
+        plugin = MagicMock(name="OtherPlugin", kind="plugins.other.OtherPlugin", config={"attribute_mapping": {"baggage.tenant.id": "tenant.id"}})
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        mapping = extract_span_attribute_mapping(plugin_manager_factory)
+
+        assert mapping == {}
+
+    def test_baggage_attribute_span_processor_remaps_baggage_attributes(self):
+        """Option A processor should copy already-injected baggage.* attributes onto mapped keys."""
+        processor = BaggageAttributeSpanProcessor(
+            {
+                "baggage.tenant.id": "tenant.id",
+                "baggage.user.email": "user.email",
+            }
+        )
+        span = MagicMock()
+        span.attributes = {
+            "baggage.tenant.id": "team-a",
+            "baggage.user.email": "user@example.com",
+        }
+
+        processor.on_start(span)
+
+        span.set_attribute.assert_any_call("tenant.id", "team-a")
+        span.set_attribute.assert_any_call("user.email", "user@example.com")
+
+    def test_baggage_attribute_span_processor_noops_without_matching_attributes(self):
+        """Option A processor should safely no-op when source baggage keys are absent."""
+        processor = BaggageAttributeSpanProcessor({"baggage.tenant.id": "tenant.id"})
+        span = MagicMock()
+        span.attributes = {"http.route": "/rpc"}
+
+        processor.on_start(span)
+
+        span.set_attribute.assert_not_called()
+
+    def test_baggage_attribute_span_processor_ignores_non_baggage_mappings(self):
+        """Option A processor should ignore mappings that do not target baggage.* keys."""
+        processor = BaggageAttributeSpanProcessor({"tenant.id": "tenant.alias"})
+        span = MagicMock()
+        span.attributes = {"tenant.id": "team-a"}
+
+        processor.on_start(span)
+
+        span.set_attribute.assert_not_called()
 
     @patch("mcpgateway.observability.get_correlation_id", return_value="corr-123")
     def test_create_span_injects_correlation_id(self, mock_get_correlation_id):
