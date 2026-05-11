@@ -34,7 +34,7 @@ from ..conftest import _ensure_admin_logged_in
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:

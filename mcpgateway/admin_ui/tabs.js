@@ -419,7 +419,7 @@ export const showTab = function (tabName) {
 
         if (tabName === "teams") {
           // Load Teams list if not already loaded
-          const teamsList = safeGetElement("teams-list");
+          const teamsList = safeGetElement("unified-teams-list");
           if (teamsList) {
             // Check if it's still showing the loading message or is empty
             const hasLoadingMessage =

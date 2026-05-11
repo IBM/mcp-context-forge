@@ -929,6 +929,47 @@ class TestBootstrapDefaultRoles:
                             assert minimal_call[0].kwargs["is_system_role"] is False
 
     @pytest.mark.asyncio
+    async def test_bootstrap_roles_updates_existing_system_role_permissions(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        roles_file = tmp_path / "roles.json"
+        roles_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "platform_admin",
+                        "description": "Platform admin role",
+                        "scope": "global",
+                        "permissions": ["tools.read", "tools.execute"],
+                        "is_system_role": True,
+                    }
+                ]
+            )
+        )
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        existing_role = Mock()
+        existing_role.name = "platform_admin"
+        existing_role.permissions = ["tools.read"]
+        existing_role.is_system_role = True
+        mock_role_service.get_role_by_name.return_value = existing_role
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        await bootstrap_default_roles(mock_conn)
+
+        assert existing_role.permissions == ["tools.execute", "tools.read"]
+        assert mock_db.commit.called
+        mock_db.refresh.assert_any_call(existing_role)
+
+    @pytest.mark.asyncio
     async def test_bootstrap_roles_with_dict_instead_of_list(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
         """Test handling when JSON is a dict instead of a list."""
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user

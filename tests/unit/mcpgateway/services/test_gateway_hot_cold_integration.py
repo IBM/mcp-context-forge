@@ -10,7 +10,7 @@ for health checks and auto-refresh polling.
 """
 
 # Standard
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -483,7 +483,7 @@ class TestBranchSpecificMissingLines:
 
         mock_gateway = _make_mock_gateway(url="http://test-server:8000", name="test-gateway")
         # Naive datetime (no tzinfo), old enough that time_since_refresh > 300s
-        mock_gateway.last_refresh_at = datetime.utcnow() - timedelta(hours=2)
+        mock_gateway.last_refresh_at = datetime.now(timezone.utc) - timedelta(hours=2)
         mock_gateway.refresh_interval_seconds = None
 
         mock_refresh = AsyncMock(return_value={"added": 0, "updated": 0, "removed": 0})
@@ -516,7 +516,7 @@ class TestBranchSpecificMissingLines:
 
         mock_gateway = _make_mock_gateway(url="http://test-server:8000", name="test-gateway")
         # Naive datetime, refreshed 30 seconds ago (within 3600s interval)
-        mock_gateway.last_refresh_at = datetime.utcnow() - timedelta(seconds=30)
+        mock_gateway.last_refresh_at = datetime.now(timezone.utc) - timedelta(seconds=30)
         mock_gateway.refresh_interval_seconds = None
 
         mock_refresh = AsyncMock(return_value={"added": 0, "updated": 0, "removed": 0})

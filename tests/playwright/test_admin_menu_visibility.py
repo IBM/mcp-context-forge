@@ -24,7 +24,7 @@ from typing import Any, Dict, Generator, List, Optional
 import uuid
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, expect, Page, Playwright
+from playwright.sync_api import APIRequestContext, Page, Playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
@@ -43,7 +43,7 @@ MENU_PLATFORM_ADMIN_EMAIL = f"{MENU_TEST_PREFIX}-platform-admin-{uuid.uuid4().he
 MENU_TEAM_ADMIN_EMAIL = f"{MENU_TEST_PREFIX}-team-admin-{uuid.uuid4().hex[:8]}@test.example.com"
 MENU_DEVELOPER_EMAIL = f"{MENU_TEST_PREFIX}-developer-{uuid.uuid4().hex[:8]}@test.example.com"
 MENU_VIEWER_EMAIL = f"{MENU_TEST_PREFIX}-viewer-{uuid.uuid4().hex[:8]}@test.example.com"
-MENU_TEST_PASSWORD = "Changeme123!"
+MENU_TEST_PASSWORD = "MenuP@ssw0rd!Test2026X"  # pragma: allowlist secret
 MENU_TEAM_NAME = f"{MENU_TEST_PREFIX}-team-{uuid.uuid4().hex[:8]}"
 
 # Menu sections with their data-testid attributes

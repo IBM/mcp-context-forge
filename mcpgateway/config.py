@@ -455,6 +455,7 @@ class Settings(BaseSettings):
             "/mcp/",  # Exempt: MCP Streamable HTTP is a programmatic protocol, not browser-based
             "/sse",  # Exempt: SSE is a server-sent event stream, not vulnerable to CSRF
             "/message",  # Exempt: MCP SSE message endpoint
+            "/rpc",  # Exempt: JSON-RPC is a programmatic protocol, not browser-based
         ],
         description="Paths exempt from CSRF protection",
     )
@@ -846,7 +847,28 @@ class Settings(BaseSettings):
             elif host_for_check.startswith("169.254."):
                 invalid_domains.append((domain, "link-local address"))
             # Check for private IP ranges (commonly misconfigured)
-            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.")):
+            elif domain_lower.startswith(
+                (
+                    "10.",
+                    "172.16.",
+                    "172.17.",
+                    "172.18.",
+                    "172.19.",
+                    "172.20.",
+                    "172.21.",
+                    "172.22.",
+                    "172.23.",
+                    "172.24.",
+                    "172.25.",
+                    "172.26.",
+                    "172.27.",
+                    "172.28.",
+                    "172.29.",
+                    "172.30.",
+                    "172.31.",
+                    "192.168.",
+                )
+            ):
                 invalid_domains.append((domain, "private IP range"))
             # Check for obviously invalid patterns
             elif " " in domain or "\t" in domain or "\n" in domain:
@@ -1566,7 +1588,6 @@ class Settings(BaseSettings):
         }
 
     def log_critical_issues(self, status: SecurityStatus) -> None:
-
         """Log critical security issues and remediation steps."""
         if status["status"] == "FAIL":
             logger.critical(f"[SECURITY FATAL] {status['message']}")

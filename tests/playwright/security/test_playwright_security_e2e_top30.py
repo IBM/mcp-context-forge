@@ -38,7 +38,7 @@ from .conftest import BASE_URL
 pytestmark = [pytest.mark.ui, pytest.mark.e2e, pytest.mark.playwright_security_e2e]
 
 _UNSET = object()
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _extract_servers(response_json: Any) -> list[dict[str, Any]]:
@@ -180,14 +180,14 @@ def email_logged_in_page(context: BrowserContext) -> Page:
         pytest.skip("Email login form is unavailable in this environment.")
 
     admin_email = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-    candidate_passwords = [os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!"), os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")]
+    candidate_passwords = [os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW"), os.getenv("PLATFORM_ADMIN_PASSWORD", "5S1Nd8z$Ivb6N%Lsj^okvVF6")]
 
     login_succeeded = False
     for password in candidate_passwords:
         login_page.submit_login(admin_email, password)
 
         if login_page.is_on_change_password_page():
-            desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
+            desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW")
             login_page.submit_password_change(password, desired_password)
 
         if "/admin/login" not in page.url and "/admin/change-password-required" not in page.url:
@@ -584,7 +584,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
                 "/auth/email/admin/users",
                 data={
                     "email": f"forbidden-{uuid.uuid4().hex[:8]}@example.com",
-                    "password": "SecurePass123!",
+                    "password": "SecureP@ssw0rd!Test2026",  # pragma: allowlist secret
                     "full_name": "Forbidden User",
                 },
             )

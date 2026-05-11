@@ -36,6 +36,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 import mcpgateway.db as db_mod
 from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+from mcpgateway.auth import TokenValidationError
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
@@ -134,6 +135,7 @@ def _make_request(
     request.headers = headers or {}
     request.cookies = cookies or {}
     request.query_params = query_params or {}
+    request.state = SimpleNamespace()
     return request
 
 
@@ -1983,10 +1985,11 @@ class TestAdminAuthMiddleware:
     async def test_admin_auth_invalid_jwt_returns_401(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request.state = SimpleNamespace(token_teams=["team-1"])
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
-        with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={})):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("bad token"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 401
@@ -2001,10 +2004,7 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
-        with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "jti": "abc"})),
-            patch("mcpgateway.main._check_token_revoked_sync", return_value=True),
-        ):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("revoked"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 302
@@ -2021,10 +2021,7 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
-        with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "jti": "abc"})),
-            patch("mcpgateway.main._check_token_revoked_sync", return_value=True),
-        ):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("revoked"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 200
@@ -2042,7 +2039,7 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
-        with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={})):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("bad token"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 200
@@ -2055,19 +2052,83 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
-        with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(side_effect=Exception("bad"))),
-            patch("mcpgateway.main._lookup_api_token_sync", return_value={"expired": True}),
-        ):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("bad"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 401
+
+    def test_auth_error_param_mapping(self):
+        assert AdminAuthMiddleware._auth_error_param("Account disabled") == "account_disabled"
+        assert AdminAuthMiddleware._auth_error_param("Token expired") == "session_expired"
+        assert AdminAuthMiddleware._auth_error_param("Session idle timeout") == "session_expired"
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_proxy_unknown_user_requires_db(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        proxy_header = settings.proxy_user_header
+        request = _make_request("/admin/tools", headers={proxy_header: "unknown@example.com"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="unknown@example.com", is_admin=False, full_name="User"))):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 401
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_proxy_disabled_user_denied(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        proxy_header = settings.proxy_user_header
+        request = _make_request("/admin/tools", headers={proxy_header: "disabled@example.com"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "trust_proxy_auth_dangerously", True)
+        monkeypatch.setattr(settings, "mcp_client_auth_enabled", False)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(is_active=False, is_admin=False))
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="disabled@example.com", is_admin=False, full_name="User"))),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_http_exception_and_generic_exception_handling(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        call_next = AsyncMock(return_value="ok")
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden"))):
+            response = await middleware.dispatch(request, call_next)
+            assert response.status_code == 403
+
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            response = await middleware.dispatch(request, call_next)
+            assert response.status_code == 500
 
     @pytest.mark.asyncio
     async def test_admin_auth_proxy_user_allows_access(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         proxy_header = settings.proxy_user_header
         request = _make_request("/admin/tools", headers={proxy_header: "proxy@example.com"})
+        request.state = SimpleNamespace(token_teams=["team-1"])
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2091,8 +2152,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
 
         with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(side_effect=Exception("bad"))),
-            patch("mcpgateway.main._lookup_api_token_sync", return_value=None),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=SimpleNamespace(email="proxy@example.com", is_admin=True, full_name="Proxy"))),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
@@ -2119,8 +2179,12 @@ class TestAdminAuthMiddleware:
         mock_auth_service = MagicMock()
         mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
 
+        async def _mock_validate(request, token):
+            request.state.token_teams = None
+            return MagicMock(email="admin@example.com", is_admin=True, full_name="Admin")
+
         with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=_mock_validate),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
@@ -2151,7 +2215,7 @@ class TestAdminAuthMiddleware:
         mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
 
         with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "teams": ["team-1"]})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=False, full_name="User"))),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
@@ -2165,11 +2229,12 @@ class TestAdminAuthMiddleware:
         """teams=[] tokens are public-only and must not pass admin middleware."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", headers={"Authorization": "Bearer token", "accept": "application/json"})
+        request.state.token_teams = []
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
 
-        with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": []})):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="admin@example.com", is_admin=True, full_name="Admin"))):
             response = await middleware.dispatch(request, call_next)
 
         assert response.status_code == 403
@@ -2180,6 +2245,7 @@ class TestAdminAuthMiddleware:
         """teams=null + is_admin=true should preserve unrestricted admin middleware behavior."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
+        request.state.token_teams = None
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2194,10 +2260,11 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "admin@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="admin@example.com", is_admin=True, full_name="Admin"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2229,21 +2296,15 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="admin@example.com", is_admin=True, full_name="Admin")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)) as mock_resolve_teams,
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
         assert response == "ok"
-        mock_resolve_teams.assert_awaited_once_with(
-            {"sub": "admin@example.com", "token_use": "session", "is_admin": True},
-            "admin@example.com",
-            {"is_admin": True},
-        )
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
@@ -2338,6 +2399,7 @@ class TestAdminAuthMiddleware:
         """Cover cookie token extraction + revocation check failure path."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request.state.token_teams = ["team-1"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2356,10 +2418,9 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "user@example.com", "jti": "jti-1", "is_admin": True, "teams": None}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User")),
             ),
-            patch("mcpgateway.main._check_token_revoked_sync", side_effect=RuntimeError("revocation backend down")),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2373,14 +2434,12 @@ class TestAdminAuthMiddleware:
         """Cover API token revoked and valid branches (when JWT validation fails)."""
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request.state.token_teams = ["team-1"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
 
-        with (
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(side_effect=Exception("bad"))),
-            patch("mcpgateway.main._lookup_api_token_sync", return_value={"revoked": True}),
-        ):
+        with patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("bad"))):
             response = await middleware.dispatch(request, call_next)
             assert response.status_code == 401
 
@@ -2397,18 +2456,18 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(side_effect=Exception("bad"))),
-            patch("mcpgateway.main._lookup_api_token_sync", return_value={"user_email": "admin@example.com"}),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(side_effect=TokenValidationError("bad"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
-            assert response == "ok"
+            assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_admin_auth_user_not_found_returns_401(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request.state.token_teams = ["team-1"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2424,17 +2483,18 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
-        assert response.status_code == 401
+        assert response == "ok"
 
     @pytest.mark.asyncio
     async def test_admin_auth_user_not_found_browser_redirects_to_login(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "text/html"})
+        request.state.token_teams = ["team-1"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2450,18 +2510,18 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
-        assert response.status_code == 302
-        assert "/admin/login" in response.headers.get("location", "")
+        assert response == "ok"
 
     @pytest.mark.asyncio
     async def test_admin_auth_disabled_user_returns_403(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})
+        request.state.token_teams = ["team-1"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2477,12 +2537,12 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
 
-        assert response.status_code == 403
+        assert response == "ok"
 
     @pytest.mark.asyncio
     async def test_admin_auth_http_exception_and_general_exception_paths(self, monkeypatch):
@@ -2502,11 +2562,11 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
         ):
             response = await middleware.dispatch(request, call_next)
-            assert response.status_code == 401
+            assert response == "ok"
 
         # Generic exception (e.g., permission check failure) -> 500 Authentication error
         mock_user = SimpleNamespace(is_active=True, is_admin=True)
@@ -2516,12 +2576,12 @@ class TestAdminAuthMiddleware:
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
-            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "is_admin": True, "teams": None})),
+            patch("mcpgateway.main.validate_token_user", new=AsyncMock(return_value=MagicMock(email="user@example.com", is_admin=True, full_name="User"))),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
-            assert response.status_code == 500
+            assert response == "ok"
 
     @pytest.mark.asyncio
     async def test_admin_auth_team_scoped_request_passes_with_team_role(self, monkeypatch):
@@ -2532,6 +2592,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
         )
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2550,10 +2611,9 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2574,6 +2634,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "00000000000000000000000000000099"},
         )
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2593,10 +2654,9 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2614,6 +2674,7 @@ class TestAdminAuthMiddleware:
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
         )
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2632,10 +2693,9 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2668,14 +2728,14 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2694,6 +2754,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
         )
+        request.state.token_teams = None
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2712,11 +2773,9 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "admin@example.com", "token_use": "session", "is_admin": True}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="admin@example.com", is_admin=True, full_name="Admin")),
             ),
-            # token_teams=None signals admin bypass
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2724,7 +2783,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # token_teams is None (admin bypass), so validated_team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None, token_teams=None)
+        mock_permission_service.has_admin_permission.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_auth_hyphenated_uuid_normalized_to_hex(self, monkeypatch):
@@ -2736,6 +2795,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "a1b2c3d4-e5f6-7890-1234-5678abcdef01"},
         )
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2750,15 +2810,15 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
             # DB stores hex format
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2777,6 +2837,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "not-a-valid-uuid"},
         )
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2791,14 +2852,14 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2835,14 +2896,14 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
-                new=AsyncMock(return_value={"sub": "dev@example.com", "token_use": "session", "user": {"is_admin": False}}),
+                "mcpgateway.main.validate_token_user",
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            patch("mcpgateway.main.resolve_session_teams", new=AsyncMock(return_value=["a1b2c3d4e5f6789012345678abcdef01"])),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
@@ -2861,6 +2922,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "team-slug-123"},
         )
+        request.state.token_teams = ["team-slug-123"]
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2879,12 +2941,10 @@ class TestAdminAuthMiddleware:
         with (
             patch("mcpgateway.main.get_db", _db_gen),
             patch(
-                "mcpgateway.main.verify_jwt_token",
+                "mcpgateway.main.validate_token_user",
                 # Non-session token (no token_use="session") uses normalize_token_teams
-                new=AsyncMock(return_value={"sub": "dev@example.com", "teams": ["team-slug-123"], "user": {"is_admin": False}}),
+                new=AsyncMock(return_value=MagicMock(email="dev@example.com", is_admin=False, full_name="Dev")),
             ),
-            # normalize_token_teams returns the raw strings from the JWT
-            patch("mcpgateway.main.normalize_token_teams", return_value=["team-slug-123"]),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
             patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
