@@ -129,6 +129,45 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
 )
 
 
+def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
+
+    Applies only to known outbound or redirect endpoints that the gateway may
+    later contact or surface to a client. This closes the gap where
+    ``oauth_config["token_url"]`` previously bypassed [`validate_core_url`](mcpgateway/common/validators.py:1939).
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a URL-bearing field is not a string or fails validation.
+    """
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("oauth_config must be an object")
+    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server"):
+        raw_value = v.get(field_name)
+        if raw_value in (None, ""):
+            continue
+        if not isinstance(raw_value, str):
+            raise ValueError(f"oauth_config.{field_name} must be a string URL")
+        validate_core_url(raw_value, f"OAuth config {field_name}")
+    raw_servers = v.get("authorization_servers")
+    if raw_servers in (None, ""):
+        return v
+    if not isinstance(raw_servers, list):
+        raise ValueError("oauth_config.authorization_servers must be a list of URLs")
+    for idx, server in enumerate(raw_servers):
+        if not isinstance(server, str):
+            raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
+        validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
+
+
 def _validate_mapping_size(v: dict | None) -> dict | None:
     """Validate that a mapping dict does not exceed size limits.
 
@@ -2906,6 +2945,12 @@ class GatewayCreate(BaseModelWithConfigDict):
         """
         return validate_core_url(v, "Gateway URL")
 
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -3240,6 +3285,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return validate_core_url(v, "Gateway URL")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
 
     @field_validator("description", mode="before")
     @classmethod

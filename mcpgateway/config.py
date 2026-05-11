@@ -167,7 +167,8 @@ class SecurityConfigurationError(Exception):
 
 
 def calculate_entropy(text: str) -> float:
-    """Calculate Shannon entropy to detect low-randomness secrets.
+    """
+    Calculate Shannon entropy to detect low-randomness secrets.
 
     Args:
         text (str): The secret string to evaluate.
