@@ -221,6 +221,50 @@ async def test_client_credentials_flow_with_scopes(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_prepare_runtime_credentials_validates_oauth_urls(oauth_manager):
+    credentials = {
+        "token_url": "https://issuer.example.com/token",
+        "issuer": "https://issuer.example.com",
+        "authorization_server": "https://issuer.example.com",
+        "authorization_servers": ["https://issuer.example.com", "https://backup.example.com"],
+    }
+
+    with patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()):
+        runtime_credentials = await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+    assert runtime_credentials["token_url"] == "https://issuer.example.com/token"
+    assert runtime_credentials["issuer"] == "https://issuer.example.com"
+    assert runtime_credentials["authorization_server"] == "https://issuer.example.com"
+    assert runtime_credentials["authorization_servers"] == ["https://issuer.example.com", "https://backup.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_rejects_blocked_authorization_server_list(oauth_manager):
+    credentials = {
+        "authorization_servers": ["http://169.254.169.254/latest/meta-data/"],
+    }
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(OAuthError, match="Invalid runtime OAuth configuration for client_credentials flow"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
+async def test_prepare_runtime_credentials_rejects_non_list_authorization_servers(oauth_manager):
+    credentials = {
+        "authorization_servers": "https://issuer.example.com",
+    }
+
+    with (
+        patch("mcpgateway.services.oauth_manager.decrypt_oauth_config_for_runtime", new_callable=AsyncMock, return_value=credentials.copy()),
+        pytest.raises(OAuthError, match="Invalid runtime OAuth configuration for client_credentials flow"),
+    ):
+        await oauth_manager._prepare_runtime_credentials(credentials, "client_credentials")
+
+
+@pytest.mark.asyncio
 async def test_client_credentials_flow_decrypt_secret(oauth_manager):
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
@@ -1082,14 +1126,11 @@ async def test_exchange_code_for_tokens_omits_resource_for_entra_v2_scope_flow(o
     request_data = mock_client.post.call_args[1]["data"]
     assert "resource" not in request_data
 
+
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
     """Test that complete_authorization_code_flow handles scope returned as list (OAuth providers like Gamma)."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": ["read", "write", "admin"],  # List format
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": ["read", "write", "admin"], "expires_in": 3600}  # List format
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1104,10 +1145,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1120,11 +1158,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
     """Test that complete_authorization_code_flow handles scope as space-separated string (standard OAuth)."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": "read write admin",  # String format
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": "read write admin", "expires_in": 3600}  # String format
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1139,10 +1173,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1155,11 +1186,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager):
     """Test that complete_authorization_code_flow handles empty scope string."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": "",  # Empty string
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": "", "expires_in": 3600}  # Empty string
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1174,10 +1201,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1190,11 +1214,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager):
     """Test that complete_authorization_code_flow handles invalid scope type gracefully."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": 123,  # Invalid type (number)
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": 123, "expires_in": 3600}  # Invalid type (number)
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1209,10 +1229,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
@@ -1225,11 +1242,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
 @pytest.mark.asyncio
 async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager):
     """Test that complete_authorization_code_flow filters non-string items from list scopes."""
-    mock_token_response = {
-        "access_token": "test-token",
-        "scope": ["read", 123, None, "write"],  # Mixed types
-        "expires_in": 3600
-    }
+    mock_token_response = {"access_token": "test-token", "scope": ["read", 123, None, "write"], "expires_in": 3600}  # Mixed types
 
     mock_token_storage = AsyncMock()
     mock_token_record = MagicMock()
@@ -1244,10 +1257,7 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
         patch.object(oauth_manager, "_extract_token_audience", return_value=None),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id="gw-123",
-            code="auth-code",
-            state="test-state",
-            credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
+            gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
         )
 
     assert result["success"] is True
