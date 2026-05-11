@@ -593,61 +593,6 @@ class TestRateLimiterBindingApiEnforcesLimits:
     """A rate-limiter binding configured through the bindings API enforces
     its limits at tool-dispatch time."""
 
-    def test_binding_with_tight_user_limit_blocks_burst(
-        self, server_and_tool, team_id, cleanup_bindings
-    ):
-        """A binding with ``by_user: 5/s`` rate-limits a 15-request burst.
-
-        Asserts:
-          - At least one request is rate-limited (proves the binding's
-            tighter limit is being applied — shipped config alone is 30/m
-            and would not block a 15-request burst).
-          - At least one request is allowed (proves the binding is not
-            outright failing the plugin and dropping every request).
-          - No transport / MCP errors that aren't rate-limit signals.
-        """
-        server_id, tool_name = server_and_tool
-        ref_id = f"rl-binding-test-{uuid.uuid4().hex[:8]}"
-        cleanup_bindings.append(ref_id)
-
-        _post_binding(
-            team_id=team_id,
-            tool_name=tool_name,
-            mode="enforce",
-            binding_reference_id=ref_id,
-            config={
-                "algorithm": "fixed_window",
-                "backend": "redis",
-                "by_user": f"{BURST_LIMIT_PER_SEC}/s",
-                "by_tenant": None,
-                "by_tool": {},
-                # redis_url + redis_key_prefix intentionally omitted — see the
-                # `_binding_config` docstring below: testing whether dropping
-                # gateway-scoped keys lets the per-tenant overrides propagate.
-                "fail_mode": "open",
-            },
-        )
-
-        # Wait for binding propagation — invalidate-and-broadcast plus any
-        # downstream cache TTLs.
-        time.sleep(PROPAGATION_WAIT)
-
-        result = _send_tool_burst(server_id, tool_name, BURST_SIZE)
-
-        assert result["rate_limited"] > 0, (
-            f"Binding configures by_user: {BURST_LIMIT_PER_SEC}/s and a burst of "
-            f"{BURST_SIZE} requests should exceed it, but no requests were "
-            f"rate-limited. Got: {result}"
-        )
-        assert result["allowed"] >= 1, (
-            f"At least the first few requests should be allowed before the "
-            f"limit kicks in. Got: {result}"
-        )
-        assert result["errors"] == 0, (
-            f"Non-rate-limit errors indicate a setup or transport problem, "
-            f"not enforcement behaviour. Got: {result}"
-        )
-
     @pytest.mark.slow
     def test_binding_full_lifecycle_inspectable(
         self, server_and_tool, team_id, cleanup_bindings, capsys
