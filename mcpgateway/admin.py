@@ -65,10 +65,9 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_context import get_scoped_resource_access_context
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -1370,6 +1369,7 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
+    from mcpgateway.db import SessionLocal
     from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
     with SessionLocal() as db:
@@ -4691,6 +4691,7 @@ async def _admin_logout(request: Request) -> Response:
     clear_auth_cookie(response)
 
     # Clear CSRF token cookie
+    # First-Party
     from mcpgateway.services.csrf_service import clear_csrf_cookie
 
     clear_csrf_cookie(response, settings)

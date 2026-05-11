@@ -69,8 +69,6 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
-
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
@@ -102,6 +100,7 @@ from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -1922,7 +1921,10 @@ def validate_security_configuration():
 
         # Audit logging for explicit security overrides in production
         if current_settings.environment == "production" and not current_settings.require_strong_secrets:
-            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. This override is being logged for audit purposes as per US-1 requirements.")
+            logger.warning(
+                "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
+                "This override is being logged for audit purposes as per US-1 requirements."
+            )
 
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:
@@ -10197,6 +10199,79 @@ async def handle_internal_mcp_tools_call_metric(request: Request):
     return ORJSONResponse(content={"status": "ok"})
 
 
+async def _handle_tools_list_rpc(
+    request: Request,
+    db: Session,
+    user,
+    tool_service,
+    server_id: Optional[str],
+    cursor: Optional[str],
+    serializer_func,
+) -> Dict[str, Any]:
+    """Handle tools/list and list_tools RPC methods with shared logic.
+
+    Args:
+        request: The FastAPI request object
+        db: Database session
+        user: Authenticated user with permissions
+        tool_service: Tool service instance
+        server_id: Optional server ID for server-scoped tool listing
+        cursor: Optional pagination cursor
+        serializer_func: Function to serialize tool definitions (either _serialize_mcp_tool_definitions or _serialize_legacy_tool_payloads)
+
+    Returns:
+        Dictionary containing tools list and optional nextCursor
+
+    Raises:
+        HTTPException: If permission check fails
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    _req_email, _req_is_admin = user_email, is_admin
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
+
+    # Admin bypass - only when token has NO team restrictions
+    if is_admin and token_teams is None:
+        user_email = None
+        token_teams = None  # Admin unrestricted
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
+
+    if server_id:
+        tools = await tool_service.list_server_tools(
+            db,
+            server_id,
+            cursor=cursor,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+    else:
+        tools, next_cursor = await tool_service.list_tools(
+            db,
+            cursor=cursor,
+            limit=0,
+            user_email=user_email,
+            token_teams=token_teams,
+            requesting_user_email=_req_email,
+            requesting_user_is_admin=_req_is_admin,
+            requesting_user_team_roles=_req_team_roles,
+        )
+        # Release DB connection early to prevent idle-in-transaction under load
+        db.commit()
+        db.close()
+        result = {"tools": serializer_func(tools)}
+        if next_cursor:
+            result["nextCursor"] = next_cursor
+
+    return result
+
+
 async def _handle_rpc_authenticated(request: Request, db: Session, user):
     """Handle RPC requests.
 
@@ -10338,89 +10413,26 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "tools/list":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin and token_teams is None:
-                user_email = None
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                # Release DB connection early to prevent idle-in-transaction under load
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_mcp_tool_definitions(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_service=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_mcp_tool_definitions,
+            )
         elif method == "list_tools":  # Legacy endpoint
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-            # Admin bypass - only when token has NO team restrictions (token_teams is None)
-            # If token has explicit team scope (even empty [] for public-only), respect it
-            if is_admin and token_teams is None:
-                user_email = None
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(
-                    db,
-                    server_id,
-                    cursor=cursor,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-            else:
-                tools, next_cursor = await tool_service.list_tools(
-                    db,
-                    cursor=cursor,
-                    limit=0,
-                    user_email=user_email,
-                    token_teams=token_teams,
-                    requesting_user_email=_req_email,
-                    requesting_user_is_admin=_req_is_admin,
-                    requesting_user_team_roles=_req_team_roles,
-                )
-                db.commit()
-                db.close()
-                result = {"tools": _serialize_legacy_tool_payloads(tools)}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            result = await _handle_tools_list_rpc(
+                request=request,
+                db=db,
+                user=user,
+                tool_service=tool_service,
+                server_id=server_id,
+                cursor=cursor,
+                serializer_func=_serialize_legacy_tool_payloads,
+            )
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
@@ -11871,6 +11883,7 @@ app.include_router(export_import_router)
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
     try:
+        # First-Party
         from mcpgateway.routers.compliance_router import router as compliance_router
 
         app.include_router(compliance_router)
@@ -12048,10 +12061,10 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
