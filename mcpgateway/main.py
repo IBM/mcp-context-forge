@@ -36,6 +36,7 @@ import hashlib
 import html
 import json
 import logging
+import os
 import re
 import signal
 import sys
@@ -70,8 +71,6 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
-
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
@@ -103,6 +102,7 @@ from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -1602,6 +1602,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # Warn about per-worker database connection pool multiplication
+        if os.environ.get("GUNICORN_CMD_ARGS") or os.environ.get("GUNICORN_WORKERS"):
+            workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+            total_pool = settings.db_pool_size + settings.db_max_overflow
+            total_connections = workers * total_pool
+            logger.warning(
+                "⚠️  DATABASE POOL: Running with %d gunicorn workers. "
+                "Total max DB connections = workers(%d) * (pool_size + max_overflow) = %d * %d = %d. "
+                "Ensure PostgreSQL max_connections >= %d. ",
+                workers,
+                workers,
+                workers,
+                total_pool,
+                total_connections,
+                total_connections,
+            )
+
         # Warn about unsafe UAID configuration if A2A is enabled
         if settings.mcpgateway_a2a_enabled:
             uaid_allowed_domains = getattr(settings, "uaid_allowed_domains", [])
@@ -1924,10 +1941,7 @@ def validate_security_configuration():
 
         # Audit logging for explicit security overrides in production
         if current_settings.environment == "production" and not current_settings.require_strong_secrets:
-            logger.warning(
-                "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
-                "This override is being logged for audit purposes as per US-1 requirements."
-            )
+            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. " "This override is being logged for audit purposes as per US-1 requirements.")
 
         log_security_recommendations(security_status)
     except SecurityConfigurationError as e:
@@ -11871,7 +11885,9 @@ app.include_router(export_import_router)
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
     try:
+        # First-Party
         from mcpgateway.routers.compliance_router import router as compliance_router
+
         app.include_router(compliance_router)
         logger.info("Compliance router included")
     except ImportError as e:  # pragma: no cover - optional import guard
@@ -12047,10 +12063,10 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])

@@ -145,7 +145,11 @@ def build_engine() -> Engine:
         sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
         sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
 
-        logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+        logger.info(
+            "Configuring SQLite with pool_size=%s, max_overflow=%s. " "Note: With gunicorn multi-worker deployment, each worker gets its own pool. ",
+            sqlite_pool_size,
+            sqlite_max_overflow,
+        )
 
         return create_engine(
             settings.database_url,
@@ -183,7 +187,14 @@ def build_engine() -> Engine:
     elif settings.db_pool_class == "queue":
         logger.info("Using QueuePool (explicit configuration)")
     else:
-        logger.info("Using QueuePool with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+        logger.info(
+            "Using QueuePool with pool_size=%s, max_overflow=%s. "
+            "Note: With gunicorn multi-worker deployment, each worker gets its own pool. "
+            "Total max connections = workers × (pool_size + max_overflow). "
+            "See Issue #4645 for connection pool sizing guidance.",
+            settings.db_pool_size,
+            settings.db_max_overflow,
+        )
 
     # Determine pre_ping setting
     # - "auto": Enabled for non-PgBouncer with QueuePool, disabled otherwise
