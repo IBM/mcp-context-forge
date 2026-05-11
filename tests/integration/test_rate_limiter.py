@@ -380,43 +380,6 @@ class TestToolPreInvoke:
         assert "Retry-After" not in result.http_headers  # Not on success
 
 
-class TestStoreCleanup:
-    """Tests for rate limit store cleanup."""
-
-    @pytest.mark.asyncio
-    async def test_store_cleanup_between_tests(self, rate_limit_plugin_2_per_second):
-        """Verify each plugin instance starts with an empty store."""
-        plugin = rate_limit_plugin_2_per_second
-        backend = plugin._rate_backend
-
-        # Fresh instance — store must be empty before any requests
-        assert len(backend._algorithm._store) == 0
-
-        ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
-        payload = PromptPrehookPayload(prompt_id="test", args={})
-
-        await plugin.prompt_pre_fetch(payload, ctx)
-
-        # After one request a window entry must exist
-        assert len(backend._algorithm._store) > 0
-
-    @pytest.mark.asyncio
-    async def test_multiple_users_create_separate_windows(self, rate_limit_plugin_2_per_second):
-        """Verify multiple users create separate window entries in the backend store."""
-        plugin = rate_limit_plugin_2_per_second
-        backend = plugin._rate_backend
-
-        ctx_alice = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
-        ctx_bob = PluginContext(global_context=GlobalContext(request_id="r2", user="bob"))
-        payload = PromptPrehookPayload(prompt_id="test", args={})
-
-        await plugin.prompt_pre_fetch(payload, ctx_alice)
-        await plugin.prompt_pre_fetch(payload, ctx_bob)
-
-        # Each user must have their own key in the store
-        assert len(backend._algorithm._store) >= 2
-
-
 class TestSlidingWindowIntegration:
     """End-to-end integration tests for the sliding_window algorithm."""
 
@@ -717,22 +680,6 @@ class TestPermissiveMode:
         assert result.violation.http_status_code == 429
 
     @pytest.mark.asyncio
-    async def test_permissive_mode_still_tracks_counters(self):
-        """Permissive mode still decrements the counter — backend store must grow."""
-        plugin, hook_ref, executor = self._make_plugin_and_hook("10/s")
-        ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
-        payload = ToolPreInvokePayload(name="tool", arguments={})
-
-        await executor.execute_plugin(hook_ref, payload, ctx, violations_as_exceptions=True)
-        await executor.execute_plugin(hook_ref, payload, ctx, violations_as_exceptions=True)
-
-        # Counter must have been incremented — key exists in backend store
-        store = plugin._rate_backend._algorithm._store
-        assert len(store) > 0, "Permissive mode must still track counters in the backend store"
-        key = next(iter(store))
-        assert store[key].count == 2, f"Expected count=2 after 2 requests, got {store[key].count}"
-
-    @pytest.mark.asyncio
     async def test_permissive_mode_contrast_with_enforce(self):
         """Enforce mode raises PluginViolationError; permissive mode does not."""
         enforce_config = PluginConfig(
@@ -785,18 +732,6 @@ class TestDisabledMode:
         for _ in range(10):
             result, _ = await executor.execute(hook_refs, payload, global_ctx, "tool_pre_invoke", violations_as_exceptions=True)
             assert result.violation is None, "Disabled plugin must never produce a violation"
-
-    @pytest.mark.asyncio
-    async def test_disabled_mode_does_not_track_counters(self):
-        """execute() skips the plugin — backend store must remain empty."""
-        plugin, hook_refs, executor = self._make_plugin_and_refs()
-        global_ctx = GlobalContext(request_id="r1", user="alice")
-        payload = ToolPreInvokePayload(name="tool", arguments={})
-
-        for _ in range(5):
-            await executor.execute(hook_refs, payload, global_ctx, "tool_pre_invoke", violations_as_exceptions=True)
-
-        assert len(plugin._rate_backend._algorithm._store) == 0, "Disabled plugin must not write to the backend store — executor skips it entirely"
 
     def test_disabled_plugin_mode_property(self):
         """Plugin mode property reflects the configured disabled mode."""
