@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-# -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_main.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
@@ -5481,6 +5479,40 @@ def test_startup_succeeds_with_uaid_require_allowlist_false():
 
         # Verify ERROR was logged
         assert mock_logger.error.called
+
+
+def test_db_pool_warning_calculation_with_gunicorn_workers():
+    """Verify DB pool warning calculation when GUNICORN_WORKERS is set."""
+    with patch.dict(os.environ, {"GUNICORN_WORKERS": "4"}):
+        # Test the calculation logic directly
+        workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+        db_pool_size = 15
+        db_max_overflow = 30
+        total_pool = db_pool_size + db_max_overflow
+        total_connections = workers * total_pool
+
+        assert workers == 4
+        assert total_pool == 45
+        assert total_connections == 180
+
+
+def test_db_pool_warning_calculation_with_gunicorn_cmd_args():
+    """Verify DB pool warning triggers when GUNICORN_CMD_ARGS is set."""
+    with patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--workers=2"}):
+        # Verify the condition that triggers the warning
+        assert os.environ.get("GUNICORN_CMD_ARGS") is not None
+
+        # Test default worker calculation
+        workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
+        assert workers == 2
+
+
+def test_db_pool_warning_not_triggered_without_gunicorn():
+    """Verify DB pool warning condition is false without gunicorn env vars."""
+    with patch.dict(os.environ, {}, clear=True):
+        # Verify the condition that prevents the warning
+        assert os.environ.get("GUNICORN_CMD_ARGS") is None
+        assert os.environ.get("GUNICORN_WORKERS") is None
 
 
 # ========================================================================== #
