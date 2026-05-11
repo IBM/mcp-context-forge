@@ -1528,6 +1528,22 @@ class TestMain:
                                                         mock_resources.assert_called_once()
                                                         mock_logger.info.assert_any_call("Database ready")
 
+    @pytest.mark.asyncio
+    async def test_main_exception_handling(self, mock_settings):
+        """Test main function exception handling and re-raise."""
+        mock_engine = Mock()
+
+        # Mock engine.connect() to raise an exception
+        mock_engine.connect.side_effect = Exception("Connection failed")
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
+            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    with pytest.raises(Exception, match="Connection failed"):
+                        await main()
+
+                    mock_logger.error.assert_called_with("Database migration failed: Connection failed")
+
 
 class TestModuleLevel:
     """Test module-level code and imports."""
