@@ -3794,6 +3794,48 @@ class TestToolService:
             assert "Connection refused by upstream MCP server" in call_kwargs["error_message"]
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_timeout_message_preserved_through_exception_group(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Bare TimeoutError() wrapped in ExceptionGroup must produce a descriptive fallback message.
+
+        Regression test for GitHub issue #2782: TimeoutError() stringifies to '' when
+        wrapped in BaseExceptionGroup during MCP SDK TaskGroup cleanup, causing clients
+        to receive an empty error string. The fix detects this case and substitutes
+        "Tool invocation timed out after {effective_timeout}s".
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Bare TimeoutError() has no message — str(TimeoutError()) == ''
+        bare_timeout = TimeoutError()
+        assert str(bare_timeout) == "", "precondition: bare TimeoutError must stringify to empty string"
+
+        inner_group = ExceptionGroup("inner task group", [bare_timeout])
+        outer_group = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner_group])
+        tool_service._http_client.request.side_effect = outer_group
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            error_str = str(exc_info.value)
+            assert error_str.strip(), "error message must not be empty"
+            assert "timed out after" in error_str
+            assert str(settings.tool_timeout) in error_str
+
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["success"] is False
+            assert "timed out after" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
     async def test_reset_metrics(self, tool_service, test_db):
         """Test resetting metrics."""
         # Mock DB operations
