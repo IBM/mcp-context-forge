@@ -2,7 +2,7 @@ import { http, HttpResponse } from "msw";
 
 export const handlers = [
   // Mock login endpoint
-  http.post("/app/auth/login", async ({ request }) => {
+  http.post("*/app/auth/login", async ({ request }) => {
     const body = await request.json();
     const { email, password } = body as { email: string; password: string };
 
@@ -29,12 +29,12 @@ export const handlers = [
   }),
 
   // Mock auth check endpoint
-  http.get("/app/auth/me", () => {
+  http.get("*/app/auth/me", () => {
     return HttpResponse.json({ detail: "Unauthorized" }, { status: 401 });
   }),
 
   // Mock gateways endpoint with cursor pagination
-  http.get("/gateways", ({ request }) => {
+  http.get("*/gateways", ({ request }) => {
     const url = new URL(request.url);
     const cursor = url.searchParams.get("cursor");
     const limit = parseInt(url.searchParams.get("limit") || "25", 10);
@@ -64,12 +64,12 @@ export const handlers = [
   }),
 
   // Mock gateway delete endpoint
-  http.delete("/gateways/:id", () => {
+  http.delete("*/gateways/:id", () => {
     return HttpResponse.json({ success: true });
   }),
 
   // Mock gateway test endpoint
-  http.post("/gateways/:id/test", () => {
+  http.post("*/gateways/:id/test", () => {
     return HttpResponse.json({
       success: true,
       message: "Connection successful",
@@ -77,7 +77,7 @@ export const handlers = [
   }),
 
   // Mock create gateway endpoint
-  http.post("/gateways", async ({ request }) => {
+  http.post("*/gateways", async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json(
       {
@@ -90,7 +90,7 @@ export const handlers = [
   }),
 
   // Mock update gateway endpoint
-  http.put("/gateways/:gatewayId", async ({ request, params }) => {
+  http.put("*/gateways/:gatewayId", async ({ request, params }) => {
     const body = (await request.json()) as Record<string, unknown>;
     const { gatewayId } = params;
     return HttpResponse.json({
