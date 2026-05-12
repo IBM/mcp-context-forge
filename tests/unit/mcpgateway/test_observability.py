@@ -34,6 +34,8 @@ class TestObservability:
             "OTEL_TRACES_EXPORTER",
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_EXPORTER_OTLP_INSECURE",
+            "OTEL_EXPORTER_OTLP_PROTOCOL",
             "OTEL_EMIT_LANGFUSE_ATTRIBUTES",
             "OTEL_CAPTURE_IDENTITY_ATTRIBUTES",
             "OTEL_CAPTURE_INPUT_SPANS",
@@ -169,11 +171,11 @@ class TestObservability:
     @patch("mcpgateway.observability.HTTP_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
-    def test_init_telemetry_otlp_http_insecure_parameter(self, mock_processor, mock_provider, mock_exporter):
-        """Test that OTEL_EXPORTER_OTLP_INSECURE is passed to HTTP exporter constructor."""
+    def test_init_telemetry_otlp_http_insecure_true(self, mock_processor, mock_provider, mock_exporter):
+        """Test that OTEL_EXPORTER_OTLP_INSECURE=true rewrites https to http for HTTP exporter."""
         self._enable_observability()
         os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
-        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://localhost:4317"
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
         os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
         os.environ["OTEL_SERVICE_NAME"] = "test-service"
@@ -186,11 +188,38 @@ class TestObservability:
 
         result = init_telemetry()
 
-        # Verify the HTTP exporter was called with insecure=True
+        # Verify the HTTP exporter was called with http:// endpoint
         mock_exporter.assert_called_once()
         call_kwargs = mock_exporter.call_args[1]
-        assert "insecure" in call_kwargs
-        assert call_kwargs["insecure"] is True
+        assert call_kwargs["endpoint"].startswith("http://")
+        assert not call_kwargs["endpoint"].startswith("https://")
+        assert result is not None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.HTTP_EXPORTER")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.BatchSpanProcessor")
+    def test_init_telemetry_otlp_http_insecure_false(self, mock_processor, mock_provider, mock_exporter):
+        """Test that OTEL_EXPORTER_OTLP_INSECURE=false rewrites http to https for HTTP exporter."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "false"
+        os.environ["OTEL_SERVICE_NAME"] = "test-service"
+
+        # Mock the provider and exporter instances
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+        exporter_instance = MagicMock()
+        mock_exporter.return_value = exporter_instance
+
+        result = init_telemetry()
+
+        # Verify the HTTP exporter was called with https:// endpoint
+        mock_exporter.assert_called_once()
+        call_kwargs = mock_exporter.call_args[1]
+        assert call_kwargs["endpoint"].startswith("https://")
         assert result is not None
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
@@ -756,6 +785,7 @@ class TestObservability:
             for call in span.set_attribute.call_args_list:
                 assert call[0][0] != "key2" or call[0][0] == "error"
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_otlp_http_fallback(self):
         """Test OTLP HTTP exporter fallback when gRPC exporter is unavailable."""

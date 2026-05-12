@@ -942,10 +942,14 @@ def init_telemetry() -> Optional[Any]:
                 # Use HTTP exporter as fallback
                 ep = str(endpoint) if endpoint is not None else ""
                 http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
+                # HTTP exporter relies on URL scheme for TLS, not an 'insecure' parameter
+                if cfg.otel_exporter_otlp_insecure and http_ep.startswith("https://"):
+                    http_ep = http_ep.replace("https://", "http://", 1)
+                elif not cfg.otel_exporter_otlp_insecure and http_ep.startswith("http://"):
+                    http_ep = http_ep.replace("http://", "https://", 1)
                 exporter = cast(Any, HTTP_EXPORTER)(
                     endpoint=http_ep,
-                    headers=header_dict or None,
-                    insecure=cfg.otel_exporter_otlp_insecure
+                    headers=header_dict or None
                 )
             else:
                 logger.error("No OTLP exporter available")
