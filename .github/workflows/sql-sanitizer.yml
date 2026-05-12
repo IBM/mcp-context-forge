@@ -58,7 +58,7 @@ jobs:
 
                 yq -i '
                   (.plugins[] | select(.name == "SQLSanitizer") | .mode) = "enforce" |
-                  (.plugins[] | select(.name == "SQLSanitizer") | .config.fields) = "null" |
+                  (.plugins[] | select(.name == "SQLSanitizer") | .config.fields) = ["sql", "query", "statement", "message"] |
                   (.plugins[] | select(.name == "RetryWithBackoffPlugin") | .mode) = "disabled"
                 ' "$CONFIG_FILE"
 
@@ -115,12 +115,11 @@ jobs:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
-                  LOG_LEVEL: DEBUG
               run: |
                   make venv
                   make install
                   make stop-serve
-                  make serve > gunicorn.log 2>&1 &
+                  make serve > gateway.log 2>&1 &
 
                   echo "Waiting for gateway to start..."
                   for i in {1..60}; do
@@ -299,7 +298,7 @@ jobs:
                   IS_ERROR=$(echo "$RESPONSE" | jq -r '.isError')
                   ERR_MSG=$(echo "$RESPONSE" | jq -r '.content[0].text')
 
-                  cat gunicorn.log | grep sql_sanitizer
+                  cat gateway.log | grep sql_sanitizer
 
                   if [[ "$IS_ERROR" == "true" ]] && [[ "$ERR_MSG" == *"blocked by plugin SQLSanitizer"* ]]; then
                     echo "Success: SQLSanitizer blocked the 'DROP' command."
@@ -307,7 +306,6 @@ jobs:
                     echo "Failure: SQLSanitizer did not block the malicious command as expected."
                     exit 1
                   fi
-
 
                   echo "All sql-sanitizer tests passed!"
             - name: Upload logs on failure
@@ -319,6 +317,5 @@ jobs:
                       fast-test-server.log
                       sql-sanitizer_output.json
                       sql-sanitizer_test.log
-                      gunicorn.log
-
+                      gateway.log
                   retention-days: 7
