@@ -17,7 +17,7 @@ cpex-rate-limiter = "2026-05-11T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-05-11T23:59:59Z"
 cpex-pii-filter = "2026-05-11T23:59:59Z"
 cpex-retry-with-backoff = "2026-05-11T23:59:59Z"
-cpex-secrets-detection = "2026-05-11T23:59:59Z"
+cpex-secrets-detection = "2026-05-12T23:59:59Z"
 langchain-core = "2026-05-06T23:59:59Z"
 
 [tool.uv.sources]
