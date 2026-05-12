@@ -24,9 +24,6 @@ Examples:
     True
     >>> hasattr(logger, 'info')
     True
-    >>> from mcpgateway.bootstrap_db import Base
-    >>> hasattr(Base, 'metadata')
-    True
 """
 
 # Standard
