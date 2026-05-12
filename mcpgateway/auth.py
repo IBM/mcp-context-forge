@@ -743,6 +743,7 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return {
             "user_email": api_token.user_email,
             "jti": api_token.jti,
+            "resource_scopes": api_token.resource_scopes or [],
         }
 
 
@@ -1954,6 +1955,8 @@ async def get_current_user(
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]
+                    # Store token scopes for permission checking
+                    request.state.token_scopes = api_token_info.get("resource_scopes", [])
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
