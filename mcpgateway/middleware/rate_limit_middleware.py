@@ -392,8 +392,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 self.redis_client.incr(violation_key)
                 self.redis_client.expire(violation_key, self.lockout_duration_minutes * 60)
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Redis violation increment failed for dimension %s, falling back to in-memory: %s",
+                    dimension,
+                    str(e),
+                )
         self._increment_violation_memory(dimension)
 
     def _increment_violation_memory(self, dimension: str) -> None:
