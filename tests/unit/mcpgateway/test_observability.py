@@ -976,6 +976,48 @@ class TestObservability:
 
         span.set_attribute.assert_not_called()
 
+    def test_extract_span_attribute_mapping_returns_empty_when_factory_is_none(self):
+        """Startup extraction should return empty dict when plugin_manager_factory is None."""
+        mapping = extract_span_attribute_mapping(None)
+        assert mapping == {}
+
+    def test_baggage_attribute_span_processor_noops_when_mapping_empty(self):
+        """Processor should no-op when span_attribute_mapping is empty."""
+        processor = BaggageAttributeSpanProcessor({})
+        span = MagicMock()
+        span.attributes = {"baggage.tenant.id": "team-a"}
+
+        processor.on_start(span)
+
+        span.set_attribute.assert_not_called()
+
+    def test_baggage_attribute_span_processor_noops_when_span_is_none(self):
+        """Processor should no-op when span is None."""
+        processor = BaggageAttributeSpanProcessor({"baggage.tenant.id": "tenant.id"})
+
+        processor.on_start(None)
+
+        # Should not raise an exception
+
+    def test_baggage_attribute_span_processor_skips_none_values(self):
+        """Processor should skip attributes with None values."""
+        processor = BaggageAttributeSpanProcessor({"baggage.tenant.id": "tenant.id"})
+        span = MagicMock()
+        span.attributes = {"baggage.tenant.id": None}
+
+        processor.on_start(span)
+
+        span.set_attribute.assert_not_called()
+
+    def test_baggage_attribute_span_processor_on_end_returns_none(self):
+        """Processor on_end should return None."""
+        processor = BaggageAttributeSpanProcessor({"baggage.tenant.id": "tenant.id"})
+        span = MagicMock()
+
+        result = processor.on_end(span)
+
+        assert result is None
+
     @patch("mcpgateway.observability.get_correlation_id", return_value="corr-123")
     def test_create_span_injects_correlation_id(self, mock_get_correlation_id):
         """Test correlation_id injection when missing from attributes."""
