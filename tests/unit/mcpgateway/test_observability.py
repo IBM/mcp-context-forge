@@ -138,6 +138,7 @@ class TestObservability:
         provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
@@ -164,6 +165,7 @@ class TestObservability:
         assert call_kwargs["insecure"] is False
         assert result is not None
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.HTTP_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
