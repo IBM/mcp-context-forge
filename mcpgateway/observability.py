@@ -478,11 +478,11 @@ class BaggageAttributeSpanProcessor:
                 continue
             span.set_attribute(target_key, value)
 
-    def on_end(self, span):
+    def on_end(self, _span):
         """Handle span end event.
 
         Args:
-            span: The span being ended.
+            _span: The span being ended (unused).
         """
         return None
 
