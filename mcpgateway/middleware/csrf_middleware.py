@@ -92,6 +92,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             >>> parsed.netloc
             'example.com'
         """
+        logger.debug(f"[CSRF-DISPATCH] {request.method} {request.url.path} - csrf_enabled={settings.csrf_enabled}, method_in_safe={request.method in SAFE_METHODS}")
         # 1. Skip if CSRF protection is disabled
         if not settings.csrf_enabled:
             return await call_next(request)
@@ -165,11 +166,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             logger.warning(f"CSRF cookie missing for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
-        logger.info(f"CSRF validation starting: user={user_id}, session={session_id}, csrf_token_len={len(csrf_token)}, cookie_token_len={len(cookie_token)}")
+        logger.info(f"CSRF validation starting: user={user_id}, session={session_id}, csrf_token_len={len(csrf_token)}, cookie_token_len={len(cookie_token)}, token={csrf_token}")
 
         # Constant-time comparison to prevent timing attacks
         if not hmac.compare_digest(csrf_token, cookie_token):
-            logger.warning(f"CSRF double-submit validation failed: tokens do not match (header={csrf_token[:20]}..., cookie={cookie_token[:20]}...)")
+            logger.warning(f"CSRF double-submit validation failed: tokens do not match (header={csrf_token}, cookie={cookie_token})")
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         logger.info("CSRF double-submit validation passed")

@@ -12617,7 +12617,7 @@ if UI_ENABLED:
             # Generate CSRF token if we have both user and session context
             if user_id and session_id:
                 csrf_token = generate_csrf_token(user_id=user_id, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
-                logger.info(f"Generated CSRF token for /admin/: user={user_id}, session={session_id}, token={csrf_token[:20]}...")
+                logger.info(f"Generated CSRF token for /admin/: user={user_id}, session={session_id}, secret_len={len(settings.csrf_secret_key)}, expiry={settings.csrf_token_expiry}, token={csrf_token}")
                 response = templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
                 set_csrf_cookie(response, csrf_token, settings)
                 return response

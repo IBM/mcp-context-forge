@@ -1624,18 +1624,58 @@ def _request_origin_matches(request: Request) -> bool:
     return False
 
 
-def _set_admin_csrf_cookie(request: Request, response: Response) -> str:
+def _set_admin_csrf_cookie(request: Request, response: Response, user_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
     """Set or refresh admin CSRF cookie and return token value.
 
     Args:
         request: Incoming request used for existing token and path scoping.
         response: Outgoing response where the cookie will be written.
+        user_id: Optional user ID to use for CSRF token generation (overrides extraction from request).
+        session_id: Optional session ID to use for CSRF token generation (overrides extraction from request).
 
     Returns:
         CSRF token value stored in the response cookie.
     """
-    existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
-    csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
+    # Import CSRF service for HMAC-based token generation
+    from mcpgateway.services.csrf_service import get_csrf_service
+    import jwt as pyjwt
+    
+    # If user_id and session_id not provided, extract from request
+    if not user_id or not session_id:
+        # Get user_id and session_id from request state (set by AuthContextMiddleware)
+        if hasattr(request.state, "user") and request.state.user:
+            user = request.state.user
+            # EmailUser uses 'email' as primary key
+            if not user_id:
+                user_id = user.email if hasattr(user, "email") else str(user.id) if hasattr(user, "id") else None
+        
+        # Get session_id from JWT jti claim
+        if not session_id:
+            session_id = getattr(request.state, "jti", None)
+        
+        # Fallback: try to extract from JWT cookie if not in request.state
+        if not user_id or not session_id:
+            jwt_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+            if jwt_cookie:
+                try:
+                    # Decode JWT without verification for extracting user_id and session_id
+                    # This is safe because we only use it for CSRF token generation, not authorization
+                    payload = pyjwt.decode(jwt_cookie, options={"verify_signature": False})
+                    if not user_id:
+                        user_id = payload.get("sub") or payload.get("email") or payload.get("user", {}).get("email")
+                    if not session_id:
+                        session_id = payload.get("jti")
+                except Exception:
+                    pass  # Fall back to random token if JWT decoding fails
+    
+    # Generate HMAC-based CSRF token if we have user context
+    if user_id and session_id:
+        csrf_service = get_csrf_service()
+        csrf_token = csrf_service.generate_csrf_token(user_id, session_id)
+    else:
+        # Fallback to random token for unauthenticated requests (shouldn't happen in admin UI)
+        existing_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME)
+        csrf_token = existing_token if isinstance(existing_token, str) and len(existing_token) >= 32 else secrets.token_urlsafe(32)
 
     use_secure = (settings.environment == "production") or settings.secure_cookies
     max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
@@ -4172,8 +4212,17 @@ async def admin_ui(
             # Set HTTP-only cookie using centralized security cookie utility
             set_auth_cookie(response, token, remember_me=False)
             LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
+            
+            # Set CSRF cookie with the same session_id (jti) as the JWT token
+            # This ensures CSRF validation will pass when using the new JWT
+            _set_admin_csrf_cookie(request, response, user_id=admin_email, session_id=payload["jti"])
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+            # Still set CSRF cookie even if JWT fails (will extract from request)
+            _set_admin_csrf_cookie(request, response)
+    else:
+        # Email auth not enabled, set CSRF cookie without JWT context
+        _set_admin_csrf_cookie(request, response)
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
@@ -4200,7 +4249,6 @@ async def admin_ui(
                 samesite=samesite,
             )
 
-    _set_admin_csrf_cookie(request, response)
     return response
 
 

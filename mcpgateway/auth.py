@@ -1364,6 +1364,10 @@ async def get_current_user(
         if auth_provider:
             # email, oauth, saml, or any other interactive auth provider
             request.state.auth_method = "jwt"
+            # Store jti (session ID) for CSRF token binding and session tracking
+            jti = payload.get("jti")
+            if jti:
+                request.state.jti = jti
             return
 
         # Legacy API token fallback: check if JTI exists in API token table
@@ -1382,6 +1386,8 @@ async def get_current_user(
                     # Continue authentication - last_used update is not critical
             else:
                 request.state.auth_method = "jwt"
+                # Store jti for CSRF token binding even if not an API token
+                request.state.jti = jti_for_check
         else:
             # No auth_provider or JTI; default to interactive
             request.state.auth_method = "jwt"
