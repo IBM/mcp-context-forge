@@ -218,7 +218,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
-        logger.debug(f"SQL-SANITIZER payload: {payload.args}")
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return PromptPrehookResult(
@@ -245,7 +245,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
-        logger.debug(f"SQL-SANITIZER payload: {payload.args}")
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return ToolPreInvokeResult(
