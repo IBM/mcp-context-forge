@@ -52,6 +52,35 @@ HEADER_NAME_REGEX = re.compile(r"^[A-Za-z0-9\-]+$")
 # Maximum header value length (4KB)
 MAX_HEADER_VALUE_LENGTH = 4096
 
+# Inbound passthrough denylist: protocol-level headers that must never be
+# forwarded from client requests, regardless of allowlist configuration.
+# These headers control request encoding, routing, and connection management
+# and must be set by the gateway, not by clients.
+#
+# Security rationale per header:
+# - content-type: Prevents encoding-dispatch bypass
+# - content-length: httpx auto-recalculates; defence-in-depth
+# - host: Prevents vhost selection / cache-poisoning attacks
+# - transfer-encoding: Prevents request-smuggling attacks
+# - connection, keep-alive, proxy-connection, te, trailer, upgrade: Hop-by-hop headers
+#
+# Note: authorization is intentionally NOT on this list — it has gateway-auth-aware
+# handling earlier in get_passthrough_headers / compute_passthrough_headers_cached.
+_INBOUND_PASSTHROUGH_DENYLIST: frozenset[str] = frozenset(
+    {
+        "content-type",
+        "content-length",
+        "host",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+    }
+)
+
 
 class PassthroughHeadersError(Exception):
     """Base class for passthrough headers-related errors.
@@ -275,6 +304,12 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                 continue
 
             header_lower = header_name.lower()
+
+            # Block protocol-level headers from inbound passthrough
+            if header_lower in _INBOUND_PASSTHROUGH_DENYLIST:
+                logger.warning(f"Refusing inbound passthrough of protocol-level header '{header_name}' (security policy)")
+                continue
+
             header_value = request_headers_lower.get(header_lower)
 
             if header_value:
@@ -398,6 +433,12 @@ def compute_passthrough_headers_cached(
                 continue
 
             header_lower = header_name.lower()
+
+            # Block protocol-level headers from inbound passthrough
+            if header_lower in _INBOUND_PASSTHROUGH_DENYLIST:
+                logger.warning(f"Refusing inbound passthrough of protocol-level header '{header_name}' (security policy)")
+                continue
+
             header_value = request_headers_lower.get(header_lower)
 
             if header_value:
