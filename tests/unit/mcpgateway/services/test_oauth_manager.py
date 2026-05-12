@@ -590,6 +590,35 @@ async def test_exchange_code_for_token_no_secret(oauth_manager):
     assert result == "public-tok"
 
 
+@pytest.mark.asyncio
+async def test_exchange_code_for_token_basic_auth_without_secret(oauth_manager):
+    """Test exchange_code_for_token with Basic Auth requested but no client_secret (public client fallback)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "public-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager.exchange_code_for_token(
+            {
+                "client_id": "cid",
+                "token_url": "https://auth/token",
+                "redirect_uri": "https://cb",
+                "token_endpoint_auth_method": "client_secret_basic",
+            },
+            code="auth-code",
+            state="state-123",
+        )
+    assert result == "public-tok"
+    # Verify it fell back to POST body mode (client_id in body, no Authorization header)
+    call_kwargs = mock_client.post.call_args[1]
+    assert "client_id" in call_kwargs["data"]
+    assert "headers" in call_kwargs
+    assert "Authorization" not in call_kwargs["headers"]
+
+
 # ---------- refresh_token ----------
 
 
