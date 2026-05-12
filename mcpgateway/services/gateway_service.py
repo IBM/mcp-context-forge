@@ -627,6 +627,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return raw_oauth_config
 
         def _validate_discovered(url: str, name: str) -> bool:
+            """Validate a discovered OAuth endpoint URL.
+
+            Args:
+                url: The endpoint URL to validate
+                name: Human-readable name of the endpoint for logging
+
+            Returns:
+                True if URL passes security validation, False otherwise
+            """
             try:
                 SecurityValidator.validate_url(url, name)
                 return True

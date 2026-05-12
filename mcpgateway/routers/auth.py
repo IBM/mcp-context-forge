@@ -228,8 +228,8 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         if settings.csrf_rotate_on_login:
             try:
                 # Third-Party
-                import jwt
                 from fastapi.responses import JSONResponse
+                import jwt
 
                 # First-Party
                 from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
