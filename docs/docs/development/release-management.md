@@ -37,13 +37,8 @@ Use `bump2version` to update all version references atomically:
 bump2version --verbose --new-version=X.Y.Z-RC-N build
 ```
 
-This updates the version string in the four canonical locations defined in `.bumpversion.cfg`:
+This updates the version string in the canonical locations defined in `.bumpversion.cfg`:
 
-| File | Field |
-|------|-------|
-| `mcpgateway/__init__.py` | `__version__` |
-| `pyproject.toml` | `version` |
-| `Containerfile.lite` | `version` label |
 
 !!! note "bump2version does not commit or tag"
     The project's `.bumpversion.cfg` has `commit = False` and `tag = False`. You must commit and tag manually after all gates pass.
@@ -118,22 +113,29 @@ Update `Containerfile.lite` with the latest tags, then verify the image builds:
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 ```
 
-### 1.7 Close the GitHub milestone
-
-- Move all remaining open issues to the next milestone
-- Close the current milestone on GitHub
-
----
-
 ## 2. Python Dependency Updates
 
 Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
 
-### 2.1 Update dependencies with `update_dependencies.py`
+### 2.1 Update CPEX dependencies
+Update the `[tool.uv.exclude-newer-package]` section of `pyproject.toml` file to the current date/time and execute
+`uv lock --upgrade` to get the latest depenencies and update the uv.lock file.
 
+### 2.2 Update dependencies with `update_dependencies.py`
+
+```bash
+find . -path "./mcp-servers/templates" -prune -o -path "*/.venv" -prune -o -name "pyproject.toml" -type f -print | while read -r toml_file; do
+  dir=$(dirname "$toml_file")
+  echo "Updating dependencies in $dir"
+  (cd "$dir" && uv lock --upgrade)
+done
+```
+
+!!! Optional: The above step may not update all dependencies as expected. Run the following command to update all dependencies in pyproject.toml files and not work from dynamic versions.
 The repository includes an async dependency updater at `.github/tools/update_dependencies.py`. Run it against every `pyproject.toml` and `requirements.txt` in the tree:
 
 ```bash
+
 # Main project
 python .github/tools/update_dependencies.py --file pyproject.toml
 
@@ -160,7 +162,7 @@ python .github/tools/update_dependencies.py --file tests/populate/requirements.t
 !!! tip "Dry-run first"
     Use `--dry-run` to preview changes before applying: `python .github/tools/update_dependencies.py --file pyproject.toml --dry-run`
 
-### 2.2 Reinstall and verify
+### 2.3 Reinstall and verify
 
 After updating, reinstall the dev environment and verify everything still resolves:
 
@@ -168,7 +170,7 @@ After updating, reinstall the dev environment and verify everything still resolv
 make install-dev
 ```
 
-### 2.3 Audit for vulnerabilities
+### 2.4 Audit for vulnerabilities
 
 ```bash
 make pip-audit
@@ -244,10 +246,11 @@ When ContextForge and `cpex-plugins` share Rust dependency changes, apply the sa
 Update `go.mod` and `go.sum` for all Go modules:
 
 ```bash
-cd a2a-agents/go/a2a-echo-agent && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/fast-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/slow-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/benchmark-server && go get -u ./... && go mod tidy && cd ../../..
+find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
+  dir=$(dirname "$mod_file")
+  echo "Updating Go dependencies in $dir"
+  (cd "$dir" && go get -u ./... && go mod tidy)
+done
 ```
 
 Verify Go code compiles and passes security checks:
@@ -1426,6 +1429,10 @@ Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.
 ### 16.1 Close the milestone
 
 If not already done in step 1.5, close the GitHub milestone and ensure all issues are accounted for.
+- Move all remaining open issues to the next milestone
+- Close the current milestone on GitHub
+
+---
 
 ### 16.2 Create the next milestone
 
