@@ -120,7 +120,7 @@ jobs:
                   make venv
                   make install
                   make stop-serve
-                  make serve > gunicorn.log 2>&1
+                  make serve > gunicorn.log 2>&1 &
 
                   echo "Waiting for gateway to start..."
                   for i in {1..60}; do
