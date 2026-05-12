@@ -153,7 +153,7 @@ class CategoryConfig(BaseModel):
     """
 
     threshold: float = Field(default=0.75, ge=0.0, le=1.0, description="Score threshold for triggering an action")
-    action: Literal["block", "redact", "flag-only"] = Field(default="block", description="Action to take when threshold exceeded")
+    action: Literal["block", "disable", "redact", "flag-only"] = Field(default="block", description="Action to take when threshold exceeded")
 
 
 class PromptInjectionGuardConfig(BaseModel):
@@ -167,15 +167,15 @@ class PromptInjectionGuardConfig(BaseModel):
         categories: Per-category threshold and action overrides.
     """
 
-    mode: Literal["block", "redact", "flag-only"] = Field(default="block", description="Global default response mode")
+    mode: Literal["block", "disable", "redact", "flag-only"] = Field(default="block", description="Global default response mode")
     check_tool_output: bool = Field(default=False, description="Scan tool outputs via tool_post_invoke hook")
     use_llm_guard: bool = Field(default=False, description="Enable optional LLM Guard Tier-2 scorer (requires llm-guard package)")
     redaction_placeholder: str = Field(default="[INJECTION_REDACTED]", description="Replacement text used in redact mode")
     categories: Dict[str, CategoryConfig] = Field(
         default_factory=lambda: {
-            "injection": CategoryConfig(threshold=0.75, action="block"),
-            "jailbreak": CategoryConfig(threshold=0.80, action="block"),
-            "system_prompt_leak": CategoryConfig(threshold=0.70, action="block"),
+            "injection": CategoryConfig(threshold=0.75, action="disable"),
+            "jailbreak": CategoryConfig(threshold=0.80, action="disable"),
+            "system_prompt_leak": CategoryConfig(threshold=0.70, action="disable"),
         }
     )
 
@@ -277,7 +277,7 @@ def _redact_text(text: str, placeholder: str) -> str:
     return result
 
 
-def _effective_action(category: str, cfg: PromptInjectionGuardConfig) -> Literal["block", "redact", "flag-only"]:
+def _effective_action(category: str, cfg: PromptInjectionGuardConfig) -> Literal["block", "disable", "redact", "flag-only"]:
     """Resolve the effective action for a given category.
 
     Falls back to the global ``mode`` when the category has no explicit override.
@@ -387,8 +387,8 @@ class PromptInjectionGuardPlugin(Plugin):
             return None
 
         # Highest-priority category drives the top-level action
-        # Priority: block > redact > flag-only
-        action_priority = {"block": 0, "redact": 1, "flag-only": 2}
+        # Priority: block > disable > redact > flag-only
+        action_priority = {"block": 0, "disable": 1, "redact": 2, "flag-only": 3}
         effective_actions = [(_effective_action(cat, self._cfg), cat, rule, score) for cat, rule, score in actionable]
         effective_actions.sort(key=lambda x: action_priority.get(x[0], 99))
 
@@ -422,7 +422,7 @@ class PromptInjectionGuardPlugin(Plugin):
         """
         if not args:
             return None
-        action_priority = {"block": 0, "redact": 1, "flag-only": 2}
+        action_priority = {"block": 0, "disable": 1, "redact": 2, "flag-only": 3}
         best_result: Optional[Dict[str, Any]] = None
         best_priority = 99
         for _path, text in _iter_strings(args):
@@ -493,6 +493,12 @@ class PromptInjectionGuardPlugin(Plugin):
                 ),
             )
 
+        if action == "disable":
+            return PromptPrehookResult(
+                continue_processing=False,
+                metadata={"prompt_injection_guard": details},
+            )
+
         if action == "redact":
             new_args = self._redact_args(dict(payload.args or {}))
             modified = PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args)
@@ -530,6 +536,12 @@ class PromptInjectionGuardPlugin(Plugin):
                     code="PROMPT_INJECTION_DETECTED",
                     details=details,
                 ),
+            )
+
+        if action == "disable":
+            return ToolPreInvokeResult(
+                continue_processing=False,
+                metadata={"prompt_injection_guard": details},
             )
 
         if action == "redact":
@@ -585,6 +597,12 @@ class PromptInjectionGuardPlugin(Plugin):
                     code="PROMPT_INJECTION_IN_OUTPUT",
                     details=details,
                 ),
+            )
+
+        if action == "disable":
+            return ToolPostInvokeResult(
+                continue_processing=False,
+                metadata={"prompt_injection_guard": details},
             )
 
         # flag-only or redact on output — flag only (cannot safely redact arbitrary output)

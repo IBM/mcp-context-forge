@@ -687,20 +687,20 @@ plugins:
     priority: 45 # After ArgumentNormalizer (40), before PIIFilter (50)
     conditions: []
     config:
-      mode: "block" # block | redact | flag-only
+      mode: "disable" # block | disable | redact | flag-only
       check_tool_output: false
       use_llm_guard: false # Set true after installing plugins extra (pip install mcp-contextforge-gateway[plugins])
       redaction_placeholder: "[INJECTION_REDACTED]"
       categories:
         injection:
           threshold: 0.75
-          action: "block"
+          action: "disable"
         jailbreak:
           threshold: 0.80
-          action: "block"
+          action: "disable"
         system_prompt_leak:
           threshold: 0.70
-          action: "block"
+          action: "disable"
 
   # Harmful Content Detector - keyword lexicons
   - name: "HarmfulContentDetector"
