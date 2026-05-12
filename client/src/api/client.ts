@@ -45,6 +45,31 @@ function getCookie(name: string): string | null {
   return decodeURIComponent(cookie.slice(prefix.length));
 }
 
+function getRequestUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return new URL(path, window.location.origin).toString();
+  }
+
+  return path;
+}
+
+function canUseSignal(url: string, signal: AbortSignal): boolean {
+  if (typeof Request === "undefined") {
+    return true;
+  }
+
+  try {
+    new Request(url, { signal });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Core request
 // ---------------------------------------------------------------------------
@@ -84,13 +109,19 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
   }
 
-  const response = await fetch(path, {
+  const requestUrl = getRequestUrl(path);
+  const requestOptions: RequestInit = {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "same-origin",
-    signal,
-  });
+  };
+
+  if (signal && canUseSignal(requestUrl, signal)) {
+    requestOptions.signal = signal;
+  }
+
+  const response = await fetch(requestUrl, requestOptions);
 
   if (response.status === 401) {
     if (!unauthenticated && path !== "/app/auth/me") {
