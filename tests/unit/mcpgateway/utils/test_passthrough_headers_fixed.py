@@ -472,18 +472,19 @@ class TestComputePassthroughHeadersCached:
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = False
 
+        # Use X-Custom-Type instead of Content-Type (which is now in denylist
         request_headers = {
             "x-tenant-id": "acme",
-            "content-type": "text/plain",
+            "x-custom-type": "text/plain",
             "x-empty": "\r\n\t",
         }
-        base_headers = {"Content-Type": "application/json"}
-        allowed = ["X-Tenant-Id", "Bad Header", "Content-Type", "X-Empty", "X-Missing"]
+        base_headers = {"X-Custom-Type": "application/json"}
+        allowed = ["X-Tenant-Id", "Bad Header", "X-Custom-Type", "X-Empty", "X-Missing"]
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = compute_passthrough_headers_cached(request_headers=request_headers, base_headers=base_headers, allowed_headers=allowed, gateway_auth_type=None)
 
-        assert result["Content-Type"] == "application/json"
+        assert result["X-Custom-Type"] == "application/json"
         assert result["X-Tenant-Id"] == "acme"
         assert "X-Empty" not in result
         assert any("Invalid header name" in record.message for record in caplog.records)
@@ -495,14 +496,15 @@ class TestComputePassthroughHeadersCached:
         mock_settings.enable_header_passthrough = True
         mock_settings.enable_overwrite_base_headers = True
 
-        request_headers = {"content-type": "text/plain", "authorization": "Bearer should-be-blocked"}
-        base_headers = {"Content-Type": "application/json"}
-        allowed = ["Content-Type", "Authorization"]
+        # Use X-Custom-Type instead of Content-Type (which is now in denylist per Issue #4450)
+        request_headers = {"x-custom-type": "text/plain", "authorization": "Bearer should-be-blocked"}
+        base_headers = {"X-Custom-Type": "application/json"}
+        allowed = ["X-Custom-Type", "Authorization"]
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = compute_passthrough_headers_cached(request_headers=request_headers, base_headers=base_headers, allowed_headers=allowed, gateway_auth_type="basic")
 
-        assert result["Content-Type"] == "text/plain"
+        assert result["X-Custom-Type"] == "text/plain"
         assert "Authorization" not in result
         assert any("Skipping Authorization header passthrough" in record.message for record in caplog.records)
 
