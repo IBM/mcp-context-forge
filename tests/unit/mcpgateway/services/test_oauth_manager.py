@@ -572,6 +572,37 @@ async def test_exchange_code_for_token_with_basic_auth(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_exchange_code_for_token_with_basic_auth_non_pkce(oauth_manager):
+    """Test non-PKCE authorization code exchange with HTTP Basic Auth (token_endpoint_auth_method=client_secret_basic)."""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "basic-auth-token"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        credentials = {
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "token_url": "https://example.com/token",
+            "redirect_uri": "https://example.com/callback",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }
+        result = await oauth_manager.exchange_code_for_token(credentials, code="auth-code", state="state-123")
+
+    assert result == "basic-auth-token"
+    # Verify Basic Auth header was set
+    call_kwargs = mock_client.post.call_args[1]
+    assert "headers" in call_kwargs
+    assert "Authorization" in call_kwargs["headers"]
+    assert call_kwargs["headers"]["Authorization"].startswith("Basic ")
+    # Verify client_secret NOT in POST body (only client_id should be absent too per RFC 6749)
+    assert "client_secret" not in call_kwargs["data"]
+
+
+@pytest.mark.asyncio
 async def test_exchange_code_for_token_no_secret(oauth_manager):
     """Public client without client_secret."""
     mock_response = MagicMock()
