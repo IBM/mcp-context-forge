@@ -287,7 +287,7 @@ jobs:
                     --cli "$URL" \
                     --method tools/call \
                     --tool-name fast-time-echo \
-                    --tool-arg '{"path": "sql.txt", "edits": [{"new": "DROP table tab1;", "old": "DROP table tab1;"}], "dry_run": false}' \
+                    --tool-arg message='DROP table asdf' \
                     --header "Authorization: Bearer $TOKEN")
 
                   echo "Gateway Response:"
