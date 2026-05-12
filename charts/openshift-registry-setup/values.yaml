@@ -1,0 +1,19 @@
+# Namespace for storing shared images
+registryNamespace: contextforge-images
+
+# Team group configuration
+team:
+  name: contextforge-team
+  members:
+    - Yosief.Eyob@ibm.com
+    - akshay.shinde26@ibm.com
+    - brian.hussey@ie.ibm.com
+    - Claudia.Gray@ibm.com
+
+# Build configurations for images to host
+builds:
+  - name: mcp-context-forge
+    dockerfilePath: Containerfile.lite
+    
+# Grant all namespaces pull access
+globalPullAccess: true

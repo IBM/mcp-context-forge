@@ -1056,9 +1056,9 @@ postgres:
                                 #   GKE: "standard", "ssd", "premium-rw"
                                 #   Azure AKS: "default", "managed-premium", "azurefile"
                                 #   Bare Metal: "local-path", "nfs-client"
-    useReadWriteOncePod: true    # Prefer strict single-pod mount semantics when supported by your CSI/storage class
+    useReadWriteOncePod: false    # # Disabled — NFS volumes only support ReadWriteMany
                                  # Set false to fall back to accessModes below on clusters/storage classes without RWOP support
-    accessModes: [ReadWriteOnce]
+    accessModes: [ReadWriteMany]
     size: 5Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
     annotations: {}              # Optional annotations for backup tools
@@ -1145,7 +1145,7 @@ postgres:
 # Reduces connection overhead, improves throughput under high concurrency.
 ########################################################################
 pgbouncer:
-  enabled: false                     # Set to true to route DB traffic through PgBouncer
+  enabled: true                     # Set to true to route DB traffic through PgBouncer
 
   image:
     repository: edoburu/pgbouncer
@@ -1517,10 +1517,10 @@ mcpFastTimeServer:
 # NGINX PROXY - Reverse proxy / cache layer in front of the gateway
 ########################################################################
 nginxProxy:
-  enabled: false
+  enabled: true
 
   image:
-    repository: mcpgateway/nginx-cache
+    repository: yosiefeyob1/nginx-cache
     tag: latest
     pullPolicy: IfNotPresent
 
@@ -1530,7 +1530,7 @@ nginxProxy:
 
   # Nginx cache persistence
   persistence:
-    enabled: true
+    enabled: false
     storageClassName: ""
     accessModes: [ReadWriteOnce]
     size: 2Gi

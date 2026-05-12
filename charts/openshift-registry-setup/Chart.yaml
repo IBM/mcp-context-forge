@@ -1,0 +1,5 @@
+apiVersion: v2
+name: openshift-registry-setup
+description: Sets up shared image registry namespace, team group, and access policies
+version: 1.0.0
+type: application

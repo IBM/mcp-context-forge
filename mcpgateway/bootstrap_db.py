@@ -697,86 +697,95 @@ async def main() -> None:
     """
     Bootstrap or upgrade the database schema, then log readiness.
 
-    Runs `create_all()` + `alembic stamp head` on an empty DB, otherwise just
-    executes `alembic upgrade head`, leaving application data intact.
-    Also creates the platform admin user if email authentication is enabled.
-
-    Uses distributed advisory locks (PG) or file locking (SQLite)
-    to prevent race conditions when multiple workers start simultaneously.
-
-    Args:
-        None
-
-    Raises:
-        Exception: If migration or bootstrap fails
+    Optimized for multi-replica deployments:
+    1. Check if schema is already at the latest revision BEFORE acquiring the lock
+    2. If current, skip migration entirely - no lock needed, pod starts instantly
+    3. If not current, acquire lock with TIMEOUT to prevent infinite hangs
     """
     engine = create_engine(settings.database_url)
     ini_path = files("mcpgateway").joinpath("alembic.ini")
-    cfg = Config(str(ini_path))  # path in container
+    cfg = Config(str(ini_path))
     cfg.attributes["configure_logger"] = True
 
-    # Use advisory lock to prevent concurrent migrations
+    # Escape '%' characters in URL to avoid configparser interpolation errors
+    escaped_url = settings.database_url.replace("%", "%%")
+    cfg.set_main_option("sqlalchemy.url", escaped_url)
+
     try:
         with engine.connect() as conn:
-            # Commit any open transaction on the connection before locking (though it should be fresh)
             conn.commit()
 
-            with advisory_lock(conn):
-                logger.info("Acquired migration lock, checking database schema...")
+            # --- Check if migration is needed BEFORE acquiring the lock ---
+            insp = inspect(conn)
+            table_names = insp.get_table_names()
 
-                # Pass the LOCKED connection to Alembic config
-                cfg.attributes["connection"] = conn
+            migration_needed = True
+            if "alembic_version" in table_names:
+                try:
+                    from alembic.script import ScriptDirectory  # pylint: disable=import-outside-toplevel
+                    script = ScriptDirectory.from_config(cfg)
+                    head_rev = script.get_current_head()
 
-                # Escape '%' characters in URL to avoid configparser interpolation errors
-                # (e.g., URL-encoded passwords like %40 for '@')
-                escaped_url = settings.database_url.replace("%", "%%")
-                cfg.set_main_option("sqlalchemy.url", escaped_url)
+                    rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+                    current_rev = rows[0][0] if rows else None
 
-                insp = inspect(conn)
-                table_names = insp.get_table_names()
+                    if current_rev == head_rev:
+                        logger.info(f"Schema already at head revision ({current_rev}) - skipping migration")
+                        migration_needed = False
+                except Exception as exc:
+                    logger.warning("Could not determine schema version, will run migration: %s", exc)
 
-                if "gateways" not in table_names:
-                    logger.info("Empty DB detected - creating baseline schema")
-                    Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
-                else:
-                    versions: list[str] = []
-                    if "alembic_version" in table_names:
-                        try:
-                            rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-                            versions = [row[0] for row in rows if row[0]]
-                        except Exception as exc:
-                            logger.warning("Failed to read alembic_version table: %s", exc)
+            if migration_needed:
+                # Only acquire the lock when migration is actually needed
+                with advisory_lock(conn):
+                    logger.info("Acquired migration lock, checking database schema...")
 
-                    if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
+                    # Pass the LOCKED connection to Alembic config
+                    cfg.attributes["connection"] = conn
+
+                    # Re-check inside lock (another pod may have migrated while we waited)
+                    insp = inspect(conn)
+                    table_names = insp.get_table_names()
+
+                    if "gateways" not in table_names:
+                        logger.info("Empty DB detected - creating baseline schema")
+                        Base.metadata.create_all(bind=conn)
                         command.stamp(cfg, "head")
                     else:
-                        logger.info("Running Alembic migrations to ensure schema is up to date")
-                        command.upgrade(cfg, "head")
+                        versions: list[str] = []
+                        if "alembic_version" in table_names:
+                            try:
+                                rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+                                versions = [row[0] for row in rows if row[0]]
+                            except Exception as exc:
+                                logger.warning("Failed to read alembic_version table: %s", exc)
 
-                # Post-upgrade normalization passes (inside lock to be safe)
-                updated = normalize_team_visibility(conn)
-                if updated:
-                    logger.info(f"Normalized {updated} team record(s) to supported visibility values")
+                        if not versions and _schema_looks_current(insp):
+                            logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
+                            command.stamp(cfg, "head")
+                        else:
+                            logger.info("Running Alembic migrations to ensure schema is up to date")
+                            command.upgrade(cfg, "head")
 
-                # Bootstrap admin user after database is ready, using the LOCKED connection
-                await bootstrap_admin_user(conn)
+                    # Post-upgrade normalization passes (inside lock to be safe)
+                    updated = normalize_team_visibility(conn)
+                    if updated:
+                        logger.info(f"Normalized {updated} team record(s) to supported visibility values")
 
-                # Bootstrap default RBAC roles after admin user is created
-                await bootstrap_default_roles(conn)
+                    conn.commit()
 
-                # Assign orphaned resources to admin personal team after all setup is complete
-                await bootstrap_resource_assignments(conn)
-
-                conn.commit()  # Ensure all migration changes are permanently committed
+            # --- Bootstrap tasks outside the lock ---
+            # These are idempotent (check before creating) so they don't need the lock.
+            # Running them outside prevents blocking other pods.
+            await bootstrap_admin_user(conn)
+            await bootstrap_default_roles(conn)
+            await bootstrap_resource_assignments(conn)
+            conn.commit()
 
     except Exception as e:
         logger.error(f"Migration/Bootstrap failed: {e}")
-        # Allow retry logic or container restart to handle transient issues
         raise
     finally:
-        # Dispose the engine to close all connections in the pool
         engine.dispose()
 
     logger.info("Database ready")
