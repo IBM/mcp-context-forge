@@ -1,9 +1,10 @@
 import asyncio
+
 from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPreInvokePayload
 from cpex.framework.memory import CopyOnWriteDict
-from sql_sanitizer import SQLSanitizerPlugin
-
 import pytest
+
+from plugins.sql_sanitizer.sql_sanitizer import SQLSanitizerPlugin
 
 
 @pytest.mark.asyncio
@@ -20,7 +21,13 @@ async def test_nested():
             priority=45,
             config={
                 "fields": None,
-                "blocked_statements": [r"\bDROP\b", r"\bTRUNCATE\b", r"\bALTER\b", r"\bGRANT\b", r"\bREVOKE\b"],
+                "blocked_statements": [
+                    r"\bDROP\b",
+                    r"\bTRUNCATE\b",
+                    r"\bALTER\b",
+                    r"\bGRANT\b",
+                    r"\bREVOKE\b",
+                ],
                 "block_delete_without_where": True,
                 "block_update_without_where": True,
                 "strip_comments": True,
@@ -29,6 +36,15 @@ async def test_nested():
             },
         )
     )
-    payload = CopyOnWriteDict({"path": "sql.txt", "edits": [{"new": "DROP table tab1;", "old": "DROP table tab1;"}], "dry_run": False})
-    result = await plugin.tool_pre_invoke(ToolPreInvokePayload(name="edit_file", args=payload), PluginContext(global_context=GlobalContext(request_id="1")))
-    print("blocked" if result.violation else "not blocked")
+    payload = CopyOnWriteDict(
+        {
+            "path": "sql.txt",
+            "edits": [{"new": "DROP table tab1;", "old": "DROP table tab1;"}],
+            "dry_run": False,
+        }
+    )
+    result = await plugin.tool_pre_invoke(
+        ToolPreInvokePayload(name="edit_file", args=payload),
+        PluginContext(global_context=GlobalContext(request_id="1")),
+    )
+    assert result.violation
