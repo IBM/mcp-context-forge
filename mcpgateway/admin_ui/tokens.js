@@ -458,10 +458,7 @@ const createToken = async function (form) {
 
     const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-        "Content-Type": "application/json",
-      },
+      headers: await getAuthHeaders(true),
       body: JSON.stringify(payload),
     });
 
