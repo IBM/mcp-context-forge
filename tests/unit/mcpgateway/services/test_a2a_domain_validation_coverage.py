@@ -1,4 +1,9 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_domain_validation_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for domain validation edge cases to achieve full coverage.
 
 Covers missing lines:

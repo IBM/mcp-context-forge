@@ -1,9 +1,14 @@
-"""add_ondelete_cascade_to_metrics_and_associations
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/9fb98535724d_add_ondelete_cascade_to_metrics_and_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_ondelete_cascade_to_metrics_and_associations
 
 Revision ID: 9fb98535724d
 Revises: 926d3e07d098
 Create Date: 2026-04-28 15:14:01.089813
-
 """
 
 # Standard

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Benchmark content security pattern scanning.
-
+"""Location: ./tests/performance/test_content_security_benchmark.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Benchmark content security pattern scanning.
 Usage:
     uv run python tests/performance/test_content_security_benchmark.py --mode latency
     uv run python tests/performance/test_content_security_benchmark.py --mode service-rps

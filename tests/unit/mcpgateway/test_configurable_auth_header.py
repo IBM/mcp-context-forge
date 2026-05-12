@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for configurable JWT authentication header feature.
+"""Location: ./tests/unit/mcpgateway/test_configurable_auth_header.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for configurable JWT authentication header feature.
 
 This module tests the AUTH_HEADER_NAME configuration that allows ContextForge
 to use alternative HTTP headers for JWT authentication (e.g., X-MCP-Gateway-Auth)
