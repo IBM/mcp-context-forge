@@ -174,6 +174,9 @@ def _import_fresh_main_module(
     # module-level state which can be polluted by other tests that reload session_registry.
     monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
 
+    # Use fresh in-memory database for each test to avoid conflicts
+    monkeypatch.setattr(settings_mod, "database_url", "sqlite:///:memory:", raising=False)
+
     # Avoid import-time side effects (DB/Redis readiness + bootstrap).
     monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", lambda *_a, **_k: None)
 
@@ -4761,6 +4764,9 @@ class TestLifespanAdvanced:
 
     @pytest.mark.asyncio
     async def test_lifespan_with_feature_flags(self, monkeypatch):
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -4925,6 +4931,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_exits_on_plugin_initialization_failed(self, monkeypatch):
         """Cover lifespan startup exception branch that raises SystemExit on plugin init failure."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -5067,6 +5076,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_raises_when_init_factory_fails_and_plugins_enabled(self, monkeypatch):
         """Plugins explicitly enabled + factory init failure must loud-crash, not silently degrade."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -5087,6 +5099,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_marks_degraded_when_init_factory_fails_and_plugins_disabled(self, monkeypatch):
         """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.plugins import _state as plugin_state
@@ -5108,6 +5123,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_swallows_stop_listener_exception(self, monkeypatch):
         """``stop_plugin_invalidation_listener`` raising during shutdown must not crash lifespan teardown."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -12466,6 +12484,9 @@ class TestRemainingCoverageGaps:
         so we capture it at init time and call it directly to cover the
         ``create_message_handler`` hand-off.
         """
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 

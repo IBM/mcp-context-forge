@@ -1459,8 +1459,6 @@ class TestMain:
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways"]
 
         mock_config = MagicMock()
         mock_config.attributes = {}
@@ -1472,17 +1470,17 @@ class TestMain:
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
         with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
 
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.command"):
-                            with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=5):
-                                with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command"):
+                        with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=5):
+                            with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
+                                with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
+                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
                                                 with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                                                     await main()
 
@@ -1494,8 +1492,6 @@ class TestMain:
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []
 
         mock_config = MagicMock()
         mock_config.attributes = {}
@@ -1507,26 +1503,25 @@ class TestMain:
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
         with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
 
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base"):
-                            with patch("mcpgateway.bootstrap_db.command"):
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command"):
+                        with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
+                            with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
+                                with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
+                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                    await main()
 
-                                                        # Verify all bootstrap functions were called
-                                                        mock_admin.assert_called_once()
-                                                        mock_roles.assert_called_once()
-                                                        mock_resources.assert_called_once()
-                                                        mock_logger.info.assert_any_call("Database ready")
+                                                    # Verify all bootstrap functions were called
+                                                    mock_admin.assert_called_once()
+                                                    mock_roles.assert_called_once()
+                                                    mock_resources.assert_called_once()
+                                                    mock_logger.info.assert_any_call("Database ready")
 
     @pytest.mark.asyncio
     async def test_main_exception_handling(self, mock_settings):
@@ -1551,11 +1546,10 @@ class TestModuleLevel:
     def test_module_imports(self):
         """Test that module imports work correctly."""
         # First-Party
-        from mcpgateway.bootstrap_db import Base, logger, logging_service
+        from mcpgateway.bootstrap_db import logger, logging_service
 
         assert logging_service is not None
         assert logger is not None
-        assert hasattr(Base, "metadata")
         assert hasattr(logger, "info")
         assert hasattr(logger, "error")
 

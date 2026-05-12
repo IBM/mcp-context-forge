@@ -46,14 +46,14 @@ from typing import cast
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, or_, text
+from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
