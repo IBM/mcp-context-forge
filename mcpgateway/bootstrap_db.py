@@ -728,29 +728,8 @@ async def main() -> None:
                 cfg.attributes["connection"] = conn
                 escaped_url = settings.database_url.replace("%", "%%")
                 cfg.set_main_option("sqlalchemy.url", escaped_url)
-
-                insp = inspect(conn)
-                table_names = insp.get_table_names()
-
-                if "gateways" not in table_names:
-                    logger.info("Empty DB detected - creating baseline schema")
-                    Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
-                else:
-                    versions: list[str] = []
-                    if "alembic_version" in table_names:
-                        try:
-                            rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-                            versions = [row[0] for row in rows if row[0]]
-                        except Exception as exc:
-                            logger.warning("Failed to read alembic_version table: %s", exc)
-
-                    if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
-                        command.stamp(cfg, "head")
-                    else:
-                        logger.info("Running Alembic migrations to ensure schema is up to date")
-                        command.upgrade(cfg, "head")
+                logger.info("Running Alembic migrations to ensure schema is up to date")
+                command.upgrade(cfg, "head")
 
                 # Post-upgrade normalization passes (inside lock to be safe)
                 updated = normalize_team_visibility(conn)
