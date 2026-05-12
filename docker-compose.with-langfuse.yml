@@ -98,8 +98,6 @@ services:
       - OTEL_BSP_MAX_CONCURRENT_EXPORTS=${OTEL_BSP_MAX_CONCURRENT_EXPORTS:-1}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-contextforge-gateway}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=contextforge}
-      - OTEL_BAGGAGE_ENABLED=true
-      - OTEL_BAGGAGE_HEADER_MAPPINGS=${OTEL_BAGGAGE_HEADER_MAPPINGS:-x-tenant-id:tenant.id}
     depends_on:
       langfuse-web:
         condition: service_healthy
