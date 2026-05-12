@@ -403,6 +403,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
 
     try:
+        # First-Party
         from mcpgateway.auth import validate_token_user
 
         user = await validate_token_user(request, token)
