@@ -546,7 +546,7 @@ services:
       - "--maxmemory" - "1gb"
       - "--maxmemory-policy" - "allkeys-lru"
       - "--tcp-backlog" - "2048"
-      - "--maxclients" - "10000"
+      - "--maxclients" - "30000"
 ```
 
 **Access Points:**
@@ -950,7 +950,7 @@ For 1000+ concurrent users:
 
 ```bash
 # Connection pool - Formula: (concurrent_requests / workers) * 1.5
-# Example: 32 workers × 150 = 4800 < Redis maxclients (10000)
+# Example: 32 workers × 150 = 4800 < Redis maxclients (30000)
 REDIS_MAX_CONNECTIONS=150
 
 # Timeouts - keep low for fast failure detection
@@ -972,7 +972,7 @@ redis:
     - "--tcp-backlog"
     - "2048"                    # Higher for pending connections
     - "--maxclients"
-    - "10000"                   # Max client connections
+    - "30000"                   # Max client connections
 ```
 
 #### Kubernetes Deployment
