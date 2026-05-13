@@ -173,7 +173,7 @@ class ServerClassificationService:
                     try:
                         await asyncio.wait_for(self._perform_classification(), timeout=self._leader_ttl * 0.8)
                     except asyncio.TimeoutError:
-                        logger.warning("Classification timed out after %%.0fs, skipping this cycle", self._leader_ttl * 0.8)
+                        logger.warning("Classification timed out after %.0fs, skipping this cycle", self._leader_ttl * 0.8)
                     # Renew lock after classification to keep it alive during sleep
                     await self._try_acquire_leader_lock()
                 else:

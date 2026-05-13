@@ -406,7 +406,7 @@ class ObservabilityService:
                 trace.attributes = {**(trace.attributes or {}), **attributes}
 
             self._safe_commit(obs_db, "end_trace")
-            logger.debug("Ended trace %s: %s (%%.2fms)", trace_id, status, duration_ms)
+            logger.debug("Ended trace %s: %s (%.2fms)", trace_id, status, duration_ms)
         finally:
             if owned and obs_db is not None:
                 try:
@@ -604,7 +604,7 @@ class ObservabilityService:
 
             if commit:
                 self._safe_commit(obs_db, "end_span")
-            logger.debug("Ended span %s: %s (%%.2fms)", span_id, status, duration_ms)
+            logger.debug("Ended span %s: %s (%.2fms)", span_id, status, duration_ms)
         finally:
             if session_owned:
                 try:
@@ -1022,7 +1022,7 @@ class ObservabilityService:
                 attributes={"model": model, "provider": provider},
             )
 
-        logger.debug("Recorded token usage: %s in, %s out, $%%.6f", input_tokens, output_tokens, estimated_cost_usd)
+        logger.debug("Recorded token usage: %s in, %s out, $%.6f", input_tokens, output_tokens, estimated_cost_usd)
 
     def _estimate_token_cost(self, model: str, input_tokens: int, output_tokens: int) -> float:
         """Estimate cost based on model and token counts.

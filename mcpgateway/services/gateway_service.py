@@ -3689,7 +3689,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
                 set_span_attribute(batch_span, "check.completed", True)
 
-            logger.debug("Health check batch completed for %s gateways in %%.2fs", len(gateways), elapsed)
+            logger.debug("Health check batch completed for %s gateways in %.2fs", len(gateways), elapsed)
 
         return True
 
