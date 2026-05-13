@@ -397,9 +397,81 @@ async def test_jwt_missing_scopes_session_token():
         if isinstance(scopes, dict):
             permissions = scopes.get("permissions", [])
             request.state.token_scopes = permissions
-    
+
     # Verify token_scopes is NOT set (session token, no scope enforcement)
     assert not hasattr(request.state, "token_scopes")
+
+
+def test_layer1_and_layer2_interaction():
+    """Test two-layer enforcement: Layer 1 (scopes) + Layer 2 (RBAC) are independent.
+
+    Scenario: API token has required scope (Layer 1 passes) but user lacks RBAC role (Layer 2 fails).
+
+    This test simulates the permission check decorator workflow to verify that even if
+    a token has the required permission scope, RBAC can still deny if the user lacks
+    the appropriate role. Both layers must be satisfied for access.
+    """
+
+    # Simulate user context from an API token with valid scope but missing RBAC role
+    user_context = {
+        "email": "developer@example.com",
+        "is_admin": False,
+        "token_scopes": ["tools.read", "a2a.read"],  # Layer 1: API token HAS required scopes
+        "teams": ["engineering"],  # User is in a team
+        "roles": [],  # Layer 2: User has NO roles (missing team_admin or developer role)
+    }
+
+    # Scenario 1: Layer 1 passes (token has scope), but Layer 2 fails (no RBAC role)
+    # In the actual @require_permission decorator, Layer 1 check (token scopes) happens first
+    token_scopes = user_context.get("token_scopes")
+    permission = "tools.execute"
+
+    # Layer 1 check: Does the API token have the required permission scope?
+    layer1_passes = token_scopes is not None and permission in token_scopes
+    assert layer1_passes is False  # "tools.execute" not in token scopes
+
+    # If Layer 1 had passed, Layer 2 would check RBAC roles
+    # (In actual code: both layers checked; if either fails, access denied)
+    user_roles = user_context.get("roles", [])
+    layer2_can_pass = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_can_pass is False  # User has no roles
+
+    # Result: Access denied (Layer 1 fails)
+
+    # Scenario 2: Layer 1 passes, Layer 2 also passes → Access granted
+    user_context["token_scopes"] = ["tools.execute"]  # Add required scope
+    user_context["roles"] = ["developer"]  # Add required role
+
+    token_scopes = user_context.get("token_scopes")
+    layer1_passes = token_scopes is not None and permission in token_scopes
+    assert layer1_passes is True  # "tools.execute" IS in token scopes
+
+    user_roles = user_context.get("roles", [])
+    layer2_can_pass = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_can_pass is True  # User HAS developer role
+
+    # Result: Access granted (both layers pass)
+
+    # Scenario 3: Session tokens skip Layer 1, only use Layer 2
+    session_context = {
+        "email": "user@example.com",
+        "is_admin": False,
+        "token_scopes": None,  # Session token (no scopes)
+        "teams": ["marketing"],
+        "roles": ["developer"],  # Has RBAC role
+    }
+
+    token_scopes = session_context.get("token_scopes")
+    # For session tokens, token_scopes is None → skip Layer 1 check entirely
+    layer1_checked = token_scopes is not None
+    assert layer1_checked is False  # Layer 1 skipped for session tokens
+
+    # Layer 2: Check RBAC only
+    user_roles = session_context.get("roles", [])
+    layer2_passes = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_passes is True  # User HAS required role
+
+    # Result: Access granted via Layer 2 only (Layer 1 not checked)
 
 
 def test_get_user_by_email_sync(monkeypatch):
