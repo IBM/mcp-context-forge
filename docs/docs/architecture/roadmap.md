@@ -8,12 +8,13 @@
 
 | Release | Due Date    | Completion | Status       | Description |
 | ------- | ----------- | ---------- | ------------ | ----------- |
-| 1.6.0         | 31 Aug 2026 |   0 %      | Open         | Collaboration, Workflow Management, Security Posture |
-| 1.5.0         | 31 Jul 2026 |   0 %      | Open         | Ecosystem Integrations, Advanced Observability, Plugin Marketplace |
-| 1.4.0         | 30 Jun 2026 |   0 %      | Open         | Enterprise Features, Federation Enhancements, Performance |
-| 1.3.0         | 31 May 2026 |   0 %      | Open         | New MCP Servers and Agents |
-| 1.2.0         | 30 Apr 2026 |   0 %      | Open         | Documentation, Technical Debt, Bugfixes |
-| 1.1.0         | 31 Mar 2026 |   0 %      | Open         | Technical Debt and Quality |
+| 1.6.0         | - |   0 %      | Open         | Collaboration, Workflow Management, Security Posture |
+| 1.5.0         | - |   0 %      | Open         | Ecosystem Integrations, Advanced Observability, Plugin Marketplace |
+| 1.4.0         | - |   0 %      | Open         | Enterprise Features, Federation Enhancements, Performance |
+| 1.3.0         | - |   0 %      | Open         | New MCP Servers and Agents |
+| 1.2.0         | - |   0 %      | Open         | Documentation, Technical Debt, Bugfixes |
+| 1.1.0         | - |   0 %      | Open         | Technical Debt and Quality |
+| 1.0.1         | 12 May 2026 | 100%.      | **Closed**   | Security Hardening, UI Improvements, and Bug Fixes |
 | 1.0.0         | 28 Apr 2026 | 100 %      | **Closed**   | General Availability - Technical Debt, Security Hardening, Catalog Improvements, A2A Improvements, MCP Standard Review and Sync |
 | 1.0.0-RC3     | 14 Apr 2026 | 100 %      | **Closed**   | Release Candidate 3 - Auth Hardening, Plugin Multi-Tenancy, Rust Runtime & Multi-Arch |
 | 1.0.0-RC2     | 09 Mar 2026 | 100 %      | **Closed**   | Release Candidate 2 - Hardening, Admin UI Polish, Plugin Framework & Quality |

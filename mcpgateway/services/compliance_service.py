@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/compliance_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Compliance Report Generator Service.
 
@@ -12,14 +13,14 @@ user/role inventory, and configuration snapshots stored in the gateway.
 
 # Standard
 import csv
-import io
-import json
-import logging
-import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import io
+import json
+import logging
 from typing import Any, Dict, List, Optional
+import uuid
 
 # Third-Party
 from sqlalchemy import func, select

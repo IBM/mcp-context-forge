@@ -198,8 +198,8 @@ def _validate_scopes(claims: Dict[str, Any], oauth_config: Dict[str, Any], gatew
     if token_scope_value is None:
         token_scope_value = claims.get("scp")
     if token_scope_value is None:
-        token_scope_value = ""
-    if token_scope_value == "":
+        token_scope_value = ""  # nosec B105
+    if token_scope_value == "":  # nosec B105
         logger.debug("OAuth token for gateway %s has no 'scope'/'scp' claim", gateway_name)
         return
 

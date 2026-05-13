@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test for bug fix: Tool assignment when creating virtual servers via API.
+"""Location: ./tests/unit/mcpgateway/test_server_create_tool_assignment_bug.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test for bug fix: Tool assignment when creating virtual servers via API.
 
 This test verifies that the fix for the bug where tools were not being assigned
 when creating a virtual server via API (POST /servers) works correctly.

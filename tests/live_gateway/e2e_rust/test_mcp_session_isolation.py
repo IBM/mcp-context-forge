@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e_rust/test_mcp_session_isolation.py
+"""Location: ./tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti

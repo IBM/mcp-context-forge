@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/migration/test_cross_db_schema_consistency.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Cross-database schema consistency test.
 
@@ -156,10 +157,7 @@ def _run(args, **kwargs) -> subprocess.CompletedProcess:
     """Run a subprocess, raise on non-zero exit."""
     result = subprocess.run(args, capture_output=True, text=True, check=False, **kwargs)
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Command failed: {' '.join(str(a) for a in args)}\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        raise RuntimeError(f"Command failed: {' '.join(str(a) for a in args)}\n" f"stdout: {result.stdout}\nstderr: {result.stderr}")
     return result
 
 
@@ -195,19 +193,20 @@ def _introspect_in_container(container: str, db_url: str) -> Dict[str, Any]:
     """Exec the introspection script inside *container* and return parsed JSON."""
     result = subprocess.run(
         [
-            "docker", "exec", container,
-            "/app/.venv/bin/python3", "-c",
-            _INTROSPECT_SCRIPT, db_url,
+            "docker",
+            "exec",
+            container,
+            "/app/.venv/bin/python3",
+            "-c",
+            _INTROSPECT_SCRIPT,
+            db_url,
         ],
         capture_output=True,
         text=True,
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Introspection failed in {container}:\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
+        raise RuntimeError(f"Introspection failed in {container}:\n" f"stdout: {result.stdout}\nstderr: {result.stderr}")
     return json.loads(result.stdout)
 
 
@@ -227,21 +226,36 @@ def _sqlite_schema(tmp_path_factory, container_runtime):
 
     container: Optional[str] = None
     try:
-        result = _run([
-            "docker", "run", "-d",
-            "--name", f"schema-test-sqlite-{int(time.time())}",
-            "-p", "0:4444",
-            "-e", f"DATABASE_URL=sqlite:////app/data/{db_file.name}",
-            "-e", "AUTH_REQUIRED=false",
-            "-e", "CACHE_TYPE=memory",
-            "-e", "HOST=0.0.0.0",
-            "-e", "PORT=4444",
-            "-e", "MCPGATEWAY_UI_ENABLED=false",
-            "-e", "MCPGATEWAY_ADMIN_API_ENABLED=true",
-            "-e", "LOG_LEVEL=INFO",
-            "-v", f"{tmp}:/app/data",
-            TARGET_IMAGE,
-        ])
+        result = _run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                f"schema-test-sqlite-{int(time.time())}",
+                "-p",
+                "0:4444",
+                "-e",
+                f"DATABASE_URL=sqlite:////app/data/{db_file.name}",
+                "-e",
+                "AUTH_REQUIRED=false",
+                "-e",
+                "CACHE_TYPE=memory",
+                "-e",
+                "HOST=0.0.0.0",
+                "-e",
+                "PORT=4444",
+                "-e",
+                "MCPGATEWAY_UI_ENABLED=false",
+                "-e",
+                "MCPGATEWAY_ADMIN_API_ENABLED=true",
+                "-e",
+                "LOG_LEVEL=INFO",
+                "-v",
+                f"{tmp}:/app/data",
+                TARGET_IMAGE,
+            ]
+        )
         container = result.stdout.strip()
 
         # Discover the mapped port
@@ -275,35 +289,59 @@ def _postgres_schema(tmp_path_factory, container_runtime):
     try:
         _run(["docker", "network", "create", network])
 
-        _run([
-            "docker", "run", "-d",
-            "--name", pg_container_name,
-            "--network", network,
-            "-e", "POSTGRES_USER=postgres",
-            "-e", "POSTGRES_PASSWORD=schema-test-pw",
-            "-e", "POSTGRES_DB=mcp",
-            "postgres:18",
-        ])
+        _run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                pg_container_name,
+                "--network",
+                network,
+                "-e",
+                "POSTGRES_USER=postgres",
+                "-e",
+                "POSTGRES_PASSWORD=schema-test-pw",
+                "-e",
+                "POSTGRES_DB=mcp",
+                "postgres:18",
+            ]
+        )
         pg_container = pg_container_name
         _wait_pg_ready(pg_container)
 
         db_url = f"postgresql+psycopg://postgres:schema-test-pw@{pg_container_name}:5432/mcp"  # pragma: allowlist secret
 
-        result = _run([
-            "docker", "run", "-d",
-            "--name", gw_container_name,
-            "--network", network,
-            "-p", "0:4444",
-            "-e", f"DATABASE_URL={db_url}",
-            "-e", "AUTH_REQUIRED=false",
-            "-e", "CACHE_TYPE=memory",
-            "-e", "HOST=0.0.0.0",
-            "-e", "PORT=4444",
-            "-e", "MCPGATEWAY_UI_ENABLED=false",
-            "-e", "MCPGATEWAY_ADMIN_API_ENABLED=true",
-            "-e", "LOG_LEVEL=INFO",
-            TARGET_IMAGE,
-        ])
+        result = _run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                gw_container_name,
+                "--network",
+                network,
+                "-p",
+                "0:4444",
+                "-e",
+                f"DATABASE_URL={db_url}",
+                "-e",
+                "AUTH_REQUIRED=false",
+                "-e",
+                "CACHE_TYPE=memory",
+                "-e",
+                "HOST=0.0.0.0",
+                "-e",
+                "PORT=4444",
+                "-e",
+                "MCPGATEWAY_UI_ENABLED=false",
+                "-e",
+                "MCPGATEWAY_ADMIN_API_ENABLED=true",
+                "-e",
+                "LOG_LEVEL=INFO",
+                TARGET_IMAGE,
+            ]
+        )
         gw_container = result.stdout.strip()
 
         port_result = _run(["docker", "port", gw_container, "4444/tcp"])
@@ -344,12 +382,8 @@ class TestCrossDBSchemaConsistency:
         only_sqlite = sqlite_tables - pg_tables
         only_pg = pg_tables - sqlite_tables
 
-        assert not only_sqlite, (
-            f"Tables present in SQLite but not PostgreSQL: {sorted(only_sqlite)}"
-        )
-        assert not only_pg, (
-            f"Tables present in PostgreSQL but not SQLite: {sorted(only_pg)}"
-        )
+        assert not only_sqlite, f"Tables present in SQLite but not PostgreSQL: {sorted(only_sqlite)}"
+        assert not only_pg, f"Tables present in PostgreSQL but not SQLite: {sorted(only_pg)}"
         logger.info(f"✅ Both engines have the same {len(sqlite_tables)} tables")
 
     def test_column_names_match(self, _sqlite_schema, _postgres_schema):
@@ -369,10 +403,7 @@ class TestCrossDBSchemaConsistency:
                     "only_postgres": sorted(pg_cols - sq_cols),
                 }
 
-        assert not mismatches, (
-            "Column name mismatches between engines:\n"
-            + json.dumps(mismatches, indent=2)
-        )
+        assert not mismatches, "Column name mismatches between engines:\n" + json.dumps(mismatches, indent=2)
         logger.info("✅ Column names match on all tables")
 
     def test_column_types_match(self, _sqlite_schema, _postgres_schema):
@@ -386,18 +417,12 @@ class TestCrossDBSchemaConsistency:
                 continue
             sq_cols = sqlite_norm[table]["columns"]
             pg_cols = pg_norm[table]["columns"]
-            col_diff = {
-                col: {"sqlite": sq_cols[col], "postgres": pg_cols[col]}
-                for col in sq_cols
-                if col in pg_cols and sq_cols[col] != pg_cols[col]
-            }
+            col_diff = {col: {"sqlite": sq_cols[col], "postgres": pg_cols[col]} for col in sq_cols if col in pg_cols and sq_cols[col] != pg_cols[col]}
             if col_diff:
                 mismatches[table] = col_diff
 
         assert not mismatches, (
-            "Column type mismatches (after normalisation) between engines:\n"
-            + json.dumps(mismatches, indent=2)
-            + "\n\nIf this is a known engine-specific difference, add a mapping to _TYPE_CANON."
+            "Column type mismatches (after normalisation) between engines:\n" + json.dumps(mismatches, indent=2) + "\n\nIf this is a known engine-specific difference, add a mapping to _TYPE_CANON."
         )
         logger.info("✅ Column types are equivalent across both engines")
 
@@ -416,10 +441,7 @@ class TestCrossDBSchemaConsistency:
                     "postgres": pg_norm[table]["primary_key"],
                 }
 
-        assert not mismatches, (
-            "Primary key mismatches between engines:\n"
-            + json.dumps(mismatches, indent=2)
-        )
+        assert not mismatches, "Primary key mismatches between engines:\n" + json.dumps(mismatches, indent=2)
         logger.info("✅ Primary keys match on all tables")
 
     def test_foreign_keys_match(self, _sqlite_schema, _postgres_schema):
@@ -437,8 +459,5 @@ class TestCrossDBSchemaConsistency:
                     "postgres": pg_norm[table]["foreign_keys"],
                 }
 
-        assert not mismatches, (
-            "Foreign key mismatches between engines:\n"
-            + json.dumps(mismatches, indent=2)
-        )
+        assert not mismatches, "Foreign key mismatches between engines:\n" + json.dumps(mismatches, indent=2)
         logger.info("✅ Foreign keys match on all tables")

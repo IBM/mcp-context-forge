@@ -31,7 +31,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "mcp>=1.27.0",
     "numpy>=2.4.4",
-    "openai>=2.32.0",
+    "openai>=2.33.0",
     "orjson>=3.11.8",
     "psutil>=7.2.2",
     "pydantic>=2.13.3",
@@ -70,7 +70,7 @@ anthropic = [
 ]
 aws = [
     "boto3>=1.42.97",
-    "botocore>=1.42.97",
+    "botocore>=1.42.97,<1.43.0",
 ]
 ollama = []
 gemini = [
@@ -81,17 +81,17 @@ watsonx = [
 ]
 rest = [
     "fastapi>=0.136.1",
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.26",
     "uvicorn[standard]>=0.46.0",
 ]
 all = [
     "anthropic>=0.97.0",
     "boto3>=1.42.97",
-    "botocore>=1.42.97",
+    "botocore>=1.42.97,<1.43.0",
     "fastapi>=0.136.1",
     "google-generativeai>=0.8.6",
     "ibm-watsonx-ai>=1.5.10",
-    "python-multipart>=0.0.27",
+    "python-multipart>=0.0.26",
     "uvicorn[standard]>=0.46.0",
 ]
 

@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/test_csrf_service.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_csrf_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for CSRF service.
 
@@ -231,12 +232,7 @@ class TestSetCSRFCookie:
     def test_respects_settings_secure_flag(self):
         """Test that secure flag comes from settings."""
         response = Mock()
-        settings = Mock(
-            csrf_cookie_name="csrf_token",
-            csrf_cookie_secure=False,
-            csrf_cookie_samesite="Lax",
-            csrf_token_expiry=3600
-        )
+        settings = Mock(csrf_cookie_name="csrf_token", csrf_cookie_secure=False, csrf_cookie_samesite="Lax", csrf_token_expiry=3600)
         token = "c" * 64
 
         set_csrf_cookie(response, token, settings)
@@ -247,12 +243,7 @@ class TestSetCSRFCookie:
     def test_respects_settings_samesite(self):
         """Test that samesite comes from settings."""
         response = Mock()
-        settings = Mock(
-            csrf_cookie_name="csrf_token",
-            csrf_cookie_secure=True,
-            csrf_cookie_samesite="None",
-            csrf_token_expiry=3600
-        )
+        settings = Mock(csrf_cookie_name="csrf_token", csrf_cookie_secure=True, csrf_cookie_samesite="None", csrf_token_expiry=3600)
         token = "d" * 64
 
         set_csrf_cookie(response, token, settings)
@@ -267,11 +258,7 @@ class TestClearCSRFCookie:
     def test_clears_cookie_with_max_age_zero(self):
         """Test that cookie is cleared with max_age=0."""
         response = Mock()
-        settings = Mock(
-            csrf_cookie_name="csrf_token",
-            csrf_cookie_secure=True,
-            csrf_cookie_samesite="Strict"
-        )
+        settings = Mock(csrf_cookie_name="csrf_token", csrf_cookie_secure=True, csrf_cookie_samesite="Strict")
 
         clear_csrf_cookie(response, settings)
 
@@ -289,11 +276,7 @@ class TestClearCSRFCookie:
     def test_respects_settings_when_clearing(self):
         """Test that settings are respected when clearing cookie."""
         response = Mock()
-        settings = Mock(
-            csrf_cookie_name="csrf_token",
-            csrf_cookie_secure=False,
-            csrf_cookie_samesite="Lax"
-        )
+        settings = Mock(csrf_cookie_name="csrf_token", csrf_cookie_secure=False, csrf_cookie_samesite="Lax")
 
         clear_csrf_cookie(response, settings)
 

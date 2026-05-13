@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the packaged PII filter plugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the packaged PII filter plugin.
+"""
 
 # Standard
 import logging

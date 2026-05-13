@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""add on_error to tool_plugin_bindings
+"""Location: ./mcpgateway/alembic/versions/4842b831d24e_add_on_error_to_tool_plugin_bindings.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add on_error to tool_plugin_bindings
 
 Revision ID: 4842b831d24e
-Revises: bb43712cae28
+Revises: aa1b2c3d4e5f
 Create Date: 2026-04-29
 """
 
@@ -14,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "4842b831d24e"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "bb43712cae28"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "aa1b2c3d4e5f"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

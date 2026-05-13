@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/e2e/test_translate_dynamic_env_e2e.py
+"""Location: ./tests/live_gateway/mcp/test_translate_dynamic_env_e2e.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Manav Gupta

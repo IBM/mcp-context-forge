@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for compliance_service."""
+"""Location: ./tests/unit/mcpgateway/services/test_compliance_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for compliance_service.
+"""
 
 # Standard
 from datetime import datetime, timezone
@@ -9,7 +15,6 @@ from unittest.mock import MagicMock
 
 # First-Party
 from mcpgateway.services import compliance_service as svc
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -369,8 +374,6 @@ def test_determine_status_not_implemented():  # pylint: disable=protected-access
     assert len(findings) == 1
 
 
-
-
 # ---------------------------------------------------------------------------
 # export_json
 # ---------------------------------------------------------------------------
@@ -485,9 +488,6 @@ def test_get_compliance_service_returns_singleton(monkeypatch):
 
     assert s1 is s2
     assert isinstance(s1, svc.ComplianceService)
-
-
-
 
 
 def test_get_compliance_service_reuses_existing(monkeypatch):

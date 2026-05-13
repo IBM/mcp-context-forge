@@ -30,7 +30,7 @@ RUN npm run vite:build
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468 AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -51,7 +51,7 @@ RUN npm ci && \
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="1.0.0-RC-2" \

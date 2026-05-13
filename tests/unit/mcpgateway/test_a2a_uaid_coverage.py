@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_a2a_uaid_coverage.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Additional test coverage for UAID cross-gateway functionality.
 
@@ -91,8 +92,6 @@ class TestUAIDEndpointParsing:
             _validate_uaid_endpoint_domain("[example", operation_context="test")
         # Should fail with allowlist message (empty allowlist = fail-closed)
         assert "UAID_ALLOWED_DOMAINS is empty" in str(exc_info.value)
-
-
 
 
 class TestDomainMatchingHelpers:

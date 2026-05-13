@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add migration_metadata table for hermetic config snapshots
+"""Location: ./mcpgateway/alembic/versions/f9a8b7c6d5e4_add_migration_metadata_table.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add migration_metadata table for hermetic config snapshots
 
 Revision ID: f9a8b7c6d5e4
 Revises: a31c6ffc2239

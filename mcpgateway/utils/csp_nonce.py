@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CSP nonce helper utilities.
+"""Location: ./mcpgateway/utils/csp_nonce.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CSP nonce helper utilities.
 
 Provides a standalone helper for retrieving CSP nonces from request state,
 separated from mcpgateway.main to avoid cyclic import issues.

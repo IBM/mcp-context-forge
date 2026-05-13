@@ -1,4 +1,9 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_ipv6_edge_cases.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for IPv6 edge cases in UAID domain validation.
 
 Tests cover:
@@ -122,10 +127,7 @@ class TestIPv6EdgeCases:
         Then: Should parse and validate correctly
         """
         # Arrange - allowlist contains the expanded form
-        monkeypatch.setattr(
-            "mcpgateway.config.settings.uaid_allowed_domains",
-            ["2001:0db8:0000:0000:0000:0000:0000:0001"]
-        )
+        monkeypatch.setattr("mcpgateway.config.settings.uaid_allowed_domains", ["2001:0db8:0000:0000:0000:0000:0000:0001"])
         uaid = "uaid:aid:9BjK3mP7xQv;uid=0;registry=context-forge;proto=a2a;nativeId=[2001:0db8:0000:0000:0000:0000:0000:0001]:8080"
 
         async def mock_post(*args, **kwargs):

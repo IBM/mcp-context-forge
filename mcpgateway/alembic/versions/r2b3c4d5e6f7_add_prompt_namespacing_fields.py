@@ -32,6 +32,11 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Add prompt name fields and backfill namespaced values."""
     bind = op.get_bind()
+
+    # Clean up any leftover temp table from a failed or interrupted previous
+    # migration attempt (e.g. SQLite batch_alter_table race on multi-worker startup)
+    bind.execute(sa.text("DROP TABLE IF EXISTS _alembic_tmp_prompts"))
+
     inspector = sa.inspect(bind)
 
     if not inspector.has_table("prompts"):

@@ -11,7 +11,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 rust-version = "1.85"
 authors = ["ContextForge Contributors"]
@@ -33,7 +33,7 @@ pyo3-stub-gen = "0.19"
 rand = "0.8"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 regex = "1.12.2"
-rmcp = { version = "=1.2.0", default-features = false }
+rmcp = { version = "1.4.0", default-features = false }
 sha2 = "0.10.9"
 
 # HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)

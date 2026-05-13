@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 # tests/integration/test_admin_teams_ui.py
 """Location: ./tests/integration/test_admin_teams_ui.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for admin teams UI endpoints with actual template rendering.
 Tests verify that the HTML response contains the correct UI elements (buttons, badges)
@@ -46,6 +47,7 @@ def test_client_with_teams(tmp_path):
 
     # Patch settings
     from mcpgateway.config import settings
+
     mp.setattr(settings, "database_url", url, raising=False)
     mp.setattr(settings, "email_auth_enabled", True, raising=False)
     mp.setattr(settings, "auth_required", False, raising=False)  # Disable auth requirement for testing
@@ -68,6 +70,7 @@ def test_client_with_teams(tmp_path):
 
     # Import app AFTER patching settings so admin routes are mounted
     from mcpgateway.main import app
+
     old_overrides = app.dependency_overrides.copy()
 
     # If main was already imported earlier in the test session, admin routes may
@@ -75,6 +78,7 @@ def test_client_with_teams(tmp_path):
     admin_routes = [r for r in app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
     if not admin_routes:
         from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions
+
         set_logging_service(main_mod.logging_service)
         app.include_router(admin_router)
         validate_section_permissions(admin_router)
@@ -85,72 +89,32 @@ def test_client_with_teams(tmp_path):
     # Create test admin user
     db = TestSessionLocal()
 
-    admin_user = EmailUser(
-        email="admin@test.com",
-        password_hash="$2b$12$dummy",
-        is_admin=True,
-        email_verified_at=datetime.now(timezone.utc)
-    )
+    admin_user = EmailUser(email="admin@test.com", password_hash="$2b$12$dummy", is_admin=True, email_verified_at=datetime.now(timezone.utc))
     db.add(admin_user)
 
     # Create team owner user
-    owner_user = EmailUser(
-        email="owner@test.com",
-        password_hash="$2b$12$dummy",
-        is_admin=False,
-        email_verified_at=datetime.now(timezone.utc)
-    )
+    owner_user = EmailUser(email="owner@test.com", password_hash="$2b$12$dummy", is_admin=False, email_verified_at=datetime.now(timezone.utc))
     db.add(owner_user)
     db.flush()
 
     # Create platform_admin role and assign to admin user for RBAC
     from mcpgateway.db import Role, UserRole
 
-    pa_role = Role(
-        id=str(uuid4()),
-        name="platform_admin",
-        description="Platform Administrator",
-        scope="global",
-        permissions=["*"],
-        created_by="admin@test.com",
-        is_system_role=True,
-        is_active=True
-    )
+    pa_role = Role(id=str(uuid4()), name="platform_admin", description="Platform Administrator", scope="global", permissions=["*"], created_by="admin@test.com", is_system_role=True, is_active=True)
     db.add(pa_role)
     db.flush()
 
-    pa_ur = UserRole(
-        user_email="admin@test.com",
-        role_id=pa_role.id,
-        scope="global",
-        scope_id=None,
-        granted_by="admin@test.com",
-        is_active=True
-    )
+    pa_ur = UserRole(user_email="admin@test.com", role_id=pa_role.id, scope="global", scope_id=None, granted_by="admin@test.com", is_active=True)
     db.add(pa_ur)
     db.commit()
 
     # Create public team (admin is NOT a member)
-    public_team = EmailTeam(
-        id=str(uuid4()),
-        name="Public Integration Test Team",
-        slug="public-integration-test",
-        created_by="owner@test.com",
-        visibility="public",
-        is_personal=False,
-        is_active=True
-    )
+    public_team = EmailTeam(id=str(uuid4()), name="Public Integration Test Team", slug="public-integration-test", created_by="owner@test.com", visibility="public", is_personal=False, is_active=True)
     db.add(public_team)
 
     # Create private team (admin is NOT a member)
     private_team = EmailTeam(
-        id=str(uuid4()),
-        name="Private Integration Test Team",
-        slug="private-integration-test",
-        created_by="owner@test.com",
-        visibility="private",
-        is_personal=False,
-        is_active=True
+        id=str(uuid4()), name="Private Integration Test Team", slug="private-integration-test", created_by="owner@test.com", visibility="private", is_personal=False, is_active=True
     )
     db.add(private_team)
     db.commit()
@@ -227,14 +191,7 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_teams)
 
     # Make request to admin teams partial endpoint
     # Auth is already set up in the fixture via dependency overrides
-    response = client.get(
-        "/admin/teams/partial",
-        params={
-            "page": 1,
-            "per_page": 50,
-            "render": "partial"
-        }
-    )
+    response = client.get("/admin/teams/partial", params={"page": 1, "per_page": 50, "render": "partial"})
 
     # Verify response is successful
     assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
@@ -247,7 +204,7 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_teams)
 
     # CRITICAL: Verify admin sees "Request to Join" button for PUBLIC team
     # The button has specific classes: btn-indigo and join-team-button
-    assert 'Request to Join' in html_content, "Admin should see 'Request to Join' button for public teams"
+    assert "Request to Join" in html_content, "Admin should see 'Request to Join' button for public teams"
 
     # Verify the join button appears in context of the public team
     # The HTML structure has team cards with team names followed by action buttons
@@ -265,25 +222,20 @@ def test_admin_sees_join_button_in_html_for_public_teams(test_client_with_teams)
         public_team_html = html_content[public_start:]
 
     # Verify join button is in the public team section
-    assert 'Request to Join' in public_team_html or 'requestToJoin' in public_team_html, \
-        "Join button should appear in public team section"
+    assert "Request to Join" in public_team_html or "requestToJoin" in public_team_html, "Join button should appear in public team section"
 
     # Verify "CAN JOIN" badge appears for public team
-    assert 'CAN JOIN' in public_team_html or 'badge-orange' in public_team_html, \
-        "Public team should show 'CAN JOIN' badge for non-members"
+    assert "CAN JOIN" in public_team_html or "badge-orange" in public_team_html, "Public team should show 'CAN JOIN' badge for non-members"
 
     # Verify admin controls (Manage Members, Delete Team) do NOT appear in public team section
-    assert 'Manage Members' not in public_team_html, \
-        "Admin should NOT see 'Manage Members' button for public teams"
-    assert 'Delete Team' not in public_team_html, \
-        "Admin should NOT see 'Delete Team' button for public teams"
+    assert "Manage Members" not in public_team_html, "Admin should NOT see 'Manage Members' button for public teams"
+    assert "Delete Team" not in public_team_html, "Admin should NOT see 'Delete Team' button for public teams"
 
     # For PRIVATE team: admin should see admin controls, not join button
     # Admin controls should appear for private teams
     # Note: The exact presence depends on template structure, but relationship="none" enables admin controls
     # We mainly verify that the join button does NOT appear for private teams
-    assert 'Request to Join' not in private_team_html, \
-        "Join button should not appear for private teams in admin view"
+    assert "Request to Join" not in private_team_html, "Join button should not appear for private teams in admin view"
 
 
 @pytest.mark.integration
@@ -298,38 +250,18 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
 
     # Create regular user
     db = session_factory()
-    regular_user = EmailUser(
-        email="regular@test.com",
-        password_hash="$2b$12$dummy",
-        is_admin=False,
-        email_verified_at=datetime.now(timezone.utc)
-    )
+    regular_user = EmailUser(email="regular@test.com", password_hash="$2b$12$dummy", is_admin=False, email_verified_at=datetime.now(timezone.utc))
     db.add(regular_user)
     db.flush()
 
     # Create a role with teams.read permission for the regular user
     from mcpgateway.db import Role, UserRole
-    dev_role = Role(
-        id=str(uuid4()),
-        name="developer",
-        description="Developer",
-        scope="global",
-        permissions=["teams.read"],
-        created_by="admin@test.com",
-        is_system_role=False,
-        is_active=True
-    )
+
+    dev_role = Role(id=str(uuid4()), name="developer", description="Developer", scope="global", permissions=["teams.read"], created_by="admin@test.com", is_system_role=False, is_active=True)
     db.add(dev_role)
     db.flush()
 
-    dev_ur = UserRole(
-        user_email="regular@test.com",
-        role_id=dev_role.id,
-        scope="global",
-        scope_id=None,
-        granted_by="admin@test.com",
-        is_active=True
-    )
+    dev_ur = UserRole(user_email="regular@test.com", role_id=dev_role.id, scope="global", scope_id=None, granted_by="admin@test.com", is_active=True)
     db.add(dev_ur)
     db.commit()
     db.close()
@@ -365,14 +297,7 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
     app.dependency_overrides[require_auth] = lambda: "regular@test.com"
 
     # Make request to admin teams partial endpoint
-    response = client.get(
-        "/admin/teams/partial",
-        params={
-            "page": 1,
-            "per_page": 50,
-            "render": "partial"
-        }
-    )
+    response = client.get("/admin/teams/partial", params={"page": 1, "per_page": 50, "render": "partial"})
 
     # Verify response is successful
     assert response.status_code == 200, f"Expected 200, got {response.status_code}"
@@ -383,8 +308,7 @@ def test_regular_user_sees_join_button_for_public_teams(test_client_with_teams):
     assert "Public Integration Test Team" in html_content, "Public team should appear in response"
 
     # Verify regular user sees "Request to Join" button for public team
-    assert 'Request to Join' in html_content, "Regular user should see 'Request to Join' button"
+    assert "Request to Join" in html_content, "Regular user should see 'Request to Join' button"
 
     # Verify regular user does NOT see private team (no access)
-    assert "Private Integration Test Team" not in html_content, \
-        "Regular user should NOT see private teams they are not members of"
+    assert "Private Integration Test Team" not in html_content, "Regular user should NOT see private teams they are not members of"

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for unified user-email extraction across auth helpers.
+"""Location: ./tests/unit/mcpgateway/test_auth_context_email_precedence.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for unified user-email extraction across auth helpers.
 
 This test module verifies that all user-email extraction helpers converge on
 the same canonical precedence order (email-over-sub) to ensure forensic accuracy
@@ -126,8 +131,10 @@ class TestEmailSubPrecedenceConsistency:
 
     def test_falsy_object_with_email_still_resolves(self):
         """Verify that falsy object with valid email attribute still resolves."""
+
         class FalsyUser:
             """A user class that evaluates to False in boolean context."""
+
             def __init__(self, email):
                 self.email = email
 

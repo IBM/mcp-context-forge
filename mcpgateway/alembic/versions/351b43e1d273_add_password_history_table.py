@@ -1,9 +1,14 @@
-"""add_password_history_table
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/351b43e1d273_add_password_history_table.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_password_history_table
 
 Revision ID: 351b43e1d273
 Revises: w7x8y9z0a1b2
 Create Date: 2026-04-23 12:25:15.946938
-
 """
 
 # Standard

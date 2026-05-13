@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/services/test_a2a_authorization_access.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for A2A service-layer authorization access checks.
 
@@ -181,11 +182,7 @@ class TestA2AVisibleAgentIds:
         # Verify the query was filtered to public + team only
         filter_calls = mock_query.filter.call_args_list
         assert len(filter_calls) >= 1
-        all_compiled = " ".join(
-            str(arg.compile(compile_kwargs={"literal_binds": True}))
-            for c in filter_calls
-            for arg in c.args
-        )
+        all_compiled = " ".join(str(arg.compile(compile_kwargs={"literal_binds": True})) for c in filter_calls for arg in c.args)
         assert "visibility" in all_compiled
         assert "public" in all_compiled or "'public'" in all_compiled
         assert "team" in all_compiled or "'team'" in all_compiled
@@ -209,11 +206,7 @@ class TestA2AVisibleAgentIds:
 
         filter_calls = mock_query.filter.call_args_list
         assert len(filter_calls) >= 1
-        all_compiled = " ".join(
-            str(arg.compile(compile_kwargs={"literal_binds": True}))
-            for c in filter_calls
-            for arg in c.args
-        )
+        all_compiled = " ".join(str(arg.compile(compile_kwargs={"literal_binds": True})) for c in filter_calls for arg in c.args)
         assert "visibility" in all_compiled
         assert "public" in all_compiled or "'public'" in all_compiled
 
@@ -237,11 +230,7 @@ class TestA2AVisibleAgentIds:
 
         filter_calls = mock_query.filter.call_args_list
         assert len(filter_calls) >= 1
-        all_compiled = " ".join(
-            str(arg.compile(compile_kwargs={"literal_binds": True}))
-            for c in filter_calls
-            for arg in c.args
-        )
+        all_compiled = " ".join(str(arg.compile(compile_kwargs={"literal_binds": True})) for c in filter_calls for arg in c.args)
         assert "visibility" in all_compiled
         assert "team_id" in all_compiled
 
@@ -290,13 +279,7 @@ class TestA2AListTasksFiltering:
         mock_db.query.side_effect = query_side_effect
 
         # Call list_tasks with admin bypass
-        result = a2a_service.list_tasks(
-            mock_db,
-            user_email=None,
-            token_teams=None,
-            limit=100,
-            offset=0
-        )
+        result = a2a_service.list_tasks(mock_db, user_email=None, token_teams=None, limit=100, offset=0)
 
         assert any("IN" in str(arg) for call in mock_task_query.filter.call_args_list for arg in call.args), "Task query should filter by agent IDs"
 
