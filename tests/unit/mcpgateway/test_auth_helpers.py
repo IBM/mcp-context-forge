@@ -247,12 +247,14 @@ def test_lookup_api_token_sync_not_expired_naive_datetime(monkeypatch):
         jti="jti-1",
         user_email="user@example.com",
         last_used=None,
+        resource_scopes=["tools.read", "servers.use"],  # Added for scope enforcement
     )
     session = DummySession(results=[active_token, None])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     monkeypatch.setattr("mcpgateway.db.utc_now", lambda: datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc))
     result = auth._lookup_api_token_sync("hash")
     assert result["user_email"] == "user@example.com"
+    assert result["resource_scopes"] == ["tools.read", "servers.use"]
 
 
 def test_lookup_api_token_sync_revoked(monkeypatch):
@@ -273,11 +275,13 @@ def test_lookup_api_token_sync_active(monkeypatch):
         jti="jti-1",
         user_email="user@example.com",
         last_used=None,
+        resource_scopes=["a2a.read", "tools.execute"],  # Added for scope enforcement
     )
     session = DummySession(results=[api_token, None])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._lookup_api_token_sync("hash")
     assert result["user_email"] == "user@example.com"
+    assert result["resource_scopes"] == ["a2a.read", "tools.execute"]
     assert session.commit_called is True
 
 

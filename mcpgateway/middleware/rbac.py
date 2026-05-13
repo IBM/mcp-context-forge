@@ -701,13 +701,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             token_scopes = user_context.get("token_scopes")
             if token_scopes is not None:  # Only check if this is an API token with scopes
                 if permission not in token_scopes:
-                    logger.warning(
-                        f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}"
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"API token missing required scope: {permission}"
-                    )
+                    logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"API token missing required scope: {permission}")
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
