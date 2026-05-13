@@ -35,7 +35,7 @@ Usage
 Environment Variables
 ---------------------
     MCP_SERVER_ID:       Virtual server UUID  (auto-detected if empty)
-    JWT_SECRET_KEY:      JWT signing secret   (default: my-test-key-but-now-longer-than-32-bytes)
+    JWT_SECRET_KEY:      JWT signing secret   (REQUIRED — load test raises RuntimeError if unset)
     JWT_ALGORITHM:       JWT algorithm        (default: HS256)
     JWT_AUDIENCE:        JWT audience         (default: mcpgateway-api)
     JWT_ISSUER:          JWT issuer           (default: mcpgateway)
@@ -93,7 +93,13 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _ENV.get(key) or default
 
 
-JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
+JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "")
+if not JWT_SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY env var (or .env entry) is required for this load test — "
+        "set it to the same value the gateway is signing with. A hard-coded "
+        "fallback would silently let any reader forge admin tokens (PR #4635 S1)."
+    )
 JWT_ALGORITHM = _cfg("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _cfg("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
