@@ -500,6 +500,294 @@ describe("MCPServerForm", () => {
     });
   });
 
+  describe("Custom Headers Authentication", () => {
+    // Helper: render the form with advanced settings open and Custom headers auth selected
+    const renderWithCustomHeaders = async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("radio", { name: /Custom headers/i }));
+      return user;
+    };
+
+    // Helper: click "Add header" the given number of times
+    const addHeaders = async (user: ReturnType<typeof userEvent.setup>, count = 1) => {
+      for (let i = 0; i < count; i++) {
+        await user.click(screen.getByRole("button", { name: /Add header/i }));
+      }
+    };
+
+    describe("Rendering", () => {
+      it("shows the description text when Custom headers is selected", async () => {
+        await renderWithCustomHeaders();
+        expect(
+          screen.getByText(/Send one or more custom headers with every request/i),
+        ).toBeInTheDocument();
+      });
+
+      it("shows the Add header button", async () => {
+        await renderWithCustomHeaders();
+        expect(screen.getByRole("button", { name: /Add header/i })).toBeInTheDocument();
+      });
+
+      it("shows no header rows initially", async () => {
+        await renderWithCustomHeaders();
+        expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
+      });
+
+      it("renders value inputs as type password to mask the value", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        const valueInput = screen.getByLabelText(/^Value/i);
+        expect(valueInput).toHaveAttribute("type", "password");
+      });
+
+      it("renders key inputs as type text", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        const keyInput = screen.getByLabelText(/Header key/i);
+        expect(keyInput).toHaveAttribute("type", "text");
+      });
+    });
+
+    describe("Placeholder text", () => {
+      it("shows the descriptive placeholder for key when there is exactly one header", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        expect(screen.getByPlaceholderText("e.g. X-API-Key...")).toBeInTheDocument();
+      });
+
+      it("shows the generic key placeholder when there are multiple headers", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user, 2);
+        expect(screen.getAllByPlaceholderText("Add header key...")).toHaveLength(2);
+        expect(screen.queryByPlaceholderText("e.g. X-API-Key...")).not.toBeInTheDocument();
+      });
+
+      it("shows the value placeholder on every row", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user, 2);
+        expect(screen.getAllByPlaceholderText("Add header value...")).toHaveLength(2);
+      });
+    });
+
+    describe("Adding headers", () => {
+      it("adds a new empty row when Add header is clicked", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        expect(screen.getByLabelText(/Header key/i)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Remove/i })).toBeInTheDocument();
+      });
+
+      it("adds a second row when Add header is clicked again", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user, 2);
+        expect(screen.getAllByLabelText(/Header key/i)).toHaveLength(2);
+        expect(screen.getAllByRole("button", { name: /Remove/i })).toHaveLength(2);
+      });
+    });
+
+    describe("Removing headers", () => {
+      it("removes a row when Remove is clicked", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        await user.click(screen.getByRole("button", { name: /Remove/i }));
+        expect(screen.queryByRole("button", { name: /Remove/i })).not.toBeInTheDocument();
+      });
+
+      it("keeps the remaining row after removing one of two", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user, 2);
+
+        const keyInputs = screen.getAllByLabelText(/Header key/i);
+        await user.type(keyInputs[0], "X-First");
+        await user.type(keyInputs[1], "X-Second");
+
+        const removeButtons = screen.getAllByRole("button", { name: /Remove/i });
+        await user.click(removeButtons[0]);
+
+        expect(screen.getAllByLabelText(/Header key/i)).toHaveLength(1);
+        expect(screen.getByDisplayValue("X-Second")).toBeInTheDocument();
+      });
+    });
+
+    describe("Editing header fields", () => {
+      it("accepts typed input in the key field", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        await user.type(screen.getByLabelText(/Header key/i), "X-API-Key");
+        expect(screen.getByDisplayValue("X-API-Key")).toBeInTheDocument();
+      });
+
+      it("accepts typed input in the value field", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        await user.type(screen.getByLabelText(/^Value/i), "secret-value");
+        expect(screen.getByDisplayValue("secret-value")).toBeInTheDocument();
+      });
+
+      it("editing one row's key does not affect the other row", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user, 2);
+
+        const keyInputs = screen.getAllByLabelText(/Header key/i);
+        await user.type(keyInputs[1], "X-Second");
+
+        expect(keyInputs[0]).toHaveValue("");
+        expect(keyInputs[1]).toHaveValue("X-Second");
+      });
+    });
+
+    describe("Accessibility", () => {
+      it("marks the key label as required", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        const srTexts = screen.getAllByText("(required)");
+        expect(srTexts.length).toBeGreaterThanOrEqual(2);
+      });
+
+      it("Add header button has type=button", async () => {
+        await renderWithCustomHeaders();
+        expect(screen.getByRole("button", { name: /Add header/i })).toHaveAttribute(
+          "type",
+          "button",
+        );
+      });
+
+      it("Remove button has type=button", async () => {
+        const user = await renderWithCustomHeaders();
+        await addHeaders(user);
+        expect(screen.getByRole("button", { name: /Remove/i })).toHaveAttribute("type", "button");
+      });
+    });
+  });
+
+  describe("OAuth Password Grant Validation", () => {
+    // Helper: open advanced settings, switch to OAuth auth, select password grant
+    const renderWithOAuthPassword = async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
+      // Grant type defaults to client_credentials; switch to password
+      await user.click(screen.getByRole("combobox", { name: /Grant type/i }));
+      await user.click(screen.getByRole("option", { name: /Resource owner password/i }));
+      return user;
+    };
+
+    it("shows username and password fields when password grant is selected", async () => {
+      await renderWithOAuthPassword();
+      expect(screen.getByLabelText(/Username/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/^Password/i)).toBeInTheDocument();
+    });
+
+    it("disables the submit button when username is empty", async () => {
+      const user = await renderWithOAuthPassword();
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      // Leave username empty, fill password
+      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
+    });
+
+    it("disables the submit button when password is empty", async () => {
+      const user = await renderWithOAuthPassword();
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      // Leave password empty
+      expect(screen.getByRole("button", { name: /Connect server/i })).toBeDisabled();
+    });
+
+    it("enables the submit button when both username and password are provided", async () => {
+      const user = await renderWithOAuthPassword();
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      await user.type(screen.getByLabelText(/^Password/i), "secret");
+      expect(screen.getByRole("button", { name: /Connect server/i })).not.toBeDisabled();
+    });
+
+    it("marks username input as aria-invalid when username error is present", async () => {
+      const user = await renderWithOAuthPassword();
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      // Only fill password, leave username empty
+      await user.type(screen.getByLabelText(/^Password/i), "secret");
+
+      // Temporarily type and clear username to expose the field without a value,
+      // then attempt form submission via the form element directly
+      const form = document.querySelector("form")!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/^Username/i)).toHaveAttribute("aria-invalid", "true");
+      });
+    });
+
+    it("marks password input as aria-invalid when password error is present", async () => {
+      const user = await renderWithOAuthPassword();
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      await user.type(screen.getByLabelText(/^Username/i), "service-account");
+      // Leave password empty, submit the form
+      const form = document.querySelector("form")!;
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/^Password/i)).toHaveAttribute("aria-invalid", "true");
+      });
+    });
+
+    it("shows inline error messages for both fields when both are empty", async () => {
+      await renderWithOAuthPassword();
+      await userEvent.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await userEvent.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitFor(() => {
+        expect(screen.getByText("Username is required for password grant")).toBeInTheDocument();
+        expect(screen.getByText("Password is required for password grant")).toBeInTheDocument();
+      });
+    });
+
+    it("does not show password-grant errors when a different OAuth grant type is selected", async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("radio", { name: /OAuth 2\.0/i }));
+      // Leave on the default client_credentials grant
+      await user.type(screen.getByLabelText(/Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByText("Username is required for password grant"),
+        ).not.toBeInTheDocument();
+        expect(
+          screen.queryByText("Password is required for password grant"),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("does not show password-grant errors when auth type is not OAuth", async () => {
+      const user = userEvent.setup();
+      renderWithRouter(<MCPServerForm {...defaultProps} />);
+      await user.click(screen.getByRole("button", { name: /Advanced settings/i }));
+      await user.click(screen.getByRole("radio", { name: /Basic/i }));
+      await user.type(screen.getByLabelText(/^Name/i), "Test Server");
+      await user.type(screen.getByLabelText(/^URL/i), "http://localhost:3000");
+      fireEvent.submit(document.querySelector("form")!);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByText("Username is required for password grant"),
+        ).not.toBeInTheDocument();
+      });
+    });
+  });
+
   describe("CA Certificate Upload", () => {
     it("should render CA certificate upload section in advanced settings", async () => {
       const user = userEvent.setup();

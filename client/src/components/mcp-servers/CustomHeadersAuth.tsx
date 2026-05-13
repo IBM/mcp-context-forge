@@ -67,7 +67,7 @@ export function CustomHeadersAuth({ headers, onHeadersChange }: CustomHeadersAut
               </label>
               <Input
                 id={`header-value-${index}`}
-                type="text"
+                type="password"
                 value={header.value}
                 onChange={(e) => updateHeader(index, "value", e.target.value)}
                 placeholder={"Add header value..."}
