@@ -7,14 +7,17 @@ import { AdvancedSettings } from "@/components/mcp-servers/AdvancedSettings";
 import { useRouter } from "@/router";
 import { useMCPServerForm, type TransportType } from "@/hooks/useMCPServerForm";
 
-interface NewMCPServerProps {
+interface MCPServerFormProps {
   isOpen: boolean;
   onToggle: () => void;
+  serverId?: string;
+  onSuccess?: () => void;
 }
 
-export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
+export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServerFormProps) {
   const { navigate } = useRouter();
   const {
+    fetchError,
     name,
     url,
     description,
@@ -65,11 +68,15 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
     setOAuthStoreTokens,
     oauthAutoRefresh,
     setOAuthAutoRefresh,
+    oauthUsername,
+    setOAuthUsername,
+    oauthPassword,
+    setOAuthPassword,
     queryParamName,
     setQueryParamName,
     queryParamApiKey,
     setQueryParamApiKey,
-  } = useMCPServerForm();
+  } = useMCPServerForm(serverId);
 
   const handleCancel = () => {
     onToggle();
@@ -77,7 +84,11 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     handleSubmit(event, () => {
-      onToggle();
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        onToggle();
+      }
     });
   };
 
@@ -93,7 +104,7 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                 <MCPIcon className="h-5 w-5" />
               </div>
               <h2 className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
-                Connect MCP server
+                {serverId ? "Edit MCP server" : "Connect MCP server"}
               </h2>
             </div>
 
@@ -114,6 +125,14 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
               .
             </p>
           </div>
+
+          {fetchError && serverId && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/50 dark:bg-red-950/50">
+              <p className="text-sm text-red-600 dark:text-red-400">
+                Failed to load server data: {fetchError}
+              </p>
+            </div>
+          )}
 
           <form className="space-y-6" onSubmit={onSubmit}>
             <div className="space-y-3">
@@ -254,6 +273,8 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   oauthScopes={oauthScopes}
                   oauthStoreTokens={oauthStoreTokens}
                   oauthAutoRefresh={oauthAutoRefresh}
+                  oauthUsername={oauthUsername}
+                  oauthPassword={oauthPassword}
                   onOAuthClientIdChange={setOAuthClientId}
                   onOAuthClientSecretChange={setOAuthClientSecret}
                   onOAuthTokenUrlChange={setOAuthTokenUrl}
@@ -264,6 +285,8 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   onOAuthScopesChange={setOAuthScopes}
                   onOAuthStoreTokensChange={setOAuthStoreTokens}
                   onOAuthAutoRefreshChange={setOAuthAutoRefresh}
+                  onOAuthUsernameChange={setOAuthUsername}
+                  onOAuthPasswordChange={setOAuthPassword}
                   queryParamName={queryParamName}
                   queryParamApiKey={queryParamApiKey}
                   onQueryParamNameChange={setQueryParamName}
@@ -274,6 +297,10 @@ export function MCPServerForm({ isOpen, onToggle }: NewMCPServerProps) {
                   onPassthroughHeadersChange={setPassthroughHeaders}
                   onCACertificateFilesSelected={(files) => {
                     console.log("Selected CA certificate files:", files);
+                  }}
+                  oauthErrors={{
+                    username: errors.oauthUsername,
+                    password: errors.oauthPassword,
                   }}
                 />
               )}
