@@ -135,7 +135,7 @@ class CompletionService:
             return result
 
         except Exception as e:
-            logger.error(f"Completion error: {e}")
+            logger.error("Completion error: %s", e)
             raise CompletionError(str(e))
 
     async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:

@@ -97,7 +97,7 @@ class PersonalTeamService:
             existing_team = self.db.query(EmailTeam).filter(EmailTeam.created_by == user.email, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
 
             if existing_team:
-                logger.warning(f"User {user.email} already has a personal team: {existing_team.id}")
+                logger.warning("User %s already has a personal team: %s", user.email, existing_team.id)
                 raise ValueError(f"User {user.email} already has a personal team")
 
             # Generate team name from user's display name
@@ -136,12 +136,12 @@ class PersonalTeamService:
             self.db.add(history)
             self.db.commit()
 
-            logger.info(f"Created personal team '{team.name}' for user {user.email}")
+            logger.info("Created personal team '%s' for user %s", team.name, user.email)
             return team
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to create personal team for {user.email}: {e}")
+            logger.error("Failed to create personal team for %s: %s", user.email, e)
             raise
 
     async def get_personal_team(self, user_email: str) -> Optional[EmailTeam]:
@@ -165,7 +165,7 @@ class PersonalTeamService:
             return team
 
         except Exception as e:
-            logger.error(f"Failed to get personal team for {user_email}: {e}")
+            logger.error("Failed to get personal team for %s: %s", user_email, e)
             return None
 
     async def ensure_personal_team(self, user: EmailUser) -> Optional[EmailTeam]:
@@ -195,7 +195,7 @@ class PersonalTeamService:
                 if not getattr(settings, "auto_create_personal_teams", True):
                     return None
                 # Create personal team if it doesn't exist
-                logger.info(f"Creating missing personal team for user {user.email}")
+                logger.info("Creating missing personal team for user %s", user.email)
                 team = await self.create_personal_team(user)
 
             return team
@@ -227,7 +227,7 @@ class PersonalTeamService:
             return team is not None and team.is_personal
 
         except Exception as e:
-            logger.error(f"Failed to check if team {team_id} is personal: {e}")
+            logger.error("Failed to check if team %s is personal: %s", team_id, e)
             return False
 
     async def delete_personal_team(self, team_id: str) -> bool:
@@ -272,5 +272,5 @@ class PersonalTeamService:
             return team.created_by if team else None
 
         except Exception as e:
-            logger.error(f"Failed to get personal team owner for {team_id}: {e}")
+            logger.error("Failed to get personal team owner for %s: %s", team_id, e)
             return None
