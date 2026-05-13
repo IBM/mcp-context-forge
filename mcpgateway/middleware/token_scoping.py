@@ -134,6 +134,15 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Compliance reporting
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
+    # A2A agent API permissions
+    ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
+    ("GET", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_READ),
+    ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
+    ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
+    ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
+    ("POST", re.compile(r"^/a2a/invoke/[^/]+(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
 ]
 
 # Admin route permission map (granular by route group).
