@@ -5452,10 +5452,14 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            # Preserve timeout context when message is lost during ExceptionGroup wrapping
+                            root_cause_message = str(root_cause)
+                            if not root_cause_message and isinstance(root_cause, (TimeoutError, asyncio.TimeoutError)):
+                                root_cause_message = f"Tool invocation timed out after {effective_timeout}s"
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
-                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
+                            sanitized_error = sanitize_exception_message(root_cause_message, gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
@@ -5638,10 +5642,14 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            # Preserve timeout context when message is lost during ExceptionGroup wrapping
+                            root_cause_message = str(root_cause)
+                            if not root_cause_message and isinstance(root_cause, (TimeoutError, asyncio.TimeoutError)):
+                                root_cause_message = f"Tool invocation timed out after {effective_timeout}s"
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
-                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
+                            sanitized_error = sanitize_exception_message(root_cause_message, gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
@@ -5949,6 +5957,9 @@ class ToolService(BaseService):
                     while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                         root_cause = root_cause.exceptions[0]
                 error_message = str(root_cause)
+                # Preserve timeout context when message is lost during ExceptionGroup wrapping
+                if not error_message and isinstance(root_cause, (TimeoutError, asyncio.TimeoutError)):
+                    error_message = f"Tool invocation timed out after {effective_timeout}s"
                 # Set span error status
                 if span:
                     set_span_error(span, error_message)

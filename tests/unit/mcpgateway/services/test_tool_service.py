@@ -3794,6 +3794,116 @@ class TestToolService:
             assert "Connection refused by upstream MCP server" in call_kwargs["error_message"]
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_timeout_message_preserved_through_exception_group(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Bare TimeoutError() wrapped in ExceptionGroup must produce a descriptive fallback message.
+
+        Regression test for GitHub issue #2782: TimeoutError() stringifies to '' when
+        wrapped in BaseExceptionGroup during MCP SDK TaskGroup cleanup, causing clients
+        to receive an empty error string. The fix detects this case and substitutes
+        "Tool invocation timed out after {effective_timeout}s".
+        """
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Bare TimeoutError() has no message — str(TimeoutError()) == ''
+        bare_timeout = TimeoutError()
+        assert str(bare_timeout) == "", "precondition: bare TimeoutError must stringify to empty string"
+
+        inner_group = ExceptionGroup("inner task group", [bare_timeout])
+        outer_group = ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner_group])
+        tool_service._http_client.request.side_effect = outer_group
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with (
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+        ):
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+            error_str = str(exc_info.value)
+            assert error_str.strip(), "error message must not be empty"
+            assert "timed out after" in error_str
+            assert str(settings.tool_timeout) in error_str
+
+            mock_metrics_buffer.record_tool_metric.assert_called_once()
+            call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+            assert call_kwargs["success"] is False
+            assert "timed out after" in call_kwargs["error_message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "transport,request_type,url,client_patch,client_yields",
+        [
+            ("SSE", "SSE", "http://fake-mcp:8080/sse", "mcpgateway.services.tool_service.sse_client", ("read", "write")),
+            ("STREAMABLEHTTP", "StreamableHTTP", "http://fake-mcp:8080/mcp", "mcpgateway.services.tool_service.streamablehttp_client", ("read", "write", None)),
+        ],
+    )
+    async def test_invoke_tool_mcp_inner_timeout_message_preserved_through_exception_group(self, tool_service, mock_tool, test_db, transport, request_type, url, client_patch, client_yields):
+        """SSE/StreamableHTTP inner handlers: bare TimeoutError wrapped in ExceptionGroup produces descriptive log message.
+
+        Covers tool_service.py lines 5458 (SSE) and 5648 (StreamableHTTP) — the
+        root_cause_message fallback inside each transport's except BaseException handler.
+        """
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        # First-Party
+        from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+
+        mock_gateway = SimpleNamespace(id="42", name="test_gateway", slug="test-gateway", url=url, enabled=True, reachable=True, auth_type=None, auth_value=None, capabilities={}, transport=transport, passthrough_headers=[])
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = request_type
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [] if value is None else [value]
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        outer_group = ExceptionGroup("outer", [ExceptionGroup("inner", [TimeoutError()])])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(side_effect=outer_group)
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = False
+
+        @asynccontextmanager
+        async def mock_transport_client(*_args, **_kwargs):
+            yield client_yields
+
+        with (
+            patch(client_patch, mock_transport_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
+        ):
+            with pytest.raises(ToolInvocationError) as exc_info:
+                await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert "timed out after" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_reset_metrics(self, tool_service, test_db):
         """Test resetting metrics."""
         # Mock DB operations
