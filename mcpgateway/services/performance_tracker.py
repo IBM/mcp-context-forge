@@ -174,7 +174,7 @@ class PerformanceTracker:
             if extra_context:
                 context.update(extra_context)
 
-            logger.warning("Slow operation: %s took %%.2fms", operation_name, duration * 1000, extra=context)
+            logger.warning("Slow operation: %s took %.2fms", operation_name, duration * 1000, extra=context)
 
     def get_performance_summary(self, operation_name: Optional[str] = None, min_samples: int = 1) -> Dict[str, Any]:
         """Get performance summary for analytics.
