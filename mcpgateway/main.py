@@ -3085,11 +3085,30 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled
+# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
 # Note: SIEM export can also require auth event capture even when DB security logging is off.
+# Note: Password change enforcement also requires user context to be available
+# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
+# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
 _siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
-if settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled:
+
+# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
+# This middleware enforces mandatory password changes for users with password_change_required flag
+# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
+if settings.password_change_enforcement_enabled:
+    # First-Party
+    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
+
+    app.add_middleware(PasswordChangeEnforcementMiddleware)
+    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
+else:
+    logger.info("🔒 Password change enforcement middleware disabled")
+
+# Add authentication context middleware SECOND (runs FIRST due to reverse order)
+# This populates request.state.user for downstream middleware and handlers
+_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
+if _auth_context_required:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
