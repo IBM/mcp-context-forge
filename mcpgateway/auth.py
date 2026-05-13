@@ -1912,6 +1912,13 @@ async def get_current_user(
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
+            # Extract and store token scopes for permission checking (JWT tokens)
+            # This mirrors the database API token behavior at line 1814
+            scopes = payload.get("scopes")
+            if scopes and isinstance(scopes, dict):
+                permissions = scopes.get("permissions", [])
+                if permissions:
+                    request.state.token_scopes = permissions
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
