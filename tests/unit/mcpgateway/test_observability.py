@@ -786,7 +786,6 @@ class TestObservability:
                 assert call[0][0] != "key2" or call[0][0] == "error"
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
-    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     def test_init_telemetry_otlp_http_fallback(self):
         """Test OTLP HTTP exporter fallback when gRPC exporter is unavailable."""
         self._enable_observability()
