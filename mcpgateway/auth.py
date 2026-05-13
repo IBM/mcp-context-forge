@@ -1914,6 +1914,12 @@ async def get_current_user(
                 request.state.jti = jti
             # Extract and store token scopes for permission checking (JWT tokens)
             # This mirrors the database API token behavior at line 1821
+            #
+            # NAMING NOTE: JWT tokens use nested "scopes.permissions" structure (OAuth 2.0 standard)
+            # while database API tokens use "resource_scopes" field (database schema naming).
+            # Both converge to unified "token_scopes" in request.state for consistent enforcement.
+            # See docs/security/TOKEN_SCOPE_NAMING.md for full rationale.
+            #
             # SECURITY: Must set token_scopes even for empty dict/list to enforce scope checks.
             # - scopes dict present (even if {}): API token, enforce scope check
             # - scopes missing/None: Session token, skip scope check (token_scopes stays None)
@@ -1974,7 +1980,11 @@ async def get_current_user(
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]
-                    # Store token scopes for permission checking
+                    # Store token scopes for permission checking (Database API tokens)
+                    # NAMING NOTE: Database API tokens use "resource_scopes" field (database schema naming)
+                    # while JWT tokens use nested "scopes.permissions" (OAuth 2.0 standard).
+                    # Both converge to unified "token_scopes" in request.state for consistent enforcement.
+                    # See docs/security/TOKEN_SCOPE_NAMING.md and JWT path at line 1770.
                     request.state.token_scopes = api_token_info.get("resource_scopes", [])
             else:
                 logger.debug("API token not found in database")
