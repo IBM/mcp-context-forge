@@ -643,6 +643,11 @@ def downgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
 
+    inspector = sa.inspect(conn)
+    if not inspector.has_table("prompts") and not inspector.has_table("resources"):
+        print("prompts and resources tables not found. Skipping downgrade.")
+        return
+
     # Best-effort: rebuild integer prompt ids and remap dependent FK columns.
     # 1) Create old-style prompts table with integer id (autoincrement)
     # If a previous partial downgrade left these tables behind, drop them first
