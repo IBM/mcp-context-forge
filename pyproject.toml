@@ -483,6 +483,7 @@ preview = true
 "playwright.config.py" = ["D1", "D417"]
 "run_mutmut.py" = ["D1", "D417"]
 # G004 enforced only in mcpgateway/services/ — other dirs deferred to separate PRs
+"plugins/**/*.py" = ["G004"]
 "mcpgateway/*.py" = ["G004"]
 "mcpgateway/admin_ui/**/*.py" = ["G004"]
 "mcpgateway/alembic/**/*.py" = ["G004"]
