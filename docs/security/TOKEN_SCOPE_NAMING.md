@@ -104,7 +104,7 @@ The different naming does NOT affect security:
 
 ## References
 
-- JWT token scope extraction: `mcpgateway/auth.py:1770-1776`
+- JWT token scope extraction: `mcpgateway/auth.py:1770-1778`
 - Database token scope extraction: `mcpgateway/auth.py:713-717, 1821`
-- Unified permission checking: `mcpgateway/middleware/rbac.py:680-692`
-- Test coverage: `tests/security/test_token_scope_enforcement_regression.py`
+- Unified permission checking: `mcpgateway/middleware/rbac.py:680-698`
+- Test coverage: `tests/unit/mcpgateway/test_auth_helpers.py`
