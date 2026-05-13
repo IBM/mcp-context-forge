@@ -85,14 +85,24 @@ if token_scopes is not None:
 3. **Backward Compatibility**: Existing JWT tokens in production use the `scopes.permissions` structure
 4. **Type Safety**: Different names prevent accidental mixing of JWT and database token fields
 
-## Migration Path
+## Migration Path (Future Consideration)
 
-If unified naming is desired in the future:
+**Status:** The current naming split is **intentional and permanent** for the foreseeable future.
+
+**Rationale:**
+- JWT `scopes.permissions` aligns with OAuth 2.0 / OIDC standards
+- Database `resource_scopes` clearly indicates resource-level permissions
+- Both converge to unified `token_scopes` in user context (no runtime confusion)
+- Changing either would break backward compatibility with existing tokens
+
+**If unification becomes necessary** (tracked in issue #TBD):
 
 1. Add `permissions` alias to `EmailApiToken.resource_scopes` in database schema
 2. Update JWT generation to use top-level `permissions` array
 3. Maintain backward compatibility by checking both field names during transition
-4. Deprecate old field names after migration period
+4. Deprecate old field names after 6-month migration period
+
+**Current Recommendation:** Keep existing naming. The split is well-documented and causes no security or functional issues.
 
 ## Security Implications
 
