@@ -299,14 +299,15 @@ def test_is_api_token_jti_sync(monkeypatch):
     assert auth._is_api_token_jti_sync("jti") is True
 
 
-def test_jwt_malformed_scopes_handling(caplog):
-    """Test that malformed JWT scopes (non-dict) are logged and treated as session tokens."""
+def test_jwt_malformed_scopes_rejected(caplog):
+    """Test that malformed JWT scopes (non-dict) are rejected with 401 error."""
     from types import SimpleNamespace
     import logging
-    
+    from fastapi import HTTPException
+
     # Create mock request state
     request_state = SimpleNamespace()
-    
+
     # Mock JWT payload with malformed scopes (string instead of dict)
     malformed_payload = {
         "email": "user@example.com",
@@ -314,28 +315,32 @@ def test_jwt_malformed_scopes_handling(caplog):
         "scopes": "tools.read,a2a.read",  # MALFORMED: should be dict, not string
         "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
     }
-    
-    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+
+    # Simulate the JWT scope extraction logic from auth.py (with rejection)
     logger = logging.getLogger("mcpgateway.auth")
-    
-    with caplog.at_level(logging.DEBUG, logger="mcpgateway.auth"):
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.auth"):
         scopes = malformed_payload.get("scopes")
+        error_raised = False
         if scopes is not None:
             if isinstance(scopes, dict):
                 permissions = scopes.get("permissions", [])
                 request_state.token_scopes = permissions
             else:
-                # This should trigger the debug log
-                logger.debug(
-                    f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
-                    f"Token will be treated as session token (no scope enforcement). "
-                    f"Check token generation configuration."
+                # Malformed JWT: reject with 401
+                logger.warning(
+                    f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. "
+                    f"Tokens with malformed scopes must be regenerated with correct structure."
                 )
-    
-    # Verify malformed scopes are logged
-    assert "Malformed JWT token: scopes field is str, expected dict" in caplog.text
-    
-    # Verify token_scopes is NOT set (treated as session token)
+                error_raised = True
+
+    # Verify malformed scopes are logged as WARNING
+    assert "JWT token rejected: scopes field is str, expected dict" in caplog.text
+
+    # Verify rejection would have occurred
+    assert error_raised is True
+
+    # Verify token_scopes is NOT set (token was rejected)
     assert not hasattr(request_state, "token_scopes")
 
 
