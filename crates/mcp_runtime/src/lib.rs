@@ -76,7 +76,7 @@ use rmcp::{
     },
 };
 
-use crate::config::{ListenTarget, RuntimeConfig};
+use crate::config::{ListenTarget, RuntimeConfig, SESSIONLESS_PROTOCOL_MIN_VERSION};
 use crate::observability::{
     TraceRequestContext, derive_langfuse_trace_name, inject_current_trace_context,
     is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload,
@@ -2812,6 +2812,12 @@ fn validate_initialize_params(
         ));
     }
 
+    // Phase 1 / #4686: compute the semantic gate centrally during initialize
+    // validation so later transport branches can switch from legacy sessionful
+    // behavior to sessionless semantics without each call site inventing its
+    // own version-cutoff logic.
+    let _sessionless_semantics = uses_sessionless_mcp_semantics(Some(&protocol_version));
+
     Ok(())
 }
 
@@ -3037,11 +3043,23 @@ async fn handle_initialize_with_session_core(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let request_id = request.id.clone();
     let request_params = request.params.clone();
+
+    // #4686: Extract protocol version to determine sessionless semantics
+    let protocol_version = request_params
+        .get("protocolVersion")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let sessionless_semantics = uses_sessionless_mcp_semantics(Some(protocol_version));
+
     let (span, is_root_span) =
         start_runtime_operation_span("mcp.initialize", &incoming_headers, auth_context.as_ref());
     set_span_attribute(&span, "mcp.method", "initialize");
-    set_span_attribute(&span, "mcp.session_id", session_id.clone());
-    set_span_attribute(&span, "langfuse.session.id", session_id.clone());
+
+    // #4686: Only include session_id in telemetry for sessionful protocols
+    if !sessionless_semantics {
+        set_span_attribute(&span, "mcp.session_id", session_id.clone());
+        set_span_attribute(&span, "langfuse.session.id", session_id.clone());
+    }
     if is_root_span {
         set_langfuse_trace_name(&span, "mcp.initialize");
     }
@@ -3107,16 +3125,20 @@ async fn handle_initialize_with_session_core(
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
             .map_or_else(|| session_id.clone(), str::to_string);
-        set_span_attribute(
-            &span_for_body,
-            "mcp.session_id",
-            response_session_id.clone(),
-        );
-        set_span_attribute(
-            &span_for_body,
-            "langfuse.session.id",
-            response_session_id.clone(),
-        );
+
+        // #4686: Only include session_id in telemetry for sessionful protocols
+        if !sessionless_semantics {
+            set_span_attribute(
+                &span_for_body,
+                "mcp.session_id",
+                response_session_id.clone(),
+            );
+            set_span_attribute(
+                &span_for_body,
+                "langfuse.session.id",
+                response_session_id.clone(),
+            );
+        }
 
         if status.is_success() {
             set_span_attribute(&span_for_body, "success", true);
@@ -3990,6 +4012,35 @@ fn requested_protocol_version(request: &JsonRpcRequest) -> Option<String> {
         .map(str::to_string)
 }
 
+fn normalize_protocol_version(protocol_version: Option<&str>, default_version: &str) -> String {
+    protocol_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_version)
+        .to_string()
+}
+
+fn uses_sessionless_mcp_semantics(protocol_version: Option<&str>) -> bool {
+    let normalized = normalize_protocol_version(protocol_version, SESSIONLESS_PROTOCOL_MIN_VERSION);
+    let is_sessionless = normalized >= SESSIONLESS_PROTOCOL_MIN_VERSION;
+
+    // Log deprecation warning for sessionful protocols
+    if !is_sessionless {
+        tracing::warn!(
+            protocol_version = %normalized,
+            min_sessionless_version = SESSIONLESS_PROTOCOL_MIN_VERSION,
+            "DEPRECATION: MCP protocol version uses legacy sessionful semantics. \
+             Sessionful protocols (< {}) are deprecated and will be removed in a future release. \
+             Please upgrade to protocol version {} or later for sessionless semantics. \
+             See https://github.com/modelcontextprotocol/specification/pull/2567 for details.",
+            SESSIONLESS_PROTOCOL_MIN_VERSION,
+            SESSIONLESS_PROTOCOL_MIN_VERSION
+        );
+    }
+
+    is_sessionless
+}
+
 fn extract_client_capabilities(request: &JsonRpcRequest) -> Option<Value> {
     request.params.get("capabilities").cloned()
 }
@@ -4576,17 +4627,24 @@ async fn forward_transport_request(
     // - whether live SSE streaming should be proxied directly by Rust
     // - otherwise, whether the request should fall through to Python's
     //   existing transport/session implementation
-    let session_id = if state.session_core_enabled() {
+    let request_protocol_version =
+        requested_protocol_version_from_headers(&incoming_headers);
+    let sessionless_semantics =
+        uses_sessionless_mcp_semantics(request_protocol_version.as_deref());
+
+    let session_id = if state.session_core_enabled() && !sessionless_semantics {
         match validate_runtime_session_request(state, &mut incoming_headers, &uri).await {
             Ok(session_id) => session_id,
             Err(response) => return response,
         }
     } else {
-        None
+        runtime_session_id_from_request(&incoming_headers, &uri)
     };
-    let session_validated = state.session_core_enabled() && session_id.is_some();
+    let session_validated =
+        state.session_core_enabled() && !sessionless_semantics && session_id.is_some();
 
     if method == reqwest::Method::GET
+        && !sessionless_semantics
         && state.resume_core_enabled()
         && state.session_core_enabled()
         && state.event_store_enabled()
@@ -4645,7 +4703,8 @@ async fn forward_transport_request(
         .await;
     }
 
-    if state.affinity_core_enabled()
+    if !sessionless_semantics
+        && state.affinity_core_enabled()
         && state.session_core_enabled()
         && session_id.is_some()
         && (method == reqwest::Method::GET || method == reqwest::Method::DELETE)
@@ -4674,20 +4733,25 @@ async fn forward_transport_request(
     }
 
     if method == reqwest::Method::GET
+        && !sessionless_semantics
         && state.live_stream_core_enabled()
         && accepts_sse(&incoming_headers)
         && !incoming_headers.contains_key("last-event-id")
     {
-        // ADR-052: Guard the live-stream relay with a 405 when we have no
+        // ADR-052 + #4686: Guard the live-stream relay with a 405 when we have no
         // session to anchor a passive SSE stream to. Two branches land here:
         //   (a) session_core is disabled globally — Rust has no session
         //       infrastructure to validate against.
         //   (b) session_core is enabled but no valid session id was presented
         //       (neither `Mcp-Session-Id`/`x-mcp-session-id` header nor
         //       `session_id` query parameter).
-        // The 405 is spec-mandated, not a workaround: per MCP Streamable HTTP
-        // ("Listening for messages from the server"), GET /mcp requires a
-        // session id. The Python transport bridge enforces the same rule.
+        // The 405 is spec-mandated for sessionful protocols, not a workaround:
+        // per MCP Streamable HTTP ("Listening for messages from the server"),
+        // GET /mcp requires a session id in sessionful mode. The Python transport
+        // bridge enforces the same rule.
+        //
+        // #4686: Sessionless protocols (>= 2025-11-25) bypass this check entirely.
+        // Sessionless GET requests are allowed and fall through to the backend.
         //
         // What changed in ADR-052: the GET-with-session path below now
         // delivers real server-initiated messages (Python's GET handler
@@ -4785,12 +4849,13 @@ async fn forward_transport_request(
     // "Missing session ID", which fails
     // `test_delete_mcp_terminates_session_or_405`.
     if method == reqwest::Method::DELETE
+        && !sessionless_semantics
         && runtime_session_id_from_request(&incoming_headers, &uri).is_none()
     {
         let mut response = json_response(
             StatusCode::METHOD_NOT_ALLOWED,
             json!({
-                "detail": "DELETE /mcp requires Mcp-Session-Id; without one there is no session to terminate."
+                "detail": "DELETE /mcp requires Mcp-Session-Id in sessionful mode; without one there is no session to terminate."
             }),
         );
         response.headers_mut().insert(
@@ -10315,16 +10380,16 @@ mod unit_tests {
         hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
-        normalize_postgres_database_url, normalize_tool_input_schema, parse_error_response,
-        parse_sse_line, pool_owner_key, prompt_arguments_from_schema, public_client_ip,
-        query_param, read_next_sse_frame, remove_runtime_session, replay_events_endpoint,
-        requested_initialize_session_id, requested_protocol_version,
+        normalize_postgres_database_url, normalize_protocol_version, normalize_tool_input_schema,
+        parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
+        public_client_ip, query_param, read_next_sse_frame, remove_runtime_session,
+        replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
         response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
         tools_call_error_type_from_payload, transport_delete_server_scoped,
-        transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
-        validate_protocol_version, validate_runtime_session_request,
+        transport_get_server_scoped, upsert_runtime_session, uses_sessionless_mcp_semantics,
+        validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{
         Json, Router,

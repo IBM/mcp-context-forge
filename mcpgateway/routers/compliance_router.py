@@ -16,15 +16,14 @@ Examples:
 """
 
 # Standard
-import logging
 from datetime import datetime, timedelta
+import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from pydantic import BaseModel
-from pydantic import ValidationInfo, field_validator
+from pydantic import BaseModel, field_validator, ValidationInfo
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -67,6 +66,7 @@ class GenerateReportRequest(BaseModel):
     @classmethod
     def validate_period(cls, v: datetime, info: ValidationInfo) -> datetime:
         """Validate period_end is not in the future and within 365 days of period_start."""
+        # Standard
         from datetime import timezone
 
         now = datetime.now(timezone.utc)

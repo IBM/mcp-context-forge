@@ -4439,7 +4439,11 @@ class TestInvokeResourceCoverage:
         # Avoid real SSL context creation; we're only covering the validation branch.
         resource_service.create_ssl_context = MagicMock(return_value=MagicMock())
 
-        headers_token = request_headers_var.set({"mcp-session-id": "downstream-res"})
+        # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+        headers_token = request_headers_var.set({
+            "mcp-session-id": "downstream-res",
+            "mcp-protocol-version": "2024-11-05"
+        })
         try:
             with (
                 patch(
@@ -6788,7 +6792,7 @@ class TestInvokeResourceCoverageEdges:
         registry = MagicMock()
         registry.acquire = _fake_acquire
 
-        headers_token = request_headers_var.set({"mcp-session-id": "downstream-r"})
+        headers_token = request_headers_var.set({"mcp-session-id": "downstream-r", "mcp-protocol-version": "2024-11-05"})
         try:
             with (
                 patch(

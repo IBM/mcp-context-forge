@@ -69,12 +69,10 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
-
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import TokenValidationError, get_current_user, get_user_team_roles, validate_token_user
+from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -102,6 +100,7 @@ from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -1417,6 +1416,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
+    # Initialize sessionless connection pool for MCP protocol versions >= 2025-11-25
+    # First-Party
+    from mcpgateway.services.sessionless_connection_pool import init_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+
+    await init_sessionless_connection_pool()
+    logger.info("Sessionless connection pool initialized")
+
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -1811,6 +1817,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
 
         await shutdown_upstream_session_registry()
+
+        # Drain sessionless connection pool
+        # First-Party
+        from mcpgateway.services.sessionless_connection_pool import shutdown_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+
+        await shutdown_sessionless_connection_pool()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()
@@ -11871,6 +11883,7 @@ app.include_router(export_import_router)
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
     try:
+        # First-Party
         from mcpgateway.routers.compliance_router import router as compliance_router
 
         app.include_router(compliance_router)
@@ -12048,10 +12061,10 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])

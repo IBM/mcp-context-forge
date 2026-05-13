@@ -3103,10 +3103,14 @@ class TestToolService:
             yield MagicMock()
 
         # Pin a downstream session id in the ContextVar so the registry path is taken.
+        # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored.
         # First-Party
         from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
-        headers_token = request_headers_var.set({"mcp-session-id": "downstream-sess-xyz"})
+        headers_token = request_headers_var.set({
+            "mcp-session-id": "downstream-sess-xyz",
+            "mcp-protocol-version": "2024-11-05"
+        })
 
         try:
             with (
@@ -3214,8 +3218,12 @@ class TestToolService:
             mock_settings.tool_timeout = 60
 
             # Downstream session A
+            # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
             returns[:] = make_returns()
-            token_a = request_headers_var.set({"mcp-session-id": "downstream-A"})
+            token_a = request_headers_var.set({
+                "mcp-session-id": "downstream-A",
+                "mcp-protocol-version": "2024-11-05"
+            })
             try:
                 await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
             finally:
@@ -3223,7 +3231,10 @@ class TestToolService:
 
             # Downstream session B (same user, same gateway)
             returns[:] = make_returns()
-            token_b = request_headers_var.set({"mcp-session-id": "downstream-B"})
+            token_b = request_headers_var.set({
+                "mcp-session-id": "downstream-B",
+                "mcp-protocol-version": "2024-11-05"
+            })
             try:
                 await tool_service.invoke_tool(test_db, "dummy_tool", {}, request_headers=None)
             finally:

@@ -43,7 +43,7 @@ class TestResourcePluginIntegration:
     def resource_service_with_mock_plugins(self):
         """Create ResourceService with mocked plugin manager."""
         with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGINS_CONFIG_FILE": "test.yaml"}):
-            with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
+            with patch("mcpgateway.plugins.get_plugin_manager") as mock_get_plugin_manager:
                 # Standard
                 from unittest.mock import AsyncMock
 
@@ -55,9 +55,15 @@ class TestResourcePluginIntegration:
                 mock_manager.initialize = AsyncMock()
                 # Add default invoke_hook mock that returns success
                 mock_manager.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, modified_payload=None), None))  # contexts
-                MockPluginManager.return_value = mock_manager
+                # Add has_hooks_for mock to return True for resource hooks
+                mock_manager.has_hooks_for = MagicMock(return_value=True)
+                # Make get_plugin_manager return an async function that returns the mock
+                mock_get_plugin_manager.return_value = AsyncMock(return_value=mock_manager)
+                # Override to return mock_manager directly for sync access
+                async def async_get_manager(server_id=None):
+                    return mock_manager
+                mock_get_plugin_manager.side_effect = async_get_manager
                 service = ResourceService()
-                service._plugin_manager = mock_manager
                 return service, mock_manager
 
     @pytest.mark.asyncio
