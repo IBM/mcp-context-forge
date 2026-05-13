@@ -113,7 +113,13 @@ def _invoke_tool_once(server_id: str, tool_name: str) -> int:
         client_name="rate-limiter-multi-tenant-test",
     )
     if sid is None:
-        return 0  # caller asserts == 200, so 0 surfaces as a clear handshake failure
+        # initialize_mcp_session already logged the failing step; surface a
+        # descriptive failure here instead of returning a sentinel HTTP status
+        # that the caller would print as `assert 0 == 200` (PR #4635 R4).
+        pytest.fail(
+            f"MCP session handshake failed for server {server_id!r} — "
+            f"see logger output for the failing step"
+        )
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
