@@ -349,11 +349,11 @@ async def test_jwt_empty_dict_scopes_enforcement():
     """Test that JWT with empty dict scopes {} correctly enforces scope checks."""
     from unittest.mock import MagicMock
     from starlette.requests import Request
-    
+
     # Create mock request
     request = MagicMock(spec=Request)
     request.state = SimpleNamespace()
-    
+
     # JWT payload with empty dict scopes (CRITICAL: must be detected as API token)
     empty_dict_payload = {
         "email": "user@example.com",
@@ -361,14 +361,14 @@ async def test_jwt_empty_dict_scopes_enforcement():
         "scopes": {},  # Empty dict - should enforce scope checks
         "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
     }
-    
+
     # Simulate the JWT scope extraction logic from auth.py:1770-1787
     scopes = empty_dict_payload.get("scopes")
     if scopes is not None:
         if isinstance(scopes, dict):
             permissions = scopes.get("permissions", [])
             request.state.token_scopes = permissions
-    
+
     # Verify token_scopes is set to empty list (enforces scope checks)
     assert hasattr(request.state, "token_scopes")
     assert request.state.token_scopes == []
@@ -379,18 +379,18 @@ async def test_jwt_missing_scopes_session_token():
     """Test that JWT without scopes field is treated as session token (no scope checks)."""
     from unittest.mock import MagicMock
     from starlette.requests import Request
-    
+
     # Create mock request
     request = MagicMock(spec=Request)
     request.state = SimpleNamespace()
-    
+
     # JWT payload without scopes field (session token)
     session_payload = {
         "email": "user@example.com",
         "sub": "user@example.com",
         "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
     }
-    
+
     # Simulate the JWT scope extraction logic from auth.py:1770-1787
     scopes = session_payload.get("scopes")
     if scopes is not None:
