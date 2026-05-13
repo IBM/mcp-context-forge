@@ -24,7 +24,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { getToken } from "../api/client";
+import { useAuthContext } from "../auth/AuthContext";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -231,17 +231,42 @@ export function AuthGuard({
   publicPrefixes = DEFAULT_PUBLIC_PREFIXES,
 }: AuthGuardProps) {
   const { navigate, path } = useRouter();
-  const authenticated = getToken() !== null;
+  const { isAuthenticated, isLoading } = useAuthContext();
+  const pathname = path.split("?")[0];
 
   const isPublic =
-    publicPaths.includes(path) || publicPrefixes.some((prefix) => path.startsWith(prefix));
+    publicPaths.includes(pathname) || publicPrefixes.some((prefix) => pathname.startsWith(prefix));
 
   useEffect(() => {
-    if (!authenticated && !isPublic) {
+    if (!isLoading && !isAuthenticated && !isPublic) {
       navigate("/app/login");
     }
-  }, [authenticated, isPublic, navigate]);
+  }, [isAuthenticated, isLoading, isPublic, navigate]);
 
-  if (isPublic || !authenticated) return null;
+  // Public routes: render immediately
+  if (isPublic) return <>{children}</>;
+
+  // Loading state: show loading indicator instead of blank page
+  if (isLoading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          fontSize: "14px",
+          color: "#666",
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  // Not authenticated: return null (redirect will happen via useEffect)
+  if (!isAuthenticated) return null;
+
+  // Authenticated: render protected content
   return <>{children}</>;
 }

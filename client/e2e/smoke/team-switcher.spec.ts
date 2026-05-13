@@ -1,16 +1,8 @@
 import { test, expect } from "../fixtures/api-mock";
-import { APP, TOKEN_STORAGE_KEY } from "../utils/paths";
+import { APP } from "../utils/paths";
 
 test.describe("TeamSwitcher component (smoke)", () => {
   test("renders and displays teams from API", async ({ page, apiMock }) => {
-    // Set up authenticated session
-    await page.addInitScript(
-      ({ key, token }) => {
-        window.sessionStorage.setItem(key, token);
-      },
-      { key: TOKEN_STORAGE_KEY, token: "mock-token-12345" },
-    );
-
     // Mock authenticated user
     await apiMock.mockMe();
 
@@ -48,14 +40,6 @@ test.describe("TeamSwitcher component (smoke)", () => {
   });
 
   test("displays error message when teams fail to load", async ({ page, apiMock }) => {
-    // Set up authenticated session
-    await page.addInitScript(
-      ({ key, token }) => {
-        window.sessionStorage.setItem(key, token);
-      },
-      { key: TOKEN_STORAGE_KEY, token: "mock-token-12345" },
-    );
-
     // Mock authenticated user
     await apiMock.mockMe();
 

@@ -17,6 +17,7 @@ import functools
 from functools import wraps
 import logging
 from typing import Any, Callable, Generator, List, Optional
+from urllib.parse import urlparse
 import uuid
 import warnings
 
@@ -352,11 +353,22 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
+    sec_fetch_mode = request.headers.get("sec-fetch-mode", "")
+    sec_fetch_site = request.headers.get("sec-fetch-site", "")
     is_admin_ui_request = "/admin" in referer
-    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
+    request_path = request.url.path
+    # SPA shell/document navigations — path == "/app" covers navigations without text/html Accept.
+    is_spa_document_request = request_path == "/app"
+    referer_path = urlparse(referer).path if referer else ""
+    is_app_referer = referer_path == "/app" or referer_path.startswith("/app/")
+    # First-party React fetches from the SPA. Sec-Fetch-* are forbidden request
+    # headers in browsers, and the /app referer ties the request to the client UI
+    # instead of allowing arbitrary cookie-authenticated API calls.
+    is_first_party_app_fetch = is_app_referer and sec_fetch_site == "same-origin" and sec_fetch_mode in {"cors", "same-origin"}
+    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_spa_document_request or is_first_party_app_fetch
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
+    # Cookies should only be used for browser/HTML requests and same-origin UI fetches.
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -365,6 +377,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         )
 
     if not token:
+        if is_first_party_app_fetch:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
+
         # For browser requests (HTML Accept header or HTMX), redirect to login
         if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
