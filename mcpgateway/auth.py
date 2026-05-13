@@ -1914,14 +1914,15 @@ async def get_current_user(
                 request.state.jti = jti
             # Extract and store token scopes for permission checking (JWT tokens)
             # This mirrors the database API token behavior at line 1821
-            # NOTE: Empty permissions list is intentionally not set to distinguish
-            # between "no scopes defined" (None) vs "explicitly no permissions" ([])
-            # for session tokens that should skip scope checks entirely.
+            # SECURITY: Must set token_scopes even for empty list to enforce scope checks.
+            # - scopes.permissions present (even if []): API token, enforce scope check
+            # - scopes.permissions missing: Session token, skip scope check (token_scopes stays None)
             scopes = payload.get("scopes")
             if scopes and isinstance(scopes, dict):
                 permissions = scopes.get("permissions", [])
-                if permissions:  # Only set if non-empty to match DB token behavior
-                    request.state.token_scopes = permissions
+                # Set token_scopes for ANY API token with scopes field, even if empty
+                # Empty list means "no permissions granted" and will deny all access
+                request.state.token_scopes = permissions
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
