@@ -1202,7 +1202,11 @@ The migration test suite follows an **n-2 support policy** and tests sequential 
 
 ## 14. Manual Testing
 
-These tests verify core user-facing workflows that automated tests do not fully cover. Perform them against the running compose stack (`make testing-up`).
+These tests verify core user-facing workflows that automated tests do not fully cover. Build and start the compose stack first:
+
+```bash
+make docker-prod && make testing-up
+```
 
 ### 14.1 Generate a JWT token
 
@@ -1213,82 +1217,78 @@ export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
   --secret my-test-key-but-now-longer-than-32-bytes)
-```
 
-Set the base URL (use `8080` for the nginx-proxied compose stack):
-
-```bash
 export BASE_URL="http://localhost:8080"
 ```
 
 ### 14.2 Register an MCP server via SSE
 
-Start a sample MCP server and register it as an SSE gateway:
+The translate process must bind to `0.0.0.0` so the gateway container can reach it via `host.docker.internal`:
 
 ```bash
-# Start a sample MCP time server exposed via SSE
+# Start MCP time server exposed via SSE (bind to 0.0.0.0 for Docker reachability)
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
   --expose-sse \
-  --port 8002 &
+  --port 8002 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (use host.docker.internal since gateway runs in Docker)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_sse","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"release_test_sse","url":"http://host.docker.internal:8002/sse"}' \
      $BASE_URL/gateways | jq
-```
 
-Verify the tools from the server appear in the catalog:
-
-```bash
+# Verify tools appear in catalog
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.3 Register an MCP server via Streamable HTTP
 
-Register a server using the Streamable HTTP transport:
+Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
 
 ```bash
-# Start a sample MCP server exposed via Streamable HTTP
+# Start MCP server exposed via Streamable HTTP
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
-  --port 8003 &
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
+  --expose-streamable-http \
+  --port 8003 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (explicit transport field required)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_streamable","url":"http://localhost:8003/mcp"}' \
+     -d '{"name":"release_test_streamable","url":"http://host.docker.internal:8003/mcp","transport":"STREAMABLEHTTP"}' \
      $BASE_URL/gateways | jq
+
+# Verify tools
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.4 Create a virtual server and export it
 
-Bundle the imported tools into a virtual MCP server:
+The request body must wrap the server fields under a `"server"` key:
 
 ```bash
-# Create the virtual server
+# Create virtual server
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_server","description":"Release validation tools","associatedTools":["1","2"]}' \
+     -d '{"server":{"name":"release_test_server","description":"Release validation tools","associatedTools":[]}}' \
      $BASE_URL/servers | jq
+
+# Verify (shows id, name, associatedTools)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq '[.[] | {id, name, associatedTools}]'
 ```
 
-Verify the server was created:
+Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq
-```
-
-Export the configuration for backup verification:
-
-```bash
-python -m mcpgateway.cli export --out release-test-export.json
+HOST=localhost PORT=8080 python -m mcpgateway.cli export --out release-test-export.json
 ```
 
 ### 14.5 Test with MCP Inspector
 
-Connect interactively via MCP Inspector to validate the protocol layer:
+Registered MCP gateways cannot be accessed directly via Inspector — they must be exposed through a virtual server. Add the SSE and Streamable HTTP gateways to `release_test_server` via the Admin UI or API, then connect Inspector to the virtual server.
 
 ```bash
 npx -y @modelcontextprotocol/inspector
@@ -1297,15 +1297,15 @@ npx -y @modelcontextprotocol/inspector
 In the Inspector UI:
 
 1. Set **Transport** to `SSE`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/sse`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/sse`
 3. Set **Header** `Authorization` to `Bearer <YOUR_TOKEN>`
 4. Click **Connect**
-5. Verify: tools list loads, you can execute a tool call, and the response is correct
+5. Verify: tools from both registered gateways appear, you can execute a tool call, and the response is correct
 
 Repeat with **Streamable HTTP**:
 
 1. Set **Transport** to `Streamable HTTP`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/mcp`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
 3. Set the same Authorization header
 4. Verify: tools list loads and tool calls execute correctly
 
@@ -1320,7 +1320,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-sse": {
       "type": "sse",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/sse",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/sse",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1336,7 +1336,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-http": {
       "type": "http",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/mcp/",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
