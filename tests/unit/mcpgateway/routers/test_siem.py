@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for SIEM admin router."""
+"""Location: ./tests/unit/mcpgateway/routers/test_siem.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for SIEM admin router.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock

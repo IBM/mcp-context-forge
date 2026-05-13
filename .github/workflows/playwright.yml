@@ -35,6 +35,9 @@ jobs:
       SECURE_COOKIES: "false"
       PLAYWRIGHT_INSTALL_FLAGS: --with-deps
       UV_CACHE_DIR: /tmp/uv-cache
+      # Disable forced password-change on bootstrap so Playwright tests can
+      # access /admin/ without being redirected to /admin/change-password-required
+      ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "false"
 
     steps:
       - name: ⬇️ Checkout source

@@ -69,12 +69,10 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
-from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
-
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import TokenValidationError, get_current_user, get_user_team_roles, validate_token_user
+from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -102,6 +100,7 @@ from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
@@ -3086,11 +3085,30 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled
+# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
 # Note: SIEM export can also require auth event capture even when DB security logging is off.
+# Note: Password change enforcement also requires user context to be available
+# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
+# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
 _siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
-if settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled:
+
+# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
+# This middleware enforces mandatory password changes for users with password_change_required flag
+# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
+if settings.password_change_enforcement_enabled:
+    # First-Party
+    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
+
+    app.add_middleware(PasswordChangeEnforcementMiddleware)
+    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
+else:
+    logger.info("🔒 Password change enforcement middleware disabled")
+
+# Add authentication context middleware SECOND (runs FIRST due to reverse order)
+# This populates request.state.user for downstream middleware and handlers
+_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
+if _auth_context_required:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
@@ -11871,6 +11889,7 @@ app.include_router(export_import_router)
 # Compliance report router (admin API)
 if settings.mcpgateway_admin_api_enabled:
     try:
+        # First-Party
         from mcpgateway.routers.compliance_router import router as compliance_router
 
         app.include_router(compliance_router)
@@ -12048,10 +12067,10 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])

@@ -1,5 +1,5 @@
 {
-  "alpinejs": "sha384-WPtu0YHhJ3arcykfnv1JgUffWDSKRnqnDeTpJUbOc2os2moEmLkIdaeR0trPN4be",
+  "alpinejs": "sha384-pb6hrQvo4s23cEUFtj0CZkzGE3jyK3pj26RIupXXxhSrrcUA/Cn0lZgcCrGH0t6L",
   "chartjs": "sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ",
   "codemirror_addon_simple": "sha384-5+aYjV0V2W3IwhAYp/9WOrGMv1TaYkCjnkkW7Hv3yJQo28MergRCSRaUIUzDUs2J",
   "codemirror_css": "sha384-zaeBlB/vwYsDRSlFajnDd7OydJ0cWk+c2OWybl3eSUf6hW2EbhlCsQPqKr3gkznT",
@@ -10,7 +10,7 @@
   "codemirror_mode_rust": "sha384-SR4yBoZPBNymEiWYb4h8YbjccmCDvVyzr5DYXq4QWt7E/voRHmUbr/ja617eM6Rh",
   "codemirror_mode_shell": "sha384-dmPRq54XNtYnlnAo7QrwJnZNa5r0JP5gU8z4H0686Cgz37qrR2jmNaDHUXyMI4wn",
   "codemirror_theme_monokai": "sha384-05WuhgjXiqmZzcQ3vQRQ39HN356Yqb+SnhvELzFtpwS5b2IlqE8QsOO5LCSJ2znj",
-  "dompurify": "sha384-ikETfzsmSTEkyr7smbhW6mdO8o44Zro09Sk1uC9pbG6ZTJA0wK6v37pwx8h+3VRC",
+  "dompurify": "sha384-AX0sZ/phUL4R6LAFP+mob0mJIWg2c3PX8wPn48ctytOl7XKfRQHbakBt5/QID7uh",
   "fontawesome": "sha384-rWj9FmWWt3OMqd9vBkWRhFavvVUYalYqGPoMdL1brs/qvvqz88gvLShYa4hKNyqb",
-  "marked": "sha384-7AnLEKZ+m8uFTgZ3D3njjhz/8KRCyH9OpRs5gJwID3vGDxmSHXvmn/2LnegrLjuT"
+  "marked": "sha384-coEhNYf+uY/IAdm3afqLaaHhP4vzpDHARAMbRvTGjDwDSCD7DnG5dAKe4sDoUupt"
 }

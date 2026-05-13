@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for password policy enforcement.
+"""Location: ./tests/unit/mcpgateway/test_password_policy.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for password policy enforcement.
 
 This module tests the comprehensive password policy implementation
 addressing pentesting report findings.
@@ -85,15 +90,11 @@ class TestPasswordPolicyService:
     def test_validate_privileged_password_length(self, policy_service):
         """Test that privileged accounts require 22+ characters."""
         # 22 characters - should pass
-        assert policy_service.validate_user_password(
-            "PrivilegedP@ssw0rd2024", "admin@example.com", is_privileged=True
-        )
+        assert policy_service.validate_user_password("PrivilegedP@ssw0rd2024", "admin@example.com", is_privileged=True)
 
         # 21 characters - should fail
         with pytest.raises(PasswordPolicyError, match="at least 22 characters"):
-            policy_service.validate_user_password(
-                "PrivilegedP@ssw0rd24", "admin@example.com", is_privileged=True
-            )
+            policy_service.validate_user_password("PrivilegedP@ssw0rd24", "admin@example.com", is_privileged=True)
 
     # Service Account Password Tests
 
@@ -133,7 +134,7 @@ class TestPasswordPolicyService:
         mock_db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [mock_history]
 
         # Mock password service to return True for match
-        with patch.object(policy_service.password_service, 'verify_password_async', return_value=True):
+        with patch.object(policy_service.password_service, "verify_password_async", return_value=True):
             with pytest.raises(PasswordPolicyError, match="used recently"):
                 await policy_service.check_password_history("user@example.com", "OldP@ssw0rd!2024", 5)
 
@@ -148,7 +149,7 @@ class TestPasswordPolicyService:
         """Test that service account passwords use UUID format."""
         password = policy_service.generate_secure_password(for_service_account=True)
         assert len(password) == 36  # UUID format
-        assert password.count('-') == 4  # UUID has 4 hyphens
+        assert password.count("-") == 4  # UUID has 4 hyphens
 
     def test_generate_secure_password_uniqueness(self, policy_service):
         """Test that generated passwords are unique."""
@@ -160,22 +161,22 @@ class TestPasswordPolicyService:
     def test_get_password_strength_score_strong(self, policy_service):
         """Test password strength scoring for strong passwords."""
         result = policy_service.get_password_strength_score("VeryStr0ng!P@ssw0rd2024")
-        assert result['score'] >= 80
-        assert result['strength'] == 'strong'
-        assert len(result['feedback']) == 0
+        assert result["score"] >= 80
+        assert result["strength"] == "strong"
+        assert len(result["feedback"]) == 0
 
     def test_get_password_strength_score_weak(self, policy_service):
         """Test password strength scoring for weak passwords."""
         result = policy_service.get_password_strength_score("weak")
-        assert result['score'] < 60
-        assert result['strength'] == 'weak'
-        assert len(result['feedback']) > 0
+        assert result["score"] < 60
+        assert result["strength"] == "weak"
+        assert len(result["feedback"]) > 0
 
     def test_get_password_strength_score_common(self, policy_service):
         """Test that common passwords get low scores."""
         result = policy_service.get_password_strength_score("password")
-        assert result['score'] <= 40  # Common passwords get penalized but still have some base score
-        assert any("common" in fb.lower() for fb in result['feedback'])
+        assert result["score"] <= 40  # Common passwords get penalized but still have some base score
+        assert any("common" in fb.lower() for fb in result["feedback"])
 
     # Helper Method Tests
 

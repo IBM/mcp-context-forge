@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/ff03273d8f93_add_binding_reference_id_to_tool_plugin_bindings.py
+"""Location: ./mcpgateway/alembic/versions/d3e4f5a6b7c8_add_binding_reference_id_to_tool_plugin_bindings.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
