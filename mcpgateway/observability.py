@@ -939,14 +939,27 @@ def init_telemetry() -> Optional[Any]:
                     insecure=cfg.otel_exporter_otlp_insecure
                 )
             elif HTTP_EXPORTER:
-                # Use HTTP exporter as fallback
+                # Use HTTP exporter as fallback.
+                #
+                # Per the OTEL spec (OTLP/HTTP), the URL scheme is the source of truth
+                # for transport TLS. The `insecure` flag is meaningful only for OTLP/gRPC.
+                # We deliberately do NOT munge the scheme here based on `insecure`:
+                #   - upgrading http://  -> https:// would break standard local-collector
+                #     setups like http://localhost:4318
+                #   - downgrading https:// -> http:// would silently strip TLS from an
+                #     explicitly-secure endpoint (the default value of insecure is True,
+                #     so any user who sets only OTEL_EXPORTER_OTLP_ENDPOINT=https://...
+                #     would otherwise get plaintext, leaking auth headers)
                 ep = str(endpoint) if endpoint is not None else ""
-                http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
-                # HTTP exporter relies on URL scheme for TLS, not an 'insecure' parameter
-                if cfg.otel_exporter_otlp_insecure and http_ep.startswith("https://"):
-                    http_ep = http_ep.replace("https://", "http://", 1)
-                elif not cfg.otel_exporter_otlp_insecure and http_ep.startswith("http://"):
-                    http_ep = http_ep.replace("http://", "https://", 1)
+                http_ep = ep
+                # If the user supplied the gRPC default port but ended up on the HTTP
+                # transport (e.g. via _is_langfuse_otlp_endpoint forcing protocol=http),
+                # rewrite the port and append the OTLP/HTTP traces path. Skip the path
+                # append when the endpoint already targets a /v1/ resource.
+                if ":4317" in http_ep:
+                    http_ep = http_ep.replace(":4317", ":4318")
+                    if "/v1/" not in http_ep:
+                        http_ep = http_ep.rstrip("/") + "/v1/traces"
                 exporter = cast(Any, HTTP_EXPORTER)(
                     endpoint=http_ep,
                     headers=header_dict or None
