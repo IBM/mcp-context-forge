@@ -1914,22 +1914,23 @@ async def get_current_user(
                 request.state.jti = jti
             # Extract and store token scopes for permission checking (JWT tokens)
             # This mirrors the database API token behavior at line 1821
-            # SECURITY: Must set token_scopes even for empty list to enforce scope checks.
-            # - scopes.permissions present (even if []): API token, enforce scope check
-            # - scopes.permissions missing: Session token, skip scope check (token_scopes stays None)
+            # SECURITY: Must set token_scopes even for empty dict/list to enforce scope checks.
+            # - scopes dict present (even if {}): API token, enforce scope check
+            # - scopes missing/None: Session token, skip scope check (token_scopes stays None)
             scopes = payload.get("scopes")
-            if scopes and isinstance(scopes, dict):
-                permissions = scopes.get("permissions", [])
-                # Set token_scopes for ANY API token with scopes field, even if empty
-                # Empty list means "no permissions granted" and will deny all access
-                request.state.token_scopes = permissions
-            elif scopes and not isinstance(scopes, dict):
-                # Malformed JWT: scopes field exists but is not a dict
-                logger.debug(
-                    f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
-                    f"Token will be treated as session token (no scope enforcement). "
-                    f"Check token generation configuration."
-                )
+            if scopes is not None:
+                if isinstance(scopes, dict):
+                    permissions = scopes.get("permissions", [])
+                    # Set token_scopes for ANY API token with scopes field, even if empty
+                    # Empty dict {} or empty list [] means "no permissions granted" → deny all
+                    request.state.token_scopes = permissions
+                else:
+                    # Malformed JWT: scopes field exists but is not a dict
+                    logger.debug(
+                        f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
+                        f"Token will be treated as session token (no scope enforcement). "
+                        f"Check token generation configuration."
+                    )
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
