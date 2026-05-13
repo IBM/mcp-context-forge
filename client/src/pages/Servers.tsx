@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo, useEffect } from "react";
 import { Plus } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Button } from "@/components/ui/button";
-import { useRouter } from "@/router";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
@@ -17,13 +16,13 @@ import { Loading } from "@/components/ui/loading";
 const DEFAULT_PAGE_SIZE = 10;
 
 export function Servers() {
-  const { navigate } = useRouter();
   const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
   const [allServers, setAllServers] = useState<MCPServer[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [testDialogOpen, setTestDialogOpen] = useState(false);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const [updateServerId, setUpdateServerId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -33,6 +32,7 @@ export function Servers() {
     const params = new URLSearchParams();
     params.set("limit", DEFAULT_PAGE_SIZE.toString());
     params.set("include_pagination", "true");
+    params.set("include_inactive", "true");
     return `/gateways?${params.toString()}`;
   }, []);
 
@@ -58,10 +58,9 @@ export function Servers() {
   // Convert query error to string for display
   const error = queryError ? queryError.message : null;
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleEdit = (_id: string) => {
-    // TODO: Implement edit functionality
-    throw new Error("Edit functionality not yet implemented");
+  const handleEdit = (id: string) => {
+    setUpdateServerId(id);
+    setIsFormOpen(true);
   };
 
   const handleDelete = (id: string) => {
@@ -105,6 +104,7 @@ export function Servers() {
       params.set("cursor", nextCursor);
       params.set("limit", limit.toString());
       params.set("include_pagination", "true");
+      params.set("include_inactive", "true");
 
       const result = await api.get<ServersResponse>(`/gateways?${params.toString()}`);
       setAllServers((prev) => [...prev, ...result.gateways]);
@@ -129,7 +129,19 @@ export function Servers() {
   return (
     <div className="p-6">
       {isFormOpen ? (
-        <MCPServerForm isOpen={isFormOpen} onToggle={() => setIsFormOpen(false)} />
+        <MCPServerForm
+          isOpen={isFormOpen}
+          onToggle={() => {
+            setIsFormOpen(false);
+            setUpdateServerId(null);
+          }}
+          serverId={updateServerId || undefined}
+          onSuccess={() => {
+            setIsFormOpen(false);
+            setUpdateServerId(null);
+            refetch();
+          }}
+        />
       ) : isLoading ? (
         <div
           role="status"
@@ -178,7 +190,7 @@ export function Servers() {
                   onClick={() => setIsFormOpen(true)}
                 >
                   <Plus className="h-4 w-4" />
-                  New Server
+                  Connect
                 </Button>
               </div>
 
@@ -229,38 +241,28 @@ export function Servers() {
               </div>
             </>
           ) : (
-            <div className="rounded-xl border border-neutral-200 p-8 shadow-sm dark:border-neutral-800">
-              <div className="flex flex-col gap-6">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-orange-500 text-white shadow-sm">
-                    <MCPIcon className="h-5 w-5 [&_path]:fill-white" />
-                  </div>
-                  <h2 className="text-xl font-semibold text-neutral-950 dark:text-neutral-50">
-                    Connect MCP server
-                  </h2>
+            <div className="border border-border rounded-lg p-6 flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-sm bg-orange-500">
+                  <MCPIcon className="size-4 [&_path]:fill-black" />
                 </div>
-
-                <p className="text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">
-                  Register an MCP server to federate its tools, resources, and prompts. Or,{" "}
-                  <button
-                    type="button"
-                    onClick={() => navigate("/app/server-catalog")}
-                    className="font-medium text-cyan-700 underline decoration-cyan-300 underline-offset-4 transition hover:text-cyan-800 dark:text-cyan-400 dark:decoration-cyan-700 dark:hover:text-cyan-300"
-                  >
-                    select from available servers
-                  </button>
-                  .
-                </p>
-
-                <Button
-                  variant="default"
-                  className="h-10 w-fit rounded-lg px-4"
-                  onClick={() => setIsFormOpen(true)}
-                >
-                  <Plus className="h-4 w-4" />
-                  Connect
-                </Button>
+                <h2 className="text-base font-medium">Connect MCP server</h2>
               </div>
+
+              <div className="py-5">
+                <p className="text-sm text-foreground">
+                  Register a MCP server to federate its tools, resources, and prompts to use with a
+                  virtual server.
+                </p>
+              </div>
+
+              <Button
+                className="bg-foreground text-background hover:bg-foreground/90 h-8 w-38 rounded-sm px-2 gap-1.5 text-sm font-medium"
+                onClick={() => setIsFormOpen(true)}
+              >
+                <Plus className="size-3" />
+                Connect
+              </Button>
             </div>
           )}
         </>

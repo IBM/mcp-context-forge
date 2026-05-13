@@ -43,6 +43,8 @@ interface AdvancedSettingsProps {
   oauthScopes: string;
   oauthStoreTokens: boolean;
   oauthAutoRefresh: boolean;
+  oauthUsername: string;
+  oauthPassword: string;
   onOAuthClientIdChange: (value: string) => void;
   onOAuthClientSecretChange: (value: string) => void;
   onOAuthTokenUrlChange: (value: string) => void;
@@ -53,6 +55,8 @@ interface AdvancedSettingsProps {
   onOAuthScopesChange: (value: string) => void;
   onOAuthStoreTokensChange: (checked: boolean) => void;
   onOAuthAutoRefreshChange: (checked: boolean) => void;
+  onOAuthUsernameChange: (value: string) => void;
+  onOAuthPasswordChange: (value: string) => void;
   queryParamName: string;
   queryParamApiKey: string;
   onQueryParamNameChange: (value: string) => void;
@@ -62,6 +66,7 @@ interface AdvancedSettingsProps {
   passthroughHeaders: string;
   onPassthroughHeadersChange: (value: string) => void;
   onCACertificateFilesSelected: (files: File[]) => void;
+  oauthErrors?: { username?: string; password?: string };
 }
 
 export function AdvancedSettings({
@@ -87,6 +92,8 @@ export function AdvancedSettings({
   oauthScopes,
   oauthStoreTokens,
   oauthAutoRefresh,
+  oauthUsername,
+  oauthPassword,
   onOAuthClientIdChange,
   onOAuthClientSecretChange,
   onOAuthTokenUrlChange,
@@ -97,6 +104,8 @@ export function AdvancedSettings({
   onOAuthScopesChange,
   onOAuthStoreTokensChange,
   onOAuthAutoRefreshChange,
+  onOAuthUsernameChange,
+  onOAuthPasswordChange,
   queryParamName,
   queryParamApiKey,
   onQueryParamNameChange,
@@ -106,6 +115,7 @@ export function AdvancedSettings({
   passthroughHeaders,
   onPassthroughHeadersChange,
   onCACertificateFilesSelected,
+  oauthErrors,
 }: AdvancedSettingsProps) {
   const renderAuthContent = () => {
     switch (authType) {
@@ -139,6 +149,8 @@ export function AdvancedSettings({
             scopes={oauthScopes}
             storeTokens={oauthStoreTokens}
             autoRefresh={oauthAutoRefresh}
+            username={oauthUsername}
+            password={oauthPassword}
             onClientIdChange={onOAuthClientIdChange}
             onClientSecretChange={onOAuthClientSecretChange}
             onTokenUrlChange={onOAuthTokenUrlChange}
@@ -149,6 +161,9 @@ export function AdvancedSettings({
             onScopesChange={onOAuthScopesChange}
             onStoreTokensChange={onOAuthStoreTokensChange}
             onAutoRefreshChange={onOAuthAutoRefreshChange}
+            onUsernameChange={onOAuthUsernameChange}
+            onPasswordChange={onOAuthPasswordChange}
+            errors={oauthErrors}
           />
         );
       case "query":
