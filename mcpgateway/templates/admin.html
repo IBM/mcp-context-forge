@@ -6284,7 +6284,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <ul class="mt-2 space-y-1">
                           <li id="req-length" class="flex items-start">
                             <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            At least {{ password_min_length or 8 }} characters long
+                            At least {{ password_min_length or 22 }} characters long
                           </li>
                           {% if password_require_uppercase %}
                           <li id="req-uppercase" class="flex items-start">
@@ -6318,7 +6318,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <script nonce="{{ csp_nonce(request) }}">
                   // Validate the Create User password box and update requirement icons
                   (function(){
-                    const minLen = {{ password_min_length | tojson }} || 8;
+                    const minLen = {{ password_min_length | tojson }} || 22;
                     const REQ_UPPER = {{ password_require_uppercase | tojson }};
                     const REQ_LOWER = {{ password_require_lowercase | tojson }};
                     const REQ_NUMS = {{ password_require_numbers | tojson }};

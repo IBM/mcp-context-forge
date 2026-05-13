@@ -3936,7 +3936,7 @@ async def admin_ui(
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
             # Password policy flags for frontend templates
-            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_min_length": getattr(settings, "password_min_length_privileged", 22),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
@@ -4785,7 +4785,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
-            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_min_length": getattr(settings, "password_min_length_privileged", 22),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
