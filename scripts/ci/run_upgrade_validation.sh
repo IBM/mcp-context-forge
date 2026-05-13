@@ -464,6 +464,7 @@ run_postgres_upgrade() {
     local pg_container="${NAME_PREFIX}-pg-upgrade-db"
     local old_container="${NAME_PREFIX}-pg-upgrade-old"
     local new_container="${NAME_PREFIX}-pg-upgrade-new"
+    local base_db_url
     local db_url
     local versions
     local markers
@@ -484,12 +485,14 @@ run_postgres_upgrade() {
 
     wait_for_postgres_ready "${pg_container}"
 
+    # Use the driver that the base image actually ships with (psycopg2 for old releases).
+    base_db_url="postgresql+${BASE_IMAGE_PG_DRIVER}://postgres:upgrade-test-password@${pg_container}:5432/mcp"
     db_url="postgresql+psycopg://postgres:upgrade-test-password@${pg_container}:5432/mcp"
     docker run -d \
         --name "${old_container}" \
         --network "${network}" \
         -p "${port}:4444" \
-        -e "DATABASE_URL=${db_url}" \
+        -e "DATABASE_URL=${base_db_url}" \
         -e "AUTH_REQUIRED=false" \
         -e "CACHE_TYPE=memory" \
         -e "HOST=0.0.0.0" \
@@ -621,6 +624,7 @@ run_postgres_roundtrip() {
     local pg_container="${NAME_PREFIX}-pg-rt-db"
     local old_container="${NAME_PREFIX}-pg-rt-old"
     local new_container="${NAME_PREFIX}-pg-rt-new"
+    local base_db_url
     local db_url
     local base_version
     local post_upgrade_version
@@ -643,6 +647,8 @@ run_postgres_roundtrip() {
 
     wait_for_postgres_ready "${pg_container}"
 
+    # Use the driver that the base image actually ships with (psycopg2 for old releases).
+    base_db_url="postgresql+${BASE_IMAGE_PG_DRIVER}://postgres:upgrade-test-password@${pg_container}:5432/mcp"
     db_url="postgresql+psycopg://postgres:upgrade-test-password@${pg_container}:5432/mcp"
 
     # Phase 1: boot base image – auto-migrates to its head revision
@@ -650,7 +656,7 @@ run_postgres_roundtrip() {
         --name "${old_container}" \
         --network "${network}" \
         -p "${port}:4444" \
-        -e "DATABASE_URL=${db_url}" \
+        -e "DATABASE_URL=${base_db_url}" \
         -e "AUTH_REQUIRED=false" \
         -e "CACHE_TYPE=memory" \
         -e "HOST=0.0.0.0" \
@@ -725,6 +731,15 @@ main() {
 
     expected_head="$(get_expected_head)"
     log "Expected alembic head: ${expected_head}"
+
+    # Detect which PostgreSQL driver the base image ships with.
+    # Releases up to ~0.9.x used psycopg2; later releases switched to psycopg (v3).
+    if docker run --rm --entrypoint="" "${BASE_IMAGE}" python3 -c "import psycopg" >/dev/null 2>&1; then
+        BASE_IMAGE_PG_DRIVER="psycopg"
+    else
+        BASE_IMAGE_PG_DRIVER="psycopg2"
+    fi
+    log "Base image PostgreSQL driver: ${BASE_IMAGE_PG_DRIVER}"
 
     # Each test gets its own non-overlapping port range (base + 0..999)
     run_sqlite_fresh       "${expected_head}" "$(next_port 22000)"
