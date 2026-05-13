@@ -58,6 +58,14 @@ global.ResizeObserver = class ResizeObserver {
   disconnect() {}
 };
 
+// Mock pointer capture APIs required by Radix UI Select and other pointer-event-driven components
+window.HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
+window.HTMLElement.prototype.setPointerCapture = vi.fn();
+window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+
+// Mock scrollIntoView required by Radix UI Select dropdown item focus
+window.HTMLElement.prototype.scrollIntoView = vi.fn();
+
 // Start MSW server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 

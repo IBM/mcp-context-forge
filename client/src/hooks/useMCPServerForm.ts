@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, type FormEvent } from "react";
+import { useState, useCallback, useMemo, useEffect, type FormEvent } from "react";
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import {
@@ -19,74 +19,125 @@ export interface CustomHeader {
   value: string;
 }
 
-// Zod schema for form validation with sanitization - matches API request body
-const mcpServerFormSchema = z.object({
-  name: z
-    .string()
-    .transform((val) => sanitizeString(val, 100))
-    .pipe(z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters")),
-  url: z
-    .string()
-    .transform((val) => sanitizeUrl(val, 2000))
-    .pipe(
-      z
-        .string()
-        .min(1, "URL is required")
-        .refine(
-          (value) => {
-            try {
-              const url = new URL(value);
-              return url.protocol === "http:" || url.protocol === "https:";
-            } catch {
-              return false;
-            }
-          },
-          { message: "URL must start with http:// or https://" },
-        ),
-    ),
-  description: z
-    .string()
-    .transform((val) => sanitizeString(val, 500))
-    .pipe(z.string().max(500, "Description must be less than 500 characters"))
-    .optional(),
-  transport: z.enum(["SSE", "STREAMABLEHTTP"]),
-  passthroughHeaders: z.array(z.string().transform((val) => sanitizeString(val, 200))).optional(),
-  authType: z.string().optional(),
-  authUsername: z
-    .string()
-    .transform((val) => sanitizeString(val, 200))
-    .optional(),
-  authPassword: z
-    .string()
-    .transform((val) => sanitizePassword(val, 1000))
-    .optional(),
-  authToken: z
-    .string()
-    .transform((val) => sanitizeToken(val, 2000))
-    .optional(),
-  authHeaderKey: z
-    .string()
-    .transform((val) => sanitizeString(val, 200))
-    .optional(),
-  authHeaderValue: z
-    .string()
-    .transform((val) => sanitizeString(val, 500))
-    .optional(),
-  authQueryParamKey: z
-    .string()
-    .transform((val) => sanitizeQueryParam(val, 100))
-    .optional(),
-  authQueryParamValue: z
-    .string()
-    .transform((val) => sanitizeQueryParam(val, 500))
-    .optional(),
-  oneTimeAuth: z.boolean().optional(),
-  visibility: z.enum(["public", "private"]).optional(),
-  caCertificate: z
-    .string()
-    .transform((val) => sanitizeCertificate(val, 10000))
-    .optional(),
+// Maps frontend AuthType to the API's auth_type field value.
+// "none" sends "" to explicitly clear any existing auth config on update.
+const AUTH_TYPE_TO_API: Record<AuthType, string> = {
+  none: "",
+  basic: "basic",
+  bearer: "bearer",
+  custom: "authheaders",
+  oauth: "oauth",
+  query: "query_param",
+};
+
+// Maps API auth_type values back to the frontend AuthType.
+const AUTH_TYPE_FROM_API: Partial<Record<string, AuthType>> = {
+  basic: "basic",
+  bearer: "bearer",
+  authheaders: "custom",
+  oauth: "oauth",
+  query_param: "query",
+};
+
+const oauthConfigSchema = z.object({
+  grant_type: z.enum(["client_credentials", "authorization_code", "password"]).optional(),
+  issuer: z.string().optional(),
+  client_id: z.string().optional(),
+  client_secret: z.string().optional(),
+  token_url: z.string().optional(),
+  authorization_url: z.string().optional(),
+  redirect_uri: z.string().optional(),
+  scopes: z.array(z.string()).optional(),
+  store_tokens: z.boolean().optional(),
+  auto_refresh: z.boolean().optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
 });
+
+// Zod schema for form validation with sanitization - matches API request body
+const mcpServerFormSchema = z
+  .object({
+    name: z
+      .string()
+      .transform((val) => sanitizeString(val, 100))
+      .pipe(
+        z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
+      ),
+    url: z
+      .string()
+      .transform((val) => sanitizeUrl(val, 2000))
+      .pipe(
+        z
+          .string()
+          .min(1, "URL is required")
+          .refine(
+            (value) => {
+              try {
+                const url = new URL(value);
+                return url.protocol === "http:" || url.protocol === "https:";
+              } catch {
+                return false;
+              }
+            },
+            { message: "URL must start with http:// or https://" },
+          ),
+      ),
+    description: z
+      .string()
+      .transform((val) => sanitizeString(val, 500))
+      .pipe(z.string().max(500, "Description must be less than 500 characters"))
+      .optional(),
+    transport: z.enum(["SSE", "STREAMABLEHTTP"]),
+    passthroughHeaders: z.array(z.string().transform((val) => sanitizeString(val, 200))).optional(),
+    authType: z.string().optional(),
+    authUsername: z
+      .string()
+      .transform((val) => sanitizeString(val, 200))
+      .optional(),
+    authPassword: z
+      .string()
+      .transform((val) => sanitizePassword(val, 1000))
+      .optional(),
+    authToken: z
+      .string()
+      .transform((val) => sanitizeToken(val, 2000))
+      .optional(),
+    auth_headers: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+    auth_query_param_key: z
+      .string()
+      .transform((val) => sanitizeQueryParam(val, 100))
+      .optional(),
+    auth_query_param_value: z
+      .string()
+      .transform((val) => sanitizeQueryParam(val, 500))
+      .optional(),
+    oneTimeAuth: z.boolean().optional(),
+    visibility: z.enum(["public", "private"]).optional(),
+    caCertificate: z
+      .string()
+      .transform((val) => sanitizeCertificate(val, 10000))
+      .optional(),
+    oauth_config: oauthConfigSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    const config = data.oauth_config;
+    if (data.authType === "oauth" && config?.grant_type === "password") {
+      if (!config.username) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Username is required for password grant",
+          path: ["oauthUsername"],
+        });
+      }
+      if (!config.password) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Password is required for password grant",
+          path: ["oauthPassword"],
+        });
+      }
+    }
+  });
 
 export type MCPServerFormData = z.infer<typeof mcpServerFormSchema>;
 
@@ -100,18 +151,17 @@ export interface FormErrors {
   authUsername?: string;
   authPassword?: string;
   authToken?: string;
-  authHeaderKey?: string;
-  authHeaderValue?: string;
-  authQueryParamKey?: string;
-  authQueryParamValue?: string;
   oneTimeAuth?: string;
   visibility?: string;
   caCertificate?: string;
+  oauthUsername?: string;
+  oauthPassword?: string;
   submit?: string;
 }
 
 export interface UseMCPServerFormReturn {
   // Form state
+  fetchError: string | undefined;
   name: string;
   url: string;
   description: string;
@@ -124,10 +174,6 @@ export interface UseMCPServerFormReturn {
   authUsername: string;
   authPassword: string;
   authToken: string;
-  authHeaderKey: string;
-  authHeaderValue: string;
-  authQueryParamKey: string;
-  authQueryParamValue: string;
   caCertificate: string;
   // OAuth fields
   bearerToken: string;
@@ -142,6 +188,8 @@ export interface UseMCPServerFormReturn {
   oauthScopes: string;
   oauthStoreTokens: boolean;
   oauthAutoRefresh: boolean;
+  oauthUsername: string;
+  oauthPassword: string;
   queryParamName: string;
   queryParamApiKey: string;
   errors: FormErrors;
@@ -161,10 +209,6 @@ export interface UseMCPServerFormReturn {
   setAuthUsername: (value: string) => void;
   setAuthPassword: (value: string) => void;
   setAuthToken: (value: string) => void;
-  setAuthHeaderKey: (value: string) => void;
-  setAuthHeaderValue: (value: string) => void;
-  setAuthQueryParamKey: (value: string) => void;
-  setAuthQueryParamValue: (value: string) => void;
   setCaCertificate: (value: string) => void;
   // OAuth setters
   setBearerToken: (value: string) => void;
@@ -179,6 +223,8 @@ export interface UseMCPServerFormReturn {
   setOAuthScopes: (value: string) => void;
   setOAuthStoreTokens: (checked: boolean) => void;
   setOAuthAutoRefresh: (checked: boolean) => void;
+  setOAuthUsername: (value: string) => void;
+  setOAuthPassword: (value: string) => void;
   setQueryParamName: (value: string) => void;
   setQueryParamApiKey: (value: string) => void;
 
@@ -205,10 +251,6 @@ const initialState = {
   authUsername: "",
   authPassword: "",
   authToken: "",
-  authHeaderKey: "",
-  authHeaderValue: "",
-  authQueryParamKey: "",
-  authQueryParamValue: "",
   caCertificate: "",
   bearerToken: "",
   customHeaders: [] as CustomHeader[],
@@ -222,6 +264,8 @@ const initialState = {
   oauthScopes: "",
   oauthStoreTokens: true,
   oauthAutoRefresh: true,
+  oauthUsername: "",
+  oauthPassword: "",
   queryParamName: "",
   queryParamApiKey: "",
 };
@@ -239,10 +283,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const [authUsername, setAuthUsername] = useState(initialState.authUsername);
   const [authPassword, setAuthPassword] = useState(initialState.authPassword);
   const [authToken, setAuthToken] = useState(initialState.authToken);
-  const [authHeaderKey, setAuthHeaderKey] = useState(initialState.authHeaderKey);
-  const [authHeaderValue, setAuthHeaderValue] = useState(initialState.authHeaderValue);
-  const [authQueryParamKey, setAuthQueryParamKey] = useState(initialState.authQueryParamKey);
-  const [authQueryParamValue, setAuthQueryParamValue] = useState(initialState.authQueryParamValue);
   const [caCertificate, setCaCertificate] = useState(initialState.caCertificate);
   const [bearerToken, setBearerToken] = useState(initialState.bearerToken);
   const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>(initialState.customHeaders);
@@ -258,11 +298,116 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const [oauthScopes, setOAuthScopes] = useState(initialState.oauthScopes);
   const [oauthStoreTokens, setOAuthStoreTokens] = useState(initialState.oauthStoreTokens);
   const [oauthAutoRefresh, setOAuthAutoRefresh] = useState(initialState.oauthAutoRefresh);
+  const [oauthUsername, setOAuthUsername] = useState(initialState.oauthUsername);
+  const [oauthPassword, setOAuthPassword] = useState(initialState.oauthPassword);
   const [queryParamName, setQueryParamName] = useState(initialState.queryParamName);
   const [queryParamApiKey, setQueryParamApiKey] = useState(initialState.queryParamApiKey);
   const [errors, setErrors] = useState<FormErrors>({});
 
   const isEditMode = Boolean(gatewayId);
+
+  // Fetch server data when in edit mode
+  // API response uses camelCase outer keys (via alias_generator), but oauth_config dict stays snake_case
+  const { data: serverData, error: serverFetchError } = useQuery<{
+    name?: string;
+    url?: string;
+    description?: string;
+    transport?: string;
+    visibility?: string;
+    authType?: string;
+    authUsername?: string;
+    authPassword?: string;
+    authToken?: string;
+    authHeaders?: Array<{ key: string; value: string }>;
+    authHeaderKey?: string;
+    authHeaderValue?: string;
+    authQueryParamKey?: string;
+    authQueryParamValueMasked?: string;
+    passthroughHeaders?: string[];
+    oneTimeAuth?: boolean;
+    caCertificate?: string;
+    oauthConfig?: {
+      grant_type?: string;
+      client_id?: string;
+      client_secret?: string;
+      token_url?: string;
+      issuer?: string;
+      redirect_uri?: string;
+      authorization_url?: string;
+      scopes?: string | string[];
+      username?: string;
+      password?: string;
+      store_tokens?: boolean;
+      auto_refresh?: boolean;
+    };
+  }>(`/gateways/${gatewayId}`, {
+    enabled: Boolean(gatewayId),
+  });
+
+  // Populate form when server data is loaded
+  useEffect(() => {
+    if (serverData && gatewayId) {
+      // Basic fields
+      setName(serverData.name || "");
+      setUrl(serverData.url || "");
+      setDescription(serverData.description || "");
+      setTransport((serverData.transport as TransportType) || "STREAMABLEHTTP");
+      setVisibility(serverData.visibility || "public");
+
+      // Auth fields — open advanced panel when any auth is configured
+      if (serverData.authType) {
+        setAuthType(AUTH_TYPE_FROM_API[serverData.authType] ?? (serverData.authType as AuthType));
+        setAdvancedOpen(true);
+      }
+      if (serverData.authUsername) setAuthUsername(serverData.authUsername);
+      if (serverData.authPassword) setAuthPassword(serverData.authPassword);
+      // bearer token: API returns authToken, which maps to the bearer token UI field
+      if (serverData.authToken) setBearerToken(serverData.authToken);
+      // custom headers: show existing headers (values will be masked by the server).
+      // The getFormData() filter skips masked values so unchanged headers are never sent back.
+      if (serverData.authHeaders && serverData.authHeaders.length > 0) {
+        setCustomHeaders(
+          serverData.authHeaders.map((h, i) => ({ id: String(i + 1), key: h.key, value: h.value })),
+        );
+      } else if (serverData.authHeaderKey) {
+        setCustomHeaders([
+          { id: "1", key: serverData.authHeaderKey, value: serverData.authHeaderValue || "" },
+        ]);
+      }
+      // query param auth
+      if (serverData.authQueryParamKey) setQueryParamName(serverData.authQueryParamKey);
+      if (serverData.authQueryParamValueMasked)
+        setQueryParamApiKey(serverData.authQueryParamValueMasked);
+
+      // Advanced settings
+      if (serverData.passthroughHeaders && Array.isArray(serverData.passthroughHeaders)) {
+        setPassthroughHeaders(serverData.passthroughHeaders.join(", "));
+      }
+      if (serverData.oneTimeAuth !== undefined) setOneTimeAuth(serverData.oneTimeAuth);
+      if (serverData.caCertificate) setCaCertificate(serverData.caCertificate);
+
+      // OAuth config — outer key is camelCase (oauthConfig), inner dict keys are snake_case
+      if (serverData.oauthConfig) {
+        const oauthConfig = serverData.oauthConfig;
+        if (oauthConfig.grant_type) setOAuthGrantType(oauthConfig.grant_type);
+        if (oauthConfig.client_id) setOAuthClientId(oauthConfig.client_id);
+        if (oauthConfig.client_secret) setOAuthClientSecret(oauthConfig.client_secret);
+        if (oauthConfig.token_url) setOAuthTokenUrl(oauthConfig.token_url);
+        if (oauthConfig.issuer) setOAuthIssuerUrl(oauthConfig.issuer);
+        if (oauthConfig.redirect_uri) setOAuthRedirectUri(oauthConfig.redirect_uri);
+        if (oauthConfig.authorization_url) setOAuthAuthorizationUrl(oauthConfig.authorization_url);
+        if (oauthConfig.scopes) {
+          setOAuthScopes(
+            Array.isArray(oauthConfig.scopes) ? oauthConfig.scopes.join(" ") : oauthConfig.scopes,
+          );
+        }
+        if (oauthConfig.username) setOAuthUsername(oauthConfig.username);
+        if (oauthConfig.password) setOAuthPassword(oauthConfig.password);
+        setOAuthStoreTokens(Boolean(oauthConfig.store_tokens));
+        setOAuthAutoRefresh(Boolean(oauthConfig.auto_refresh));
+      }
+    }
+  }, [serverData, gatewayId]);
 
   // Use useQuery for POST request to create MCP gateway
   const { execute: createGateway, isLoading: isCreating } = useQuery<unknown, MCPServerFormData>(
@@ -292,24 +437,78 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       .map((h) => h.trim())
       .filter((h) => h.length > 0);
 
+    let oauthConfig: z.infer<typeof oauthConfigSchema> | undefined;
+    if (authType === "oauth") {
+      const scopesArray = oauthScopes ? oauthScopes.split(/\s+/).filter(Boolean) : undefined;
+      const base = {
+        grant_type: oauthGrantType || undefined,
+        issuer: oauthIssuerUrl || undefined,
+        scopes: scopesArray,
+        store_tokens: oauthStoreTokens,
+        auto_refresh: oauthAutoRefresh,
+      };
+
+      if (oauthGrantType === "client_credentials") {
+        oauthConfig = {
+          ...base,
+          client_id: oauthClientId || undefined,
+          client_secret: oauthClientSecret || undefined,
+          token_url: oauthTokenUrl || undefined,
+        };
+      } else if (oauthGrantType === "authorization_code") {
+        oauthConfig = {
+          ...base,
+          client_id: oauthClientId || undefined,
+          client_secret: oauthClientSecret || undefined,
+          token_url: oauthTokenUrl || undefined,
+          authorization_url: oauthAuthorizationUrl || undefined,
+          redirect_uri: oauthRedirectUri || undefined,
+        };
+      } else if (oauthGrantType === "password") {
+        oauthConfig = {
+          ...base,
+          client_id: oauthClientId || undefined,
+          client_secret: oauthClientSecret || undefined,
+          token_url: oauthTokenUrl || undefined,
+          username: oauthUsername || undefined,
+          password: oauthPassword || undefined,
+        };
+      }
+    }
+
     return {
       name,
       url,
       description: description || undefined,
       transport,
       passthroughHeaders: headersArray.length > 0 ? headersArray : undefined,
-      // Don't send authType if it's "none" - API doesn't accept it
-      authType: authType && authType !== "none" ? authType : undefined,
-      authUsername: authUsername || undefined,
-      authPassword: authPassword || undefined,
-      authToken: authToken || undefined,
-      authHeaderKey: authHeaderKey || undefined,
-      authHeaderValue: authHeaderValue || undefined,
-      authQueryParamKey: authQueryParamKey || undefined,
-      authQueryParamValue: authQueryParamValue || undefined,
+      authType: AUTH_TYPE_TO_API[authType],
+      authUsername: authType === "basic" ? authUsername || undefined : undefined,
+      authPassword:
+        authType === "basic"
+          ? authPassword === "*****"
+            ? undefined
+            : authPassword || undefined
+          : undefined,
+      authToken:
+        authType === "bearer"
+          ? bearerToken === "*****"
+            ? undefined
+            : bearerToken || undefined
+          : undefined,
+      auth_headers: (() => {
+        if (authType !== "custom") return undefined;
+        const headers = customHeaders
+          .filter((h) => h.key)
+          .map((h) => ({ key: h.key, value: h.value }));
+        return headers.length > 0 ? headers : undefined;
+      })(),
+      auth_query_param_key: authType === "query" ? queryParamName || undefined : undefined,
+      auth_query_param_value: authType === "query" ? queryParamApiKey || undefined : undefined,
       oneTimeAuth: oneTimeAuth || undefined,
       visibility: (visibility as "public" | "private") || undefined,
       caCertificate: caCertificate || undefined,
+      oauth_config: oauthConfig,
     };
   }, [
     name,
@@ -320,14 +519,25 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     authType,
     authUsername,
     authPassword,
-    authToken,
-    authHeaderKey,
-    authHeaderValue,
-    authQueryParamKey,
-    authQueryParamValue,
+    bearerToken,
+    customHeaders,
+    queryParamName,
+    queryParamApiKey,
     oneTimeAuth,
     visibility,
     caCertificate,
+    oauthGrantType,
+    oauthClientId,
+    oauthClientSecret,
+    oauthTokenUrl,
+    oauthIssuerUrl,
+    oauthRedirectUri,
+    oauthAuthorizationUrl,
+    oauthScopes,
+    oauthStoreTokens,
+    oauthAutoRefresh,
+    oauthUsername,
+    oauthPassword,
   ]);
 
   const validateField = useCallback((field: keyof FormErrors, value: string) => {
@@ -393,10 +603,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setAuthUsername(initialState.authUsername);
     setAuthPassword(initialState.authPassword);
     setAuthToken(initialState.authToken);
-    setAuthHeaderKey(initialState.authHeaderKey);
-    setAuthHeaderValue(initialState.authHeaderValue);
-    setAuthQueryParamKey(initialState.authQueryParamKey);
-    setAuthQueryParamValue(initialState.authQueryParamValue);
     setCaCertificate(initialState.caCertificate);
     setBearerToken(initialState.bearerToken);
     setCustomHeaders(initialState.customHeaders);
@@ -410,6 +616,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setOAuthScopes(initialState.oauthScopes);
     setOAuthStoreTokens(initialState.oauthStoreTokens);
     setOAuthAutoRefresh(initialState.oauthAutoRefresh);
+    setOAuthUsername(initialState.oauthUsername);
+    setOAuthPassword(initialState.oauthPassword);
     setQueryParamName(initialState.queryParamName);
     setQueryParamApiKey(initialState.queryParamApiKey);
     setErrors({});
@@ -490,14 +698,20 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     if (!name.trim() || !url.trim()) return false;
     try {
       const parsed = new URL(url.trim());
-      return parsed.protocol === "http:" || parsed.protocol === "https:";
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     } catch {
       return false;
     }
-  }, [name, url]);
+    if (authType === "oauth" && oauthGrantType === "password") {
+      if (!oauthUsername.trim()) return false;
+      if (!oauthPassword.trim()) return false;
+    }
+    return true;
+  }, [name, url, authType, oauthGrantType, oauthUsername, oauthPassword]);
 
   return {
     // State
+    fetchError: serverFetchError?.message,
     name,
     url,
     description,
@@ -510,10 +724,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     authUsername,
     authPassword,
     authToken,
-    authHeaderKey,
-    authHeaderValue,
-    authQueryParamKey,
-    authQueryParamValue,
     caCertificate,
     bearerToken,
     customHeaders,
@@ -527,6 +737,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     oauthScopes,
     oauthStoreTokens,
     oauthAutoRefresh,
+    oauthUsername,
+    oauthPassword,
     queryParamName,
     queryParamApiKey,
     errors,
@@ -546,10 +758,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setAuthUsername,
     setAuthPassword,
     setAuthToken,
-    setAuthHeaderKey,
-    setAuthHeaderValue,
-    setAuthQueryParamKey,
-    setAuthQueryParamValue,
     setCaCertificate,
     setBearerToken,
     setCustomHeaders,
@@ -563,6 +771,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setOAuthScopes,
     setOAuthStoreTokens,
     setOAuthAutoRefresh,
+    setOAuthUsername,
+    setOAuthPassword,
     setQueryParamName,
     setQueryParamApiKey,
 
