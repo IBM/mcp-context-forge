@@ -37,13 +37,8 @@ Use `bump2version` to update all version references atomically:
 bump2version --verbose --new-version=X.Y.Z-RC-N build
 ```
 
-This updates the version string in the four canonical locations defined in `.bumpversion.cfg`:
+This updates the version string in the canonical locations defined in `.bumpversion.cfg`:
 
-| File | Field |
-|------|-------|
-| `mcpgateway/__init__.py` | `__version__` |
-| `pyproject.toml` | `version` |
-| `Containerfile.lite` | `version` label |
 
 !!! note "bump2version does not commit or tag"
     The project's `.bumpversion.cfg` has `commit = False` and `tag = False`. You must commit and tag manually after all gates pass.
@@ -118,22 +113,29 @@ Update `Containerfile.lite` with the latest tags, then verify the image builds:
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 ```
 
-### 1.7 Close the GitHub milestone
-
-- Move all remaining open issues to the next milestone
-- Close the current milestone on GitHub
-
----
-
 ## 2. Python Dependency Updates
 
 Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
 
-### 2.1 Update dependencies with `update_dependencies.py`
+### 2.1 Update CPEX dependencies
+Update the `[tool.uv.exclude-newer-package]` section of `pyproject.toml` file to the current date/time and execute
+`uv lock --upgrade` to get the latest depenencies and update the uv.lock file.
 
+### 2.2 Update dependencies with `update_dependencies.py`
+
+```bash
+find . -path "./mcp-servers/templates" -prune -o -path "*/.venv" -prune -o -name "pyproject.toml" -type f -print | while read -r toml_file; do
+  dir=$(dirname "$toml_file")
+  echo "Updating dependencies in $dir"
+  (cd "$dir" && uv lock --upgrade)
+done
+```
+
+!!! Optional: The above step may not update all dependencies as expected. Run the following command to update all dependencies in pyproject.toml files and not work from dynamic versions.
 The repository includes an async dependency updater at `.github/tools/update_dependencies.py`. Run it against every `pyproject.toml` and `requirements.txt` in the tree:
 
 ```bash
+
 # Main project
 python .github/tools/update_dependencies.py --file pyproject.toml
 
@@ -160,7 +162,7 @@ python .github/tools/update_dependencies.py --file tests/populate/requirements.t
 !!! tip "Dry-run first"
     Use `--dry-run` to preview changes before applying: `python .github/tools/update_dependencies.py --file pyproject.toml --dry-run`
 
-### 2.2 Reinstall and verify
+### 2.3 Reinstall and verify
 
 After updating, reinstall the dev environment and verify everything still resolves:
 
@@ -168,7 +170,7 @@ After updating, reinstall the dev environment and verify everything still resolv
 make install-dev
 ```
 
-### 2.3 Audit for vulnerabilities
+### 2.4 Audit for vulnerabilities
 
 ```bash
 make pip-audit
@@ -244,10 +246,11 @@ When ContextForge and `cpex-plugins` share Rust dependency changes, apply the sa
 Update `go.mod` and `go.sum` for all Go modules:
 
 ```bash
-cd a2a-agents/go/a2a-echo-agent && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/fast-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/slow-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/benchmark-server && go get -u ./... && go mod tidy && cd ../../..
+find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
+  dir=$(dirname "$mod_file")
+  echo "Updating Go dependencies in $dir"
+  (cd "$dir" && go get -u ./... && go mod tidy)
+done
 ```
 
 Verify Go code compiles and passes security checks:
@@ -1199,7 +1202,11 @@ The migration test suite follows an **n-2 support policy** and tests sequential 
 
 ## 14. Manual Testing
 
-These tests verify core user-facing workflows that automated tests do not fully cover. Perform them against the running compose stack (`make testing-up`).
+These tests verify core user-facing workflows that automated tests do not fully cover. Build and start the compose stack first:
+
+```bash
+make docker-prod && make testing-up
+```
 
 ### 14.1 Generate a JWT token
 
@@ -1210,82 +1217,78 @@ export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
   --secret my-test-key-but-now-longer-than-32-bytes)
-```
 
-Set the base URL (use `8080` for the nginx-proxied compose stack):
-
-```bash
 export BASE_URL="http://localhost:8080"
 ```
 
 ### 14.2 Register an MCP server via SSE
 
-Start a sample MCP server and register it as an SSE gateway:
+The translate process must bind to `0.0.0.0` so the gateway container can reach it via `host.docker.internal`:
 
 ```bash
-# Start a sample MCP time server exposed via SSE
+# Start MCP time server exposed via SSE (bind to 0.0.0.0 for Docker reachability)
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
   --expose-sse \
-  --port 8002 &
+  --port 8002 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (use host.docker.internal since gateway runs in Docker)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_sse","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"release_test_sse","url":"http://host.docker.internal:8002/sse"}' \
      $BASE_URL/gateways | jq
-```
 
-Verify the tools from the server appear in the catalog:
-
-```bash
+# Verify tools appear in catalog
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.3 Register an MCP server via Streamable HTTP
 
-Register a server using the Streamable HTTP transport:
+Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
 
 ```bash
-# Start a sample MCP server exposed via Streamable HTTP
+# Start MCP server exposed via Streamable HTTP
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
-  --port 8003 &
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
+  --expose-streamable-http \
+  --port 8003 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (explicit transport field required)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_streamable","url":"http://localhost:8003/mcp"}' \
+     -d '{"name":"release_test_streamable","url":"http://host.docker.internal:8003/mcp","transport":"STREAMABLEHTTP"}' \
      $BASE_URL/gateways | jq
+
+# Verify tools
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.4 Create a virtual server and export it
 
-Bundle the imported tools into a virtual MCP server:
+The request body must wrap the server fields under a `"server"` key:
 
 ```bash
-# Create the virtual server
+# Create virtual server
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_server","description":"Release validation tools","associatedTools":["1","2"]}' \
+     -d '{"server":{"name":"release_test_server","description":"Release validation tools","associatedTools":[]}}' \
      $BASE_URL/servers | jq
+
+# Verify (shows id, name, associatedTools)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq '[.[] | {id, name, associatedTools}]'
 ```
 
-Verify the server was created:
+Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq
-```
-
-Export the configuration for backup verification:
-
-```bash
-python -m mcpgateway.cli export --out release-test-export.json
+HOST=localhost PORT=8080 python -m mcpgateway.cli export --out release-test-export.json
 ```
 
 ### 14.5 Test with MCP Inspector
 
-Connect interactively via MCP Inspector to validate the protocol layer:
+Registered MCP gateways cannot be accessed directly via Inspector — they must be exposed through a virtual server. Add the SSE and Streamable HTTP gateways to `release_test_server` via the Admin UI or API, then connect Inspector to the virtual server.
 
 ```bash
 npx -y @modelcontextprotocol/inspector
@@ -1294,15 +1297,15 @@ npx -y @modelcontextprotocol/inspector
 In the Inspector UI:
 
 1. Set **Transport** to `SSE`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/sse`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/sse`
 3. Set **Header** `Authorization` to `Bearer <YOUR_TOKEN>`
 4. Click **Connect**
-5. Verify: tools list loads, you can execute a tool call, and the response is correct
+5. Verify: tools from both registered gateways appear, you can execute a tool call, and the response is correct
 
 Repeat with **Streamable HTTP**:
 
 1. Set **Transport** to `Streamable HTTP`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/mcp`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
 3. Set the same Authorization header
 4. Verify: tools list loads and tool calls execute correctly
 
@@ -1317,7 +1320,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-sse": {
       "type": "sse",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/sse",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/sse",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1333,7 +1336,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-http": {
       "type": "http",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/mcp/",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1426,6 +1429,10 @@ Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.
 ### 16.1 Close the milestone
 
 If not already done in step 1.5, close the GitHub milestone and ensure all issues are accounted for.
+- Move all remaining open issues to the next milestone
+- Close the current milestone on GitHub
+
+---
 
 ### 16.2 Create the next milestone
 

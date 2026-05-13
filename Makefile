@@ -8442,7 +8442,7 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## ðŸ
 # Migration testing configuration
 MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
-UPGRADE_BASE_IMAGE ?= ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+UPGRADE_BASE_IMAGE ?= ghcr.io/ibm/mcp-context-forge:1.0.0
 UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 
 # Get supported versions from version config (n-2 policy)

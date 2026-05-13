@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""add_grpc_service_id_to_tools
+"""Location: ./mcpgateway/alembic/versions/w7x8y9z0a1b2_add_grpc_service_id_to_tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_grpc_service_id_to_tools
 
 Revision ID: w7x8y9z0a1b2
 Revises: 9fb98535724d
 Create Date: 2026-02-16 13:45:00.000000
-
 """
 
 # Standard

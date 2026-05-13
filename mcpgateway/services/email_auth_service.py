@@ -1132,6 +1132,7 @@ class EmailAuthService:
 
         # Check password history (prevents reuse of last N passwords and current password)
         try:
+            # First-Party
             from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
             policy_service = PasswordPolicyService(self.db, self.password_service)
@@ -1153,6 +1154,7 @@ class EmailAuthService:
 
         # Save old password to history before updating
         try:
+            # First-Party
             from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
             policy_service = PasswordPolicyService(self.db, self.password_service)
@@ -1908,6 +1910,7 @@ class EmailAuthService:
 
                 # Check password history (prevents reuse of last N passwords and current password)
                 try:
+                    # First-Party
                     from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
                     policy_service = PasswordPolicyService(self.db, self.password_service)
@@ -1925,6 +1928,7 @@ class EmailAuthService:
 
                 # Save old password to history before updating
                 try:
+                    # First-Party
                     from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
                     policy_service = PasswordPolicyService(self.db, self.password_service)

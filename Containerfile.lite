@@ -40,7 +40,7 @@ ARG ENABLE_PROFILING=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1776834862 AS rust-builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1778562845 AS rust-builder
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
@@ -142,7 +142,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468 AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -163,7 +163,7 @@ RUN npm ci && \
 ###########################
 # Frontend builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1777957922 AS frontend-builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468 AS frontend-builder
 WORKDIR /opt/app-root/src
 
 # Copy package.json and package-lock.json
@@ -188,7 +188,7 @@ RUN npm run vite:build
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1776834862 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1778562845 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -340,7 +340,7 @@ RUN python3 -OO -m compileall -x 'cpex/templates' -q /app/.venv /app/mcpgateway 
 ###########################
 # Using ubi10-minimal for cross-platform compatibility
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1776834797 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723 AS runtime
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
@@ -354,7 +354,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.0"
+    org.opencontainers.image.version="1.0.1"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies

@@ -65,10 +65,9 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
-from mcpgateway.auth_context import get_scoped_resource_access_context
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -96,10 +95,11 @@ from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECT
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace, SessionLocal
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
@@ -1370,6 +1370,7 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
 
+    # First-Party
     from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
     with SessionLocal() as db:
@@ -4094,6 +4095,7 @@ async def admin_login_page(request: Request) -> Response:
         jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if jwt_token:
             try:
+                # First-Party
                 from mcpgateway.auth import validate_token_user
 
                 auth_user = await validate_token_user(request, jwt_token)
@@ -4691,6 +4693,7 @@ async def _admin_logout(request: Request) -> Response:
     clear_auth_cookie(response)
 
     # Clear CSRF token cookie
+    # First-Party
     from mcpgateway.services.csrf_service import clear_csrf_cookie
 
     clear_csrf_cookie(response, settings)
@@ -12075,7 +12078,7 @@ async def admin_discover_oauth(
 
     try:
         body = await request.json()
-    except Exception as _e:
+    except Exception:
         LOGGER.warning("OAuth discovery failed: invalid JSON body")
         return JSONResponse(
             {"success": False, "error": "Invalid JSON body"},
@@ -12108,6 +12111,15 @@ async def admin_discover_oauth(
         metadata = await dcr.discover_as_metadata(issuer)
 
         def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            """Validate and return an OAuth endpoint URL, or None if invalid.
+
+            Args:
+                raw: The raw endpoint URL string or None.
+                name: The name of the endpoint for validation error messages.
+
+            Returns:
+                The validated URL string if valid, None otherwise.
+            """
             if not raw:
                 return None
             try:
