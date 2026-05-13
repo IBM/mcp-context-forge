@@ -442,7 +442,7 @@ target-version = "py311"
 # Also "D1" for docstring present checks.
 # "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
 # TODO: Enable "I" for import sorting as a separate PR.
-select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL"]
+select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL", "G004"]
 ignore = [
     # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
     "PLR0904",  # too-many-public-methods  (pylint R0904)

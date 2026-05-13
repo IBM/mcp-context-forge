@@ -561,7 +561,7 @@ class TokenCatalogService:
         self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
-        logger.info(f"Created {token_type} API token '{name}' for user {SecurityValidator.sanitize_log_message(user_email)}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
+        logger.info("Created %s API token '%s' for user %s. Token ID: %s, Expires: %s", token_type, name, SecurityValidator.sanitize_log_message(user_email), api_token.id, expires_at or 'Never')
         return api_token, raw_token
 
     async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:
@@ -873,7 +873,7 @@ class TokenCatalogService:
         self.db.commit()
         self.db.refresh(token)
 
-        logger.info(f"Updated token '{token.name}' for user {SecurityValidator.sanitize_log_message(user_email)}")
+        logger.info("Updated token '%s' for user %s", token.name, SecurityValidator.sanitize_log_message(user_email))
 
         return token
 
@@ -928,9 +928,9 @@ class TokenCatalogService:
 
             await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
-            logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
+            logger.debug("Failed to invalidate auth cache for revoked token: %s", cache_error)
 
-        logger.info(f"Revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
+        logger.info("Revoked token '%s' (JTI: %s) by %s", token.name, token.jti, revoked_by)
 
         return True
 
@@ -968,9 +968,9 @@ class TokenCatalogService:
 
             await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
-            logger.debug(f"Failed to invalidate auth cache: {cache_error}")
+            logger.debug("Failed to invalidate auth cache: %s", cache_error)
 
-        logger.info(f"Admin revoked token '{token.name}' (JTI: {token.jti}) by {revoked_by}")
+        logger.info("Admin revoked token '%s' (JTI: %s) by %s", token.name, token.jti, revoked_by)
         return True
 
     async def is_token_revoked(self, jti: str) -> bool:
@@ -1323,11 +1323,11 @@ class TokenCatalogService:
             self.db.commit()
 
             if count > 0:
-                logger.info(f"Cleaned up {count} expired tokens")
+                logger.info("Cleaned up %s expired tokens", count)
 
             return count
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to cleanup expired tokens: {e}")
+            logger.error("Failed to cleanup expired tokens: %s", e)
             return 0

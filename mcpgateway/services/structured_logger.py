@@ -298,7 +298,7 @@ class LogRouter:
                 log_db.add(log_entry)
 
         except Exception as e:
-            logger.error(f"Failed to persist log entry to database: {e}", exc_info=True)
+            logger.error("Failed to persist log entry to database: %s", e, exc_info=True)
 
     def _send_to_external(self, entry: Dict[str, Any]) -> None:
         """Send log entry to external systems.

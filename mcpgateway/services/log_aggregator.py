@@ -144,14 +144,14 @@ class LogAggregator:
                 db=db,
             )
 
-            logger.info(f"Aggregated performance metrics for {component}.{operation_type}: " f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate")
+            logger.info("Aggregated performance metrics for %s.%s: %s requests, %.2fms avg, %.2f%% error rate", component, operation_type, count, avg_duration, error_rate * 100)
 
             if should_close:
                 db.commit()  # Commit transaction on success
             return metric
 
         except Exception as e:
-            logger.error(f"Failed to aggregate performance metrics: {e}")
+            logger.error("Failed to aggregate performance metrics: %s", e)
             if should_close and db:
                 db.rollback()
             return None
