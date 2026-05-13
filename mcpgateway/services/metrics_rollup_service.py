@@ -165,10 +165,11 @@ class MetricsRollupService:
         self._rollup_runs = 0
 
         logger.info(
-            f"MetricsRollupService initialized: enabled={self.enabled}, "
-            f"interval_hours={self.rollup_interval_hours}, "
-            f"delete_raw={self.delete_raw_after_rollup}, "
-            f"postgresql={self._is_postgresql}"
+            "MetricsRollupService initialized: enabled=%s, interval_hours=%s, delete_raw=%s, postgresql=%s",
+            self.enabled,
+            self.rollup_interval_hours,
+            self.delete_raw_after_rollup,
+            self._is_postgresql,
         )
 
     def pause(self, reason: str = "maintenance") -> None:
@@ -234,7 +235,7 @@ class MetricsRollupService:
             except asyncio.CancelledError:
                 pass
 
-        logger.info(f"MetricsRollupService shutdown complete: " f"total_rollups={self._total_rollups}, rollup_runs={self._rollup_runs}")
+        logger.info("MetricsRollupService shutdown complete: total_rollups=%s, rollup_runs=%s", self._total_rollups, self._rollup_runs)
 
     async def _rollup_loop(self) -> None:
         """Background task that periodically rolls up metrics.
@@ -246,7 +247,7 @@ class MetricsRollupService:
         Raises:
             asyncio.CancelledError: When the task is cancelled during shutdown.
         """
-        logger.info(f"Metrics rollup loop started (interval={self.rollup_interval_hours}h)")
+        logger.info("Metrics rollup loop started (interval=%sh)", self.rollup_interval_hours)
 
         # Calculate interval in seconds
         interval_seconds = self.rollup_interval_hours * 3600
@@ -269,7 +270,7 @@ class MetricsRollupService:
                         pass
 
                 if self._pause_event.is_set():
-                    logger.info(f"Metrics rollup paused ({self._pause_reason or 'maintenance'}), skipping this cycle")
+                    logger.info("Metrics rollup paused (%s), skipping this cycle", self._pause_reason or "maintenance")
                     try:
                         await asyncio.wait_for(self._shutdown_event.wait(), timeout=5)
                     except asyncio.TimeoutError:
@@ -281,7 +282,7 @@ class MetricsRollupService:
                     # On first run, detect backfill gap (may scan entire retention period)
                     hours_back = await asyncio.to_thread(self._detect_backfill_hours)
                     if hours_back > 24:
-                        logger.info(f"Backfill detected: rolling up {hours_back} hours of unprocessed metrics")
+                        logger.info("Backfill detected: rolling up %s hours of unprocessed metrics", hours_back)
                     first_run = False
                 else:
                     # Normal runs: only process recent hours to catch late-arriving data
@@ -296,16 +297,19 @@ class MetricsRollupService:
 
                 if summary.total_rollups_created > 0 or summary.total_rollups_updated > 0:
                     logger.info(
-                        f"Metrics rollup #{self._rollup_runs}: created {summary.total_rollups_created}, "
-                        f"updated {summary.total_rollups_updated} rollups "
-                        f"from {summary.total_records_aggregated} records in {summary.duration_seconds:.2f}s"
+                        "Metrics rollup #%s: created %s, updated %s rollups from %s records in %.2fs",
+                        self._rollup_runs,
+                        summary.total_rollups_created,
+                        summary.total_rollups_updated,
+                        summary.total_records_aggregated,
+                        summary.duration_seconds,
                     )
 
             except asyncio.CancelledError:
                 logger.debug("Rollup loop cancelled")
                 raise
             except Exception as e:
-                logger.error(f"Error in metrics rollup loop: {e}", exc_info=True)
+                logger.error("Error in metrics rollup loop: %s", e, exc_info=True)
                 # Continue the loop despite errors
                 await asyncio.sleep(60)
 
@@ -346,7 +350,7 @@ class MetricsRollupService:
                 return max(24, min(hours_since_earliest, max_hours))
 
         except Exception as e:
-            logger.warning(f"Error detecting backfill hours: {e}, using default 24")
+            logger.warning("Error detecting backfill hours: %s, using default 24", e)
             return 24
 
     async def rollup_all(
@@ -520,13 +524,13 @@ class MetricsRollupService:
                 db.commit()
 
         except Exception as e:
-            logger.error(f"Error rolling up {table_name}: {e}", exc_info=True)
+            logger.error("Error rolling up %s: %s", table_name, e, exc_info=True)
             error_msg = str(e)
 
         duration = time.monotonic() - start_time
 
         if rollups_created + rollups_updated > 0:
-            logger.debug(f"Rolled up {table_name}: {records_aggregated} records -> " f"{rollups_created} new, {rollups_updated} updated rollups")
+            logger.debug("Rolled up %s: %s records -> %s new, %s updated rollups", table_name, records_aggregated, rollups_created, rollups_updated)
 
         return RollupResult(
             table_name=table_name,

@@ -409,11 +409,11 @@ class LLMProviderService:
             db.add(provider)
             db.commit()
             db.refresh(provider)
-            logger.info(f"Created LLM provider: {provider.name} (ID: {provider.id})")
+            logger.info("Created LLM provider: %s (ID: %s)", provider.name, provider.id)
             return provider
         except IntegrityError as e:
             db.rollback()
-            logger.error(f"Failed to create LLM provider: {e}")
+            logger.error("Failed to create LLM provider: %s", e)
             raise LLMProviderNameConflictError(provider_data.name)
 
     def get_provider(self, db: Session, provider_id: str) -> LLMProvider:
@@ -567,11 +567,11 @@ class LLMProviderService:
         try:
             db.commit()
             db.refresh(provider)
-            logger.info(f"Updated LLM provider: {provider.name} (ID: {provider.id})")
+            logger.info("Updated LLM provider: %s (ID: %s)", provider.name, provider.id)
             return provider
         except IntegrityError as e:
             db.rollback()
-            logger.error(f"Failed to update LLM provider: {e}")
+            logger.error("Failed to update LLM provider: %s", e)
             raise
 
     def delete_provider(self, db: Session, provider_id: str) -> bool:
@@ -592,7 +592,7 @@ class LLMProviderService:
 
         db.delete(provider)
         db.commit()
-        logger.info(f"Deleted LLM provider: {provider_name} (ID: {provider_id})")
+        logger.info("Deleted LLM provider: %s (ID: %s)", provider_name, provider_id)
         return True
 
     def set_provider_state(self, db: Session, provider_id: str, activate: Optional[bool] = None) -> LLMProvider:
@@ -614,7 +614,7 @@ class LLMProviderService:
             provider.enabled = activate
         db.commit()
         db.refresh(provider)
-        logger.info(f"Set LLM provider state: {provider.name} enabled={provider.enabled}")
+        logger.info("Set LLM provider state: %s enabled=%s", provider.name, provider.enabled)
         return provider
 
     # ---------------------------------------------------------------------------
@@ -675,11 +675,11 @@ class LLMProviderService:
             db.add(model)
             db.commit()
             db.refresh(model)
-            logger.info(f"Created LLM model: {model.model_id} (ID: {model.id})")
+            logger.info("Created LLM model: %s (ID: %s)", model.model_id, model.id)
             return model
         except IntegrityError as e:
             db.rollback()
-            logger.error(f"Failed to create LLM model: {e}")
+            logger.error("Failed to create LLM model: %s", e)
             raise LLMModelConflictError(f"Model conflict: {model_data.model_id}")
 
     def get_model(self, db: Session, model_id: str) -> LLMModel:
@@ -789,7 +789,7 @@ class LLMProviderService:
 
         db.commit()
         db.refresh(model)
-        logger.info(f"Updated LLM model: {model.model_id} (ID: {model.id})")
+        logger.info("Updated LLM model: %s (ID: %s)", model.model_id, model.id)
         return model
 
     def delete_model(self, db: Session, model_id: str) -> bool:
@@ -807,7 +807,7 @@ class LLMProviderService:
 
         db.delete(model)
         db.commit()
-        logger.info(f"Deleted LLM model: {model_name} (ID: {model_id})")
+        logger.info("Deleted LLM model: %s (ID: %s)", model_name, model_id)
         return True
 
     def set_model_state(self, db: Session, model_id: str, activate: Optional[bool] = None) -> LLMModel:
@@ -829,7 +829,7 @@ class LLMProviderService:
             model.enabled = activate
         db.commit()
         db.refresh(model)
-        logger.info(f"Set LLM model state: {model.model_id} enabled={model.enabled}")
+        logger.info("Set LLM model state: %s enabled=%s", model.model_id, model.enabled)
         return model
 
     # ---------------------------------------------------------------------------

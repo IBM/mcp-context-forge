@@ -160,7 +160,8 @@ class SecurityLogger:
         log_level = logging.WARNING if not success else logging.INFO
         logger.log(
             log_level,
-            f"Authentication attempt: {description}",
+            "Authentication attempt: %s",
+            description,
             extra={
                 "security_event": True,
                 "event_type": event.event_type if event else None,
@@ -325,7 +326,8 @@ class SecurityLogger:
         )
 
         logger.warning(
-            f"Suspicious activity detected: {description}",
+            "Suspicious activity detected: %s",
+            description,
             extra={
                 "security_event": True,
                 "activity_type": activity_type,
@@ -590,7 +592,7 @@ class SecurityLogger:
             return event
 
         except Exception as e:
-            logger.error(f"Failed to create security event: {e}")
+            logger.error("Failed to create security event: %s", e)
             db.rollback()
             return None
 
@@ -727,7 +729,7 @@ class SecurityLogger:
             return audit
 
         except Exception as e:
-            logger.error(f"Failed to create audit trail: {e}")
+            logger.error("Failed to create audit trail: %s", e)
             db.rollback()
             return None
 

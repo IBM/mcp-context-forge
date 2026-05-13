@@ -165,7 +165,10 @@ class TokenStorageService:
                 token_record.scopes = scopes
                 token_record.updated_at = datetime.now(timezone.utc)
                 logger.info(
-                    f"Updated OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                    "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                    SecurityValidator.sanitize_log_message(user_id),
                 )
             else:
                 # Create new record
@@ -174,7 +177,10 @@ class TokenStorageService:
                 )
                 self.db.add(token_record)
                 logger.info(
-                    f"Stored new OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                    "Stored new OAuth tokens for gateway %s, app user %s, OAuth user %s",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                    SecurityValidator.sanitize_log_message(user_id),
                 )
 
             self.db.commit()
@@ -182,7 +188,7 @@ class TokenStorageService:
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to store OAuth tokens: {str(e)}")
+            logger.error("Failed to store OAuth tokens: %s", str(e))
             raise OAuthError(f"Token storage failed: {str(e)}")
 
     async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
@@ -200,20 +206,21 @@ class TokenStorageService:
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if not token_record:
-                logger.debug(f"No OAuth tokens found for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
+                logger.debug("No OAuth tokens found for gateway %s, app user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
                 return None
 
             # Verify token_type is Bearer
             if hasattr(token_record, "token_type") and token_record.token_type and token_record.token_type.lower() != "bearer":
                 logger.warning(
-                    f"Unexpected token_type '{token_record.token_type}' for gateway "
-                    f"{SecurityValidator.sanitize_log_message(gateway_id)}, app user "
-                    f"{SecurityValidator.sanitize_log_message(app_user_email)}; expected 'Bearer'"
+                    "Unexpected token_type '%s' for gateway %s, app user %s; expected 'Bearer'",
+                    token_record.token_type,
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
                 )
 
             # Check if token is expired or near expiration
             if self._is_token_expired(token_record, threshold_seconds):
-                logger.info(f"OAuth token expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
+                logger.info("OAuth token expired for gateway %s, app user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
                 if token_record.refresh_token:
                     # Attempt to refresh token
                     new_token = await self._refresh_access_token(token_record)
@@ -227,7 +234,7 @@ class TokenStorageService:
             return token_record.access_token
 
         except Exception as e:
-            logger.error(f"Failed to retrieve OAuth token: {str(e)}")
+            logger.error("Failed to retrieve OAuth token: %s", str(e))
             return None
 
     # REMOVED: get_any_valid_token() - This was a security vulnerability
@@ -244,7 +251,7 @@ class TokenStorageService:
         """
         try:
             if not token_record.refresh_token:
-                logger.warning(f"No refresh token available for gateway {token_record.gateway_id}")
+                logger.warning("No refresh token available for gateway %s", token_record.gateway_id)
                 return None
 
             # Get the gateway configuration to retrieve OAuth settings
@@ -254,7 +261,7 @@ class TokenStorageService:
             gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
 
             if not gateway or not gateway.oauth_config:
-                logger.error(f"No OAuth configuration found for gateway {token_record.gateway_id}")
+                logger.error("No OAuth configuration found for gateway %s", token_record.gateway_id)
                 return None
 
             # Refuse refresh on a private gateway whose owner is not the token
@@ -281,7 +288,7 @@ class TokenStorageService:
                 try:
                     refresh_token = await self.encryption.decrypt_secret_async(refresh_token)
                 except Exception as e:
-                    logger.error(f"Failed to decrypt refresh token: {str(e)}")
+                    logger.error("Failed to decrypt refresh token: %s", str(e))
                     return None
 
             # Decrypt client_secret if it's encrypted
@@ -336,17 +343,17 @@ class TokenStorageService:
                     normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
                     oauth_config["resource"] = [r for r in normalized if r]
                     if not oauth_config["resource"] and original_count > 0:
-                        logger.warning(f"All {original_count} configured resource values were empty and removed during refresh")
+                        logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
                 else:
                     normalized = normalize_resource(existing_resource, preserve_query=True)
                     if not normalized and existing_resource:
-                        logger.warning(f"Configured resource was empty and removed during refresh: {existing_resource}")
+                        logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
                     oauth_config["resource"] = normalized
             elif gateway.url:
                 # Derive from gateway.url if not explicitly configured (strip query)
                 oauth_config["resource"] = normalize_resource(gateway.url)
                 if not oauth_config.get("resource"):
-                    logger.warning(f"Gateway URL is empty, skipping resource parameter: {gateway.url}")
+                    logger.warning("Gateway URL is empty, skipping resource parameter: %s", gateway.url)
 
             # Use OAuthManager to refresh the token
             # First-Party
@@ -354,7 +361,7 @@ class TokenStorageService:
 
             oauth_manager = OAuthManager()
 
-            logger.info(f"Attempting to refresh token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
+            logger.info("Attempting to refresh token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
             token_response = await oauth_manager.refresh_token(
                 refresh_token,
                 oauth_config,
@@ -406,15 +413,15 @@ class TokenStorageService:
             token_record.updated_at = now
 
             self.db.commit()
-            logger.info(f"Successfully refreshed token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
+            logger.info("Successfully refreshed token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
 
             return new_access_token
 
         except Exception as e:
-            logger.error(f"Failed to refresh OAuth token for gateway {token_record.gateway_id}: {str(e)}")
+            logger.error("Failed to refresh OAuth token for gateway %s: %s", token_record.gateway_id, str(e))
             # If refresh fails, we should clear the token to force re-authentication
             if "invalid" in str(e).lower() or "expired" in str(e).lower():
-                logger.warning(f"Refresh token appears invalid/expired, clearing tokens for gateway {token_record.gateway_id}")
+                logger.warning("Refresh token appears invalid/expired, clearing tokens for gateway %s", token_record.gateway_id)
                 self.db.delete(token_record)
                 self.db.commit()
             return None
@@ -511,7 +518,7 @@ class TokenStorageService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to get token info: {str(e)}")
+            logger.error("Failed to get token info: %s", str(e))
             return None
 
     async def revoke_user_tokens(self, gateway_id: str, app_user_email: str) -> bool:
@@ -546,14 +553,14 @@ class TokenStorageService:
             if token_record:
                 self.db.delete(token_record)
                 self.db.commit()
-                logger.info(f"Revoked OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
+                logger.info("Revoked OAuth tokens for gateway %s, user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
                 return True
 
             return False
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to revoke OAuth tokens: {str(e)}")
+            logger.error("Failed to revoke OAuth tokens: %s", str(e))
             return False
 
     async def cleanup_expired_tokens(self, max_age_days: int = 30) -> int:

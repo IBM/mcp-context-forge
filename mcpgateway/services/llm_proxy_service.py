@@ -198,7 +198,7 @@ class LLMProxyService:
             auth_data = decode_auth(provider.api_key)
             return auth_data.get("api_key")
         except Exception as e:
-            logger.error(f"Failed to decode API key for provider {provider.name}: {e}")
+            logger.error("Failed to decode API key for provider %s: %s", provider.name, e)
             return None
 
     def _build_openai_request(
@@ -521,10 +521,10 @@ class LLMProxyService:
                 return result
 
             except httpx.HTTPStatusError as e:
-                logger.error(f"LLM request failed: {e.response.status_code} - {e.response.text}")
+                logger.error("LLM request failed: %s - %s", e.response.status_code, e.response.text)
                 raise LLMProxyRequestError(f"Request failed: {e.response.status_code}")
             except httpx.RequestError as e:
-                logger.error(f"LLM request error: {e}")
+                logger.error("LLM request error: %s", e)
                 raise LLMProxyRequestError(f"Connection error: {str(e)}")
 
     async def chat_completion_stream(

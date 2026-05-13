@@ -301,7 +301,7 @@ class ExportService:
             ExportValidationError: If validation fails
         """
         try:
-            logger.info(f"Starting configuration export by {exported_by}")
+            logger.info("Starting configuration export by %s", exported_by)
 
             # Determine which entity types to include
             all_types = ["tools", "gateways", "servers", "prompts", "resources", "roots"]
@@ -391,11 +391,11 @@ class ExportService:
             # Validate export data
             self._validate_export_data(cast(Dict[str, Any], export_data))
 
-            logger.info(f"Export completed successfully with {sum(export_data['metadata']['entity_counts'].values())} total entities")
+            logger.info("Export completed successfully with %s total entities", sum(export_data["metadata"]["entity_counts"].values()))
             return cast(Dict[str, Any], export_data)
 
         except Exception as e:
-            logger.error(f"Export failed: {str(e)}")
+            logger.error("Export failed: %s", str(e))
             raise ExportError(f"Failed to export configuration: {str(e)}")
 
     async def _export_tools(self, db: Session, tags: Optional[List[str]], include_inactive: bool, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -745,7 +745,7 @@ class ExportService:
                 "prompts": ["prompt1"]
             }
         """
-        logger.info(f"Starting selective export by {exported_by}")
+        logger.info("Starting selective export by %s", exported_by)
 
         class SelExportOptions(TypedDict, total=False):
             """Options that control behavior for selective export."""
@@ -813,7 +813,7 @@ class ExportService:
 
         self._validate_export_data(cast(Dict[str, Any], export_data))
 
-        logger.info(f"Selective export completed with {sum(export_data['metadata']['entity_counts'].values())} entities")
+        logger.info("Selective export completed with %s entities", sum(export_data["metadata"]["entity_counts"].values()))
         return cast(Dict[str, Any], export_data)
 
     @staticmethod

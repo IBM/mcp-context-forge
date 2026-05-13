@@ -341,11 +341,13 @@ class LoggingService:
                 file_handler.setLevel(log_level)
                 root_logger.addHandler(file_handler)
                 if settings.log_rotation_enabled:
-                    logging.info(f"File logging enabled with rotation: {settings.log_folder or '.'}/{settings.log_file} (max: {settings.log_max_size_mb}MB, backups: {settings.log_backup_count})")
+                    logging.info(
+                        "File logging enabled with rotation: %s/%s (max: %sMB, backups: %s)", settings.log_folder or ".", settings.log_file, settings.log_max_size_mb, settings.log_backup_count
+                    )
                 else:
-                    logging.info(f"File logging enabled (no rotation): {settings.log_folder or '.'}/{settings.log_file}")
+                    logging.info("File logging enabled (no rotation): %s/%s", settings.log_folder or ".", settings.log_file)
             except Exception as e:
-                logging.warning(f"Failed to initialize file logging: {e}")
+                logging.warning("Failed to initialize file logging: %s", e)
         else:
             logging.info("File logging disabled - logging to stdout/stderr only")
 
@@ -363,7 +365,7 @@ class LoggingService:
             self._storage_handler.setLevel(log_level)
             root_logger.addHandler(self._storage_handler)
 
-            logging.info(f"Log storage initialized with {settings.log_buffer_size_mb}MB buffer")
+            logging.info("Log storage initialized with %sMB buffer", settings.log_buffer_size_mb)
 
         logging.info("Logging service initialized")
 
@@ -675,7 +677,7 @@ class LoggingService:
             try:
                 await queue.put(message)
             except Exception as e:
-                logger.error(f"Failed to notify subscriber: {e}")
+                logger.error("Failed to notify subscriber: %s", e)
 
     async def subscribe(self) -> AsyncGenerator[_LogMessage, None]:
         """Subscribe to log messages.

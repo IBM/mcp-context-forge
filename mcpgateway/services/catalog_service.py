@@ -76,7 +76,7 @@ class CatalogService:
                     catalog_path = Path(__file__).parent.parent.parent / settings.mcpgateway_catalog_file
 
             if not catalog_path.exists():
-                logger.warning(f"Catalog file not found: {catalog_path}")
+                logger.warning("Catalog file not found: %s", catalog_path)
                 return {"catalog_servers": [], "categories": [], "auth_types": []}
 
             content = await asyncio.to_thread(catalog_path.read_text, encoding="utf-8")
@@ -86,11 +86,11 @@ class CatalogService:
             self._catalog_cache = catalog_data
             self._cache_timestamp = time.time()
 
-            logger.info(f"Loaded {len(catalog_data.get('catalog_servers', []))} servers from catalog")
+            logger.info("Loaded %s servers from catalog", len(catalog_data.get("catalog_servers", [])))
             return catalog_data
 
         except Exception as e:
-            logger.error(f"Failed to load catalog: {e}")
+            logger.error("Failed to load catalog: %s", e)
             return {"catalog_servers": [], "categories": [], "auth_types": []}
 
     def _get_registry_cache(self):
@@ -162,7 +162,7 @@ class CatalogService:
                     if not enabled and auth_type == "oauth" and not oauth_config:
                         oauth_disabled_urls.add(url)
             except Exception as e:
-                logger.warning(f"Failed to check registered servers: {e}")
+                logger.warning("Failed to check registered servers: %s", e)
                 # Continue without marking registered servers
                 registered_urls = set()
                 oauth_disabled_urls = set()
@@ -224,7 +224,7 @@ class CatalogService:
                 cache_data = response.model_dump(mode="json")
                 await cache.set("catalog", cache_data, filters_hash)
             except Exception as e:
-                logger.debug(f"Failed to cache catalog response: {e}")
+                logger.debug("Failed to cache catalog response: %s", e)
 
         return response
 
@@ -263,7 +263,7 @@ class CatalogService:
                 result = db.execute(stmt)
                 existing = result.scalar_one_or_none()
             except Exception as e:
-                logger.warning(f"Error checking existing registration: {e}")
+                logger.warning("Error checking existing registration: %s", e)
                 existing = None
 
             if existing:
@@ -328,7 +328,7 @@ class CatalogService:
                 # OAuth server without credentials - register but skip initialization
                 # User will need to complete OAuth flow later
                 skip_initialization = True
-                logger.info(f"Registering OAuth server {server_data['name']} without credentials - OAuth flow required later")
+                logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
 
             # For OAuth servers without credentials, register directly without connection test
             if skip_initialization:
@@ -421,7 +421,7 @@ class CatalogService:
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
-            logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")
+            logger.info("Registered catalog server: %s (%s)", gateway_read.name, catalog_id)
 
             # Query for tools discovered from this gateway
             # First-Party
@@ -446,7 +446,7 @@ class CatalogService:
             return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 
         except Exception as e:
-            logger.error(f"Failed to register catalog server {catalog_id}: {e}")
+            logger.error("Failed to register catalog server %s: %s", catalog_id, e)
 
             # Map common exceptions to user-friendly messages
             error_str = str(e)
@@ -524,7 +524,7 @@ class CatalogService:
             )
 
         except Exception as e:
-            logger.error(f"Failed to check server status for {catalog_id}: {e}")
+            logger.error("Failed to check server status for %s: %s", catalog_id, e)
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
     async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
