@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for SIEM export service."""
+"""Location: ./tests/unit/mcpgateway/services/test_siem_export_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for SIEM export service.
+"""
 
 # Standard
 from datetime import datetime, timezone

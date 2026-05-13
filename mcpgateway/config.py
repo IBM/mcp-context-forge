@@ -841,7 +841,7 @@ class Settings(BaseSettings):
                 host_for_check = host_for_check.split(":")[0]
 
             # Check for localhost variants (including IPv6 bracket notation)
-            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
+            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):  # nosec B104
                 invalid_domains.append((domain, "loopback address"))
             # Check for link-local
             elif host_for_check.startswith("169.254."):
