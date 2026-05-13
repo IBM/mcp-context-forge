@@ -6160,8 +6160,7 @@ class ToolService(BaseService):
                 # Log structured message with performance tracking (using local variables)
                 if success:
                     structured_logger.info(
-                        "Tool '%s' invoked successfully",
-                        name,
+                        f"Tool '{name}' invoked successfully",  # noqa: G004
                         user_id=app_user_email,
                         resource_type="tool",
                         resource_id=tool_id,
@@ -6171,8 +6170,7 @@ class ToolService(BaseService):
                     )
                 else:
                     structured_logger.error(
-                        "Tool '%s' invocation failed",
-                        name,
+                        f"Tool '{name}' invocation failed",  # noqa: G004
                         error=Exception(error_message) if error_message else None,
                         user_id=app_user_email,
                         resource_type="tool",

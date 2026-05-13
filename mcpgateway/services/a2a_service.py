@@ -873,8 +873,7 @@ class A2AAgentService(BaseService):
                     # Agent was already committed above, so it persists even if tool creation fails
                     logger.warning("Failed to create tool for A2A agent %s: %s", new_agent.name, tool_error)
                     structured_logger.warning(
-                        "A2A agent '%s' created without tool association",
-                        new_agent.name,
+                        f"A2A agent '{new_agent.name}' created without tool association",  # noqa: G004
                         user_id=created_by,
                         resource_type="a2a_agent",
                         resource_id=str(new_agent.id),
@@ -886,8 +885,7 @@ class A2AAgentService(BaseService):
 
                 # Log A2A agent registration for lifecycle tracking
                 structured_logger.info(
-                    "A2A agent '%s' registered successfully",
-                    new_agent.name,
+                    f"A2A agent '{new_agent.name}' registered successfully",  # noqa: G004
                     user_id=created_by,
                     user_email=owner_email,
                     team_id=team_id,
