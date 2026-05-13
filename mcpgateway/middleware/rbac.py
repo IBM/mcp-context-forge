@@ -698,6 +698,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
             # API tokens with resource_scopes must have the required permission scope
             # This is independent of RBAC role checks (Layer 2)
+            #
+            # TOKEN TYPE DETECTION: Uses `is not None` check to distinguish:
+            # - token_scopes=None: Session token (skip scope check, use RBAC only)
+            # - token_scopes=[...]: API token with scopes (enforce scope check)
+            # - token_scopes=[]: API token with empty scopes (enforce scope check, deny all)
             token_scopes = user_context.get("token_scopes")
             if token_scopes is not None:  # Only check if this is an API token with scopes
                 if permission not in token_scopes:
