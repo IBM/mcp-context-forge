@@ -1920,6 +1920,12 @@ async def get_current_user(
             # Both converge to unified "token_scopes" in request.state for consistent enforcement.
             # See docs/security/TOKEN_SCOPE_NAMING.md for full rationale.
             #
+            # SECURITY DESIGN: Two-layer model with intentional token-type differentiation
+            # - Session tokens (no scopes field): Use RBAC only (Layer 2)
+            #   Session tokens are tied to users with roles; RBAC controls permissions.
+            # - API tokens (scopes field present): Use scopes + RBAC (Layer 1 + Layer 2)
+            #   API tokens are standalone credentials; scopes enforce least-privilege.
+            #
             # SECURITY: Must set token_scopes even for empty dict/list to enforce scope checks.
             # - scopes dict present (even if {}): API token, enforce scope check
             # - scopes missing/None: Session token, skip scope check (token_scopes stays None)
@@ -1932,10 +1938,14 @@ async def get_current_user(
                     request.state.token_scopes = permissions
                 else:
                     # Malformed JWT: scopes field exists but is not a dict
-                    logger.debug(
-                        f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
-                        f"Token will be treated as session token (no scope enforcement). "
-                        f"Check token generation configuration."
+                    # Reject malformed tokens to enforce fail-closed security model
+                    logger.warning(
+                        f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. "
+                        f"Tokens with malformed scopes must be regenerated with correct structure."
+                    )
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid token: malformed scopes field"
                     )
             await _set_auth_method_from_payload(payload)
 
