@@ -59,6 +59,11 @@ def _replace_single_fk_with_cascade(table_name: str, referred_table: str, local_
         return
 
     fk_names = _get_fk_names(inspector, table_name, referred_table)
+    # If no named FK found, the table was likely created fresh from db.py models
+    # which already have CASCADE. Skip migration for idempotency.
+    if len(fk_names) == 0:
+        return
+        
     if len(fk_names) != 1:
         raise RuntimeError(f"Expected exactly one foreign key from {table_name} to {referred_table}, found {fk_names}")
 
