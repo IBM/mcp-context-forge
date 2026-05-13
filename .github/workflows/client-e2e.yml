@@ -63,12 +63,10 @@ jobs:
 
       - name: 🎭 Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: ./client
         run: npx playwright install --with-deps chromium
 
       - name: 🎭 Install Playwright system deps (cached browsers)
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        working-directory: ./client
         run: npx playwright install-deps chromium
 
       - name: 🧪 Run Playwright tests
