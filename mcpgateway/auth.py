@@ -1939,14 +1939,8 @@ async def get_current_user(
                 else:
                     # Malformed JWT: scopes field exists but is not a dict
                     # Reject malformed tokens to enforce fail-closed security model
-                    logger.warning(
-                        f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. "
-                        f"Tokens with malformed scopes must be regenerated with correct structure."
-                    )
-                    raise HTTPException(
-                        status_code=401,
-                        detail="Invalid token: malformed scopes field"
-                    )
+                    logger.warning(f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. " f"Tokens with malformed scopes must be regenerated with correct structure.")
+                    raise HTTPException(status_code=401, detail="Invalid token: malformed scopes field")
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
