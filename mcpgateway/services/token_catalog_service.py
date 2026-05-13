@@ -561,7 +561,7 @@ class TokenCatalogService:
         self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
-        logger.info("Created %s API token '%s' for user %s. Token ID: %s, Expires: %s", token_type, name, SecurityValidator.sanitize_log_message(user_email), api_token.id, expires_at or 'Never')
+        logger.info("Created %s API token '%s' for user %s. Token ID: %s, Expires: %s", token_type, name, SecurityValidator.sanitize_log_message(user_email), api_token.id, expires_at or "Never")
         return api_token, raw_token
 
     async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:

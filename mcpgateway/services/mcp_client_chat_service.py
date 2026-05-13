@@ -2411,7 +2411,7 @@ class MCPChatService:
         self._initialized = False
         self._tools: List[BaseTool] = []
 
-        logger.info("MCPChatService initialized for user: %s", user_id or 'anonymous')
+        logger.info("MCPChatService initialized for user: %s", user_id or "anonymous")
 
     async def initialize(self) -> None:
         """
@@ -2919,10 +2919,14 @@ class MCPChatService:
                     total_unique = len(all_orphan_ids)
                     total_affected = total_unique + dropped_overflow_count
                     logger.warning(
-                        "Stream completed with %s orphan tool end(s): %s buffered, %s dropped (tracked), %s dropped (untracked overflow)", total_affected, buffered_count, dropped_count, dropped_overflow_count
+                        "Stream completed with %s orphan tool end(s): %s buffered, %s dropped (tracked), %s dropped (untracked overflow)",
+                        total_affected,
+                        buffered_count,
+                        dropped_count,
+                        dropped_overflow_count,
                     )
                     if all_orphan_ids:
-                        logger.debug("Full orphan run_id list: %s", ', '.join(all_orphan_ids))
+                        logger.debug("Full orphan run_id list: %s", ", ".join(all_orphan_ids))
                     now_iso = datetime.now(timezone.utc).isoformat()
                     error_parts = []
                     if buffered_count > 0:

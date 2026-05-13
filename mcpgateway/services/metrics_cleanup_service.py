@@ -188,7 +188,10 @@ class MetricsCleanupService:
 
         logger.info(
             "MetricsCleanupService initialized: enabled=%s, retention_days=%s, batch_size=%s, interval_hours=%s",
-            self.enabled, self.retention_days, self.batch_size, self.cleanup_interval_hours,
+            self.enabled,
+            self.retention_days,
+            self.batch_size,
+            self.cleanup_interval_hours,
         )
 
     async def start(self) -> None:

@@ -1265,7 +1265,7 @@ class ResourceService(BaseService):
                     s.team = team_map.get(s.team_id) if s.team_id else None
                     result.append(self.convert_resource_to_read(s, include_metrics=False))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert resource %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert resource %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining resources instead of failing completely
             # Return appropriate format based on pagination type
             if page is not None:
@@ -1407,7 +1407,7 @@ class ResourceService(BaseService):
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_resource_to_read(t, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert resource %s (%s): %s", getattr(t, 'id', 'unknown'), getattr(t, 'name', 'unknown'), e)
+                logger.exception("Failed to convert resource %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                 # Continue with remaining resources instead of failing completely
         return result
 
@@ -1531,7 +1531,7 @@ class ResourceService(BaseService):
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
                     result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert resource %s (%s): %s", getattr(t, 'id', 'unknown'), getattr(t, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert resource %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                     # Continue with remaining resources instead of failing completely
             return result
 
@@ -2422,7 +2422,8 @@ class ResourceService(BaseService):
                                     success = True
                                     logger.info(
                                         "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                                        SecurityValidator.sanitize_log_message(gateway.id), meta_data is not None,
+                                        SecurityValidator.sanitize_log_message(gateway.id),
+                                        meta_data is not None,
                                     )
                                     # Skip the rest of the DB lookup logic
 
@@ -2615,7 +2616,7 @@ class ResourceService(BaseService):
                 raise
             finally:
                 # Record metrics only if we found a resource (not for templates)
-                logger.debug("read_resource finally block: resource_db=%s, resource_id=%s, server_id=%s", 'present' if resource_db else None, resource_db.id if resource_db else None, server_id)
+                logger.debug("read_resource finally block: resource_db=%s, resource_id=%s, server_id=%s", "present" if resource_db else None, resource_db.id if resource_db else None, server_id)
 
                 if resource_db:
                     try:
@@ -2733,7 +2734,7 @@ class ResourceService(BaseService):
                 else:
                     await self._notify_resource_deactivated(resource)
 
-                logger.info("Resource %s %s", resource.uri, 'activated' if activate else 'deactivated')
+                logger.info("Resource %s %s", resource.uri, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for resource state change
                 audit_trail.log_action(

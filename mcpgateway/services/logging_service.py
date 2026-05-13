@@ -341,9 +341,11 @@ class LoggingService:
                 file_handler.setLevel(log_level)
                 root_logger.addHandler(file_handler)
                 if settings.log_rotation_enabled:
-                    logging.info("File logging enabled with rotation: %s/%s (max: %sMB, backups: %s)", settings.log_folder or '.', settings.log_file, settings.log_max_size_mb, settings.log_backup_count)
+                    logging.info(
+                        "File logging enabled with rotation: %s/%s (max: %sMB, backups: %s)", settings.log_folder or ".", settings.log_file, settings.log_max_size_mb, settings.log_backup_count
+                    )
                 else:
-                    logging.info("File logging enabled (no rotation): %s/%s", settings.log_folder or '.', settings.log_file)
+                    logging.info("File logging enabled (no rotation): %s/%s", settings.log_folder or ".", settings.log_file)
             except Exception as e:
                 logging.warning("Failed to initialize file logging: %s", e)
         else:

@@ -156,7 +156,10 @@ class PermissionService:
 
             logger.debug(
                 "Permission check: user=%s, permission=%s, team=%s, granted=%s",
-                SecurityValidator.sanitize_log_message(user_email), permission, SecurityValidator.sanitize_log_message(team_id), granted,
+                SecurityValidator.sanitize_log_message(user_email),
+                permission,
+                SecurityValidator.sanitize_log_message(team_id),
+                granted,
             )
 
             return granted
@@ -543,7 +546,9 @@ class PermissionService:
             if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams):
                 logger.debug(
                     "[RBAC] Team %s not in token scope %s for %s: excluding team-scoped roles but keeping global/personal roles",
-                    SecurityValidator.sanitize_log_message(team_id), SecurityValidator.sanitize_log_message(token_teams), SecurityValidator.sanitize_log_message(user_email),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(token_teams),
+                    SecurityValidator.sanitize_log_message(user_email),
                 )
             else:
                 # Team is in scope: include team-scoped roles for this team

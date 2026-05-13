@@ -2806,7 +2806,7 @@ class ToolService(BaseService):
                         )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert tool %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert tool %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
             # Return appropriate format based on pagination type
@@ -2963,7 +2963,7 @@ class ToolService(BaseService):
                         )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, 'id', 'unknown'), getattr(tool, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                     # Continue with remaining tools instead of failing completely
 
             return result
@@ -3177,7 +3177,7 @@ class ToolService(BaseService):
             try:
                 result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False, requesting_user_email=user_email, requesting_user_is_admin=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, 'id', 'unknown'), getattr(tool, 'name', 'unknown'), e)
+                logger.exception("Failed to convert tool %s (%s): %s", getattr(tool, "id", "unknown"), getattr(tool, "name", "unknown"), e)
                 # Continue with remaining tools instead of failing completely
 
         next_cursor = None
@@ -3351,7 +3351,7 @@ class ToolService(BaseService):
 
             db.commit()
             await self._notify_tool_deleted(tool_info)
-            logger.info("Permanently deleted tool: %s", tool_info['name'])
+            logger.info("Permanently deleted tool: %s", tool_info["name"])
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
@@ -3521,7 +3521,7 @@ class ToolService(BaseService):
                     # Active
                     await self._notify_tool_activated(tool)
 
-                logger.info("Tool: %s is %s%s", tool.name, 'enabled' if activate else 'disabled', ' and accessible' if reachable else ' but inaccessible')
+                logger.info("Tool: %s is %s%s", tool.name, "enabled" if activate else "disabled", " and accessible" if reachable else " but inaccessible")
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
@@ -3728,7 +3728,8 @@ class ToolService(BaseService):
 
                         logger.info(
                             "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                            SecurityValidator.sanitize_log_message(gateway.id), meta_data is not None,
+                            SecurityValidator.sanitize_log_message(gateway.id),
+                            meta_data is not None,
                         )
                         return tool_result
         except Exception as e:
@@ -5056,7 +5057,8 @@ class ToolService(BaseService):
                                     if conflicts:
                                         logger.warning(
                                             "REST tool GET request has conflicting parameters between URL and input arguments. URL query params will take precedence for: %s. Tool: %s",
-                                            ', '.join(sorted(conflicts)), name,
+                                            ", ".join(sorted(conflicts)),
+                                            name,
                                         )
 
                                 payload.update(query_params)
@@ -5255,7 +5257,9 @@ class ToolService(BaseService):
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            logger.debug("[AFFINITY] Worker %s | Session %s... | Tool: %s | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)", worker_id, session_short, name)
+                            logger.debug(
+                                "[AFFINITY] Worker %s | Session %s... | Tool: %s | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)", worker_id, session_short, name
+                            )
 
                     # Inject identity propagation headers and meta for MCP tools
                     if global_context and global_context.user_context:
@@ -6156,7 +6160,8 @@ class ToolService(BaseService):
                 # Log structured message with performance tracking (using local variables)
                 if success:
                     structured_logger.info(
-                        "Tool '%s' invoked successfully", name,
+                        "Tool '%s' invoked successfully",
+                        name,
                         user_id=app_user_email,
                         resource_type="tool",
                         resource_id=tool_id,
@@ -6166,7 +6171,8 @@ class ToolService(BaseService):
                     )
                 else:
                     structured_logger.error(
-                        "Tool '%s' invocation failed", name,
+                        "Tool '%s' invocation failed",
+                        name,
                         error=Exception(error_message) if error_message else None,
                         user_id=app_user_email,
                         resource_type="tool",

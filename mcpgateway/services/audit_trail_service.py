@@ -240,7 +240,11 @@ class AuditTrailService:
             db.refresh(audit_entry)
 
             logger.debug(
-                "Audit trail logged: %s %s/%s by %s", action, resource_type, resource_id, user_id,
+                "Audit trail logged: %s %s/%s by %s",
+                action,
+                resource_type,
+                resource_id,
+                user_id,
                 extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id, "user_id": user_id, "success": success},
             )
 

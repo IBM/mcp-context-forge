@@ -1041,8 +1041,10 @@ class TeamManagementService:
                             await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_owner_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
                         logger.info(
                             "Transitioned RBAC role from %s to %s for %s in team %s",
-                            settings.default_team_member_role, settings.default_team_owner_role,
-                            SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id),
+                            settings.default_team_member_role,
+                            settings.default_team_owner_role,
+                            SecurityValidator.sanitize_log_message(user_email),
+                            SecurityValidator.sanitize_log_message(team_id),
                         )
 
                     elif old_role == "owner" and new_role == "member":
@@ -1053,8 +1055,10 @@ class TeamManagementService:
                             await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
                         logger.info(
                             "Transitioned RBAC role from %s to %s for %s in team %s",
-                            settings.default_team_owner_role, settings.default_team_member_role,
-                            SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id),
+                            settings.default_team_owner_role,
+                            settings.default_team_member_role,
+                            SecurityValidator.sanitize_log_message(user_email),
+                            SecurityValidator.sanitize_log_message(team_id),
                         )
 
                 except Exception as role_error:

@@ -145,7 +145,10 @@ class TokenBlocklistService:
                     logger.warning("Failed to cache revocation in Redis: %s", e)
 
             logger.info(
-                "Token revoked: jti=%s, reason=%s, revoked_by=%s", jti, reason, revoked_by,
+                "Token revoked: jti=%s, reason=%s, revoked_by=%s",
+                jti,
+                reason,
+                revoked_by,
                 extra={"security_event": "token_revocation", "security_severity": "medium", "jti": jti, "reason": reason, "revoked_by": revoked_by},
             )
 
@@ -217,7 +220,8 @@ class TokenBlocklistService:
         if idle_duration > max_idle:
             logger.info(
                 "Token %s exceeded idle timeout: %.1f minutes",
-                jti, idle_duration.total_seconds() / 60,
+                jti,
+                idle_duration.total_seconds() / 60,
                 extra={"security_event": "idle_timeout", "security_severity": "low", "jti": jti, "idle_minutes": idle_duration.total_seconds() / 60},
             )
             return True
@@ -297,7 +301,8 @@ class TokenBlocklistService:
 
                 if deleted_count > 0:
                     logger.info(
-                        "Cleaned up %s expired tokens from blocklist", deleted_count,
+                        "Cleaned up %s expired tokens from blocklist",
+                        deleted_count,
                         extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
                     )
 
@@ -311,7 +316,8 @@ class TokenBlocklistService:
 
                 if deleted_count > 0:
                     logger.info(
-                        "Cleaned up %s expired tokens from blocklist", deleted_count,
+                        "Cleaned up %s expired tokens from blocklist",
+                        deleted_count,
                         extra={"security_event": "blocklist_cleanup", "deleted_count": deleted_count, "cutoff_time": cutoff_time.isoformat()},
                     )
 
@@ -337,7 +343,8 @@ class TokenBlocklistService:
         # Note: This requires tracking active tokens per user, which would need
         # additional implementation. For now, this is a placeholder for future enhancement.
         logger.warning(
-            "Bulk token revocation requested for user %s but not yet implemented", user_email,
+            "Bulk token revocation requested for user %s but not yet implemented",
+            user_email,
             extra={"security_event": "bulk_revocation_requested", "target_user": user_email, "revoked_by": revoked_by, "reason": reason},
         )
         return 0

@@ -519,13 +519,13 @@ class PromptService(BaseService):
             # Ensure the result is a list (JSON array)
             if not isinstance(arguments, list):
                 error_msg = f"Arguments must be a JSON array, got {type(arguments).__name__}"
-                logger.error("Invalid arguments type%s: %s. Raw value (first 200 chars): %r", ' for ' + context if context else '', error_msg, args_value[:200])
+                logger.error("Invalid arguments type%s: %s. Raw value (first 200 chars): %r", " for " + context if context else "", error_msg, args_value[:200])
                 raise PromptArgumentsJSONError(field_name="arguments", json_error=error_msg, raw_value=args_value, context=context)
 
             return arguments
         except orjson.JSONDecodeError as json_err:
             # Log the error with context
-            logger.error("Invalid JSON in arguments field%s: %s. Raw value (first 200 chars): %r", ' for ' + context if context else '', json_err, args_value[:200])
+            logger.error("Invalid JSON in arguments field%s: %s. Raw value (first 200 chars): %r", " for " + context if context else "", json_err, args_value[:200])
             # Raise custom exception
             raise PromptArgumentsJSONError(field_name="arguments", json_error=str(json_err), raw_value=args_value, context=context) from json_err
 
@@ -1524,7 +1524,7 @@ class PromptService(BaseService):
                     s.team = team_map.get(s.team_id) if s.team_id else None
                     result.append(self.convert_prompt_to_read(s, include_metrics=False))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                     # Continue with remaining prompts instead of failing completely
             # Return appropriate format based on pagination type
             if page is not None:
@@ -1633,7 +1633,7 @@ class PromptService(BaseService):
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_prompt_to_read(t, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, 'id', 'unknown'), getattr(t, 'name', 'unknown'), e)
+                logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                 # Continue with remaining prompts instead of failing completely
         return result
 
@@ -1755,7 +1755,7 @@ class PromptService(BaseService):
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
                     result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, 'id', 'unknown'), getattr(t, 'name', 'unknown'), e)
+                    logger.exception("Failed to convert prompt %s (%s): %s", getattr(t, "id", "unknown"), getattr(t, "name", "unknown"), e)
                     # Continue with remaining prompts instead of failing completely
             return result
 
@@ -2644,7 +2644,7 @@ class PromptService(BaseService):
                     await self._notify_prompt_activated(prompt)
                 else:
                     await self._notify_prompt_deactivated(prompt)
-                logger.info("Prompt %s %s", prompt.name, 'activated' if activate else 'deactivated')
+                logger.info("Prompt %s %s", prompt.name, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for prompt state change
                 audit_trail.log_action(
@@ -2857,7 +2857,7 @@ class PromptService(BaseService):
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
-            logger.info("Deleted prompt: %s", prompt_info['name'])
+            logger.info("Deleted prompt: %s", prompt_info["name"])
 
             # Structured logging: Audit trail for prompt deletion
             audit_trail.log_action(

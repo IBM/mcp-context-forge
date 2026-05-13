@@ -1062,7 +1062,7 @@ class A2AAgentService(BaseService):
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -1185,7 +1185,7 @@ class A2AAgentService(BaseService):
             try:
                 result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(agent, 'id', 'unknown'), getattr(agent, 'name', 'unknown'), e)
+                logger.exception("Failed to convert A2A agent %s (%s): %s", getattr(agent, "id", "unknown"), getattr(agent, "name", "unknown"), e)
                 # Continue with remaining agents instead of failing completely
 
         return result

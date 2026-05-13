@@ -1362,7 +1362,7 @@ class ObservabilityService:
             if self._safe_commit(obs_db, "record_metric"):
                 # Only refresh and return ID if commit succeeded
                 obs_db.refresh(metric)
-                logger.debug("Recorded metric: %s = %s %s", name, value, unit or '')
+                logger.debug("Recorded metric: %s = %s %s", name, value, unit or "")
                 return metric.id
             # Commit failed - return 0
             return 0

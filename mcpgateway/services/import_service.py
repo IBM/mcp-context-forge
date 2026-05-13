@@ -358,7 +358,9 @@ class ImportService:
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
 
-            logger.info("Import %s completed: created=%s, updated=%s, skipped=%s, failed=%s", import_id, status.created_entities, status.updated_entities, status.skipped_entities, status.failed_entities)
+            logger.info(
+                "Import %s completed: created=%s, updated=%s, skipped=%s, failed=%s", import_id, status.created_entities, status.updated_entities, status.skipped_entities, status.failed_entities
+            )
 
             return status
 
@@ -1019,7 +1021,7 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info("Bulk processed %s tools: %s created, %s updated, %s skipped, %s failed", len(tools_data), result['created'], result['updated'], result['skipped'], result['failed'])
+            logger.info("Bulk processed %s tools: %s created, %s updated, %s skipped, %s failed", len(tools_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(tools_data)
@@ -1078,7 +1080,7 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info("Bulk processed %s resources: %s created, %s updated, %s skipped, %s failed", len(resources_data), result['created'], result['updated'], result['skipped'], result['failed'])
+            logger.info("Bulk processed %s resources: %s created, %s updated, %s skipped, %s failed", len(resources_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(resources_data)
@@ -1137,7 +1139,7 @@ class ImportService:
             for error in result.get("errors", []):
                 status.errors.append(error)
 
-            logger.info("Bulk processed %s prompts: %s created, %s updated, %s skipped, %s failed", len(prompts_data), result['created'], result['updated'], result['skipped'], result['failed'])
+            logger.info("Bulk processed %s prompts: %s created, %s updated, %s skipped, %s failed", len(prompts_data), result["created"], result["updated"], result["skipped"], result["failed"])
 
         except Exception as e:
             status.failed_entities += len(prompts_data)
@@ -1837,7 +1839,7 @@ class ImportService:
         if not enhanced_data.get("federation_source"):
             enhanced_data["federation_source"] = f"imported-by-{user_context['user_email']}"
 
-        logger.debug("Enhanced entity with multitenancy: team_id=%s, visibility=%s", enhanced_data['team_id'], enhanced_data['visibility'])
+        logger.debug("Enhanced entity with multitenancy: team_id=%s, visibility=%s", enhanced_data["team_id"], enhanced_data["visibility"])
         return enhanced_data
 
     async def _assign_imported_items_to_team(self, db: Session, imported_by: str, imported_after: Optional[datetime] = None) -> None:

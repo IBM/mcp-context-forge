@@ -2067,7 +2067,9 @@ class EmailAuthService:
                         # Transfer ownership to the first available owner
                         new_owner = potential_owners[0]
                         team.created_by = new_owner.user_email
-                        logger.info("Transferred team '%s' ownership from %s to %s", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(email), new_owner.user_email)
+                        logger.info(
+                            "Transferred team '%s' ownership from %s to %s", SecurityValidator.sanitize_log_message(team.name), SecurityValidator.sanitize_log_message(email), new_owner.user_email
+                        )
                     else:
                         # No other owners available - check if it's a single-user team
                         all_members_stmt = select(EmailTeamMember).where(EmailTeamMember.team_id == team.id)

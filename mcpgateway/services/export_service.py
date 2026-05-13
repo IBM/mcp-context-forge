@@ -391,7 +391,7 @@ class ExportService:
             # Validate export data
             self._validate_export_data(cast(Dict[str, Any], export_data))
 
-            logger.info("Export completed successfully with %s total entities", sum(export_data['metadata']['entity_counts'].values()))
+            logger.info("Export completed successfully with %s total entities", sum(export_data["metadata"]["entity_counts"].values()))
             return cast(Dict[str, Any], export_data)
 
         except Exception as e:
@@ -813,7 +813,7 @@ class ExportService:
 
         self._validate_export_data(cast(Dict[str, Any], export_data))
 
-        logger.info("Selective export completed with %s entities", sum(export_data['metadata']['entity_counts'].values()))
+        logger.info("Selective export completed with %s entities", sum(export_data["metadata"]["entity_counts"].values()))
         return cast(Dict[str, Any], export_data)
 
     @staticmethod

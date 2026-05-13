@@ -390,7 +390,7 @@ class GrpcService:
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(GrpcServiceRead.model_validate(s))
             except (ValidationError, ValueError, KeyError, TypeError) as e:
-                logger.exception("Failed to convert gRPC service %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                logger.exception("Failed to convert gRPC service %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
 
         # Return appropriate format based on pagination type
         if page is not None:

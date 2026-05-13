@@ -1401,12 +1401,12 @@ class SSOService:
                 user_data["groups"] = entra_groups_from_graph
             elif "groups" in verified_id_token_claims:
                 user_data["groups"] = verified_id_token_claims["groups"]
-                logger.debug("Extracted %s groups from Entra ID token", len(verified_id_token_claims['groups']))
+                logger.debug("Extracted %s groups from Entra ID token", len(verified_id_token_claims["groups"]))
 
             # Extract roles from id_token (App Roles)
             if "roles" in verified_id_token_claims:
                 user_data["roles"] = verified_id_token_claims["roles"]
-                logger.debug("Extracted %s roles from Entra ID token", len(verified_id_token_claims['roles']))
+                logger.debug("Extracted %s roles from Entra ID token", len(verified_id_token_claims["roles"]))
 
             # Also extract any missing basic claims from id_token
             for claim in ["email", "name", "preferred_username", "oid", "sub"]:
@@ -2393,7 +2393,7 @@ class SSOService:
                 # Get role by name
                 role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
                 if not role:
-                    logger.warning("Role '%s' not found, skipping assignment for %s", assignment['role_name'], SecurityValidator.sanitize_log_message(user_email))
+                    logger.warning("Role '%s' not found, skipping assignment for %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email))
                     continue
 
                 # Check if assignment already exists
@@ -2407,12 +2407,13 @@ class SSOService:
                     logger.info("Assigned SSO role '%s' to %s", role.name, SecurityValidator.sanitize_log_message(user_email))
 
             except Exception as e:
-                logger.warning("Failed to assign role '%s' to %s: %s", assignment['role_name'], SecurityValidator.sanitize_log_message(user_email), e, exc_info=True)
+                logger.warning("Failed to assign role '%s' to %s: %s", assignment["role_name"], SecurityValidator.sanitize_log_message(user_email), e, exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
                     logger.error(
                         "Database rollback failed after role assignment error for %s: %s. Aborting remaining role assignments.",
-                        SecurityValidator.sanitize_log_message(user_email), rollback_error,
+                        SecurityValidator.sanitize_log_message(user_email),
+                        rollback_error,
                     )
                     break
