@@ -1923,6 +1923,13 @@ async def get_current_user(
                 # Set token_scopes for ANY API token with scopes field, even if empty
                 # Empty list means "no permissions granted" and will deny all access
                 request.state.token_scopes = permissions
+            elif scopes and not isinstance(scopes, dict):
+                # Malformed JWT: scopes field exists but is not a dict
+                logger.debug(
+                    f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
+                    f"Token will be treated as session token (no scope enforcement). "
+                    f"Check token generation configuration."
+                )
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
