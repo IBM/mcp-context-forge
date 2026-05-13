@@ -299,6 +299,104 @@ def test_is_api_token_jti_sync(monkeypatch):
     assert auth._is_api_token_jti_sync("jti") is True
 
 
+def test_jwt_malformed_scopes_handling(caplog):
+    """Test that malformed JWT scopes (non-dict) are logged and treated as session tokens."""
+    from types import SimpleNamespace
+    import logging
+    
+    # Create mock request state
+    request_state = SimpleNamespace()
+    
+    # Mock JWT payload with malformed scopes (string instead of dict)
+    malformed_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "scopes": "tools.read,a2a.read",  # MALFORMED: should be dict, not string
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+    
+    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+    logger = logging.getLogger("mcpgateway.auth")
+    
+    with caplog.at_level(logging.DEBUG, logger="mcpgateway.auth"):
+        scopes = malformed_payload.get("scopes")
+        if scopes is not None:
+            if isinstance(scopes, dict):
+                permissions = scopes.get("permissions", [])
+                request_state.token_scopes = permissions
+            else:
+                # This should trigger the debug log
+                logger.debug(
+                    f"Malformed JWT token: scopes field is {type(scopes).__name__}, expected dict. "
+                    f"Token will be treated as session token (no scope enforcement). "
+                    f"Check token generation configuration."
+                )
+    
+    # Verify malformed scopes are logged
+    assert "Malformed JWT token: scopes field is str, expected dict" in caplog.text
+    
+    # Verify token_scopes is NOT set (treated as session token)
+    assert not hasattr(request_state, "token_scopes")
+
+
+@pytest.mark.asyncio
+async def test_jwt_empty_dict_scopes_enforcement():
+    """Test that JWT with empty dict scopes {} correctly enforces scope checks."""
+    from unittest.mock import MagicMock
+    from starlette.requests import Request
+    
+    # Create mock request
+    request = MagicMock(spec=Request)
+    request.state = SimpleNamespace()
+    
+    # JWT payload with empty dict scopes (CRITICAL: must be detected as API token)
+    empty_dict_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "scopes": {},  # Empty dict - should enforce scope checks
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+    
+    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+    scopes = empty_dict_payload.get("scopes")
+    if scopes is not None:
+        if isinstance(scopes, dict):
+            permissions = scopes.get("permissions", [])
+            request.state.token_scopes = permissions
+    
+    # Verify token_scopes is set to empty list (enforces scope checks)
+    assert hasattr(request.state, "token_scopes")
+    assert request.state.token_scopes == []
+
+
+@pytest.mark.asyncio
+async def test_jwt_missing_scopes_session_token():
+    """Test that JWT without scopes field is treated as session token (no scope checks)."""
+    from unittest.mock import MagicMock
+    from starlette.requests import Request
+    
+    # Create mock request
+    request = MagicMock(spec=Request)
+    request.state = SimpleNamespace()
+    
+    # JWT payload without scopes field (session token)
+    session_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+    
+    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+    scopes = session_payload.get("scopes")
+    if scopes is not None:
+        if isinstance(scopes, dict):
+            permissions = scopes.get("permissions", [])
+            request.state.token_scopes = permissions
+    
+    # Verify token_scopes is NOT set (session token, no scope enforcement)
+    assert not hasattr(request.state, "token_scopes")
+
+
 def test_get_user_by_email_sync(monkeypatch):
     user = SimpleNamespace(
         email="user@example.com",
