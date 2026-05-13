@@ -48,3 +48,11 @@ async def test_nested():
         PluginContext(global_context=GlobalContext(request_id="1")),
     )
     assert result.violation
+
+    payload = CopyOnWriteDict({"message": "DROP table asdf"})
+
+    result = await plugin.tool_pre_invoke(
+        ToolPreInvokePayload(name="echo", args=payload),
+        PluginContext(global_context=GlobalContext(request_id="1")),
+    )
+    assert result.violation
