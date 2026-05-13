@@ -133,7 +133,10 @@ class MetricsBufferService:
 
         logger.info(
             "MetricsBufferService initialized: recording_enabled=%s, buffer_enabled=%s, flush_interval=%ss, max_buffer_size=%s",
-            self.recording_enabled, self.enabled, self.flush_interval, self.max_buffer_size,
+            self.recording_enabled,
+            self.enabled,
+            self.flush_interval,
+            self.max_buffer_size,
         )
 
     async def start(self) -> None:
@@ -548,7 +551,12 @@ class MetricsBufferService:
 
         logger.debug(
             "Flushing %s metrics: tools=%s, resources=%s, prompts=%s, servers=%s, a2a_agents=%s",
-            total, len(tool_metrics), len(resource_metrics), len(prompt_metrics), len(server_metrics), len(a2a_agent_metrics),
+            total,
+            len(tool_metrics),
+            len(resource_metrics),
+            len(prompt_metrics),
+            len(server_metrics),
+            len(a2a_agent_metrics),
         )
 
         # Flush in thread to avoid blocking event loop
@@ -566,7 +574,13 @@ class MetricsBufferService:
 
         logger.info(
             "Metrics flush #%s: wrote %s records (tools=%s, resources=%s, prompts=%s, servers=%s, a2a=%s)",
-            self._flush_count, total, len(tool_metrics), len(resource_metrics), len(prompt_metrics), len(server_metrics), len(a2a_agent_metrics),
+            self._flush_count,
+            total,
+            len(tool_metrics),
+            len(resource_metrics),
+            len(prompt_metrics),
+            len(server_metrics),
+            len(a2a_agent_metrics),
         )
 
     def _flush_to_db(

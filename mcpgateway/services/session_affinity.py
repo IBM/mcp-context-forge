@@ -45,9 +45,9 @@ import orjson
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.services.upstream_session_registry import (
+from mcpgateway.services.upstream_session_registry import (  # re-exported as the single source of truth
     MessageHandlerFactory,
-)  # re-exported as the single source of truth
+)
 from mcpgateway.utils.internal_http import (
     internal_loopback_base_url,
     internal_loopback_verify,
@@ -304,9 +304,9 @@ class SessionAffinity:
         # either registers ownership
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -360,9 +360,9 @@ class SessionAffinity:
         """
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -427,9 +427,7 @@ class SessionAffinity:
         # Lazy import — redis is only required when cache_type=redis.
         try:
             # Third-Party
-            from redis import (
-                exceptions as redis_exc,
-            )  # pylint: disable=import-outside-toplevel
+            from redis import exceptions as redis_exc  # pylint: disable=import-outside-toplevel
         except ImportError:
             logger.warning("Listener-%s: %s for %s", operation, exc, mcp_session_id, exc_info=exc)
             return
@@ -503,9 +501,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import (
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                     get_redis_client,
-                )  # pylint: disable=import-outside-toplevel
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -548,9 +546,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import (
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                     get_redis_client,
-                )  # pylint: disable=import-outside-toplevel
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -590,9 +588,9 @@ class SessionAffinity:
         if settings.cache_type == "redis":
             try:
                 # First-Party
-                from mcpgateway.utils.redis_client import (
+                from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                     get_redis_client,
-                )  # pylint: disable=import-outside-toplevel
+                )
 
                 redis = await get_redis_client()
                 if redis is None:
@@ -680,9 +678,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -727,9 +725,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if redis:
@@ -776,9 +774,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -882,9 +880,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -1012,7 +1010,7 @@ class SessionAffinity:
                 return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
-            logger.warning("Timeout executing forwarded request: %s", request.get('method'))
+            logger.warning("Timeout executing forwarded request: %s", request.get("method"))
             return {"error": {"code": -32603, "message": "Internal request timeout"}}
         except Exception as e:
             logger.warning("Error executing forwarded request: %s", e)
@@ -1158,9 +1156,9 @@ class SessionAffinity:
 
         try:
             # First-Party
-            from mcpgateway.utils.redis_client import (
+            from mcpgateway.utils.redis_client import (  # pylint: disable=import-outside-toplevel
                 get_redis_client,
-            )  # pylint: disable=import-outside-toplevel
+            )
 
             redis = await get_redis_client()
             if not redis:
@@ -1202,7 +1200,7 @@ class SessionAffinity:
                             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                             if msg and msg["type"] == "message":
                                 response_data = orjson.loads(msg["data"])
-                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get('status'))
+                                logger.debug("[HTTP_AFFINITY] Received HTTP response via Redis: status=%s", response_data.get("status"))
 
                                 # Decode hex body back to bytes
                                 body_hex = response_data.get("body", "")

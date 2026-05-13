@@ -1946,7 +1946,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 result.append(self.convert_gateway_to_read(s))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert gateway %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                logger.exception("Failed to convert gateway %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining gateways instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -3213,9 +3213,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         db.commit()
                         await cache.invalidate_resources()
 
-                logger.debug("Gateway %s bulk state update: %s tools, %s prompts, %s resources", SecurityValidator.sanitize_log_message(gateway.name), tools_updated, prompts_updated, resources_updated)
+                logger.debug(
+                    "Gateway %s bulk state update: %s tools, %s prompts, %s resources", SecurityValidator.sanitize_log_message(gateway.name), tools_updated, prompts_updated, resources_updated
+                )
 
-                logger.info("Gateway status: %s - %s and %s", SecurityValidator.sanitize_log_message(gateway.name), 'enabled' if activate else 'disabled', 'accessible' if reachable else 'inaccessible')
+                logger.info(
+                    "Gateway status: %s - %s and %s", SecurityValidator.sanitize_log_message(gateway.name), "enabled" if activate else "disabled", "accessible" if reachable else "inaccessible"
+                )
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
@@ -3645,7 +3649,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         timeout=settings.gateway_health_check_timeout,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, 'name', 'unknown'), settings.gateway_health_check_timeout)
+                    logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
                     await self._handle_gateway_failure(gateway)
 
@@ -4798,7 +4802,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     tools_to_add.append(db_tool)
                     logger.debug("Created new tool: %s", tool.name)
             except Exception as e:
-                logger.warning("Failed to process tool %s: %s", getattr(tool, 'name', 'unknown'), e)
+                logger.warning("Failed to process tool %s: %s", getattr(tool, "name", "unknown"), e)
                 continue
 
         return tools_to_add
@@ -4880,7 +4884,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     resources_to_add.append(db_resource)
                     logger.debug("Created new resource: %s", resource.uri)
             except Exception as e:
-                logger.warning("Failed to process resource %s: %s", getattr(resource, 'uri', 'unknown'), e)
+                logger.warning("Failed to process resource %s: %s", getattr(resource, "uri", "unknown"), e)
                 continue
 
         return resources_to_add
@@ -4991,7 +4995,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     prompts_to_add.append(db_prompt)
                     logger.debug("Created new prompt: %s", prompt.name)
             except Exception as e:
-                logger.warning("Failed to process prompt %s: %s", getattr(prompt, 'name', 'unknown'), e)
+                logger.warning("Failed to process prompt %s: %s", getattr(prompt, "name", "unknown"), e)
                 continue
 
         return prompts_to_add
@@ -5323,9 +5327,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info(
                     "Refreshed gateway %s: tools(+%s/-%s/~%s), resources(+%s/-%s/~%s), prompts(+%s/-%s/~%s)",
                     gateway_name,
-                    result["tools_added"], result["tools_removed"], result["tools_updated"],
-                    result["resources_added"], result["resources_removed"], result["resources_updated"],
-                    result["prompts_added"], result["prompts_removed"], result["prompts_updated"],
+                    result["tools_added"],
+                    result["tools_removed"],
+                    result["tools_updated"],
+                    result["resources_added"],
+                    result["resources_removed"],
+                    result["resources_updated"],
+                    result["prompts_added"],
+                    result["prompts_removed"],
+                    result["prompts_updated"],
                 )
 
                 # Invalidate caches per-type based on actual changes
@@ -5467,10 +5477,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         logger.log(
             log_level,
             "Manual refresh for gateway %s %s. Stats: tools(+%s/-%s), resources(+%s/-%s), prompts(+%s/-%s) in %.2fms",
-            gateway_id, status_msg,
-            result["tools_added"], result["tools_removed"],
-            result["resources_added"], result["resources_removed"],
-            result["prompts_added"], result["prompts_removed"],
+            gateway_id,
+            status_msg,
+            result["tools_added"],
+            result["tools_removed"],
+            result["resources_added"],
+            result["resources_removed"],
+            result["prompts_added"],
+            result["prompts_removed"],
             result["duration_ms"],
         )
 
@@ -5592,7 +5606,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         logger.info("Fetched %s tools from gateway", len(tools))
                     # Fetch resources if supported
 
-                    logger.debug("Checking for resources support: %s", capabilities.get('resources'))
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     resources = []
                     if capabilities.get("resources"):
                         try:
@@ -5647,7 +5661,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     # Fetch prompts if supported
                     prompts = []
-                    logger.debug("Checking for prompts support: %s", capabilities.get('prompts'))
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()
@@ -5771,7 +5785,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Fetch resources if supported
                 resources = []
                 if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get('resources'))
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
                             response = await session.list_resources()
@@ -5826,7 +5840,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Fetch prompts if supported
                 prompts = []
                 if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get('prompts'))
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()
@@ -5939,7 +5953,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Fetch resources if supported
                 resources = []
                 if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get('resources'))
+                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
                     if capabilities.get("resources"):
                         try:
                             response = await session.list_resources()
@@ -5994,7 +6008,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Fetch prompts if supported
                 prompts = []
                 if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get('prompts'))
+                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
                     if capabilities.get("prompts"):
                         try:
                             response = await session.list_prompts()

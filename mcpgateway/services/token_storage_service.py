@@ -166,7 +166,9 @@ class TokenStorageService:
                 token_record.updated_at = datetime.now(timezone.utc)
                 logger.info(
                     "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email), SecurityValidator.sanitize_log_message(user_id),
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                    SecurityValidator.sanitize_log_message(user_id),
                 )
             else:
                 # Create new record
@@ -176,7 +178,9 @@ class TokenStorageService:
                 self.db.add(token_record)
                 logger.info(
                     "Stored new OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email), SecurityValidator.sanitize_log_message(user_id),
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                    SecurityValidator.sanitize_log_message(user_id),
                 )
 
             self.db.commit()
@@ -209,7 +213,9 @@ class TokenStorageService:
             if hasattr(token_record, "token_type") and token_record.token_type and token_record.token_type.lower() != "bearer":
                 logger.warning(
                     "Unexpected token_type '%s' for gateway %s, app user %s; expected 'Bearer'",
-                    token_record.token_type, SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email),
+                    token_record.token_type,
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
                 )
 
             # Check if token is expired or near expiration

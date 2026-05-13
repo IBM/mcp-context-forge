@@ -47,8 +47,8 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
@@ -871,7 +871,7 @@ class ServerService(BaseService):
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert server %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -988,7 +988,7 @@ class ServerService(BaseService):
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=False))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception("Failed to convert server %s (%s): %s", getattr(s, 'id', 'unknown'), getattr(s, 'name', 'unknown'), e)
+                logger.exception("Failed to convert server %s (%s): %s", getattr(s, "id", "unknown"), getattr(s, "name", "unknown"), e)
                 # Continue with remaining servers instead of failing completely
         return result
 
@@ -1543,7 +1543,7 @@ class ServerService(BaseService):
                     await self._notify_server_activated(server)
                 else:
                     await self._notify_server_deactivated(server)
-                logger.info("Server %s %s", server.name, 'activated' if activate else 'deactivated')
+                logger.info("Server %s %s", server.name, "activated" if activate else "deactivated")
 
                 # Structured logging: Audit trail for server state change
                 self._audit_trail.log_action(
@@ -1670,7 +1670,7 @@ class ServerService(BaseService):
             metrics_cache.invalidate("servers")
 
             await self._notify_server_deleted(server_info)
-            logger.info("Deleted server: %s", server_info['name'])
+            logger.info("Deleted server: %s", server_info["name"])
 
             # Structured logging: Audit trail for server deletion
             self._audit_trail.log_action(

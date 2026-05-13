@@ -160,7 +160,8 @@ class SecurityLogger:
         log_level = logging.WARNING if not success else logging.INFO
         logger.log(
             log_level,
-            "Authentication attempt: %s", description,
+            "Authentication attempt: %s",
+            description,
             extra={
                 "security_event": True,
                 "event_type": event.event_type if event else None,
@@ -325,7 +326,8 @@ class SecurityLogger:
         )
 
         logger.warning(
-            "Suspicious activity detected: %s", description,
+            "Suspicious activity detected: %s",
+            description,
             extra={
                 "security_event": True,
                 "activity_type": activity_type,

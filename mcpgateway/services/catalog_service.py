@@ -86,7 +86,7 @@ class CatalogService:
             self._catalog_cache = catalog_data
             self._cache_timestamp = time.time()
 
-            logger.info("Loaded %s servers from catalog", len(catalog_data.get('catalog_servers', [])))
+            logger.info("Loaded %s servers from catalog", len(catalog_data.get("catalog_servers", [])))
             return catalog_data
 
         except Exception as e:
@@ -328,7 +328,7 @@ class CatalogService:
                 # OAuth server without credentials - register but skip initialization
                 # User will need to complete OAuth flow later
                 skip_initialization = True
-                logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data['name'])
+                logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
 
             # For OAuth servers without credentials, register directly without connection test
             if skip_initialization:

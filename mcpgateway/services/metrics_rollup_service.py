@@ -166,7 +166,10 @@ class MetricsRollupService:
 
         logger.info(
             "MetricsRollupService initialized: enabled=%s, interval_hours=%s, delete_raw=%s, postgresql=%s",
-            self.enabled, self.rollup_interval_hours, self.delete_raw_after_rollup, self._is_postgresql,
+            self.enabled,
+            self.rollup_interval_hours,
+            self.delete_raw_after_rollup,
+            self._is_postgresql,
         )
 
     def pause(self, reason: str = "maintenance") -> None:
@@ -267,7 +270,7 @@ class MetricsRollupService:
                         pass
 
                 if self._pause_event.is_set():
-                    logger.info("Metrics rollup paused (%s), skipping this cycle", self._pause_reason or 'maintenance')
+                    logger.info("Metrics rollup paused (%s), skipping this cycle", self._pause_reason or "maintenance")
                     try:
                         await asyncio.wait_for(self._shutdown_event.wait(), timeout=5)
                     except asyncio.TimeoutError:
@@ -295,8 +298,11 @@ class MetricsRollupService:
                 if summary.total_rollups_created > 0 or summary.total_rollups_updated > 0:
                     logger.info(
                         "Metrics rollup #%s: created %s, updated %s rollups from %s records in %.2fs",
-                        self._rollup_runs, summary.total_rollups_created, summary.total_rollups_updated,
-                        summary.total_records_aggregated, summary.duration_seconds,
+                        self._rollup_runs,
+                        summary.total_rollups_created,
+                        summary.total_rollups_updated,
+                        summary.total_records_aggregated,
+                        summary.duration_seconds,
                     )
 
             except asyncio.CancelledError:
