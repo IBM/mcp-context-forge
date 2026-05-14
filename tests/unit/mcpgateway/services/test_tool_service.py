@@ -10702,11 +10702,115 @@ class TestGrpcToolInvocation:
                 await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
 
 
-# Coverage decision-record (B7 anti-regression):
-#   ``invoke_tool`` has three byte-identical ``except asyncio.CancelledError: raise``
-#   clauses (REST ~5446, MCP ~5632, gRPC 5847) plus the gRPC timeout post-invoke hook
-#   (~5851). The gRPC clauses are exercised by ``TestGrpcToolInvocation``. Equivalent
-#   REST/MCP tests require coaxing CancelledError through ``asyncio.wait_for``, which
-#   converts cancellation into TimeoutError in some Python event-loop states. Since the
-#   pattern is structurally identical in all three branches, protecting it in one branch
+@pytest.mark.asyncio
+async def test_invoke_tool_sessionless_pool_path():
+    """Test invoke_tool using sessionless connection pool (lines 5365, 5372-5373)."""
+    # Standard
+    from types import SimpleNamespace
+
+    # First-Party
+    from mcpgateway.services.tool_service import ToolService
+    from mcpgateway.services.sessionless_connection_pool import SessionlessConnectionPool
+    from mcpgateway.services.upstream_session_registry import TransportType
+    from mcp.types import TextContent
+
+    tool_service = ToolService()
+    test_db = MagicMock()
+
+    # Mock tool and gateway
+    mock_tool = MagicMock()
+    mock_tool.id = "tool-1"
+    mock_tool.name = "test_tool"
+    mock_tool.gateway_id = "gw-1"
+    mock_tool.server_id = None
+    mock_tool.enabled = True
+    mock_tool.visibility = "public"
+    mock_tool.team_id = "public"
+    mock_tool.integration_type = "MCP"
+    mock_tool.request_type = "SSE"
+    mock_tool.jsonpath_filter = ""
+    mock_tool.auth_type = None
+    mock_tool.auth_value = None
+    mock_tool.original_name = "test_tool"
+    mock_tool.headers = {}
+    mock_tool.gateway_slug = "test-gateway"
+
+    mock_gateway = SimpleNamespace(
+        id="gw-1",
+        name="test-gateway",
+        slug="test-gateway",
+        description="Test gateway for sessionless pool",
+        url="http://localhost:9000",
+        transport="SSE",
+        enabled=True,
+        reachable=True,
+        auth_type=None,
+        auth_value=None,
+        oauth_config=None,
+        ca_certificate=None,
+        ca_certificate_sig=None,
+        client_cert=None,
+        client_key=None,
+        auth_query_params=None,
+        capabilities={"tools": {"listChanged": True}},
+        passthrough_headers=[],
+        team_id="public",
+        owner_email="test@example.com",
+        visibility="public",
+        tags=[],
+        gateway_mode="cache",
+    )
+
+    # Link the gateway to the tool to prevent MagicMock from creating a mock gateway
+    mock_tool.gateway = mock_gateway
+
+    # Set up database mock to return tool and gateway
+    returns = [mock_tool, mock_gateway, mock_gateway]
+
+    def execute_side_effect(*_args, **_kwargs):
+        value = returns.pop(0) if returns else None
+        m = Mock()
+        m.scalar_one_or_none.return_value = value
+        m.scalars.return_value = m
+        m.all.return_value = [] if value is None else [value]
+        return m
+
+    test_db.execute = Mock(side_effect=execute_side_effect)
+
+    # Create sessionless pool and mock connection
+    pool = SessionlessConnectionPool()
+
+    expected_result = ToolResult(content=[TextContent(type="text", text="Tool result from sessionless pool")])
+    mock_session = AsyncMock()
+    mock_session.call_tool = AsyncMock(return_value=expected_result)
+
+    mock_conn = MagicMock()
+    mock_conn.session = mock_session
+    mock_conn.url = "http://localhost:9000"
+    mock_conn.transport_type = TransportType.SSE
+    mock_conn.is_closed = False
+    mock_conn.last_used = time.time()
+    mock_conn.use_count = 0
+
+    class MockAcquireContext:
+        async def __aenter__(self):
+            return mock_conn
+
+        async def __aexit__(self, *args):
+            pass
+
+    # Patch all necessary components
+    with (
+        patch("mcpgateway.services.tool_service._downstream_session_id_from_request", return_value=None),
+        patch("mcpgateway.services.sessionless_connection_pool.get_sessionless_connection_pool", return_value=pool),
+        patch.object(pool, "acquire", return_value=MockAcquireContext()),
+        patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+    ):
+        result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify the sessionless pool path was used
+        assert result is not None
+        assert mock_session.call_tool.called
+        mock_session.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
+        assert result.content[0].text == "Tool result from sessionless pool"
 #   (gRPC) is sufficient to detect a regression that would affect all three.

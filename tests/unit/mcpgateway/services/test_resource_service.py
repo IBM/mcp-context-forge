@@ -7975,3 +7975,91 @@ class TestReadResourceMetaDataValidationIntegration:
             await service.invoke_resource(db, resource_id="res-1", resource_uri="file:///test.txt", meta_data=hidden_depth)
 
         db.execute.assert_not_called()
+
+
+
+# --------------------------------------------------------------------------- #
+# Sessionless Connection Pool Tests                                           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_invoke_resource_sessionless_pool_path(resource_service, mock_db, monkeypatch):
+    """Test invoke_resource using sessionless connection pool (lines 2056, 2063-2064)."""
+    # First-Party
+    from mcpgateway.services.sessionless_connection_pool import SessionlessConnectionPool
+    from mcpgateway.services.upstream_session_registry import TransportType
+
+    # Mock resource with gateway using sessionless protocol
+    mock_resource = MagicMock(id="res-1", name="test_resource", gateway_id="gw-1")
+    mock_gateway = MagicMock(
+        id="gw-1",
+        name="test_gateway",
+        url="http://localhost:9000",
+        transport="sse",
+        ca_certificate=None,
+        ca_certificate_sig=None,
+        auth_type=None,
+        auth_value={},
+        oauth_config=None,
+        auth_query_params=None,
+    )
+
+    mock_db.commit = MagicMock()
+    mock_db.close = MagicMock()
+
+    # Create sessionless pool and mock connection
+    pool = SessionlessConnectionPool()
+
+    mock_session = AsyncMock()
+    mock_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="Resource content from sessionless pool", blob=None)])
+
+    mock_conn = MagicMock()
+    mock_conn.session = mock_session
+    mock_conn.url = "http://localhost:9000"
+    mock_conn.transport_type = TransportType.SSE
+    mock_conn.is_closed = False
+    mock_conn.last_used = time.time()
+    mock_conn.use_count = 0
+
+    class MockAcquireContext:
+        async def __aenter__(self):
+            return mock_conn
+
+        async def __aexit__(self, *args):
+            pass
+
+    # Patch all necessary components
+    with (
+        patch(
+            "mcpgateway.services.resource_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                platform_admin_email="admin@test.com",
+                httpx_max_connections=10,
+                httpx_max_keepalive_connections=5,
+                httpx_keepalive_expiry=30,
+                health_check_timeout=1,
+            ),
+        ),
+        patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+        patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+        patch("mcpgateway.services.resource_service._downstream_session_id_from_request", return_value=None),
+        patch("mcpgateway.services.sessionless_connection_pool.get_sessionless_connection_pool", return_value=pool),
+        patch.object(pool, "acquire", return_value=MockAcquireContext()),
+        patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+    ):
+        mock_trace.get = MagicMock(return_value=None)
+
+        result = await resource_service.invoke_resource(
+            db=mock_db,
+            resource_id="res-1",
+            resource_uri="test://resource",
+            user_identity="test@example.com",
+            resource_obj=mock_resource,
+            gateway_obj=mock_gateway,
+        )
+
+        # Verify the sessionless pool path was used
+        assert result == "Resource content from sessionless pool"
+        assert mock_session.read_resource.called

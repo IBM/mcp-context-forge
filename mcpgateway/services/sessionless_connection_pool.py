@@ -259,11 +259,13 @@ class SessionlessConnectionPool:
                 else:
                     raise ValueError(f"Unsupported transport type: {transport_type}")
 
-                # Enter the transport context
+                # Enter the transport context manually (context must stay open for pooled connection)
+                # ruff: noqa: PLC2801
                 streams = await transport_ctx.__aenter__()  # pylint: disable=no-member
                 read_stream, write_stream = streams[0], streams[1]
 
-                # Create and initialize the session
+                # Create and initialize the session (context must stay open for pooled connection)
+                # ruff: noqa: PLC2801
                 session = ClientSession(read_stream, write_stream)
                 await session.__aenter__()  # pylint: disable=no-member
                 await session.initialize()

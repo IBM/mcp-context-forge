@@ -420,7 +420,7 @@ class PromptService(BaseService):
         # CWE-400: Validate meta_data limits before forwarding to upstream
         _validate_meta_data(meta_data)
 
-        try:
+        try:  # pylint: disable=duplicate-code
             # #4205 / #4686: Connection reuse strategy depends on protocol semantics.
             # - Sessionful protocols (< 2025-11-25): Use UpstreamSessionRegistry
             #   keyed by downstream Mcp-Session-Id for 1:1 binding.

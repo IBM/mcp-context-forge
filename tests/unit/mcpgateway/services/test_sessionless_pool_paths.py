@@ -253,4 +253,6 @@ async def test_tool_service_sessionless_pool_direct():
     assert 'get_sessionless_connection_pool' in source, "sessionless pool import missing"
     assert 'pool.acquire' in source, "pool.acquire() call missing"
     assert 'anyio.fail_after' in source, "anyio.fail_after timeout handling missing (line 5372)"
+
+
     assert 'SessionlessConnectionPool' in source, "SessionlessConnectionPool type missing"
