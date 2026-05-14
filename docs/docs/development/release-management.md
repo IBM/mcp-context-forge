@@ -253,6 +253,8 @@ find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print |
 done
 ```
 
+Update `LINT_GO_TOOLCHAIN ?= go1.26.3` appropriately in the _root_/Makefile
+
 Verify Go code compiles and passes security checks:
 
 ```bash
