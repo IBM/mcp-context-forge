@@ -146,15 +146,29 @@ def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
     rate_limited = 0
     errors = 0
 
+    # Single token reused for the handshake and every burst call below; the
+    # gateway doesn't bind sessions to the originating token, but two independent
+    # `_fresh_headers()` calls cost two POST /auth/login round-trips and obscure
+    # which token is actually paired with `Mcp-Session-Id`.
+    base_headers = _fresh_headers()
+
     sid = initialize_mcp_session(
-        GATEWAY_URL, server_id, _fresh_headers(),
+        GATEWAY_URL, server_id, base_headers,
         client_name="rate-limiter-dynamic-test",
     )
     if sid is None:
-        return {"allowed": 0, "rate_limited": 0, "errors": count, "total": count}
+        # Returning an all-errors counter would let
+        # `test_burst_all_allowed_when_disabled` evaluate `0 == 0` and
+        # `0 == BURST_SIZE - BURST_SIZE` — both pass, so a total handshake
+        # failure looks like a green test. Mirror the multi-tenant file's
+        # pattern (PR #4635 R4) and surface a descriptive failure instead.
+        pytest.fail(
+            f"MCP session handshake failed for server {server_id!r} — "
+            f"see logger output for the failing step"
+        )
 
     headers = {
-        **_fresh_headers(),
+        **base_headers,
         "Accept": "application/json, text/event-stream",
         "Mcp-Session-Id": sid,
     }
