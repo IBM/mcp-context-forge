@@ -220,6 +220,56 @@ describe("editA2AAgent", () => {
     expect(openModal).toHaveBeenCalledWith("a2a-edit-modal");
   });
 
+  test("prefills protocol_version dropdown from agent data", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <form id="edit-a2a-agent-form"></form>
+      <input id="a2a-agent-name-edit" />
+      <input id="a2a-agent-endpoint-url-edit" />
+      <textarea id="a2a-agent-description-edit"></textarea>
+      <select id="a2a-agent-type-edit"><option value="A2A">A2A</option></select>
+      <select id="a2a-protocol-version-edit">
+        <option value="1.0">1.0</option>
+        <option value="0.3">0.3</option>
+      </select>
+      <input id="a2a-agent-tags-edit" />
+      <input id="a2a-agent-capabilities-edit" />
+      <input id="a2a-agent-config-edit" />
+      <input id="edit-a2a-visibility-public" type="radio" />
+      <input id="edit-a2a-visibility-team" type="radio" />
+      <input id="edit-a2a-visibility-private" type="radio" />
+      <select id="auth-type-a2a-edit"><option value="">None</option></select>
+      <div id="auth-basic-fields-a2a-edit" style="display:none"></div>
+      <div id="auth-bearer-fields-a2a-edit" style="display:none"></div>
+      <div id="auth-headers-fields-a2a-edit" style="display:none"></div>
+      <div id="auth-oauth-fields-a2a-edit" style="display:none"></div>
+      <div id="auth-query_param-fields-a2a-edit" style="display:none"></div>
+      <div id="a2a-edit-modal" class="hidden"></div>
+    `;
+
+    const agent = {
+      name: "Legacy Agent",
+      endpointUrl: "http://localhost:9000/a2a",
+      description: "v0.3 agent",
+      agentType: "A2A",
+      protocolVersion: "0.3",
+      visibility: "private",
+      authType: "",
+      tags: [],
+      capabilities: {},
+      config: {},
+    };
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(agent),
+    });
+
+    await editA2AAgent("agent-legacy");
+
+    expect(document.getElementById("a2a-protocol-version-edit").value).toBe("0.3");
+  });
+
   test("shows error on fetch failure", async () => {
     window.ROOT_PATH = "";
     document.body.innerHTML = '<form id="edit-a2a-agent-form"></form>';
