@@ -125,18 +125,12 @@ echo $$ > "${LOCK_FILE}"
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 3: Virtual Environment Activation
-# Check if a virtual environment is already active. If not, try to activate one
-# from known locations. This ensures dependencies are properly isolated.
+# Check if a virtual environment is already active. If not, activate the one
+# created by `make install` in the project directory.
 #────────────────────────────────────────────────────────────────────────────────
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
-    # Check for virtual environment in user's home directory (preferred location)
-    if [[ -f "${HOME}/.venv/mcpgateway/bin/activate" ]]; then
-        echo "🔧  Activating virtual environment: ${HOME}/.venv/mcpgateway"
-        # shellcheck disable=SC1090
-        source "${HOME}/.venv/mcpgateway/bin/activate"
-
-    # Check for virtual environment in script directory (development setup)
-    elif [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
+    # Use the project-local virtual environment created by `make install`
+    if [[ -f "${SCRIPT_DIR}/.venv/bin/activate" ]]; then
         echo "🔧  Activating virtual environment in script directory"
         # shellcheck disable=SC1090
         source "${SCRIPT_DIR}/.venv/bin/activate"
@@ -146,7 +140,7 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
         echo "⚠️  WARNING: No virtual environment found!"
         echo "   This may lead to dependency conflicts."
         echo "   Consider creating a virtual environment with:"
-        echo "   python3 -m venv ~/.venv/mcpgateway"
+        echo "   make venv install-dev"
 
         # Optional: Uncomment the following lines to enforce virtual environment usage
         # echo "❌  FATAL: Virtual environment required for production deployments"
