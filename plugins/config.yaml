@@ -131,7 +131,7 @@ plugins:
         "tool_post_invoke",
       ]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "enforce" # enforce | enforce_ignore_error | permissive | disabled
+    mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 150
     # conditions:
     #   # Apply to specific tools/servers
@@ -399,7 +399,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 170
     conditions: []
     config:

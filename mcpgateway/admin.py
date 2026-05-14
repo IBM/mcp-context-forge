@@ -12111,6 +12111,15 @@ async def admin_discover_oauth(
         metadata = await dcr.discover_as_metadata(issuer)
 
         def _safe_endpoint(raw: str | None, name: str) -> str | None:
+            """Validate and return an OAuth endpoint URL, or None if invalid.
+
+            Args:
+                raw: The raw endpoint URL string or None.
+                name: The name of the endpoint for validation error messages.
+
+            Returns:
+                The validated URL string if valid, None otherwise.
+            """
             if not raw:
                 return None
             try:

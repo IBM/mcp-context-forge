@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/aa1_add_token_revocation_idle_timeout_fields.py
+"""Location: ./mcpgateway/alembic/versions/c3c3b7f9b014_add_token_revocation_idle_timeout_fields.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 add_token_revocation_idle_timeout_fields
 
-Revision ID: c3c3b7f9b014
+Revision ID: aa1b2c3d4e5f
 Revises: bb43712cae28
 Create Date: 2026-04-21 12:58:00.000000
 """
@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = "c3c3b7f9b014"  # pragma: allowlist secret
+revision = "aa1b2c3d4e5f"  # pragma: allowlist secret
 down_revision = "bb43712cae28"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test CSRF middleware fixes for review recommendations.
+"""Location: ./tests/unit/mcpgateway/middleware/test_csrf_fixes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test CSRF middleware fixes for review recommendations.
 
 Tests for the 5 issues identified in the review:
 1. Form field parsing for classic HTML form submits

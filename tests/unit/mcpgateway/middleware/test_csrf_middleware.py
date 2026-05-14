@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/test_csrf_middleware.py
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/middleware/test_csrf_middleware.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for CSRF middleware.
 
@@ -103,8 +104,7 @@ async def test_post_with_invalid_token_returns_403():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = False
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -164,8 +164,7 @@ async def test_post_with_mismatched_cookie_returns_403():
 
     mock_csrf_service = MagicMock()
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -197,8 +196,7 @@ async def test_post_with_valid_token_succeeds():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -282,10 +280,7 @@ async def test_referer_matches_trusted_origin_passes():
     request = MagicMock(spec=Request)
     request.method = "POST"
     request.url.path = "/api/data"
-    request.headers = {
-        "X-CSRF-Token": "valid_token",
-        "referer": "https://example.com/page"
-    }
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://example.com/page"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
@@ -294,8 +289,7 @@ async def test_referer_matches_trusted_origin_passes():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -319,10 +313,7 @@ async def test_referer_wrong_domain_returns_403():
     request = MagicMock(spec=Request)
     request.method = "POST"
     request.url.path = "/api/data"
-    request.headers = {
-        "X-CSRF-Token": "valid_token",
-        "referer": "https://evil.com/page"
-    }
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://evil.com/page"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
@@ -331,8 +322,7 @@ async def test_referer_wrong_domain_returns_403():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -366,8 +356,7 @@ async def test_referer_absent_passes():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -518,8 +507,7 @@ async def test_session_id_from_header():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -542,10 +530,7 @@ async def test_origin_header_used_when_referer_absent():
     request = MagicMock(spec=Request)
     request.method = "POST"
     request.url.path = "/api/data"
-    request.headers = {
-        "X-CSRF-Token": "valid_token",
-        "origin": "https://example.com"
-    }
+    request.headers = {"X-CSRF-Token": "valid_token", "origin": "https://example.com"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
@@ -554,8 +539,7 @@ async def test_origin_header_used_when_referer_absent():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -579,10 +563,7 @@ async def test_trusted_origins_accepted():
     request = MagicMock(spec=Request)
     request.method = "POST"
     request.url.path = "/api/data"
-    request.headers = {
-        "X-CSRF-Token": "valid_token",
-        "referer": "https://trusted.com/page"
-    }
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://trusted.com/page"}
     request.state = MagicMock()
     request.state.user = MagicMock(email="user@example.com")
     request.state.jti = "session123"
@@ -591,8 +572,7 @@ async def test_trusted_origins_accepted():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
         mock_settings.csrf_enabled = True
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
@@ -625,12 +605,14 @@ async def test_csrf_fallback_jwt_context_from_cookie_succeeds():
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service), \
-         patch(
-             "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
-             AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
-         ):
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+    ):
         mock_settings.csrf_enabled = True
         mock_settings.auth_required = True
         mock_settings.csrf_exempt_paths = []
@@ -660,8 +642,10 @@ async def test_csrf_fallback_jwt_verification_failure_returns_403():
     request.state.jti = None
     request.cookies = {"jwt_token": "bad_jwt_token", "csrf_token": "valid_token"}
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(side_effect=Exception("invalid token"))):
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(side_effect=Exception("invalid token"))),
+    ):
         mock_settings.csrf_enabled = True
         mock_settings.auth_required = True
         mock_settings.csrf_exempt_paths = []
@@ -695,12 +679,14 @@ async def test_csrf_form_post_without_header_is_rejected_without_consuming_body(
     mock_csrf_service = MagicMock()
     mock_csrf_service.validate_csrf_token.return_value = True
 
-    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, \
-         patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service), \
-         patch(
-             "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
-             AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-2"}),
-         ):
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-2"}),
+        ),
+    ):
         mock_settings.csrf_enabled = True
         mock_settings.auth_required = True
         mock_settings.csrf_exempt_paths = []
