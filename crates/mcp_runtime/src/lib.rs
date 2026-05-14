@@ -4021,7 +4021,10 @@ fn normalize_protocol_version(protocol_version: Option<&str>, default_version: &
 }
 
 fn uses_sessionless_mcp_semantics(protocol_version: Option<&str>) -> bool {
-    let normalized = normalize_protocol_version(protocol_version, SESSIONLESS_PROTOCOL_MIN_VERSION);
+    // Default to oldest supported version (2024-11-05) for backward compatibility
+    // when no protocol version is specified. This ensures existing clients without
+    // protocol version headers continue to use sessionful semantics.
+    let normalized = normalize_protocol_version(protocol_version, "2024-11-05");
     let is_sessionless = normalized.as_str() >= SESSIONLESS_PROTOCOL_MIN_VERSION;
 
     // Log deprecation warning for sessionful protocols
@@ -4767,7 +4770,7 @@ async fn forward_transport_request(
         // and level-split logs let ops distinguish "no traffic" from "every
         // client rejected"; capability headers keep parity with the other
         // terminal responses in this function.
-        if session_id.is_none() {
+        if !sessionless_semantics && (session_id.is_none() || !state.session_core_enabled()) {
             let session_core_enabled = state.session_core_enabled();
             let reject_reason = if !session_core_enabled {
                 TransportGetRejectReason::SessionCoreDisabled
@@ -10378,16 +10381,16 @@ mod unit_tests {
         hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
-        normalize_postgres_database_url, normalize_tool_input_schema,
-        parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
-        public_client_ip, query_param, read_next_sse_frame, remove_runtime_session,
-        replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
+        normalize_postgres_database_url, normalize_tool_input_schema, parse_error_response,
+        parse_sse_line, pool_owner_key, prompt_arguments_from_schema, public_client_ip,
+        query_param, read_next_sse_frame, remove_runtime_session, replay_events_endpoint,
+        requested_initialize_session_id, requested_protocol_version,
         response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
         tools_call_error_type_from_payload, transport_delete_server_scoped,
-        transport_get_server_scoped, upsert_runtime_session,
-        validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
+        transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
+        validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{
         Json, Router,

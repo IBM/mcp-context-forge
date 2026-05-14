@@ -2247,7 +2247,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
                         "jsonrpc": "2.0",
                         "id": 1,
                         "result": {
-                            "protocolVersion": "2025-11-25",
+                            "protocolVersion": "2024-11-05",
                             "capabilities": {},
                             "serverInfo": {"name": "ContextForge", "version": "0.1.0"}
                         }
@@ -2308,12 +2308,12 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
     let initialize_response = client
         .post(format!("{runtime_url}/mcp"))
         .header("x-contextforge-auth-context", auth_context.clone())
-        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-protocol-version", "2024-11-05")
         .json(&json!({
             "jsonrpc":"2.0",
             "id":1,
             "method":"initialize",
-            "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+            "params":{"protocolVersion":"2024-11-05","capabilities":{}}
         }))
         .send()
         .await
@@ -2362,7 +2362,7 @@ async fn resume_core_replays_public_get_from_rust_event_store() {
         .get(format!("{runtime_url}/mcp?session_id={session_id}"))
         .header("x-contextforge-auth-context", auth_context)
         .header("accept", "text/event-stream")
-        .header("mcp-protocol-version", "2025-11-25")
+        .header("mcp-protocol-version", "2024-11-05")
         .header("last-event-id", first_event_id)
         .send()
         .await
