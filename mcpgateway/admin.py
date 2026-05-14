@@ -1639,7 +1639,7 @@ def _set_admin_csrf_cookie(request: Request, response: Response, user_id: Option
     # Import CSRF service for HMAC-based token generation
     from mcpgateway.services.csrf_service import get_csrf_service
     import jwt as pyjwt
-    
+
     # If user_id and session_id not provided, extract from request
     if not user_id or not session_id:
         # Get user_id and session_id from request state (set by AuthContextMiddleware)
@@ -1648,11 +1648,11 @@ def _set_admin_csrf_cookie(request: Request, response: Response, user_id: Option
             # EmailUser uses 'email' as primary key
             if not user_id:
                 user_id = user.email if hasattr(user, "email") else str(user.id) if hasattr(user, "id") else None
-        
+
         # Get session_id from JWT jti claim
         if not session_id:
             session_id = getattr(request.state, "jti", None)
-        
+
         # Fallback: try to extract from JWT cookie if not in request.state
         if not user_id or not session_id:
             jwt_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
@@ -1667,7 +1667,7 @@ def _set_admin_csrf_cookie(request: Request, response: Response, user_id: Option
                         session_id = payload.get("jti")
                 except Exception:
                     pass  # Fall back to random token if JWT decoding fails
-    
+
     # Generate HMAC-based CSRF token if we have user context
     if user_id and session_id:
         csrf_service = get_csrf_service()
@@ -4212,7 +4212,7 @@ async def admin_ui(
             # Set HTTP-only cookie using centralized security cookie utility
             set_auth_cookie(response, token, remember_me=False)
             LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
-            
+
             # Set CSRF cookie with the same session_id (jti) as the JWT token
             # This ensures CSRF validation will pass when using the new JWT
             _set_admin_csrf_cookie(request, response, user_id=admin_email, session_id=payload["jti"])

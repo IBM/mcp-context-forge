@@ -12592,7 +12592,6 @@ if UI_ENABLED:
         """Serve admin UI and generate CSRF token for form submissions."""
         try:
             from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
-            from mcpgateway.auth_context import get_request_identity
 
             # Get user identity from request state (set by AuthContextMiddleware)
             user_id = None
@@ -12621,10 +12620,10 @@ if UI_ENABLED:
                 response = templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
                 set_csrf_cookie(response, csrf_token, settings)
                 return response
-            else:
-                # User not authenticated yet, serve without CSRF token (will redirect to login)
-                logger.warning(f"No user or session context for /admin/: user_id={user_id}, session_id={session_id}")
-                return templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
+
+            # User not authenticated yet, serve without CSRF token (will redirect to login)
+            logger.warning(f"No user or session context for /admin/: user_id={user_id}, session_id={session_id}")
+            return templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
         except Exception as e:
             logger.warning(f"Failed to serve admin page with CSRF token: {e}")
             # Fallback to template without CSRF token
