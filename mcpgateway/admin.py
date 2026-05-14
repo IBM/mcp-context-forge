@@ -15761,6 +15761,7 @@ async def admin_add_a2a_agent(
             description=form.get("description"),
             endpoint_url=form["endpoint_url"],
             agent_type=form.get("agent_type", "generic"),
+            protocol_version=str(form.get("protocol_version", "1.0")),
             auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
@@ -16050,6 +16051,11 @@ async def admin_edit_a2a_agent(
             uaid_protocol=uaid_protocol,
             uaid_native_id_override=uaid_native_id_override if generate_uaid else None,
         )
+        # Only update protocol_version when the field is explicitly submitted.
+        # Defaulting on edit would silently coerce an existing 0.3 agent back
+        # to "1.0" for any caller (cached form, scripted PATCH) that omits the field.
+        if form.get("protocol_version"):
+            agent_update.protocol_version = str(form["protocol_version"])
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         await a2a_service.update_agent(

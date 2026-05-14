@@ -6966,6 +6966,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </select>
               </div>
 
+              <!-- Protocol Version -->
+              <div>
+                <label
+                  for="a2a-protocol-version"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Protocol Version</label
+                >
+                <select
+                  id="a2a-protocol-version"
+                  name="protocol_version"
+                  class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <option value="1.0" selected>1.0</option>
+                  <option value="0.3">0.3</option>
+                </select>
+              </div>
+
               <!-- Authentication Type -->
               <div>
                 <label
@@ -10530,6 +10547,22 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <option value="openai">OpenAI</option>
                           <option value="anthropic">Anthropic</option>
                           <option value="custom">Custom</option>
+                        </select>
+                      </div>
+
+                      <!-- Protocol Version -->
+                      <div>
+                        <label for="a2a-protocol-version-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Protocol Version
+                        </label>
+                        <select
+                          id="a2a-protocol-version-edit"
+                          name="protocol_version"
+                          class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                        >
+                          <option value="1.0">1.0</option>
+                          <option value="0.3">0.3</option>
                         </select>
                       </div>
 
