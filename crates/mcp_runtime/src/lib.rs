@@ -4022,7 +4022,7 @@ fn normalize_protocol_version(protocol_version: Option<&str>, default_version: &
 
 fn uses_sessionless_mcp_semantics(protocol_version: Option<&str>) -> bool {
     let normalized = normalize_protocol_version(protocol_version, SESSIONLESS_PROTOCOL_MIN_VERSION);
-    let is_sessionless = normalized >= SESSIONLESS_PROTOCOL_MIN_VERSION;
+    let is_sessionless = normalized.as_str() >= SESSIONLESS_PROTOCOL_MIN_VERSION;
 
     // Log deprecation warning for sessionful protocols
     if !is_sessionless {
@@ -4627,10 +4627,8 @@ async fn forward_transport_request(
     // - whether live SSE streaming should be proxied directly by Rust
     // - otherwise, whether the request should fall through to Python's
     //   existing transport/session implementation
-    let request_protocol_version =
-        requested_protocol_version_from_headers(&incoming_headers);
-    let sessionless_semantics =
-        uses_sessionless_mcp_semantics(request_protocol_version.as_deref());
+    let request_protocol_version = requested_protocol_version_from_headers(&incoming_headers);
+    let sessionless_semantics = uses_sessionless_mcp_semantics(request_protocol_version.as_deref());
 
     let session_id = if state.session_core_enabled() && !sessionless_semantics {
         match validate_runtime_session_request(state, &mut incoming_headers, &uri).await {
@@ -10380,7 +10378,7 @@ mod unit_tests {
         hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
-        normalize_postgres_database_url, normalize_protocol_version, normalize_tool_input_schema,
+        normalize_postgres_database_url, normalize_tool_input_schema,
         parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
         public_client_ip, query_param, read_next_sse_frame, remove_runtime_session,
         replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
@@ -10388,7 +10386,7 @@ mod unit_tests {
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
         tools_call_error_type_from_payload, transport_delete_server_scoped,
-        transport_get_server_scoped, upsert_runtime_session, uses_sessionless_mcp_semantics,
+        transport_get_server_scoped, upsert_runtime_session,
         validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{

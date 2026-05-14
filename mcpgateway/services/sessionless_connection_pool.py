@@ -77,6 +77,12 @@ class PooledConnection:
     transport_type: TransportType
     """The transport type (SSE or StreamableHTTP)."""
 
+    transport_ctx: Any
+    """The async context manager for the transport (for cleanup)."""
+
+    auth_fingerprint: Optional[str] = None
+    """Optional auth fingerprint for multi-tenant isolation."""
+
     created_at: float = field(default_factory=time.time)
     """When this connection was created."""
 
@@ -184,7 +190,7 @@ class SessionlessConnectionPool:
                 if method is None:
                     continue
 
-                async with anyio.fail_after(self._health_check_timeout_seconds):
+                async with anyio.fail_after(self._health_check_timeout_seconds):  # pylint: disable=not-async-context-manager
                     await method()
                 logger.debug("Health check succeeded via %s", method_name)
                 return True
@@ -208,8 +214,11 @@ class SessionlessConnectionPool:
             return
 
         try:
-            async with anyio.fail_after(self._shutdown_timeout_seconds):
+            async with anyio.fail_after(self._shutdown_timeout_seconds):  # pylint: disable=not-async-context-manager
+                # Close the session first
                 await connection.session.__aexit__(None, None, None)
+                # Then close the transport context
+                await connection.transport_ctx.__aexit__(None, None, None)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Error closing connection: %s", exc)
         finally:
@@ -234,31 +243,37 @@ class SessionlessConnectionPool:
         )
 
         try:
-            async with anyio.fail_after(self._session_create_timeout_seconds):
+            async with anyio.fail_after(self._session_create_timeout_seconds):  # pylint: disable=not-async-context-manager
                 if transport_type == TransportType.SSE:
-                    read_stream, write_stream = await sse_client(  # noqa: PLC2801
+                    transport_ctx = sse_client(
                         url=url,
                         headers=headers,
                         httpx_client_factory=httpx_client_factory,
-                    ).__aenter__()
-                    session = ClientSession(read_stream, write_stream)
+                    )
                 elif transport_type == TransportType.STREAMABLE_HTTP:
-                    read_stream, write_stream, _get_session_id = await streamablehttp_client(  # noqa: PLC2801
+                    transport_ctx = streamablehttp_client(
                         url=url,
                         headers=headers,
                         httpx_client_factory=httpx_client_factory,
-                    ).__aenter__()
-                    session = ClientSession(read_stream, write_stream)
+                    )
                 else:
                     raise ValueError(f"Unsupported transport type: {transport_type}")
 
-                await session.__aenter__()  # noqa: PLC2801
+                # Enter the transport context
+                streams = await transport_ctx.__aenter__()  # pylint: disable=no-member
+                read_stream, write_stream = streams[0], streams[1]
+
+                # Create and initialize the session
+                session = ClientSession(read_stream, write_stream)
+                await session.__aenter__()  # pylint: disable=no-member
                 await session.initialize()
 
                 return PooledConnection(
                     session=session,
                     url=url,
                     transport_type=transport_type,
+                    transport_ctx=transport_ctx,
+                    auth_fingerprint=_compute_auth_fingerprint(headers),
                 )
         except Exception as exc:
             logger.error(
