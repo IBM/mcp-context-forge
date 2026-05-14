@@ -26,12 +26,16 @@ http.request (root span)
 ├── plugin.hook.prompt_pre_fetch
 ├── plugin.hook.tool_pre_invoke
 └── plugin.hook.tool_post_invoke
+```
 
 Span attributes may also include request baggage dimensions, for example:
 - `baggage.tenant.id`
 - `baggage.user.id`
 - `baggage.request.id`
-```
+
+The SpanAttributeCustomizer plugin can restrict which baggage keys are copied
+onto spans and can emit selected keys without the `baggage.` prefix, for example
+`tenant.id` instead of `baggage.tenant.id`.
 
 ### Trace Context Flow
 
@@ -385,6 +389,41 @@ tenant.id=tenant-123,user.id=user-456
 The baggage middleware runs before the request-root tracing middleware, so the root
 request span and child spans can all see the same baggage values.
 
+By default, baggage copied onto spans uses the `baggage.` prefix:
+
+```json
+{
+  "baggage.tenant.id": "tenant-123",
+  "baggage.user.id": "user-456"
+}
+```
+
+To emit selected baggage keys without the prefix, enable the SpanAttributeCustomizer
+plugin and configure its baggage span attribute policy:
+
+```yaml
+plugins:
+  - name: "SpanAttributeCustomizer"
+    kind: "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin"
+    hooks: ["tool_pre_invoke", "resource_pre_fetch", "resource_post_fetch"]
+    mode: "enforce"
+    priority: 10
+    config:
+      allowed_baggage_span_attributes:
+        - "tenant.id"
+        - "user.id"
+      emit_baggage_prefixed_attributes: false
+```
+
+With this policy, the exported span attributes become:
+
+```json
+{
+  "tenant.id": "tenant-123",
+  "user.id": "user-456"
+}
+```
+
 ### Outbound Propagation
 
 Outbound propagation of baggage is opt-in:
@@ -570,6 +609,9 @@ ContextForge-specific attributes use the `contextforge.` prefix:
     "baggage.user.id": "user-456",
 }
 ```
+
+When `emit_baggage_prefixed_attributes` is disabled for allowlisted baggage keys,
+the same baggage values are emitted as `tenant.id` and `user.id`.
 
 ## Plugin Server Tracing
 

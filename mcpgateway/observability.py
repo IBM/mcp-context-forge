@@ -11,6 +11,7 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 # Standard
 import base64
 from contextlib import nullcontext
+from dataclasses import dataclass
 from importlib import import_module as _im
 import logging
 import os
@@ -166,9 +167,18 @@ _SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_KINDS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class BaggageSpanAttributePolicy:
+    """Policy for promoting OpenTelemetry baggage into span attributes."""
+
+    emit_prefixed: bool = True
+    allowed_keys: Optional[frozenset[str]] = None
+
+
 # Global tracer instance - using UPPER_CASE for module-level constant
 # pylint: disable=invalid-name
 _TRACER = None
+_BAGGAGE_SPAN_ATTRIBUTE_POLICY = BaggageSpanAttributePolicy()
 
 
 def _sanitize_span_exception_message(exc_val: Optional[BaseException]) -> str:
@@ -399,21 +409,56 @@ def _should_emit_span_attribute(attribute_name: str) -> bool:
     return True
 
 
-def extract_span_attribute_mapping(plugin_manager_factory: Any) -> Dict[str, str]:
-    """Extract validated span attribute mappings from SpanAttributeCustomizer config.
+def _normalize_allowed_baggage_keys(raw_keys: Any) -> Optional[frozenset[str]]:
+    """Validate a configured baggage-key allowlist.
 
-    Option A semantics are used: mappings target existing OTEL span attribute
-    names such as ``baggage.tenant.id`` and duplicate them to the configured
-    destination key.
+    Args:
+        raw_keys: Raw configuration value from SpanAttributeCustomizer.
+
+    Returns:
+        Optional immutable set of allowed baggage keys. ``None`` means no
+        explicit allowlist was configured, preserving legacy behavior.
+    """
+    if raw_keys is None:
+        return None
+    if not isinstance(raw_keys, list):
+        logger.warning("SpanAttributeCustomizer allowed_baggage_span_attributes must be a list; got %s", type(raw_keys).__name__)
+        return frozenset()
+
+    allowed_keys: set[str] = set()
+    for raw_key in raw_keys:
+        if not isinstance(raw_key, str):
+            logger.warning("Skipping malformed baggage span attribute allowlist entry: %r", raw_key)
+            continue
+        key = raw_key.strip()
+        if not key:
+            logger.warning("Skipping empty baggage span attribute allowlist entry")
+            continue
+        allowed_keys.add(key)
+    return frozenset(allowed_keys)
+
+
+def configure_baggage_span_attribute_policy(policy: Optional[BaggageSpanAttributePolicy] = None) -> None:
+    """Configure process-wide baggage-to-span-attribute emission policy.
+
+    Args:
+        policy: Policy to apply. ``None`` resets to legacy prefixed emission.
+    """
+    global _BAGGAGE_SPAN_ATTRIBUTE_POLICY  # pylint: disable=global-statement
+    _BAGGAGE_SPAN_ATTRIBUTE_POLICY = policy or BaggageSpanAttributePolicy()
+
+
+def extract_baggage_span_attribute_policy(plugin_manager_factory: Any) -> BaggageSpanAttributePolicy:
+    """Extract baggage span-attribute policy from SpanAttributeCustomizer config.
 
     Args:
         plugin_manager_factory: Active plugin manager factory with loaded base config.
 
     Returns:
-        Mapping of source span attribute key to destination span attribute key.
+        Policy controlling how OTEL baggage is promoted to span attributes.
     """
     if plugin_manager_factory is None:
-        return {}
+        return BaggageSpanAttributePolicy()
 
     base_config = getattr(plugin_manager_factory, "_base_config", None)
     plugins = getattr(base_config, "plugins", None) or []
@@ -425,66 +470,42 @@ def extract_span_attribute_mapping(plugin_manager_factory: Any) -> Dict[str, str
             continue
 
         config = getattr(plugin, "config", None) or {}
-        raw_mapping = config.get("attribute_mapping") or {}
-        if not isinstance(raw_mapping, dict):
-            logger.warning("SpanAttributeCustomizer attribute_mapping must be a mapping; got %s", type(raw_mapping).__name__)
-            return {}
+        emit_prefixed = config.get("emit_baggage_prefixed_attributes", True)
+        if not isinstance(emit_prefixed, bool):
+            logger.warning(
+                "SpanAttributeCustomizer emit_baggage_prefixed_attributes must be a boolean; got %s",
+                type(emit_prefixed).__name__,
+            )
+            emit_prefixed = True
 
-        extracted: Dict[str, str] = {}
-        for source_key, target_key in raw_mapping.items():
-            if not isinstance(source_key, str) or not isinstance(target_key, str):
-                logger.warning("Skipping malformed SpanAttributeCustomizer mapping entry with non-string key/value: %r -> %r", source_key, target_key)
-                continue
-            normalized_source = source_key.strip()
-            normalized_target = target_key.strip()
-            if not normalized_source or not normalized_target:
-                logger.warning("Skipping malformed SpanAttributeCustomizer mapping entry with empty key/value: %r -> %r", source_key, target_key)
-                continue
-            extracted[normalized_source] = normalized_target
-        return extracted
+        allowed_keys = _normalize_allowed_baggage_keys(config.get("allowed_baggage_span_attributes"))
+        return BaggageSpanAttributePolicy(emit_prefixed=emit_prefixed, allowed_keys=allowed_keys)
 
-    return {}
+    return BaggageSpanAttributePolicy()
 
 
-class BaggageAttributeSpanProcessor:
-    """Duplicate configured baggage-derived span attributes onto mapped keys."""
+def _baggage_span_attributes(baggage_items: Mapping[str, Any]) -> Dict[str, Any]:
+    """Convert OTEL baggage entries to span attributes under configured policy.
 
-    def __init__(self, span_attribute_mapping: Mapping[str, str]):
-        """Initialize the processor with validated mapping configuration.
+    Args:
+        baggage_items: Current OTEL baggage key/value pairs.
 
-        Args:
-            span_attribute_mapping: Mapping from source span attribute names to destination names.
-        """
-        self.span_attribute_mapping = dict(span_attribute_mapping)
+    Returns:
+        Span attributes derived from baggage.
+    """
+    if not baggage_items:
+        return {}
 
-    def on_start(self, span, _parent_context=None):
-        """Copy mapped baggage-derived attributes when a span starts.
-
-        Args:
-            span: The span being started.
-            _parent_context: Parent context required by SpanProcessor interface.
-        """
-        if not self.span_attribute_mapping or span is None:
-            return
-
-        attributes = getattr(span, "attributes", None) or {}
-        for source_key, target_key in self.span_attribute_mapping.items():
-            if not source_key.startswith("baggage."):
-                continue
-            if source_key not in attributes:
-                continue
-            value = attributes[source_key]
-            if value is None:
-                continue
-            span.set_attribute(target_key, value)
-
-    def on_end(self, _span):
-        """Handle span end event.
-
-        Args:
-            _span: The span being ended (unused).
-        """
-        return None
+    policy = _BAGGAGE_SPAN_ATTRIBUTE_POLICY
+    span_attributes: Dict[str, Any] = {}
+    for key, value in baggage_items.items():
+        if value is None:
+            continue
+        if policy.allowed_keys is not None and key not in policy.allowed_keys:
+            continue
+        attribute_name = f"baggage.{key}" if policy.emit_prefixed else key
+        span_attributes.setdefault(attribute_name, value)
+    return span_attributes
 
 
 def set_span_attribute(span: Any, attribute_name: str, value: Any) -> None:
@@ -872,9 +893,10 @@ class OpenTelemetryRequestMiddleware:
                     if OTEL_AVAILABLE and otel_baggage:
                         baggage_dict = otel_baggage.get_all()
                         if baggage_dict:
-                            for key, value in baggage_dict.items():
-                                set_span_attribute(span, f"baggage.{key}", value)
-                            logger.debug("Injected %d baggage entries into request span", len(baggage_dict))
+                            baggage_attrs = _baggage_span_attributes(baggage_dict)
+                            for key, value in baggage_attrs.items():
+                                set_span_attribute(span, key, value)
+                            logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
                 except Exception as exc:
                     logger.debug("Failed to inject baggage into request span: %s", exc)
 
@@ -891,7 +913,7 @@ class OpenTelemetryRequestMiddleware:
                 raise
 
 
-def init_telemetry(span_attribute_mapping: Optional[Mapping[str, str]] = None) -> Optional[Any]:
+def init_telemetry() -> Optional[Any]:
     """Initialize OpenTelemetry with configurable backend.
 
     Supports multiple backends via environment variables:
@@ -900,10 +922,6 @@ def init_telemetry(span_attribute_mapping: Optional[Mapping[str, str]] = None) -
     - OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger endpoint (for jaeger exporter)
     - OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin endpoint (for zipkin exporter)
     - OTEL_ENABLE_OBSERVABILITY: Set to 'true' to enable (disabled by default)
-
-    Args:
-        span_attribute_mapping: Optional startup-loaded mapping for remapping
-            existing span attribute names such as ``baggage.*`` to exported aliases.
 
     Returns:
         The initialized tracer instance or None if disabled.
@@ -1020,10 +1038,6 @@ def init_telemetry(span_attribute_mapping: Optional[Mapping[str, str]] = None) -
         if resource is not None and copy_resource_attrs:
             logger.info("Adding ResourceAttributeSpanProcessor to copy resource attributes to spans")
             provider.add_span_processor(ResourceAttributeSpanProcessor())
-
-        if span_attribute_mapping:
-            logger.info("Adding BaggageAttributeSpanProcessor with %d configured mapping(s)", len(span_attribute_mapping))
-            provider.add_span_processor(BaggageAttributeSpanProcessor(span_attribute_mapping))
 
         # Configure the appropriate exporter based on type
         exporter: Optional[Any] = None
@@ -1275,10 +1289,10 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         if OTEL_AVAILABLE and otel_baggage:
             baggage_dict = otel_baggage.get_all()
             if baggage_dict:
-                for key, value in baggage_dict.items():
-                    # Prefix baggage attributes to distinguish from direct attributes
-                    attributes.setdefault(f"baggage.{key}", value)
-                logger.debug(f"Injected {len(baggage_dict)} baggage entries as span attributes")
+                baggage_attrs = _baggage_span_attributes(baggage_dict)
+                for key, value in baggage_attrs.items():
+                    attributes.setdefault(key, value)
+                logger.debug(f"Injected {len(baggage_attrs)} baggage entries as span attributes")
     except Exception:
         logger.warning("Failed to inject baggage into span attributes", exc_info=True)
 

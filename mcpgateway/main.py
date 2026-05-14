@@ -109,7 +109,7 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import extract_span_attribute_mapping, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
@@ -1475,10 +1475,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             mark_factory_init_degraded()
 
-        # Extract span attribute mapping from plugin config before telemetry init
-        span_attribute_mapping = extract_span_attribute_mapping(get_plugin_manager_factory())
-        # Initialize telemetry with mapping (must run after plugin manager init)
-        init_telemetry(span_attribute_mapping=span_attribute_mapping)
+        # Load SpanAttributeCustomizer baggage emission policy before telemetry starts
+        # creating spans. Baggage remains the propagation mechanism; this policy
+        # controls the span attribute names exported from allowed baggage keys.
+        configure_baggage_span_attribute_policy(extract_baggage_span_attribute_policy(get_plugin_manager_factory()))
+        init_telemetry()
         logger.info("Observability initialized")
 
         try:
