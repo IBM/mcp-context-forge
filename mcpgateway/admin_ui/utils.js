@@ -147,6 +147,7 @@ export async function fetchWithTimeout(
   return fetch(url, {
     ...options,
     signal: controller.signal,
+    credentials: options.credentials || "include",
     // Add cache busting to prevent stale responses
     headers: {
       ...options.headers,

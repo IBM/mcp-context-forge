@@ -12406,6 +12406,10 @@ if UI_ENABLED:
             exc,
         )
 
+    # Note: The /admin/ route is provided by admin_router (included at line 12121)
+    # which has prefix="/admin" and a route at "/", creating the /admin/ endpoint.
+    # No standalone route is needed here.
+
     # Redirect root path to admin UI
     @app.get("/")
     async def root_redirect():
