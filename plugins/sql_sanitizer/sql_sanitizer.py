@@ -24,7 +24,7 @@ from typing import Any, Optional, Pattern
 # Third-Party
 from pydantic import BaseModel, ConfigDict, field_validator
 
-# Third-Party
+# First-Party
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -35,6 +35,12 @@ from cpex.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
+
 
 _DEFAULT_BLOCKED = [
     r"\bDROP\b",
@@ -73,7 +79,7 @@ class SQLSanitizerConfig(BaseModel):
     require_parameterization: bool = False
     block_on_violation: bool = True
 
-    @field_validator('blocked_statements', mode='before')
+    @field_validator("blocked_statements", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> list[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.
@@ -199,6 +205,7 @@ class SQLSanitizerPlugin(Plugin):
             config: Plugin configuration.
         """
         super().__init__(config)
+        logger.debug(f"SQL-SANITIZER config: {config}")
         self._cfg = SQLSanitizerConfig(**(config.config or {}))
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -211,6 +218,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return PromptPrehookResult(
@@ -237,6 +245,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return ToolPreInvokeResult(

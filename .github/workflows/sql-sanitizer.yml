@@ -115,11 +115,12 @@ jobs:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
+                  LOG_LEVEL: DEBUG
               run: |
                   make venv
                   make install
                   make stop-serve
-                  make serve &
+                  make serve > gunicorn.log 2>&1 &
 
                   echo "Waiting for gateway to start..."
                   for i in {1..60}; do
@@ -304,6 +305,7 @@ jobs:
                     echo "Failure: SQLSanitizer did not block the malicious command as expected."
                     exit 1
                   fi
+                  cat gunicorn.log | grep sql_sanitizer
 
                   echo "All sql-sanitizer tests passed!"
             - name: Upload logs on failure
@@ -315,4 +317,5 @@ jobs:
                       fast-test-server.log
                       sql-sanitizer_output.json
                       sql-sanitizer_test.log
+
                   retention-days: 7
