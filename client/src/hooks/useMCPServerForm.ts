@@ -58,88 +58,86 @@ const oauthConfigSchema = z.object({
 // Keep a reference to the inner ZodObject so validateField can access .shape
 // (ZodEffects produced by .superRefine does not expose .shape)
 const mcpServerFormObjectSchema = z.object({
-    name: z
-      .string()
-      .transform((val) => sanitizeString(val, 100))
-      .pipe(
-        z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters"),
-      ),
-    url: z
-      .string()
-      .transform((val) => sanitizeUrl(val, 2000))
-      .pipe(
-        z
-          .string()
-          .min(1, "URL is required")
-          .refine(
-            (value) => {
-              try {
-                const url = new URL(value);
-                return url.protocol === "http:" || url.protocol === "https:";
-              } catch {
-                return false;
-              }
-            },
-            { message: "URL must start with http:// or https://" },
-          ),
-      ),
-    description: z
-      .string()
-      .transform((val) => sanitizeString(val, 500))
-      .pipe(z.string().max(500, "Description must be less than 500 characters"))
-      .optional(),
-    transport: z.enum(["SSE", "STREAMABLEHTTP"]),
-    passthroughHeaders: z.array(z.string().transform((val) => sanitizeString(val, 200))).optional(),
-    authType: z.string().optional(),
-    authUsername: z
-      .string()
-      .transform((val) => sanitizeString(val, 200))
-      .optional(),
-    authPassword: z
-      .string()
-      .transform((val) => sanitizePassword(val, 1000))
-      .optional(),
-    authToken: z
-      .string()
-      .transform((val) => sanitizeToken(val, 2000))
-      .optional(),
-    auth_headers: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
-    auth_query_param_key: z
-      .string()
-      .transform((val) => sanitizeQueryParam(val, 100))
-      .optional(),
-    auth_query_param_value: z
-      .string()
-      .transform((val) => sanitizeQueryParam(val, 500))
-      .optional(),
-    oneTimeAuth: z.boolean().optional(),
-    visibility: z.enum(["public", "private"]).optional(),
-    caCertificate: z
-      .string()
-      .transform((val) => sanitizeCertificate(val, 10000))
-      .optional(),
-    oauth_config: oauthConfigSchema.optional(),
-  });
+  name: z
+    .string()
+    .transform((val) => sanitizeString(val, 100))
+    .pipe(z.string().min(1, "Name is required").max(100, "Name must be less than 100 characters")),
+  url: z
+    .string()
+    .transform((val) => sanitizeUrl(val, 2000))
+    .pipe(
+      z
+        .string()
+        .min(1, "URL is required")
+        .refine(
+          (value) => {
+            try {
+              const url = new URL(value);
+              return url.protocol === "http:" || url.protocol === "https:";
+            } catch {
+              return false;
+            }
+          },
+          { message: "URL must start with http:// or https://" },
+        ),
+    ),
+  description: z
+    .string()
+    .transform((val) => sanitizeString(val, 500))
+    .pipe(z.string().max(500, "Description must be less than 500 characters"))
+    .optional(),
+  transport: z.enum(["SSE", "STREAMABLEHTTP"]),
+  passthroughHeaders: z.array(z.string().transform((val) => sanitizeString(val, 200))).optional(),
+  authType: z.string().optional(),
+  authUsername: z
+    .string()
+    .transform((val) => sanitizeString(val, 200))
+    .optional(),
+  authPassword: z
+    .string()
+    .transform((val) => sanitizePassword(val, 1000))
+    .optional(),
+  authToken: z
+    .string()
+    .transform((val) => sanitizeToken(val, 2000))
+    .optional(),
+  auth_headers: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+  auth_query_param_key: z
+    .string()
+    .transform((val) => sanitizeQueryParam(val, 100))
+    .optional(),
+  auth_query_param_value: z
+    .string()
+    .transform((val) => sanitizeQueryParam(val, 500))
+    .optional(),
+  oneTimeAuth: z.boolean().optional(),
+  visibility: z.enum(["public", "private"]).optional(),
+  caCertificate: z
+    .string()
+    .transform((val) => sanitizeCertificate(val, 10000))
+    .optional(),
+  oauth_config: oauthConfigSchema.optional(),
+});
 
 const mcpServerFormSchema = mcpServerFormObjectSchema.superRefine((data, ctx) => {
-    const config = data.oauth_config;
-    if (data.authType === "oauth" && config?.grant_type === "password") {
-      if (!config.username) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Username is required for password grant",
-          path: ["oauthUsername"],
-        });
-      }
-      if (!config.password) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Password is required for password grant",
-          path: ["oauthPassword"],
-        });
-      }
+  const config = data.oauth_config;
+  if (data.authType === "oauth" && config?.grant_type === "password") {
+    if (!config.username) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Username is required for password grant",
+        path: ["oauthUsername"],
+      });
     }
-  });
+    if (!config.password) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Password is required for password grant",
+        path: ["oauthPassword"],
+      });
+    }
+  }
+});
 
 export type MCPServerFormData = z.infer<typeof mcpServerFormSchema>;
 
