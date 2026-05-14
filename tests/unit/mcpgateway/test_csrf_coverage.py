@@ -182,4 +182,3 @@ class TestAdminLoginJWTCookieException:
                         mock_set_csrf.assert_called_once()
                         assert response.status_code == 303
 
-# Made with Bob
