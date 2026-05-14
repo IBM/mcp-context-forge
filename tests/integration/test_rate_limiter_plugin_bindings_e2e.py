@@ -76,8 +76,13 @@ OVERRIDE_TEAM_ID = os.environ.get("RATE_LIMITER_TEST_TEAM_ID")
 # so we shell out to ``docker exec ... psql``. This couples the test to the
 # docker-compose dev stack — acceptable because the suite is already
 # skip-guarded on a running gateway via ``_is_gateway_running()``.
+#
+# Default matches the container name produced by ``docker compose up`` from the
+# repo root (project name = ``mcp-context-forge``). Override via env var if
+# you bring the stack up under a different project name (e.g.
+# ``docker compose -p <name> up`` → set RATE_LIMITER_TEST_PG_CONTAINER=<name>-postgres-1).
 PG_CONTAINER = os.environ.get(
-    "RATE_LIMITER_TEST_PG_CONTAINER", "rl-binding-test-postgres-1"
+    "RATE_LIMITER_TEST_PG_CONTAINER", "mcp-context-forge-postgres-1"
 )
 PG_USER = os.environ.get("RATE_LIMITER_TEST_PG_USER", "postgres")
 PG_DATABASE = os.environ.get("RATE_LIMITER_TEST_PG_DATABASE", "mcp")
@@ -374,8 +379,13 @@ def _psql_get_binding_config(binding_reference_id: str) -> dict | None:
 
 
 def _redis_rl_keys() -> list[tuple[str, str, str]]:
-    """Return rate-limiter keys currently in Redis as ``(key, value, ttl)`` tuples."""
-    container = os.environ.get("REDIS_CONTAINER_NAME", "rl-binding-test-redis-1")
+    """Return rate-limiter keys currently in Redis as ``(key, value, ttl)`` tuples.
+
+    Default container name matches ``docker compose up`` from the repo root
+    (project name = ``mcp-context-forge``). Override via REDIS_CONTAINER_NAME
+    if you use a custom project name (e.g. ``docker compose -p <name> up``).
+    """
+    container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
     try:
         keys_out = subprocess.run(
             ["docker", "exec", container, "redis-cli", "--scan", "--pattern", "rl:*"],
