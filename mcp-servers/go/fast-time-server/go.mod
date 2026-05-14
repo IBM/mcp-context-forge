@@ -4,7 +4,7 @@ go 1.25.5
 
 toolchain go1.26.2
 
-require github.com/mark3labs/mcp-go v0.53.0 // MCP server/runtime
+require github.com/mark3labs/mcp-go v0.54.0 // MCP server/runtime
 
 require (
     github.com/google/jsonschema-go v0.4.3 // indirect
