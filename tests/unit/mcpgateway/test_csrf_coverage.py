@@ -182,3 +182,36 @@ class TestAdminLoginJWTCookieException:
                         mock_set_csrf.assert_called_once()
                         assert response.status_code == 303
 
+
+
+
+@pytest.fixture
+def enable_admin_for_test(monkeypatch):
+    """Temporarily enable admin API and reload main.py to mount admin routes."""
+    import sys
+    from mcpgateway.config import get_settings
+    
+    # Clear settings cache and set admin enabled
+    get_settings.cache_clear()
+    monkeypatch.setenv("MCPGATEWAY_ADMIN_API_ENABLED", "true")
+    monkeypatch.setenv("MCPGATEWAY_UI_ENABLED", "true")
+    
+    # Reload main to pick up new settings and mount admin routes
+    if "mcpgateway.main" in sys.modules:
+        del sys.modules["mcpgateway.main"]
+    
+    # Import fresh main with admin enabled
+    from mcpgateway.main import app
+    
+    yield app
+    
+    # Cleanup: restore original state
+    get_settings.cache_clear()
+    if "mcpgateway.main" in sys.modules:
+        del sys.modules["mcpgateway.main"]
+
+
+# NOTE: TestMainAdminPageEndpoint class removed because the standalone /admin/ route
+# in main.py (previously at line 12410) was unreachable dead code. The admin_router
+# (included at main.py:12121) provides the /admin/ endpoint, making the standalone
+# route unreachable. The dead code has been removed from main.py.

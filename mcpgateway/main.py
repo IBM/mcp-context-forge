@@ -12586,51 +12586,9 @@ if UI_ENABLED:
             exc,
         )
 
-    # Admin page route with CSRF token generation
-    @app.get("/admin/", include_in_schema=False)
-    async def admin_page(request: Request):
-        """Serve admin UI and generate CSRF token for form submissions."""
-        try:
-            from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
-
-            # Get user identity from request state (set by AuthContextMiddleware)
-            user_id = None
-            session_id = None
-            if hasattr(request.state, "user") and request.state.user:
-                user = request.state.user
-                user_id = user.email if hasattr(user, "email") else str(user.id) if hasattr(user, "id") else None
-            session_id = getattr(request.state, "jti", None)
-
-            # Fallback: extract from JWT cookie if request.state not populated
-            if not user_id or not session_id:
-                raw_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
-                if raw_token:
-                    try:
-                        from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
-
-                        payload = await verify_jwt_token_cached(raw_token, request)
-                        user_id = payload.get("sub") or payload.get("email")
-                        session_id = payload.get("jti")
-                    except Exception:
-                        pass  # CSRF will fail later if token is invalid
-
-            # Generate CSRF token if we have both user and session context
-            if user_id and session_id:
-                csrf_token = generate_csrf_token(user_id=user_id, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
-                logger.info(
-                    f"Generated CSRF token for /admin/: user={user_id}, session={session_id}, secret_len={len(settings.csrf_secret_key)}, expiry={settings.csrf_token_expiry}, token={csrf_token}"
-                )
-                response = templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
-                set_csrf_cookie(response, csrf_token, settings)
-                return response
-
-            # User not authenticated yet, serve without CSRF token (will redirect to login)
-            logger.warning(f"No user or session context for /admin/: user_id={user_id}, session_id={session_id}")
-            return templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
-        except Exception as e:
-            logger.warning(f"Failed to serve admin page with CSRF token: {e}")
-            # Fallback to template without CSRF token
-            return templates.TemplateResponse("admin.html", {"request": request, "root_path": settings.app_root_path, "ui_airgapped": settings.ui_airgapped})
+    # Note: The /admin/ route is provided by admin_router (included at line 12121)
+    # which has prefix="/admin" and a route at "/", creating the /admin/ endpoint.
+    # No standalone route is needed here.
 
     # Redirect root path to admin UI
     @app.get("/")
