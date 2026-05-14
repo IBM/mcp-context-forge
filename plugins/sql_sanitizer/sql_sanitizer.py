@@ -24,7 +24,7 @@ from typing import Any, Optional, Pattern
 # Third-Party
 from pydantic import BaseModel, ConfigDict, field_validator
 
-# Third-Party
+# First-Party
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -35,6 +35,12 @@ from cpex.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+from mcpgateway.services.logging_service import LoggingService
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
+
 
 _DEFAULT_BLOCKED = [
     r"\bDROP\b",
@@ -73,7 +79,7 @@ class SQLSanitizerConfig(BaseModel):
     require_parameterization: bool = False
     block_on_violation: bool = True
 
-    @field_validator('blocked_statements', mode='before')
+    @field_validator("blocked_statements", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> list[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.
@@ -161,8 +167,53 @@ def _find_issues(sql: str, cfg: SQLSanitizerConfig) -> list[str]:
     return issues
 
 
+def _scan_value(key: str, value: Any, cfg: SQLSanitizerConfig, issues: list[str], scanned: dict[str, Any]) -> None:
+    """Recursively scan a value for SQL issues, respecting cfg.fields for key filtering.
+
+    Only string values whose key is in cfg.fields (or all string values when
+    cfg.fields is None) are passed to _find_issues.  Nested dicts and lists are
+    walked regardless of the key so that deeply-nested field names are still
+    checked against cfg.fields.
+
+    Args:
+        key: The field name associated with this value.
+        value: The value to inspect.
+        cfg: Sanitization configuration.
+        issues: Accumulator for issue strings (mutated in place).
+        scanned: Accumulator for sanitized replacements (mutated in place).
+    """
+    if isinstance(value, str):
+        # Apply field-name filter only at the leaf string level
+        if cfg.fields is None or key in cfg.fields:
+            found = _find_issues(value, cfg)
+            if found:
+                issues.extend([f"{key}: {m}" for m in found])
+            if cfg.strip_comments:
+                clean = _strip_sql_comments(value)
+                if clean != value:
+                    scanned[key] = clean
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _scan_value(k, v, cfg, issues, scanned)
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    _scan_value(k, v, cfg, issues, scanned)
+            elif isinstance(item, str):
+                # List items that are plain strings inherit the parent key
+                if cfg.fields is None or key in cfg.fields:
+                    found = _find_issues(item, cfg)
+                    if found:
+                        issues.extend([f"{key}[]: {m}" for m in found])
+
+
 def _scan_args(args: dict[str, Any] | None, cfg: SQLSanitizerConfig) -> tuple[list[str], dict[str, Any]]:
-    """Scan tool arguments for SQL issues.
+    """Scan tool arguments for SQL issues, including deeply nested structures.
+
+    Walks all top-level keys and recurses into nested dicts and lists.
+    String values are only checked when their key matches cfg.fields
+    (or unconditionally when cfg.fields is None).
 
     Args:
         args: Tool arguments dictionary.
@@ -176,16 +227,7 @@ def _scan_args(args: dict[str, Any] | None, cfg: SQLSanitizerConfig) -> tuple[li
         return issues, {}
     scanned: dict[str, Any] = {}
     for k, v in args.items():
-        if cfg.fields and k not in cfg.fields:
-            continue
-        if isinstance(v, str):
-            found = _find_issues(v, cfg)
-            if found:
-                issues.extend([f"{k}: {m}" for m in found])
-            if cfg.strip_comments:
-                clean = _strip_sql_comments(v)
-                if clean != v:
-                    scanned[k] = clean
+        _scan_value(k, v, cfg, issues, scanned)
     return issues, scanned
 
 
@@ -199,6 +241,7 @@ class SQLSanitizerPlugin(Plugin):
             config: Plugin configuration.
         """
         super().__init__(config)
+        logger.debug(f"SQL-SANITIZER config: {config}")
         self._cfg = SQLSanitizerConfig(**(config.config or {}))
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -211,6 +254,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return PromptPrehookResult(
@@ -237,6 +281,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
+        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return ToolPreInvokeResult(
