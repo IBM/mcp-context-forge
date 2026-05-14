@@ -2023,4 +2023,35 @@ if __name__ == "__main__":
 
 # Also, make sure to set the following environment variables or they will use defaults:
 # export MCPGATEWAY_AUTH_REQUIRED=false  # To disable auth in tests
+
+
+class TestAdminPageEndpoint:
+    """Test admin page endpoint authentication enforcement.
+    
+    Note: The AdminAuthMiddleware enforces authentication before dependency
+    injection occurs, so these tests verify that the middleware correctly
+    rejects unauthenticated requests. Full CSRF token generation testing
+    with authenticated requests is covered in unit tests (test_csrf_coverage.py)
+    where middleware can be bypassed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_admin_page_requires_auth(self, client: AsyncClient, mock_auth):
+        """Test admin page requires authentication via AdminAuthMiddleware."""
+        # AdminAuthMiddleware runs before dependency overrides, so requests
+        # without valid auth headers/cookies are rejected with 401
+        response = await client.get("/admin/")
+        
+        # Should return 401 because AdminAuthMiddleware enforces auth
+        # before the mocked dependencies are resolved
+        assert response.status_code == 401, f"Expected 401 Unauthorized, got {response.status_code}"
+
+    @pytest.mark.asyncio
+    async def test_admin_page_rejects_invalid_token(self, client: AsyncClient, mock_auth):
+        """Test admin page rejects invalid JWT tokens."""
+        # Even with a cookie, invalid tokens are rejected by AdminAuthMiddleware
+        response = await client.get("/admin/", cookies={"jwt_token": "invalid-token"})
+        
+        # Should return 401 for invalid token
+        assert response.status_code == 401, f"Expected 401 Unauthorized, got {response.status_code}"
 # Or the tests will override authentication automatically
