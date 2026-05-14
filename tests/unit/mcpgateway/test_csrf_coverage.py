@@ -33,7 +33,7 @@ class TestAdminCSRFCookieFallback:
         mock_request.state = Mock()
         mock_request.state.user = None  # Force JWT fallback
         mock_request.state.jti = None  # Force JWT fallback
-        
+
         # Create JWT with only 'sub' and 'jti'
         payload = {
             "sub": "user@example.com",
@@ -53,9 +53,9 @@ class TestAdminCSRFCookieFallback:
             mock_service = Mock()
             mock_service.generate_csrf_token = Mock(return_value="csrf-token-123")
             mock_get_service.return_value = mock_service
-            
+
             _set_admin_csrf_cookie(mock_request, mock_response)
-            
+
             # Verify CSRF token was generated with user_id from 'sub'
             mock_service.generate_csrf_token.assert_called_once_with("user@example.com", "session-123")
 
@@ -70,7 +70,7 @@ class TestAdminCSRFCookieFallback:
         mock_request.state = Mock()
         mock_request.state.user = None  # Force JWT fallback
         mock_request.state.jti = None  # Force JWT fallback
-        
+
         # Create JWT with nested user.email structure
         payload = {
             "user": {"email": "nested@example.com"},
@@ -90,9 +90,9 @@ class TestAdminCSRFCookieFallback:
             mock_service = Mock()
             mock_service.generate_csrf_token = Mock(return_value="csrf-token-456")
             mock_get_service.return_value = mock_service
-            
+
             _set_admin_csrf_cookie(mock_request, mock_response)
-            
+
             # Verify CSRF token was generated with user_id from nested email
             mock_service.generate_csrf_token.assert_called_once_with("nested@example.com", "session-456")
 
@@ -107,7 +107,7 @@ class TestAdminCSRFCookieFallback:
         mock_request.state = Mock()
         mock_request.state.user = None  # Force JWT fallback
         mock_request.state.jti = None  # Force JWT fallback
-        
+
         # Create JWT with email and jti
         payload = {
             "email": "user@example.com",
@@ -127,9 +127,9 @@ class TestAdminCSRFCookieFallback:
             mock_service = Mock()
             mock_service.generate_csrf_token = Mock(return_value="csrf-token-789")
             mock_get_service.return_value = mock_service
-            
+
             _set_admin_csrf_cookie(mock_request, mock_response)
-            
+
             # Verify session_id was extracted from jti
             mock_service.generate_csrf_token.assert_called_once_with("user@example.com", "jti-session-789")
 
@@ -146,7 +146,7 @@ class TestAdminLoginJWTCookieException:
 
         mock_request = Mock(spec=Request)
         mock_request.scope = {"root_path": ""}
-        
+
         # Mock form data
         mock_form = AsyncMock()
         mock_form.return_value = {
@@ -156,7 +156,7 @@ class TestAdminLoginJWTCookieException:
         mock_request.form = mock_form
 
         mock_db = Mock(spec=Session)
-        
+
         # Mock user
         mock_user = Mock(spec=EmailUser)
         mock_user.email = "test@example.com"
@@ -168,16 +168,16 @@ class TestAdminLoginJWTCookieException:
             mock_auth_service = Mock()
             mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
             mock_auth_class.return_value = mock_auth_service
-            
+
             # Mock JWT token creation to raise exception
             with patch("mcpgateway.admin.create_jwt_token") as mock_create_jwt:
                 mock_create_jwt.side_effect = Exception("JWT creation failed")
-                
+
                 # Mock CSRF cookie setting
                 with patch("mcpgateway.admin._set_admin_csrf_cookie") as mock_set_csrf:
                     with patch("mcpgateway.admin.utc_now"):
                         response = await admin_login_handler(mock_request, mock_db)
-                        
+
                         # Verify CSRF cookie was still set despite JWT failure (line 4063)
                         mock_set_csrf.assert_called_once()
                         assert response.status_code == 303
@@ -190,21 +190,21 @@ def enable_admin_for_test(monkeypatch):
     """Temporarily enable admin API and reload main.py to mount admin routes."""
     import sys
     from mcpgateway.config import get_settings
-    
+
     # Clear settings cache and set admin enabled
     get_settings.cache_clear()
     monkeypatch.setenv("MCPGATEWAY_ADMIN_API_ENABLED", "true")
     monkeypatch.setenv("MCPGATEWAY_UI_ENABLED", "true")
-    
+
     # Reload main to pick up new settings and mount admin routes
     if "mcpgateway.main" in sys.modules:
         del sys.modules["mcpgateway.main"]
-    
+
     # Import fresh main with admin enabled
     from mcpgateway.main import app
-    
+
     yield app
-    
+
     # Cleanup: restore original state
     get_settings.cache_clear()
     if "mcpgateway.main" in sys.modules:

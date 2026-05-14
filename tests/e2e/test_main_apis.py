@@ -2027,7 +2027,7 @@ if __name__ == "__main__":
 
 class TestAdminPageEndpoint:
     """Test admin page endpoint authentication enforcement.
-    
+
     Note: The AdminAuthMiddleware enforces authentication before dependency
     injection occurs, so these tests verify that the middleware correctly
     rejects unauthenticated requests. Full CSRF token generation testing
@@ -2041,7 +2041,7 @@ class TestAdminPageEndpoint:
         # AdminAuthMiddleware runs before dependency overrides, so requests
         # without valid auth headers/cookies are rejected with 401
         response = await client.get("/admin/")
-        
+
         # Should return 401 because AdminAuthMiddleware enforces auth
         # before the mocked dependencies are resolved
         assert response.status_code == 401, f"Expected 401 Unauthorized, got {response.status_code}"
@@ -2051,7 +2051,7 @@ class TestAdminPageEndpoint:
         """Test admin page rejects invalid JWT tokens."""
         # Even with a cookie, invalid tokens are rejected by AdminAuthMiddleware
         response = await client.get("/admin/", cookies={"jwt_token": "invalid-token"})
-        
+
         # Should return 401 for invalid token
         assert response.status_code == 401, f"Expected 401 Unauthorized, got {response.status_code}"
 # Or the tests will override authentication automatically
