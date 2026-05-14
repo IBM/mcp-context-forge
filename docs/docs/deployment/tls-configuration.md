@@ -704,13 +704,13 @@ docker compose restart gateway
    sudo chgrp 0 certs/key.pem        # Set group to 0 for container access
    ```
 
-   **Why group 0 and 640?**
-   - Container runs as UID 1001, GID 0 (see Containerfile.lite line 236, 271)
-   - Host files are owned by your UID (e.g., 1000), not container UID (1001)
-   - By setting group to 0 (root group) and permissions to 640:
+   **Why group 10001 and 640?**
+   - Container runs as UID 10001, GID 10001 (see Containerfile.lite)
+   - Host files are owned by your UID (e.g., 1000), not container UID (10001)
+   - By setting group to 10001 and permissions to 640:
 
      - Owner (your UID): Read/write access ✅
-     - Group 0: Read access ✅ ← **Container (1001:0) accesses via this**
+     - Group 10001: Read access ✅ ← **Container (10001:10001) accesses via this**
      - Others: No access ✅
 
    - More secure than 644 (no world access)
@@ -814,8 +814,8 @@ docker compose restart gateway
 1. **Access control** - Who can read the key file or secret
 2. **Filesystem permissions** - Unix permissions with proper group ownership
 
-   - Containers: 640 with group 0 (owner+group, no world access)
-   - Container user (UID 1001, GID 0) accesses via group membership
+   - Containers: 640 with group 10001 (owner+group, no world access)
+   - Container user (UID 10001, GID 10001) accesses via group membership
 
 3. **Secrets management** - Proper injection and rotation
 4. **Network isolation** - Limit exposure of TLS endpoints

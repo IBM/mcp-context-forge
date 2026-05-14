@@ -102,7 +102,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **TLS ready.** `make certs` creates local certificates, `make serve-ssl` runs Gunicorn with TLS, and the client defaults keep `SKIP_SSL_VERIFY=false`. The container images trust RHEL certificate bundles for outbound TLS.
 - **Support bundle sanitisation.** `SupportBundleService` redacts passwords, tokens, secrets, and bearer values before writing diagnostic ZIPs. Patterns cover API keys, JWTs, Authorization headers, and database URLs.
 - **Configuration masking.** `/admin/config/settings` hides sensitive keys using the `mask_sensitive` helper to prevent secret exfiltration through the Admin UI/API.
-- **Hardened containers.** `Containerfile.lite` builds on patched RHEL UBI 10 ↦ scratch, installs dependencies in a venv, strips debugging symbols, removes package managers, deletes setuid/setgid binaries, creates a non-root `UID 1001`, preserves the RPM DB for scanning, and sets security-oriented runtime env vars.
+- **Hardened containers.** `Containerfile.lite` builds on patched RHEL UBI 10 ↦ scratch, installs dependencies in a venv, strips debugging symbols, removes package managers, deletes setuid/setgid binaries, creates a non-root `UID 10001` (>10000 to avoid host conflicts), preserves the RPM DB for scanning, and sets security-oriented runtime env vars.
 - **Logging controls.** `LoggingService` centralises formatting with JSON or text output, supports log rotation, and the support bundle honours size/line caps to avoid log leakage.
 
 ## Input Validation & Guardrails

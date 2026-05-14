@@ -151,6 +151,22 @@ mcpContextForge:
     requests:
       cpu: 500m
       memory: 768Mi
+  # Pod security context - controls UID/GID for the container
+  # Default values align with the container image (UID 10001, GID 10001)
+  podSecurityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    runAsNonRoot: true
+
+  # Container security context - additional security constraints
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false  # Set to true if app doesn't need write access
+
 
   # Optional ingress for HTTP traffic
   ingress:

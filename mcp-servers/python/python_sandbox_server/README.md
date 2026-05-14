@@ -429,8 +429,8 @@ kind: Pod
 spec:
   securityContext:
     runAsNonRoot: true
-    runAsUser: 1001
-    fsGroup: 1001
+    runAsUser: 10001
+    fsGroup: 10001
   containers:
   - name: python-sandbox-server
     image: python-sandbox-server:latest
