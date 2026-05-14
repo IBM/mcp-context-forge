@@ -243,8 +243,8 @@ export function AuthGuard({
     }
   }, [isAuthenticated, isLoading, isPublic, navigate]);
 
-  // Public routes: render immediately
-  if (isPublic) return <>{children}</>;
+  // Public routes: don't render protected content — public pages are in PublicRoutes
+  if (isPublic) return null;
 
   // Loading state: show loading indicator instead of blank page
   if (isLoading) {
