@@ -1,10 +1,8 @@
 module slow-time-server
 
-go 1.25.5
+go 1.26.3
 
-toolchain go1.26.2
-
-require github.com/mark3labs/mcp-go v0.53.0
+require github.com/mark3labs/mcp-go v0.54.0
 
 require (
     github.com/google/jsonschema-go v0.4.3 // indirect

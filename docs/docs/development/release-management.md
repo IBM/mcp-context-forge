@@ -243,7 +243,7 @@ When ContextForge and `cpex-plugins` share Rust dependency changes, apply the sa
 
 ### 3.3 Go dependencies
 
-Update `go.mod` and `go.sum` for all Go modules:
+1. Update `go.mod` and `go.sum` for all Go modules:
 
 ```bash
 find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
@@ -252,6 +252,9 @@ find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print |
   (cd "$dir" && go get -u ./... && go mod tidy)
 done
 ```
+
+2. Update `LINT_GO_TOOLCHAIN ?= go1.26.3` appropriately in the _root_/Makefile
+3. Update Dockerfile e.g. `FROM golang:1.26.3`
 
 Verify Go code compiles and passes security checks:
 
