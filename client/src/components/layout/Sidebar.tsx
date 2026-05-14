@@ -1,9 +1,9 @@
 import {
   Blocks,
   Box,
-  ChartLine,
   Code,
   House,
+  MessageSquareCode,
   MessageSquareMore,
   Server,
   Settings,
@@ -16,7 +16,6 @@ import { useRouter } from "../../router";
 import { AgentIcon } from "../icons/AgentIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
 import { MainNavIcon } from "../icons/MainNavIcon.tsx";
-import { PromptIcon } from "../icons/PromptIcon.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -40,7 +39,6 @@ interface NavItem {
 const MAIN_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.dashboard", path: "/app/", icon: House },
   { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
-  { labelKey: "navigation.observability", path: "/app/observability", icon: ChartLine },
   { labelKey: "navigation.playground", path: "/app/playground", icon: MessageSquareMore },
 ];
 
@@ -51,7 +49,7 @@ const COMPONENTS_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.grpc", path: "/app/grpc", icon: Unplug },
   { labelKey: "navigation.tools", path: "/app/tools", icon: Wrench },
   { labelKey: "navigation.resources", path: "/app/resources", icon: Box },
-  { labelKey: "navigation.prompts", path: "/app/prompts", icon: PromptIcon },
+  { labelKey: "navigation.prompts", path: "/app/prompts", icon: MessageSquareCode },
 ];
 
 const ECOSYSTEM_NAV_ITEMS: NavItem[] = [
