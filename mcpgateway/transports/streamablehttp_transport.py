@@ -122,9 +122,6 @@ def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], s
     Returns:
         Active span context manager for initialize requests, otherwise a no-op context.
     """
-    # First-Party
-    from mcpgateway.utils.mcp_protocol import uses_sessionless_mcp_semantics
-
     try:
         payload = orjson.loads(body)
     except orjson.JSONDecodeError:
