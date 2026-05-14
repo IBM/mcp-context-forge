@@ -356,4 +356,116 @@ describe("Tools", () => {
 
     expect(screen.getByText("Error loading tools")).toBeInTheDocument();
   });
+
+  it("displays up to 8 tools and shows +N tag for remaining tools", async () => {
+    // Create 12 tools for a single gateway
+    const mockTools: Tool[] = Array.from({ length: 12 }, (_, i) =>
+      createMockTool(i + 1, "gateway-with-many-tools"),
+    );
+
+    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gateway-with-many-tools")).toBeInTheDocument();
+    });
+
+    // Should show first 8 tools
+    expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    expect(screen.getByText("Tool 2")).toBeInTheDocument();
+    expect(screen.getByText("Tool 3")).toBeInTheDocument();
+    expect(screen.getByText("Tool 4")).toBeInTheDocument();
+    expect(screen.getByText("Tool 5")).toBeInTheDocument();
+    expect(screen.getByText("Tool 6")).toBeInTheDocument();
+    expect(screen.getByText("Tool 7")).toBeInTheDocument();
+    expect(screen.getByText("Tool 8")).toBeInTheDocument();
+
+    // Should NOT show tools 9-12
+    expect(screen.queryByText("Tool 9")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool 10")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool 11")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool 12")).not.toBeInTheDocument();
+
+    // Should show +4 tag
+    expect(screen.getByText("+4")).toBeInTheDocument();
+    expect(screen.getByTitle("4 more tools")).toBeInTheDocument();
+  });
+
+  it("displays all tools when count is 8 or less without +N tag", async () => {
+    const mockTools: Tool[] = Array.from({ length: 8 }, (_, i) =>
+      createMockTool(i + 1, "gateway-with-eight-tools"),
+    );
+
+    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gateway-with-eight-tools")).toBeInTheDocument();
+    });
+
+    // Should show all 8 tools
+    expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    expect(screen.getByText("Tool 8")).toBeInTheDocument();
+
+    // Should NOT show +N tag
+    expect(screen.queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+  });
+
+  it("shows +1 tag with singular 'tool' in title for 9 tools", async () => {
+    const mockTools: Tool[] = Array.from({ length: 9 }, (_, i) =>
+      createMockTool(i + 1, "gateway-with-nine-tools"),
+    );
+
+    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gateway-with-nine-tools")).toBeInTheDocument();
+    });
+
+    // Should show +1 tag
+    expect(screen.getByText("+1")).toBeInTheDocument();
+    expect(screen.getByTitle("1 more tool")).toBeInTheDocument();
+  });
+
+  it("handles multiple gateways with different tool counts correctly", async () => {
+    const mockTools: Tool[] = [
+      // Gateway with 5 tools (all visible, no +N tag)
+      ...Array.from({ length: 5 }, (_, i) => createMockTool(i + 1, "gateway-small")),
+      // Gateway with 10 tools (8 visible + +2 tag)
+      ...Array.from({ length: 10 }, (_, i) => createMockTool(i + 6, "gateway-medium")),
+      // Gateway with 20 tools (8 visible + +12 tag)
+      ...Array.from({ length: 20 }, (_, i) => createMockTool(i + 16, "gateway-large")),
+    ];
+
+    server.use(http.get("/tools", () => HttpResponse.json(mockTools)));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("gateway-small")).toBeInTheDocument();
+    });
+
+    // Gateway-small: all 5 tools visible, no +N tag
+    expect(screen.getByText("5 tools")).toBeInTheDocument();
+    expect(screen.getByText("Tool 1")).toBeInTheDocument();
+    expect(screen.getByText("Tool 5")).toBeInTheDocument();
+
+    // Gateway-medium: 8 visible + +2 tag
+    expect(screen.getByText("10 tools")).toBeInTheDocument();
+    expect(screen.getByText("Tool 6")).toBeInTheDocument();
+    expect(screen.getByText("Tool 13")).toBeInTheDocument();
+    expect(screen.queryByText("Tool 14")).not.toBeInTheDocument();
+    expect(screen.getByText("+2")).toBeInTheDocument();
+
+    // Gateway-large: 8 visible + +12 tag
+    expect(screen.getByText("20 tools")).toBeInTheDocument();
+    expect(screen.getByText("Tool 16")).toBeInTheDocument();
+    expect(screen.getByText("Tool 23")).toBeInTheDocument();
+    expect(screen.queryByText("Tool 24")).not.toBeInTheDocument();
+    expect(screen.getByText("+12")).toBeInTheDocument();
+  });
 });
