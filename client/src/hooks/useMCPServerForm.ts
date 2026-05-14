@@ -55,8 +55,9 @@ const oauthConfigSchema = z.object({
 });
 
 // Zod schema for form validation with sanitization - matches API request body
-const mcpServerFormSchema = z
-  .object({
+// Keep a reference to the inner ZodObject so validateField can access .shape
+// (ZodEffects produced by .superRefine does not expose .shape)
+const mcpServerFormObjectSchema = z.object({
     name: z
       .string()
       .transform((val) => sanitizeString(val, 100))
@@ -118,8 +119,9 @@ const mcpServerFormSchema = z
       .transform((val) => sanitizeCertificate(val, 10000))
       .optional(),
     oauth_config: oauthConfigSchema.optional(),
-  })
-  .superRefine((data, ctx) => {
+  });
+
+const mcpServerFormSchema = mcpServerFormObjectSchema.superRefine((data, ctx) => {
     const config = data.oauth_config;
     if (data.authType === "oauth" && config?.grant_type === "password") {
       if (!config.username) {
@@ -441,7 +443,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     if (authType === "oauth") {
       const scopesArray = oauthScopes ? oauthScopes.split(/\s+/).filter(Boolean) : undefined;
       const base = {
-        grant_type: oauthGrantType || undefined,
         issuer: oauthIssuerUrl || undefined,
         scopes: scopesArray,
         store_tokens: oauthStoreTokens,
@@ -451,6 +452,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       if (oauthGrantType === "client_credentials") {
         oauthConfig = {
           ...base,
+          grant_type: "client_credentials",
           client_id: oauthClientId || undefined,
           client_secret: oauthClientSecret || undefined,
           token_url: oauthTokenUrl || undefined,
@@ -458,6 +460,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       } else if (oauthGrantType === "authorization_code") {
         oauthConfig = {
           ...base,
+          grant_type: "authorization_code",
           client_id: oauthClientId || undefined,
           client_secret: oauthClientSecret || undefined,
           token_url: oauthTokenUrl || undefined,
@@ -467,6 +470,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       } else if (oauthGrantType === "password") {
         oauthConfig = {
           ...base,
+          grant_type: "password",
           client_id: oauthClientId || undefined,
           client_secret: oauthClientSecret || undefined,
           token_url: oauthTokenUrl || undefined,
@@ -543,7 +547,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const validateField = useCallback((field: keyof FormErrors, value: string) => {
     try {
       const fieldSchema =
-        mcpServerFormSchema.shape[field as keyof typeof mcpServerFormSchema.shape];
+        mcpServerFormObjectSchema.shape[field as keyof typeof mcpServerFormObjectSchema.shape];
       if (fieldSchema) {
         // passthroughHeaders is stored as a comma-separated string in form state
         // but the Zod schema expects an array; convert before validating
