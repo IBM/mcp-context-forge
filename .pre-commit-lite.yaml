@@ -22,7 +22,7 @@ exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_inpu
 fail_fast: true
 
 default_language_version:
-  python: python3.12
+  python: python3.11
 
 repos:
   # -----------------------------------------------------------------------------
