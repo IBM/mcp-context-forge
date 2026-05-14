@@ -20,6 +20,10 @@ function buildGroups(tools: Tool[]): ToolGroup[] {
 }
 
 function ToolGroupCard({ group }: { group: ToolGroup }) {
+  const MAX_VISIBLE_TOOLS = 8;
+  const visibleTools = group.tools.slice(0, MAX_VISIBLE_TOOLS);
+  const remainingCount = group.tools.length - MAX_VISIBLE_TOOLS;
+
   return (
     <Card size="sm">
       <CardHeader>
@@ -54,15 +58,23 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
 
       <CardContent>
         <div className="flex flex-wrap gap-1">
-          {group.tools.map((tool) => (
+          {visibleTools.map((tool) => (
             <span
               key={tool.id}
-              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-1 text-[10px] font-medium leading-none text-white"
               title={tool.description}
             >
               {tool.name}
             </span>
           ))}
+          {remainingCount > 0 && (
+            <span
+              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              title={`${remainingCount} more ${remainingCount === 1 ? "tool" : "tools"}`}
+            >
+              +{remainingCount}
+            </span>
+          )}
         </div>
       </CardContent>
     </Card>
