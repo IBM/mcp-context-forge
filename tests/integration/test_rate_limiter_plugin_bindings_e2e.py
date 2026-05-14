@@ -30,10 +30,67 @@ Requirements:
     - At least one server with a registered tool
     - Admin user belongs to at least one team (true for the seeded
       ``admin@example.com`` personal team)
+    - ``docker exec`` access to the Postgres + Redis containers (used for
+      direct cross-checks and rate-limit key inspection)
+
+Setup:
+    From the repo root, bring up the standard compose stack::
+
+        make compose-up
+
+    The defaults below assume the resulting compose project name is
+    ``mcp-context-forge`` (i.e. containers named
+    ``mcp-context-forge-postgres-1`` and ``mcp-context-forge-redis-1``).
+    If you use a custom project name (``docker compose -p <name> up``),
+    set the corresponding env vars below.
 
 Usage:
-    uv run pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
-        -v --with-integration
+    Run all tests in this file::
+
+        uv run pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+            -v --with-integration
+
+    Run only the inspection-friendly lifecycle test with phase-by-phase
+    narration (use ``-s`` so the inline ``[inspect]`` prints render in
+    real time)::
+
+        uv run pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+            ::TestRateLimiterBindingApiEnforcesLimits::test_binding_full_lifecycle_inspectable \\
+            -v -s --with-integration -m slow
+
+    The lifecycle tests are ``@pytest.mark.slow`` (~70s each) — run them
+    one at a time when iterating.
+
+Environment variables:
+    GATEWAY_URL                       (default: http://localhost:8080)
+    GATEWAY_EMAIL                     (default: admin@example.com)
+    GATEWAY_PASSWORD                  (default: changeme)
+    BINDING_REDIS_URL                 (default: redis://redis:6379/0)
+                                          gateway-side Redis URL sent in
+                                          binding payloads
+    RATE_LIMITER_TEST_TEAM_ID         (optional) reuse an existing team for
+                                          the test-tool's team_id stamp
+                                          instead of creating one
+    RATE_LIMITER_TEST_PG_CONTAINER    (default: mcp-context-forge-postgres-1)
+    RATE_LIMITER_TEST_PG_USER         (default: postgres)
+    RATE_LIMITER_TEST_PG_DATABASE     (default: mcp)
+    REDIS_CONTAINER_NAME              (default: mcp-context-forge-redis-1)
+    PROPAGATION_WAIT                  (default: see
+                                          tests/helpers/integration_constants.py)
+
+Notes on flakiness:
+    - Tool-path amplification varies between runs (~5×–20× plugin hook
+      invocations per user-level call). The lifecycle test's enforcement
+      transition (``allowed`` → ``blocked``) is therefore non-deterministic
+      in shape; assertion only requires ``rate_limited >= 1``.
+    - Stale state from prior runs can interfere: if a previous test left
+      ``plugin:RateLimiterPlugin:mode = "disabled"`` in Redis, the
+      per-tenant manager will load the plugin as disabled and bindings
+      won't enforce. Clear with::
+
+          docker exec <redis-container> redis-cli DEL plugin:RateLimiterPlugin:mode
+          docker exec <redis-container> redis-cli --scan --pattern 'rl:*' \\
+              | xargs -I {} docker exec <redis-container> redis-cli DEL {}
 """
 
 # Standard
