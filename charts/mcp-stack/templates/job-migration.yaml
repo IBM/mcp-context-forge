@@ -28,6 +28,10 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
 

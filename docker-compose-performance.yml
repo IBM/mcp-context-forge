@@ -932,7 +932,7 @@ services:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     networks: [mcpnet]
     restart: "no"
-    # Gateway image runs as non-root (uid 1001); named volumes are root-owned
+    # Gateway image runs as non-root (uid 10001); named volumes are root-owned
     # by default, so writing /tokens/gateway.jwt requires root.
     user: "0"
     volumes:

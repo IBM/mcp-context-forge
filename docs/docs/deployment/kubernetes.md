@@ -258,7 +258,7 @@ spec:
               readOnly: true
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1001
+            runAsUser: 10001
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
           resources:

@@ -414,8 +414,8 @@ docker network prune
 
 **Permission errors:**
 ```bash
-# Fix volume permissions for application user (uid=1001)
-sudo chown -R 1001:1001 /tmp/migration_test_*
+# Fix volume permissions for application user (uid=10001)
+sudo chown -R 10001:10001 /tmp/migration_test_*
 # or make world-writable for testing
 sudo chmod -R 777 /tmp/migration_test_*
 ```
@@ -475,7 +475,7 @@ tests/migration/
 **v2.0 (Application-Level Migration Testing)**:
 - ✅ **Python3 HTTP Client**: Replaced all `curl` commands with `python3 urllib.request` for container compatibility
 - ✅ **Volume Persistence**: Fixed data directory preservation across container version switches
-- ✅ **File Permissions**: Automatic ownership management for container user (uid=1001, gid=1001)
+- ✅ **File Permissions**: Automatic ownership management for container user (uid=10001, gid=10001)
 - ✅ **REST API Integration**: All data operations use application endpoints instead of direct database access
 - ✅ **Application-Level Migrations**: Tests now validate how applications handle migrations automatically
 - ✅ **Enhanced Logging**: Comprehensive logging throughout all migration phases
@@ -490,7 +490,7 @@ docker exec <container_id> curl -s -f http://localhost:4444/health
 ```
 
 **Data Directory Management**:
-- Temporary directories are created with proper ownership (`1001:1001`)
+- Temporary directories are created with proper ownership (`10001:10001`)
 - Data volumes are preserved when switching between container versions
 - Database files persist across the entire migration test lifecycle
 

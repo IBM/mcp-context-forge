@@ -624,7 +624,7 @@ All 6 methods validate content before database persistence.
 # Run containers with security constraints
 docker run \
   --read-only \
-  --user 1001:1001 \
+  --user 10001:10001 \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   mcpgateway:latest
