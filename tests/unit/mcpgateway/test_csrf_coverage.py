@@ -151,7 +151,7 @@ class TestAdminLoginJWTCookieException:
         mock_form = AsyncMock()
         mock_form.return_value = {
             "email": "test@example.com",
-            "password": "password123",
+            "password": "password123",  # pragma: allowlist secret
         }
         mock_request.form = mock_form
 
