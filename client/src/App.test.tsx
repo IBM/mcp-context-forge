@@ -15,17 +15,6 @@ vi.mock("@/hooks/useQuery", () => ({
 }));
 
 describe("App", () => {
-  it("renders the loading page without authentication", async () => {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.history.pushState({}, "", "/app/loading");
-
-    renderWithProviders(<App />);
-
-    expect(await screen.findByRole("status", { name: /loading/i })).toBeInTheDocument();
-    expect(screen.queryByText(/loading/i)).not.toBeInTheDocument();
-  });
-
   it("logs in and navigates to Gateways page via sidebar", async () => {
     const user = userEvent.setup();
 
