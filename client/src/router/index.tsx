@@ -25,6 +25,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { useAuthContext } from "../auth/AuthContext";
+import { Loading } from "../components/ui/loading";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -208,11 +209,7 @@ export function Redirect({ to }: { to: string }) {
 // ---------------------------------------------------------------------------
 
 // Exact paths that are always public.
-const DEFAULT_PUBLIC_PATHS: readonly string[] = [
-  "/app/loading",
-  "/app/login",
-  "/app/forgot-password",
-];
+const DEFAULT_PUBLIC_PATHS: readonly string[] = ["/app/login", "/app/forgot-password"];
 
 // Path prefixes whose subtrees are always public.
 const DEFAULT_PUBLIC_PREFIXES: readonly string[] = ["/app/reset-password/"];
@@ -249,17 +246,8 @@ export function AuthGuard({
   // Loading state: show loading indicator instead of blank page
   if (isLoading) {
     return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "100vh",
-          fontSize: "14px",
-          color: "#666",
-        }}
-      >
-        Loading...
+      <div className="flex items-center justify-center min-h-screen bg-background text-muted-foreground">
+        <Loading />
       </div>
     );
   }

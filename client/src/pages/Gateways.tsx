@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useQuery } from "@/hooks/useQuery";
 import type { VirtualServer, VirtualServersResponse } from "@/types/server";
+import { Loading } from "@/components/ui/loading";
 
 const DEFAULT_PAGE_SIZE = 12;
 const SERVERS_QUERY_PATH = `/servers?limit=${DEFAULT_PAGE_SIZE}&include_pagination=true`;
@@ -311,8 +312,8 @@ export function Gateways() {
           aria-busy="true"
           className="flex items-center justify-center p-12"
         >
+          <Loading />
           <span className="sr-only">Loading virtual servers, please wait...</span>
-          <div className="size-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
         </div>
       </div>
     );

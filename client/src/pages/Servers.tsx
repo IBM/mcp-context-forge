@@ -11,6 +11,7 @@ import { api } from "@/api/client";
 import { serversApi } from "@/api/servers";
 import { sanitizeError } from "@/utils/errors";
 import type { MCPServer, ServersResponse } from "@/types/server";
+import { Loading } from "@/components/ui/loading";
 
 // Pagination constants
 const DEFAULT_PAGE_SIZE = 10;
@@ -136,8 +137,8 @@ export function Servers() {
           aria-busy="true"
           className="flex items-center justify-center p-12"
         >
+          <Loading />
           <span className="sr-only">Loading servers, please wait...</span>
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400" />
         </div>
       ) : (
         <>
