@@ -2073,7 +2073,7 @@ class A2AAgentService(BaseService):
         agent_enabled = agent.enabled
         agent_tags = getattr(agent, "tags", [])
         agent_oauth_config = getattr(agent, "oauth_config", None)
-        agent_passthrough_headers = agent.passthrough_headers
+        agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
