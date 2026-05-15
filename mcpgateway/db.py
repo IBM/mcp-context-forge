@@ -6836,3 +6836,84 @@ class ToolPluginBinding(Base):
             str: String representation of ToolPluginBinding instance.
         """
         return f"<ToolPluginBinding(id='{self.id}', team_id='{self.team_id}', tool_name='{self.tool_name}', plugin_id='{self.plugin_id}')>"
+
+
+class A2AAgentPluginBinding(Base):
+    """ORM model for per-agent per-tenant plugin policy bindings for A2A agents.
+
+    Each row represents a single plugin policy applied to a specific A2A agent
+    within a specific team. Multiple rows for the same (team, agent) pair
+    are allowed as long as the plugin_id differs — each plugin type may only
+    appear once per (team_id, agent_name, plugin_id) triple (enforced via
+    UniqueConstraint). A POST with an existing triple performs an upsert
+    (updates the existing row's config/mode/priority).
+
+    This model mirrors ToolPluginBinding but for A2A agents, enabling per-agent
+    plugin policies (e.g., enable VaultPlugin only for specific agents).
+
+    Attributes:
+        id (str): UUID primary key.
+        team_id (str): FK to ``email_teams.id``.
+        agent_name (str): Name of the A2A agent the policy applies to; ``"*"`` means all team agents.
+        plugin_id (str): One of the supported plugin identifiers.
+        mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
+        priority (int): Execution priority — lower numbers run first.
+        config (dict): Plugin-specific JSON configuration blob.
+        binding_reference_id (str): Optional external reference ID for bulk delete and stale-agent pruning.
+        on_error (str): Error handling policy (fail, ignore, disable).
+        created_at (datetime): Row creation timestamp (UTC).
+        created_by (str): Email of the user who created the binding.
+        updated_at (datetime): Last update timestamp (UTC).
+        updated_by (str): Email of the user who last updated the binding.
+
+    Examples:
+        >>> binding = A2AAgentPluginBinding(
+        ...     team_id="abc123",
+        ...     agent_name="secure-agent",
+        ...     plugin_id="VaultPlugin",
+        ...     mode="enforce",
+        ...     priority=10,
+        ...     config={"vault_path": "/secret/myapp"},
+        ...     created_by="admin@example.com",
+        ...     updated_by="admin@example.com",
+        ... )
+        >>> binding.plugin_id
+        'VaultPlugin'
+        >>> binding.mode
+        'enforce'
+    """
+
+    __tablename__ = "a2a_agent_plugin_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    on_error: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Relationship back to team
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", foreign_keys=[team_id])
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "agent_name", "plugin_id", name="uq_a2a_agent_plugin_binding"),
+        Index("ix_a2a_agent_plugin_bindings_team_id", "team_id"),
+        Index("ix_a2a_agent_plugin_bindings_agent_name", "agent_name"),
+        Index("ix_a2a_agent_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_a2a_agent_plugin_bindings_on_error_valid"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            str: String representation of A2AAgentPluginBinding instance.
+        """
+        return f"<A2AAgentPluginBinding(id='{self.id}', team_id='{self.team_id}', agent_name='{self.agent_name}', plugin_id='{self.plugin_id}')>"
