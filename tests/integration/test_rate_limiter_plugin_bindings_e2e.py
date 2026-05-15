@@ -575,6 +575,47 @@ def cleanup_bindings():
         _delete_binding_by_reference(ref_id)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_rate_limiter_redis_state_between_binding_tests():
+    """Clear Redis state that other test families may have left behind.
+
+    Specifically: the gateway-wide ``plugin:RateLimiterPlugin:mode`` key
+    set by ``tests/integration/test_rate_limiter_dynamic_behavior.py``'s
+    teardown. If left as ``"disabled"``, it overrides every binding's
+    ``mode: enforce`` at per-tenant manager build time (see
+    ``mcpgateway/plugins/gateway_plugin_manager.py::_apply_redis_mode_overrides``),
+    silently breaking these tests with no visible signal. Also wipe
+    leftover ``rl:*`` counters so per-call counter snapshots in the
+    inspectable tests start from zero rather than from a stale window.
+
+    Skips gracefully if Docker / Redis container isn't reachable — the
+    suite is already pytest-skipped on a missing gateway via
+    ``_is_gateway_running()``.
+    """
+    container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
+
+    def _docker_redis_cli(*args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                ["docker", "exec", container, "redis-cli", *args],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            return None
+
+    # Drop the gateway-wide mode override (the most common cross-test pollutant).
+    _docker_redis_cli("DEL", "plugin:RateLimiterPlugin:mode")
+
+    # Drop any leftover rl:* counters from prior runs (best-effort).
+    scan = _docker_redis_cli("--scan", "--pattern", "rl:*")
+    if scan is not None and scan.returncode == 0:
+        for key in (k.strip() for k in scan.stdout.splitlines() if k.strip()):
+            _docker_redis_cli("DEL", key)
+
+    yield
+    # No teardown — the same logic at the start of the next test handles it.
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -627,6 +668,33 @@ class TestRateLimiterBindingApiEnforcesLimits:
             don't directly distinguish 7 vs 30 because both limits get
             exceeded by amplification — the DB cross-check is the cleaner
             signal that the binding's specific values are what's stored.
+
+        Diagnostic output (with ``-s``):
+
+          Phase 1 prints the full POST request body sent to
+              ``/v1/tools/plugin_bindings/`` and the bindings API's
+              response body, so the wire shape is visible at a glance.
+
+          Phase 4 prints, for each of the 5 paced tool calls:
+
+            - the POST URL + headers + JSON-RPC ``tools/call`` body;
+            - the response status + body (200 result OR 429 with cpex's
+              "Plugin Violation: Rate limit exceeded" details, including
+              `dimensions.violated[]` and `remaining`);
+            - the Redis counter snapshot for all 3 dimensions taken
+              immediately after the call;
+            - on 429: the response's ``remaining`` value plus the
+              implied ``effective_limit`` derived from
+              ``counter + remaining``;
+            - a differential verdict — "would the static config (30/m)
+              have blocked? would the binding (7/m)? what was observed?"
+              — so it's clear which limit is actually firing on each call.
+
+          Phase 5 prints the full ``rl:*`` Redis key state with TTLs.
+
+          The diagnostic output makes this test useful as a debugging tool
+          for operators verifying that bindings are reaching the runtime,
+          not just as a CI assertion.
         """
         server_id, tool_name = server_and_tool
         ref_id = f"rl-binding-inspect-{uuid.uuid4().hex[:8]}"
@@ -665,7 +733,12 @@ class TestRateLimiterBindingApiEnforcesLimits:
             f"by_tenant={binding_by_tenant!r}, "
             f"by_tool={{{tool_name!r}: {binding_by_tool_limit!r}}}"
         )
-        _post_binding(
+        # Diagnostic: show the exact bindings-API POST payload + response body
+        # so an operator running this with `-s` can see the wire shape going to
+        # /v1/tools/plugin_bindings/ (helps debugging "is my binding payload
+        # correct?" without needing a separate curl reproduction).
+        import json as _dbg_json  # noqa: PLC0415
+        _binding_args = dict(
             team_id=team_id,
             tool_name=tool_name,
             mode="enforce",
@@ -682,6 +755,11 @@ class TestRateLimiterBindingApiEnforcesLimits:
                 "fail_mode": "open",
             },
         )
+        _say(f"  → POST /v1/tools/plugin_bindings/  (args wrapped into the payload by _post_binding):")
+        _say(f"      {_dbg_json.dumps(_binding_args, indent=2)}")
+        _binding_resp = _post_binding(**_binding_args)
+        _say(f"  ← POST response body:")
+        _say(f"      {_dbg_json.dumps(_binding_resp, indent=2)[:600]}")
         _say(f"  binding_reference_id = {ref_id}")
 
         # ---- Phase 2: persistence cross-check --------------------------------
@@ -765,6 +843,14 @@ class TestRateLimiterBindingApiEnforcesLimits:
                     ),
                 },
             }
+            # Diagnostic: show the per-call tools/call POST (URL + headers + body)
+            # and the response (status + body). Lets an operator see exactly
+            # what's being sent and what the gateway (or cpex plugin) returns
+            # — including the cpex "Plugin Violation: Rate limit exceeded"
+            # error structure on 429.
+            _say(f"  → call {i + 1}/{burst_size} POST /servers/{server_id}/mcp")
+            _say(f"      headers: Mcp-Session-Id={session_id}, Authorization=Bearer ..., Accept=json/event-stream")
+            _say(f"      body:    {_dbg_json.dumps(payload)}")
             try:
                 resp = requests.post(
                     f"{GATEWAY_URL}/servers/{server_id}/mcp",
@@ -772,6 +858,8 @@ class TestRateLimiterBindingApiEnforcesLimits:
                     headers=call_headers,
                     timeout=15,
                 )
+                _say(f"  ← call {i + 1}/{burst_size} response: HTTP {resp.status_code}")
+                _say(f"      body:    {resp.text[:400]}")
                 if resp.status_code == 429:
                     outcome = "BLOCKED (HTTP 429)"
                     rate_limited += 1
@@ -806,6 +894,55 @@ class TestRateLimiterBindingApiEnforcesLimits:
                 outcome = f"ERROR (transport: {exc})"
                 errors += 1
             _say(f"  call {i + 1}/{burst_size}: {outcome}")
+            # Diagnostic: per-call counter snapshot + binding-vs-static reasoning,
+            # so an operator can read the test output and convince themselves the
+            # binding's tighter limit (not the static gateway-wide limit) is what
+            # produced the block. The known-limit values (static=30/m,
+            # binding=binding_by_user) are tied to this test's payload + the
+            # current plugins/config.yaml — update them here if either changes.
+            _post_call_keys = _redis_rl_keys()
+            _user_v = next((v for k, v, _ in _post_call_keys if ":user:" in k), "—")
+            _tenant_v = next((v for k, v, _ in _post_call_keys if ":tenant:" in k), "—")
+            _tool_v = next((v for k, v, _ in _post_call_keys if f":tool:{tool_name}:" in k), "—")
+            _say(f"      counters after call {i + 1}: user={_user_v}  tenant={_tenant_v}  tool={_tool_v}")
+            # On 429, pull `remaining` from the response body and reason about which limit fired
+            if outcome.startswith("BLOCKED (HTTP 429)"):
+                try:
+                    _body = resp.json()
+                    _violated = (
+                        _body.get("error", {})
+                             .get("data", {})
+                             .get("details", {})
+                             .get("dimensions", {})
+                             .get("violated", [{}])[0]
+                    )
+                    _remaining = _violated.get("remaining")
+                    _reset_in = _violated.get("reset_in")
+                    _user_count = int(_user_v) if str(_user_v).isdigit() else 0
+                    _effective_limit = _user_count + (_remaining or 0)
+                    _say(
+                        f"      response says: remaining={_remaining}, reset_in={_reset_in}s  "
+                        f"→ effective_limit ≈ counter({_user_count}) + remaining({_remaining}) = {_effective_limit}"
+                    )
+                    # Known static config: plugins/config.yaml has `by_user: "30/m"`.
+                    # Known binding config: this test posted `by_user: "{binding_by_user}"`.
+                    _static_user_limit = 30
+                    _binding_user_limit = int(binding_by_user.split("/")[0])
+                    _static_would = "BLOCK" if _user_count > _static_user_limit else "pass"
+                    _binding_would = "BLOCK" if _user_count > _binding_user_limit else "pass"
+                    if _user_count > _binding_user_limit and _user_count <= _static_user_limit:
+                        _verdict = "binding's tighter limit is what's enforcing ✓"
+                    elif _user_count > _binding_user_limit and _user_count > _static_user_limit:
+                        _verdict = "either limit could be enforcing (counter exceeds both)"
+                    else:
+                        _verdict = "neither limit explains the block (?? — investigate)"
+                    _say(
+                        f"      static({_static_user_limit}/m): would {_static_would}  "
+                        f"| binding({_binding_user_limit}/m): would {_binding_would}  "
+                        f"| observed: BLOCKED  → {_verdict}"
+                    )
+                except Exception as _dbg_exc:  # noqa: BLE001
+                    _say(f"      (couldn't parse 429 body for differential reasoning: {_dbg_exc})")
             per_call_outcomes.append(outcome)
             if i < burst_size - 1:
                 time.sleep(pace_between_calls)
