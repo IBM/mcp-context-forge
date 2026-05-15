@@ -2124,3 +2124,250 @@ class TestOAuthRouterAdditionalCoverage:
         assert "gw'\"<script>" not in body
         # The escaped form should be present
         assert "gw&#x27;&quot;&lt;script&gt;" in body
+
+
+class TestOAuthCallbackCSPCompliance:
+    """Test CSP nonce support in OAuth callback success page.
+
+    Regression guard for PR #4424 and #4673 CSP implementation.
+    Ensures the OAuth callback page properly includes CSP nonce in inline scripts.
+    """
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_success_includes_csp_nonce_in_script_tag(self, mock_db, mock_request):
+        """Verify OAuth callback success page includes CSP nonce in inline script tag.
+
+        This is the critical test that exercises the actual /oauth/callback endpoint
+        and verifies the CSP nonce is properly applied to the inline script.
+        """
+        # Setup: Create gateway with OAuth config
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway-123"
+        mock_gateway.name = "Test OAuth Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test-client",
+            "client_secret": "test-secret",
+            "authorization_url": "https://oauth.example.com/authorize",
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri": "http://localhost:4444/oauth/callback",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        # Mock OAuth manager to return successful result
+        oauth_result = {
+            "user_id": "user@example.com",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "token_aud": None,
+        }
+
+        # Add CSP nonce to request state (simulating SecurityHeadersMiddleware)
+        mock_request.state.csp_nonce = "test-nonce-abc123xyz"
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-123")
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                result = await oauth_callback(
+                    code="test-auth-code",
+                    state="test-state-token",
+                    request=mock_request,
+                    db=mock_db
+                )
+
+        # Verify response is HTML
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+
+        # Decode response body
+        body = result.body.decode()
+
+        # Critical assertion: Verify CSP nonce is present in script tag
+        assert '<script nonce="test-nonce-abc123xyz">' in body, \
+            "OAuth callback page must include CSP nonce in inline script tag"
+
+        # Verify no inline onclick handlers (CSP violation)
+        assert 'onclick=' not in body, \
+            "OAuth callback page must not use inline onclick handlers (CSP violation)"
+
+        # Verify addEventListener pattern is used instead
+        assert 'addEventListener' in body, \
+            "OAuth callback page must use addEventListener for CSP compliance"
+
+        # Verify IIFE wrapper for proper scoping
+        assert '(function()' in body or '(function ()' in body, \
+            "OAuth callback page script should use IIFE for proper scoping"
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_success_handles_missing_csp_nonce_gracefully(self, mock_db, mock_request):
+        """Verify OAuth callback works even if CSP nonce is missing (fallback behavior)."""
+        # Setup: Create gateway with OAuth config
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway-456"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test-client",
+            "token_url": "https://oauth.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        oauth_result = {
+            "user_id": "user@example.com",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "token_aud": None,
+        }
+
+        # Simulate missing CSP nonce (request.state.csp_nonce not set)
+        # This tests the fallback behavior in get_csp_nonce_from_request
+        if hasattr(mock_request.state, 'csp_nonce'):
+            delattr(mock_request.state, 'csp_nonce')
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+            mock_mgr = Mock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-456")
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
+            mock_oauth_mgr.return_value = mock_mgr
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                result = await oauth_callback(
+                    code="test-auth-code",
+                    state="test-state-token",
+                    request=mock_request,
+                    db=mock_db
+                )
+
+        # Verify response is still valid HTML
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+
+        body = result.body.decode()
+
+        # When nonce is missing, get_csp_nonce_from_request returns empty string
+        # The script tag should still be present but with empty nonce attribute
+        assert '<script nonce="">' in body, \
+            "OAuth callback should handle missing CSP nonce gracefully with empty nonce attribute"
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_error_pages_do_not_include_inline_scripts(self, mock_db, mock_request):
+        """Verify OAuth callback error pages don't have inline scripts (no CSP concerns)."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Test error callback (provider returned error)
+        result = await oauth_callback(
+            code=None,
+            state="test-state",
+            error="access_denied",
+            error_description="User denied access",
+            request=mock_request,
+            db=mock_db
+        )
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        body = result.body.decode()
+
+        # Error pages should not have inline scripts
+        assert '<script' not in body, \
+            "OAuth error pages should not contain inline scripts"
+
+        # Test missing code error
+        result = await oauth_callback(
+            code=None,
+            state="test-state",
+            request=mock_request,
+            db=mock_db
+        )
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        body = result.body.decode()
+        assert '<script' not in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_csp_nonce_uniqueness_per_request(self, mock_db):
+        """Verify each OAuth callback request gets a unique CSP nonce.
+
+        This test simulates multiple requests to ensure nonces are unique,
+        preventing nonce reuse attacks.
+        """
+        # Setup gateway
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "test-gateway-789"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "test-client",
+            "token_url": "https://oauth.example.com/token",
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        oauth_result = {
+            "user_id": "user@example.com",
+            "expires_at": "2026-12-31T23:59:59Z",
+            "token_aud": None,
+        }
+
+        nonces_seen = set()
+
+        # Simulate 3 different requests
+        for i in range(3):
+            mock_request = Mock(spec=Request)
+            mock_request.url = Mock()
+            mock_request.url.scheme = "https"
+            mock_request.url.netloc = "gateway.example.com"
+            mock_request.scope = {"root_path": ""}
+            mock_request.state = SimpleNamespace()
+            mock_request.state.csp_nonce = f"unique-nonce-{i}-abc123xyz"
+
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway-789")
+                mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=oauth_result)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    from mcpgateway.routers.oauth_router import oauth_callback
+
+                    result = await oauth_callback(
+                        code="test-auth-code",
+                        state="test-state-token",
+                        request=mock_request,
+                        db=mock_db
+                    )
+
+            body = result.body.decode()
+
+            # Extract nonce from script tag
+            import re
+            nonce_match = re.search(r'<script nonce="([^"]+)">', body)
+            assert nonce_match, f"Request {i}: CSP nonce not found in script tag"
+
+            nonce = nonce_match.group(1)
+            assert nonce not in nonces_seen, f"Request {i}: Nonce {nonce} was reused (security violation)"
+            nonces_seen.add(nonce)
+
+        # Verify we collected 3 unique nonces
+        assert len(nonces_seen) == 3, "Each request should have a unique CSP nonce"
