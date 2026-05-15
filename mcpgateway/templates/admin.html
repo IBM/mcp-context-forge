@@ -6283,6 +6283,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     placeholder="Strong password"
                   />
                   <!-- Password policy guidance (visible below password field) -->
+                  {% if password_policy_enabled %}
                   <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md dark:bg-blue-900 dark:border-blue-800">
                     <div class="flex">
                       <div class="flex-shrink-0">
@@ -6293,45 +6294,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <ul class="mt-2 space-y-1">
                           <li id="req-length" class="flex items-start">
                             <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            At least {{ password_min_length or 8 }} characters long
+                            {{ password_requirements.min_length_description }}
                           </li>
-                          {% if password_require_uppercase %}
-                          <li id="req-uppercase" class="flex items-start">
+                          <li class="flex items-start">
                             <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains uppercase letters (A-Z)
+                            {{ password_requirements.complexity_description }}
+                            <ul class="ml-6 mt-1 space-y-0.5">
+                              {% for char_type in password_requirements.complexity_types %}
+                              <li id="req-{{ char_type.name }}" class="flex items-start">
+                                <i class="fas fa-circle text-gray-400 mr-2"></i>
+                                {{ char_type.description }}
+                              </li>
+                              {% endfor %}
+                            </ul>
                           </li>
-                          {% endif %}
-                          {% if password_require_lowercase %}
-                          <li id="req-lowercase" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains lowercase letters (a-z)
-                          </li>
-                          {% endif %}
-                          {% if password_require_numbers %}
-                          <li id="req-numbers" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains numbers (0-9)
-                          </li>
-                          {% endif %}
-                          {% if password_require_special %}
-                          <li id="req-special" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)
-                          </li>
-                          {% endif %}
                         </ul>
                       </div>
                     </div>
                   </div>
+                  {% endif %}
                 </div>
                 <script nonce="{{ csp_nonce(request) }}">
-                  // Validate the Create User password box and update requirement icons
+                  // Validate the Create User password box and update requirement icons (3-of-4 complexity)
                   (function(){
-                    const minLen = {{ password_min_length | tojson }} || 8;
-                    const REQ_UPPER = {{ password_require_uppercase | tojson }};
-                    const REQ_LOWER = {{ password_require_lowercase | tojson }};
-                    const REQ_NUMS = {{ password_require_numbers | tojson }};
-                    const REQ_SPEC = {{ password_require_special | tojson }};
+                    const passwordPolicy = {
+                      enabled: {{ password_policy_enabled | tojson }},
+                      requirements: {{ password_requirements | tojson }}
+                    };
 
                     // Helper to update icons if element exists
                     function updateRequirement(id, met) {
@@ -6349,24 +6338,36 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         element.classList.add('text-blue-600');
                       }
                     }
-                    window.validateNewUserPassword = function() {
-                      const password = document.getElementById('new_user_password')?.value || '';
-                      // length
-                      const lengthMet = password.length >= minLen;
-                      const uppercaseMet = /[A-Z]/.test(password);
-                      const lowercaseMet = /[a-z]/.test(password);
-                      const numbersMet = /[0-9]/.test(password);
-                      const specialMet = /[!@#$%^&*()_+\-\[\]{};':"\\|,.<>\/?]/.test(password);
 
-                      // Update indicators only if elements exist (they may be conditionally rendered)
+                    window.validateNewUserPassword = function() {
+                      if (!passwordPolicy.enabled) return;
+
+                      const password = document.getElementById('new_user_password')?.value || '';
+                      const req = passwordPolicy.requirements;
+
+                      // Check length requirement
+                      const lengthMet = password.length >= req.min_length;
                       updateRequirement('req-length', lengthMet);
-                      if (REQ_UPPER) updateRequirement('req-uppercase', uppercaseMet);
-                      if (REQ_LOWER) updateRequirement('req-lowercase', lowercaseMet);
-                      if (REQ_NUMS) updateRequirement('req-numbers', numbersMet);
-                      if (REQ_SPEC) updateRequirement('req-special', specialMet);
+
+                      // Check complexity requirements (3 of 4)
+                      const has = {
+                        uppercase: /[A-Z]/.test(password),
+                        lowercase: /[a-z]/.test(password),
+                        numbers: /[0-9]/.test(password),
+                        special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>\/?]/.test(password)
+                      };
+
+                      const typesPresent = Object.values(has).filter(Boolean).length;
+                      const complexityMet = typesPresent >= req.complexity_required;
+
+                      // Update individual character type indicators
+                      updateRequirement('req-uppercase', has.uppercase);
+                      updateRequirement('req-lowercase', has.lowercase);
+                      updateRequirement('req-numbers', has.numbers);
+                      updateRequirement('req-special', has.special);
 
                       // Determine whether submission is allowed
-                      const allRequirementsMet = lengthMet && (!REQ_UPPER || uppercaseMet) && (!REQ_LOWER || lowercaseMet) && (!REQ_NUMS || numbersMet) && (!REQ_SPEC || specialMet);
+                      const allRequirementsMet = lengthMet && complexityMet;
                       const submitBtn = document.getElementById('create_user_submit');
                       if (submitBtn) {
                         submitBtn.disabled = !allRequirementsMet;
@@ -12145,7 +12146,17 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               messagesDiv.innerHTML = '<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ User created successfully!</div>';
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             } else {
-              messagesDiv.innerHTML = '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ Failed to create user. Please check your input.</div>';
+              // Extract error message from response body if available
+              let errorMsg = 'Failed to create user. Please check your input.';
+              if (event.detail.xhr && event.detail.xhr.responseText) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = event.detail.xhr.responseText;
+                const errorDiv = tempDiv.querySelector('.text-red-500, [class*="red-500"]');
+                if (errorDiv) {
+                  errorMsg = errorDiv.textContent.trim();
+                }
+              }
+              messagesDiv.innerHTML = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ ${errorMsg}</div>`;
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             }
           });

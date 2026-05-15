@@ -155,6 +155,7 @@ from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
@@ -3936,12 +3937,9 @@ async def admin_ui(
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
-            # Password policy flags for frontend templates
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            # Password policy - pass actual requirements dict for user creation
+            "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
+            "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
@@ -7778,7 +7776,10 @@ async def admin_create_user(
         if password:
             is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
-                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
+                # Encode error message for display in URL/response
+                error_encoded = error_msg.replace(" ", "_").replace("#", "_").replace("&", "_")
+                error_html = f'<div class="text-red-500"><strong>Password validation failed:</strong><br/>{html.escape(error_msg)}</div>'
+                return HTMLResponse(content=error_html, status_code=400)
 
         # First-Party
 
