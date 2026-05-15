@@ -511,16 +511,6 @@ class PasswordPolicyService:
 
         Returns:
             dict with 'valid' bool and 'failed_requirements' list describing what didn't pass
-
-        Examples:
-            >>> from mcpgateway.db import SessionLocal
-            >>> with SessionLocal() as db:
-            ...     service = PasswordPolicyService(db)
-            ...     result = service.validate_password_detailed("weak", "alice@example.com")
-            ...     result['valid']
-            False
-            ...     len(result['failed_requirements']) > 0
-            True
         """
         if not password:
             return {
