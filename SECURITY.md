@@ -234,6 +234,10 @@ SecurityValidator.validate_identifier(identifier)
 
 ContextForge implements comprehensive SSRF protection through [`validate_url()`](mcpgateway/common/validators.py:885):
 
+**HTTP Redirect Hardening:**
+- As part of ongoing security hardening, HTTP redirect following is disabled on all outbound requests
+- See [HTTP Redirect Handling Migration Guide](docs/docs/operations/ssrf-redirect-protection-migration.md) for upgrade guidance
+
 **Scheme Allowlist:**
 - Only permits: `http://`, `https://`, `ws://`, `wss://`
 - Blocks dangerous protocols: `javascript:`, `data:`, `file:`, `ftp:`, `vbscript:`, `about:`, `chrome:`, `mailto:`

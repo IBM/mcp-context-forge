@@ -121,7 +121,7 @@ class SharedHttpClient:
             limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=not settings.skip_ssl_verify,
         )
         self._initialized = True
