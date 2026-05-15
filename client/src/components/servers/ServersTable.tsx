@@ -11,6 +11,7 @@ import { ServerIcon } from "./ServerIcon";
 import { ServerStatusBadge } from "./ServerStatusBadge";
 import { ServerActionsMenu } from "./ServerActionsMenu";
 import type { MCPServer } from "../../types/server";
+import { Loading } from "../ui/loading";
 
 function formatLastResponse(lastSeen?: string): string {
   if (!lastSeen) return "Never used";
@@ -52,8 +53,8 @@ export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest }: S
         aria-live="polite"
         aria-busy="true"
       >
+        <Loading />
         <span className="sr-only">Loading servers, please wait...</span>
-        <div className="text-gray-600 dark:text-gray-400">Loading servers...</div>
       </div>
     );
   }
