@@ -578,6 +578,54 @@ async def test_handle_sso_callback_team_service_error_falls_back_to_admin(monkey
     assert response.headers.get("location", "") == "/admin"
     assert set_cookie.called
 
+@pytest.mark.asyncio
+async def test_handle_sso_callback_invalid_jwt_falls_back_to_user_info(monkeypatch: pytest.MonkeyPatch):
+    """Test that invalid JWT token falls back to using user_info for redirect determination."""
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+
+    # Return an invalid JWT token (not properly formatted)
+    invalid_token = "not-a-valid-jwt-token"
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return invalid_token
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    # Mock TeamManagementService to return no teams
+    class MockTeamService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_teams(self, *_args, **_kwargs):
+            return []
+
+    monkeypatch.setattr(sso_router, "TeamManagementService", MockTeamService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+    request.cookies = {"sso_session_id": "session-1"}
+
+    response = await sso_router.handle_sso_callback("provider", "code", "state", error=None, error_description=None, request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    # Should redirect to root since user has no teams and is not admin
+    assert response.headers.get("location", "") == "/"
+    assert set_cookie.called
+
+
 
 
 @pytest.mark.asyncio
