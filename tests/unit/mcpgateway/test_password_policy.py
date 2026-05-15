@@ -201,6 +201,72 @@ class TestPasswordPolicyService:
         assert not policy_service._has_sufficient_entropy("aaaaaaaaaa")
         assert not policy_service._has_sufficient_entropy("ababababab")
 
+    # Password Requirements Tests
+
+    def test_get_password_requirements(self, policy_service):
+        """Test password requirements retrieval."""
+        requirements = policy_service.get_password_requirements()
+        assert requirements["min_length"] == 12
+        assert requirements["complexity_required"] == 3
+        assert requirements["complexity_total"] == 4
+        assert len(requirements["complexity_types"]) == 4
+        assert len(requirements["restrictions"]) == 3
+
+    def test_get_password_requirements_privileged(self, policy_service):
+        """Test password requirements for privileged accounts."""
+        requirements = policy_service.get_password_requirements(is_privileged=True)
+        assert requirements["min_length"] == 22
+
+    # Detailed Validation Tests
+
+    def test_validate_password_detailed_success(self, policy_service):
+        """Test detailed validation for valid password."""
+        result = policy_service.validate_password_detailed("SecureP@ssw0rd!", "user@example.com")
+        assert result["valid"] is True
+        assert len(result["failed_requirements"]) == 0
+
+    def test_validate_password_detailed_empty(self, policy_service):
+        """Test detailed validation for empty password."""
+        result = policy_service.validate_password_detailed("", "user@example.com")
+        assert result["valid"] is False
+        assert "required" in result["failed_requirements"][0].lower()
+
+    def test_validate_password_detailed_too_short(self, policy_service):
+        """Test detailed validation for password that's too short."""
+        result = policy_service.validate_password_detailed("Short1!", "user@example.com")
+        assert result["valid"] is False
+        assert any("12 characters" in req for req in result["failed_requirements"])
+
+    def test_validate_password_detailed_insufficient_complexity(self, policy_service):
+        """Test detailed validation for insufficient complexity."""
+        result = policy_service.validate_password_detailed("alllowercase123", "user@example.com")
+        assert result["valid"] is False
+        assert any("3 of 4" in req for req in result["failed_requirements"])
+
+    def test_validate_password_detailed_common_password(self, policy_service):
+        """Test detailed validation for common password."""
+        result = policy_service.validate_password_detailed("Password01@!", "user@example.com")
+        assert result["valid"] is False
+        assert any("common" in req.lower() for req in result["failed_requirements"])
+
+    def test_validate_password_detailed_username_based(self, policy_service):
+        """Test detailed validation for username-based password."""
+        result = policy_service.validate_password_detailed("john123!Pass", "john@example.com")
+        assert result["valid"] is False
+        assert any("username" in req.lower() for req in result["failed_requirements"])
+
+    def test_validate_password_detailed_sequential_chars(self, policy_service):
+        """Test detailed validation for sequential characters."""
+        result = policy_service.validate_password_detailed("Pass123word!", "user@example.com")
+        assert result["valid"] is False
+        assert any("sequential" in req.lower() for req in result["failed_requirements"])
+
+    def test_validate_password_detailed_multiple_failures(self, policy_service):
+        """Test detailed validation with multiple failures."""
+        result = policy_service.validate_password_detailed("weak", "user@example.com")
+        assert result["valid"] is False
+        assert len(result["failed_requirements"]) >= 2
+
 
 class TestPasswordPolicyIntegration:
     """Integration tests for password policy with EmailAuthService."""
