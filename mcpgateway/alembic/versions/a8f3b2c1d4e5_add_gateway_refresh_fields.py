@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Add refresh_interval_seconds and last_refresh_at to gateways table.
 
 Revision ID: a8f3b2c1d4e5
-Revises: 77243f5bfce5
+Revises: u5f6g7h8i9j0
 Create Date: 2026-01-09
 
 This migration adds two new columns to the gateways table for per-gateway
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "a8f3b2c1d4e5"
-down_revision = "77243f5bfce5"
+down_revision = "u5f6g7h8i9j0"
 branch_labels = None
 depends_on = None
 
