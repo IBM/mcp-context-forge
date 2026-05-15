@@ -365,16 +365,16 @@ async def handle_sso_callback(
             "temporarily_unavailable": "sso_unavailable",
         }
         error_code = error_mappings.get(error, "sso_failed")
-        return RedirectResponse(url=f"{root_path}/admin/login?error={error_code}", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error={error_code}", status_code=302)
 
     # Code and state are required if no error was returned
     if not code:
         logger.warning("SSO callback for provider '%s' missing both code and error parameters", provider_id)
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=sso_failed", status_code=302)
 
     if not state:
         logger.warning("SSO callback for provider '%s' missing required state parameter", provider_id)
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=sso_failed", status_code=302)
 
     sso_service = SSOService(db)
 
@@ -384,22 +384,22 @@ async def handle_sso_callback(
 
     browser_session_binding = request.cookies.get("sso_session_id") if request else None
     if not browser_session_binding:
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=sso_failed", status_code=302)
 
     callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state, session_binding=browser_session_binding)
     if callback_result:
         user_info, token_data = callback_result
 
     if not user_info:
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=sso_failed", status_code=302)
 
     # Authenticate or create user
     access_token = await sso_service.authenticate_or_create_user(user_info)
     if not access_token:
-        return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
+        return RedirectResponse(url=f"{root_path}/v1/admin/login?error=user_creation_failed", status_code=302)
 
     # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}/v1/admin", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
@@ -409,7 +409,7 @@ async def handle_sso_callback(
         set_auth_cookie(redirect_response, access_token, remember_me=False)
     except CookieTooLargeError:
         redirect_response = RedirectResponse(
-            url=f"{root_path}/admin/login?error=token_too_large",
+            url=f"{root_path}/v1/admin/login?error=token_too_large",
             status_code=302,
         )
         return redirect_response

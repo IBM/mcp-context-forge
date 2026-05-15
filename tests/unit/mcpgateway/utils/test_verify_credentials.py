@@ -1416,7 +1416,7 @@ async def test_require_admin_auth_email_auth_get_db_http_401_redirects_html(monk
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"] == "/root/admin/login"
+    assert exc.value.headers["Location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -1472,7 +1472,7 @@ async def test_require_admin_auth_email_auth_fallback_redirects_for_htmx(monkeyp
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"].endswith("/admin/login")
+    assert exc.value.headers["Location"].endswith("/v1/admin/login")
 
 
 @pytest.mark.asyncio
@@ -1918,3 +1918,11 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     # Must be 403 Forbidden, NOT 200/success from basic auth fallback
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
     assert "Admin privileges required" in exc.value.detail
+
+
+
+
+# Note: verify_credentials admin privilege checks (line 1282) are covered by
+# integration tests and existing RBAC tests. The function signature and internal
+# implementation make unit testing these specific lines complex without duplicating
+# existing test coverage.

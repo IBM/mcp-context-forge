@@ -43,6 +43,6 @@ class GatewayPopulator(BasePopulator):
                 }
             )
 
-        result = await self._batch_create(payloads, "/gateways", id_field="id")
+        result = await self._batch_create(payloads, "/v1/gateways", id_field="id")
         self.existing_data["gateway_ids"] = result["ids"]
         return result

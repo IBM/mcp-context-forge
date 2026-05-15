@@ -55,7 +55,7 @@ class TeamPopulator(BasePopulator):
 
             try:
                 resp = await self.client.post(
-                    "/teams/",
+                    "/v1/teams/",
                     json={
                         "name": team_name,
                         "description": self.faker.catch_phrase(),
@@ -132,7 +132,7 @@ class TeamPopulator(BasePopulator):
             for invitee_email in invitees:
                 try:
                     resp = await self.client.post(
-                        f"/teams/{team_id}/invitations",
+                        f"/v1/teams/{team_id}/invitations",
                         json={"email": invitee_email, "role": "member"},
                         expected_status=[200, 201, 400, 409],  # 400/409 = already member
                     )
@@ -145,7 +145,7 @@ class TeamPopulator(BasePopulator):
                             if invite_token:
                                 user_jwt = self.client.user_tokens.get(invitee_email, self.client.admin_token)
                                 await self.client.post(
-                                    f"/teams/invitations/{invite_token}/accept",
+                                    f"/v1/teams/invitations/{invite_token}/accept",
                                     token=user_jwt,
                                     expected_status=[200, 201, 400],
                                 )

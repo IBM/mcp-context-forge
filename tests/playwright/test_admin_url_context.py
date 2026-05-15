@@ -101,7 +101,7 @@ def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
     """
     return page.evaluate(f"""() => {{
         const currentPath = window.location.pathname;
-        const adminIdx = currentPath.lastIndexOf('/admin');
+        const adminIdx = currentPath.lastIndexOf('/v1/admin');
         const base = adminIdx >= 0
             ? window.location.origin + currentPath.slice(0, adminIdx)
             : (window.ROOT_PATH || window.location.origin);
@@ -114,7 +114,7 @@ def _build_navigate_admin_url(page, fragment: str = "gateways") -> str:
         const teamId = new URL(window.location.href).searchParams.get('team_id');
         if (teamId) {{ searchParams.set('team_id', teamId); }}
         const qs = searchParams.toString();
-        return base + '/admin' + (qs ? '?' + qs : '') + '#{fragment}';
+        return base + '/v1/admin' + (qs ? '?' + qs : '') + '#{fragment}';
     }}""")
 
 
@@ -139,7 +139,7 @@ def _admin_url(base_url: str, *, prefix: str = "", team_id: bool = False, includ
 def _create_gateway_api(api_request_context: APIRequestContext, name_prefix: str) -> str:
     """Create a test gateway via API. Returns the gateway ID. Skips on failure."""
     create_resp = api_request_context.post(
-        "/gateways",
+        "/v1/gateways",
         headers={"Content-Type": "application/json"},
         data={
             "name": f"{name_prefix}-{uuid.uuid4().hex[:6]}",
@@ -159,12 +159,12 @@ def _create_gateway_api(api_request_context: APIRequestContext, name_prefix: str
 def _cleanup_gateway_by_name(api_request_context: APIRequestContext, name: str) -> None:
     """Best-effort cleanup: find and delete any gateway with the given name."""
     try:
-        resp = api_request_context.get("/gateways")
+        resp = api_request_context.get("/v1/gateways")
         if not resp.ok:
             return
         for gw in resp.json():
             if gw.get("name") == name:
-                api_request_context.delete(f"/gateways/{gw['id']}")
+                api_request_context.delete(f"/v1/gateways/{gw['id']}")
     except Exception:
         pass  # Best-effort only — never fail a test on cleanup
 
@@ -208,7 +208,7 @@ def _get_delete_gateway_btn(root, gw_id: str):
     gateway_row.scroll_into_view_if_needed()
     gateway_row.locator("button[aria-expanded]").click()
     gateway_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
-    delete_form = root.locator(f'form[action*="/gateways/{gw_id}/delete"]').first
+    delete_form = root.locator(f'form[action*="/v1/gateways/{gw_id}/delete"]').first
     return delete_form.locator('button[type="submit"]').first
 
 
@@ -354,7 +354,7 @@ class TestAdminUrlContextPreservation:
 
             _assert_url_params(page.url, team_id=True, include_inactive=False)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     # ------------------------------------------------------------------
     # Delete/Toggle (issue #3321): fetch() preserves proxy URL context
@@ -367,7 +367,7 @@ class TestAdminUrlContextPreservation:
         page.wait_for_load_state("domcontentloaded")
         _wait_for_admin_content(page)
 
-        toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
+        toggle_form = page.locator('form[action*="/v1/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
@@ -395,7 +395,7 @@ class TestAdminUrlContextPreservation:
             _assert_url_params(page.url, team_id=True, include_inactive=False)
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     def test_add_gateway_preserves_both_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After adding a gateway, both team_id AND include_inactive survive in URL."""
@@ -435,7 +435,7 @@ class TestAdminUrlContextPreservation:
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
             _assert_url_params(page.url, team_id=True, include_inactive=True)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     def test_add_preserves_team_id_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Starting with only team_id: include_inactive must NOT appear post-mutation."""
@@ -569,7 +569,7 @@ class TestAdminProxyUrlContext:
 
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     def test_proxy_toggle_server_preserves_catalog_tab(self, page: Page, base_url: str):
         """After toggling a server state via proxy URL, #catalog + both params survive."""
@@ -578,7 +578,7 @@ class TestAdminProxyUrlContext:
         page.wait_for_load_state("domcontentloaded")
         _wait_for_admin_content(page)
 
-        toggle_form = page.locator('form[action*="/servers/"][action*="/state"]').first
+        toggle_form = page.locator('form[action*="/v1/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found — register a server first.")
 
@@ -606,7 +606,7 @@ class TestAdminProxyUrlContext:
             assert len(confirmed) >= 1, "Expected at least one confirm() dialog for delete"
             _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     # ------------------------------------------------------------------
     # Single-param (negative) tests
@@ -805,7 +805,7 @@ class TestAdminIframeContext:
             pass
 
         url = frame_obj.url
-        assert "/admin" in url, f"Admin path missing from iframe URL; got: {url}"
+        assert "/v1/admin" in url, f"Admin path missing from iframe URL; got: {url}"
 
         # Check if fragment is in URL or if we need to wait for JS to apply it
         if "#gateways" not in url:
@@ -866,7 +866,7 @@ class TestAdminIframeContext:
 
             self._assert_iframe_url(page)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     def test_iframe_toggle_server_preserves_proxy_prefix(self, page: Page, base_url: str):
         """Toggling a server state inside the iframe: proxy prefix + params + #catalog survive."""
@@ -878,7 +878,7 @@ class TestAdminIframeContext:
             pass
 
         frame = page.frame_locator("#admin-frame")
-        toggle_form = frame.locator('form[action*="/servers/"][action*="/state"]').first
+        toggle_form = frame.locator('form[action*="/v1/servers/"][action*="/state"]').first
         if toggle_form.count() == 0:
             pytest.skip("No server toggle forms found in iframe — register a server first.")
 
@@ -903,7 +903,7 @@ class TestAdminIframeContext:
 
             self._assert_iframe_url(page)
         finally:
-            api_request_context.delete(f"/gateways/{gw_id}")
+            api_request_context.delete(f"/v1/gateways/{gw_id}")
 
     # ------------------------------------------------------------------
     # Single-param (negative) tests
@@ -992,7 +992,7 @@ class TestAdminIframeContext:
 
         # Create a real team via API so the dropdown has something to click
         team_name = f"iframe-test-{uuid.uuid4().hex[:8]}"
-        resp = api_request_context.post("/teams", data={"name": team_name, "visibility": "public"})
+        resp = api_request_context.post("/v1/teams", data={"name": team_name, "visibility": "public"})
         assert resp.status < 400, f"Failed to create test team: HTTP {resp.status}"
         team_data = resp.json()
         team_id = team_data.get("id")
@@ -1072,4 +1072,4 @@ class TestAdminIframeContext:
             assert team_id in iframe_url, f"Expected team_id={team_id} in iframe URL, got: {iframe_url}"
         finally:
             # Cleanup: delete the test team
-            api_request_context.delete(f"/admin/teams/{team_id}")
+            api_request_context.delete(f"/v1/admin/teams/{team_id}")

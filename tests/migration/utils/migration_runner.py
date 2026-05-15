@@ -358,7 +358,7 @@ class MigrationTestRunner:
         session.timeout = 10
 
         counts = {}
-        endpoints = {"tools": "/tools", "servers": "/servers", "gateways": "/gateways", "resources": "/resources", "prompts": "/prompts", "a2a_agents": "/a2a"}
+        endpoints = {"tools": "/v1/tools", "servers": "/v1/servers", "gateways": "/v1/gateways", "resources": "/v1/resources", "prompts": "/v1/prompts", "a2a_agents": "/v1/a2a"}
 
         for entity_type, endpoint in endpoints.items():
             try:

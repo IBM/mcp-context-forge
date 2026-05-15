@@ -120,7 +120,7 @@ class TestHttpAuthMiddlewareIntegration:
 
         # Send POST request with X-API-Key header (initialize requires POST)
         response = client.post(
-            "/protocol/initialize",
+            "/v1/protocol/initialize",
             json={},
             headers={
                 "X-API-Key": "test-api-key-123",
@@ -153,7 +153,7 @@ class TestHttpAuthMiddlewareIntegration:
         client = test_client_with_http_auth
 
         response = client.post(
-            "/protocol/initialize",
+            "/v1/protocol/initialize",
             json={},
             headers={
                 "X-API-Key": "blocked-key-456",
@@ -190,7 +190,7 @@ class TestHttpAuthMiddlewareIntegration:
 
         # Send request without any authentication
         response = client.post(
-            "/protocol/initialize",
+            "/v1/protocol/initialize",
             json={},
             headers={"Content-Type": "application/json"},
         )
@@ -224,7 +224,7 @@ class TestHttpAuthMiddlewareWithoutPlugins:
             client = TestClient(app)
 
             # Request without authentication should fail (use POST for initialize)
-            response = client.post("/protocol/initialize", json={})
+            response = client.post("/v1/protocol/initialize", json={})
 
             # Should get 401 because no credentials provided (authentication middleware returns 401)
             assert response.status_code == 401
@@ -356,7 +356,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
             client_host="192.168.1.100",
@@ -378,7 +378,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),
             client_host="192.168.1.100",
@@ -397,7 +397,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({"content-type": "application/json"}),
             client_host="192.168.1.100",
@@ -537,7 +537,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({"x-correlation-id": "test-corr-123"}),
             client_host="192.168.1.100",
@@ -558,7 +558,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
@@ -579,7 +579,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
@@ -600,7 +600,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
@@ -639,7 +639,7 @@ class TestCustomAuthExamplePlugin:
 
         # Step 1: HTTP_PRE_REQUEST - Transform headers
         pre_payload = HttpPreRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
             client_host="192.168.1.100",
@@ -671,7 +671,7 @@ class TestCustomAuthExamplePlugin:
 
         # Step 3: HTTP_POST_REQUEST - Add response headers
         post_payload = HttpPostRequestPayload(
-            path="/protocol/initialize",
+            path="/v1/protocol/initialize",
             method="POST",
             headers=HttpHeaderPayload(transformed_headers),
             client_host="192.168.1.100",

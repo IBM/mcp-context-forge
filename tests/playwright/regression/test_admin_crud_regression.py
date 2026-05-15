@@ -326,7 +326,7 @@ class TestVirtualServerCRUD:
 
         # Wait for HTMX to refresh the table after deletion
         # The new implementation uses htmx.ajax() instead of full page reload
-        with admin_page.expect_response(lambda r: "/admin/servers/partial" in r.url and r.status == 200, timeout=10_000):
+        with admin_page.expect_response(lambda r: "/v1/admin/servers/partial" in r.url and r.status == 200, timeout=10_000):
             delete_button.click()
 
         # Step 5: Wait for HTMX partial to finish rendering

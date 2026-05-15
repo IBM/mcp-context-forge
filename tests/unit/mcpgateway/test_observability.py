@@ -1171,7 +1171,7 @@ class TestObservability:
         scope = {
             "type": "http",
             "method": "GET",
-            "path": "/admin",
+            "path": "/v1/admin",
             "headers": [],
             "query_string": b"",
         }

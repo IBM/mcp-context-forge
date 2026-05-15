@@ -146,7 +146,7 @@ def _mcp_post(
         Raw HTTP response.
     """
     return client.post(
-        f"/servers/{server_id}/mcp/",
+        f"/v1/servers/{server_id}/mcp/",
         headers=_mcp_headers(token, session_id=session_id),
         json={
             "jsonrpc": "2.0",
@@ -240,7 +240,7 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     team = _request_json(
         admin_client,
         "POST",
-        "/teams/",
+        "/v1/teams/",
         json={
             "name": f"{PLUGIN_PARITY_PREFIX}-team-{uuid.uuid4().hex[:8]}",
             "description": "Plugin parity MCP team",
@@ -249,9 +249,9 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     )
     team_id = team["id"]
 
-    tools = _request_json(admin_client, "GET", "/tools")
-    resources = _request_json(admin_client, "GET", "/resources")
-    prompts = _request_json(admin_client, "GET", "/prompts")
+    tools = _request_json(admin_client, "GET", "/v1/tools")
+    resources = _request_json(admin_client, "GET", "/v1/resources")
+    prompts = _request_json(admin_client, "GET", "/v1/prompts")
     time_tool = next(tool for tool in tools if tool["name"] == "fast-time-get-system-time")
     formats_resource = next(resource for resource in resources if resource["uri"] == "time://formats")
     detailed_prompt = next(prompt for prompt in prompts if prompt["name"] == "fast-time-convert-time-detailed")
@@ -259,16 +259,16 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     for resource in resources:
         if resource["uri"] == DB_DIRECT_RESOURCE_URI:
             with suppress(Exception):
-                admin_client.delete(f"/resources/{resource['id']}")
+                admin_client.delete(f"/v1/resources/{resource['id']}")
     for prompt in prompts:
         if prompt["name"] == DB_DIRECT_PROMPT_NAME or prompt.get("originalName") == DB_DIRECT_PROMPT_NAME:
             with suppress(Exception):
-                admin_client.delete(f"/prompts/{prompt['id']}")
+                admin_client.delete(f"/v1/prompts/{prompt['id']}")
 
     db_direct_resource = _request_json(
         admin_client,
         "POST",
-        "/resources",
+        "/v1/resources",
         json={
             "resource": {
                 "uri": DB_DIRECT_RESOURCE_URI,
@@ -284,7 +284,7 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     db_direct_prompt = _request_json(
         admin_client,
         "POST",
-        "/prompts",
+        "/v1/prompts",
         json={
             "prompt": {
                 "name": DB_DIRECT_PROMPT_NAME,
@@ -300,7 +300,7 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     server = _request_json(
         admin_client,
         "POST",
-        "/servers",
+        "/v1/servers",
         json={
             "server": {
                 "name": f"{PLUGIN_PARITY_PREFIX}-server-{uuid.uuid4().hex[:8]}",
@@ -323,13 +323,13 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     }
 
     with suppress(Exception):
-        admin_client.delete(f"/servers/{server_id}")
+        admin_client.delete(f"/v1/servers/{server_id}")
     with suppress(Exception):
-        admin_client.delete(f"/resources/{db_direct_resource['id']}")
+        admin_client.delete(f"/v1/resources/{db_direct_resource['id']}")
     with suppress(Exception):
-        admin_client.delete(f"/prompts/{db_direct_prompt['id']}")
+        admin_client.delete(f"/v1/prompts/{db_direct_prompt['id']}")
     with suppress(Exception):
-        admin_client.delete(f"/teams/{team_id}")
+        admin_client.delete(f"/v1/teams/{team_id}")
 
 
 class TestMcpPluginParity:

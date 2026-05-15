@@ -44,7 +44,7 @@ class TestSecurityHeaders:
         """Test security headers on API endpoints."""
         # Test with authentication disabled for this test
         with patch.object(settings, "auth_required", False):
-            response = client.get("/tools")
+            response = client.get("/v1/tools")
 
             assert response.headers["X-Content-Type-Options"] == "nosniff"
             assert response.headers["X-Frame-Options"] == "DENY"
@@ -289,7 +289,7 @@ class TestCORSConfiguration:
 
         # Send a CORS preflight request (OPTIONS with Origin and Access-Control-Request-Method)
         response = client.options(
-            "/servers/test-server-id/mcp",
+            "/v1/servers/test-server-id/mcp",
             headers={
                 "Origin": allowed_origin,
                 "Access-Control-Request-Method": "POST",
@@ -323,7 +323,7 @@ class TestCORSConfiguration:
         assert disallowed_origin not in settings.allowed_origins, "Test origin unexpectedly in allowed_origins"
 
         response = client.options(
-            "/servers/test-server-id/mcp",
+            "/v1/servers/test-server-id/mcp",
             headers={
                 "Origin": disallowed_origin,
                 "Access-Control-Request-Method": "POST",

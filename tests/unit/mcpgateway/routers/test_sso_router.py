@@ -56,7 +56,7 @@ def test_validate_redirect_uri_allows_relative(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "allowed_origins", ["https://example.com:8443"])
     monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("https://myapp.com"))
 
-    assert sso_router._validate_redirect_uri("/admin", None) is True
+    assert sso_router._validate_redirect_uri("/v1/admin", None) is True
     assert sso_router._validate_redirect_uri("https://example.com:8443/cb", None) is True
     assert sso_router._validate_redirect_uri("https://myapp.com/cb", None) is True
     assert sso_router._validate_redirect_uri("https://evil.com/cb", None) is False
@@ -228,7 +228,7 @@ async def test_handle_sso_callback_failure_redirect(monkeypatch: pytest.MonkeyPa
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -254,7 +254,7 @@ async def test_handle_sso_callback_missing_code_and_error(monkeypatch: pytest.Mo
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -281,7 +281,7 @@ async def test_handle_sso_callback_user_creation_failed(monkeypatch: pytest.Monk
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=user_creation_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=user_creation_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -313,7 +313,7 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/v1/admin")
     assert set_cookie.called
 
 
@@ -351,7 +351,7 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/v1/admin")
     assert "sso_id_token_hint=id-token-hint" in response.headers.get("set-cookie", "")
     assert set_cookie.called
 
@@ -391,7 +391,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/v1/admin")
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
@@ -418,7 +418,7 @@ async def test_handle_sso_callback_missing_session_cookie_redirects_failed(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -890,7 +890,7 @@ async def test_handle_sso_callback_oauth_error_access_denied(monkeypatch: pytest
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_cancelled" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_cancelled" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -904,7 +904,7 @@ async def test_handle_sso_callback_oauth_error_server_error(monkeypatch: pytest.
     response = await sso_router.handle_sso_callback("adfs", code=None, state=None, error="server_error", request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
-    assert "/admin/login?error=sso_server_error" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_server_error" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -918,7 +918,7 @@ async def test_handle_sso_callback_oauth_error_unknown(monkeypatch: pytest.Monke
     response = await sso_router.handle_sso_callback("adfs", code=None, state=None, error="custom_error", request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -933,4 +933,4 @@ async def test_handle_sso_callback_missing_state_no_error(monkeypatch: pytest.Mo
     response = await sso_router.handle_sso_callback("adfs", code="auth-code", state=None, error=None, request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/v1/admin/login?error=sso_failed" in response.headers.get("location", "")

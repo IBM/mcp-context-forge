@@ -602,3 +602,60 @@ async def test_ensure_user_exists_normalizes_email(email_auth_service):
         assert user == mock_user
         # Should be called with the normalized email
         mock_get.assert_called_once_with("user@example.com")
+
+
+
+
+def test_build_forgot_password_url():
+    """Test forgot password URL construction.
+
+    Coverage: mcpgateway/services/email_auth_service.py line 389
+    """
+    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.app_root_path = "/app"
+
+        result = EmailAuthService._build_forgot_password_url()
+
+        assert result == "https://example.com/app/v1/admin/forgot-password"
+
+
+def test_build_forgot_password_url_no_root_path():
+    """Test forgot password URL construction without root path."""
+    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+        mock_settings.app_domain = "http://localhost:4444"
+        mock_settings.app_root_path = ""
+
+        result = EmailAuthService._build_forgot_password_url()
+
+        assert result == "http://localhost:4444/v1/admin/forgot-password"
+
+
+def test_build_reset_password_url_with_token():
+    """Test reset password URL construction with token.
+
+    Coverage: mcpgateway/services/email_auth_service.py line 404
+    """
+    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.app_root_path = "/app"
+
+        token = "test-token-123"
+        result = EmailAuthService._build_reset_password_url(token)
+
+        assert result == "https://example.com/app/v1/admin/reset-password/test-token-123"
+
+
+def test_build_reset_password_url_with_special_chars():
+    """Test reset password URL construction with special characters in token."""
+    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+        mock_settings.app_domain = "http://localhost:4444"
+        mock_settings.app_root_path = ""
+
+        # Token with special characters that need URL encoding
+        token = "token+with/special=chars"
+        result = EmailAuthService._build_reset_password_url(token)
+
+        # Should be URL-encoded
+        assert "token%2Bwith%2Fspecial%3Dchars" in result
+        assert result == "http://localhost:4444/v1/admin/reset-password/token%2Bwith%2Fspecial%3Dchars"

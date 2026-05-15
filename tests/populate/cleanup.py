@@ -35,12 +35,12 @@ logger = logging.getLogger(__name__)
 # (entity_name, list_endpoint, id_field, items_key_or_none)
 # items_key: key in response dict containing items, or None for plain-list endpoints
 DELETION_ORDER = [
-    ("a2a_agents", "/a2a", "id", "agents"),
-    ("servers", "/servers", "id", "servers"),
-    ("prompts", "/prompts", "id", "prompts"),
-    ("resources", "/resources", "id", "resources"),
-    ("tools", "/tools", "id", "tools"),
-    ("gateways", "/gateways", "id", "gateways"),
+    ("a2a_agents", "/v1/a2a", "id", "agents"),
+    ("servers", "/v1/servers", "id", "servers"),
+    ("prompts", "/v1/prompts", "id", "prompts"),
+    ("resources", "/v1/resources", "id", "resources"),
+    ("tools", "/v1/tools", "id", "tools"),
+    ("gateways", "/v1/gateways", "id", "gateways"),
 ]
 
 # Teams and users require special handling (ownership, cascading deps)
@@ -177,7 +177,7 @@ async def cleanup_entities(
             if cursor:
                 params_t["cursor"] = cursor
             try:
-                resp = await client.get("/teams/", headers=headers, params=params_t)
+                resp = await client.get("/v1/teams/", headers=headers, params=params_t)
                 if resp.status_code != 200:
                     break
                 data = resp.json()
@@ -203,7 +203,7 @@ async def cleanup_entities(
             for owner_email, team_ids_to_delete in owner_teams.items():
                 try:
                     login_resp = await client.post(
-                        "/auth/email/login",
+                        "/v1/auth/email/login",
                         json={"email": owner_email, "password": LOADTEST_PASSWORD},
                         headers={"Content-Type": "application/json"},
                     )
@@ -217,7 +217,7 @@ async def cleanup_entities(
                     user_hdrs = {"Authorization": f"Bearer {user_jwt}", "Content-Type": "application/json"}
                     for tid in team_ids_to_delete:
                         try:
-                            resp = await client.delete(f"/teams/{tid}", headers=user_hdrs)
+                            resp = await client.delete(f"/v1/teams/{tid}", headers=user_hdrs)
                             if resp.status_code in (200, 204, 404):
                                 teams_deleted += 1
                             else:
@@ -237,7 +237,7 @@ async def cleanup_entities(
         users_deleted = 0
         users_errors = 0
         try:
-            resp = await client.get("/auth/email/admin/users", headers=headers, params={"limit": 500})
+            resp = await client.get("/v1/auth/email/admin/users", headers=headers, params={"limit": 500})
             user_list = resp.json() if resp.status_code == 200 else []
             user_emails = [u["email"] for u in user_list if isinstance(u, dict) and email_domain in str(u.get("email", ""))]
         except Exception:
@@ -246,7 +246,7 @@ async def cleanup_entities(
         if user_emails and not dry_run:
             for ue in user_emails:
                 try:
-                    resp = await client.delete(f"/auth/email/admin/users/{ue}", headers=headers)
+                    resp = await client.delete(f"/v1/auth/email/admin/users/{ue}", headers=headers)
                     if resp.status_code in (200, 204, 404):
                         users_deleted += 1
                     else:

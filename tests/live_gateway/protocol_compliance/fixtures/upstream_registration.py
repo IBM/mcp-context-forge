@@ -49,7 +49,7 @@ def _wait_for_federation_sync(
     last_status: int | None = None
     last_body: str = ""
     while time.time() < deadline:
-        resp = client.get("/tools", params={"limit": 500})
+        resp = client.get("/v1/tools", params={"limit": 500})
         last_status = resp.status_code
         if resp.status_code == 200:
             tools = resp.json()
@@ -94,14 +94,14 @@ def registered_reference_upstream(
     reference_upstream: ReferenceUpstream,
 ) -> Iterator[dict[str, Any]]:
     """POST /gateways to register the reference server; DELETE on teardown."""
-    _delete_if_exists(gateway_http_client, "/gateways", "compliance_reference")
+    _delete_if_exists(gateway_http_client, "/v1/gateways", "compliance_reference")
     payload = {
         "name": "compliance_reference",
         "url": reference_upstream.mcp_url,
         "description": "Reference MCP server for protocol-compliance tests",
         "transport": "STREAMABLEHTTP",
     }
-    resp = gateway_http_client.post("/gateways", json=payload)
+    resp = gateway_http_client.post("/v1/gateways", json=payload)
     if resp.status_code not in (200, 201):
         pytest.skip(
             f"gateway upstream registration failed {resp.status_code}: {resp.text[:200]} "
@@ -112,7 +112,7 @@ def registered_reference_upstream(
     try:
         yield gateway
     finally:
-        gateway_http_client.request("DELETE", f"/gateways/{gateway['id']}")
+        gateway_http_client.request("DELETE", f"/v1/gateways/{gateway['id']}")
 
 
 @pytest.fixture(scope="session")
@@ -125,7 +125,7 @@ def virtual_server(
     if not tools:
         pytest.skip(f"federation sync did not surface any tools for gateway " f"{registered_reference_upstream['id']}: {diag}")
 
-    _delete_if_exists(gateway_http_client, "/servers", "compliance_virtual")
+    _delete_if_exists(gateway_http_client, "/v1/servers", "compliance_virtual")
     # POST /servers takes ServerCreate nested under a top-level "server" key
     # because the route also accepts side-band team_id / visibility Body params.
     payload = {
@@ -135,11 +135,11 @@ def virtual_server(
             "associated_tools": [t["id"] for t in tools],
         }
     }
-    resp = gateway_http_client.post("/servers", json=payload)
+    resp = gateway_http_client.post("/v1/servers", json=payload)
     if resp.status_code not in (200, 201):
         pytest.skip(f"virtual-server creation failed {resp.status_code}: {resp.text[:200]}")
     server = resp.json()
     try:
         yield server
     finally:
-        gateway_http_client.request("DELETE", f"/servers/{server['id']}")
+        gateway_http_client.request("DELETE", f"/v1/servers/{server['id']}")

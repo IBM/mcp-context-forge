@@ -238,7 +238,7 @@ class ToolsPage(BasePage):
         """
         with self.page.expect_response(
             lambda resp: (
-                re.search(r"/admin/tools/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and "/search" not in resp.url and "/ids" not in resp.url and resp.request.method == "GET"
+                re.search(r"/v1/admin/tools/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and "/search" not in resp.url and "/ids" not in resp.url and resp.request.method == "GET"
             ),
             timeout=30000,
         ) as response_info:

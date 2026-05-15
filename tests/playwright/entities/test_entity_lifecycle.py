@@ -83,7 +83,7 @@ class TestToolLifecycle:
         """Admin can create a REST tool."""
         name = f"lifecycle-tool-{uuid.uuid4().hex[:8]}"
         resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -100,11 +100,11 @@ class TestToolLifecycle:
         assert tool["name"] == name
 
         # Cleanup
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_list_tools(self, admin_api: APIRequestContext):
         """Admin can list tools."""
-        resp = admin_api.get("/tools/")
+        resp = admin_api.get("/v1/tools/")
         assert resp.status == 200
         data = resp.json()
         assert isinstance(data, list)
@@ -113,7 +113,7 @@ class TestToolLifecycle:
         """Admin can get a specific tool."""
         name = f"get-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -128,18 +128,18 @@ class TestToolLifecycle:
         assert create_resp.status in (200, 201), f"Create tool failed: {create_resp.status} {create_resp.text()}"
         tool = create_resp.json()
 
-        resp = admin_api.get(f"/tools/{tool['id']}")
+        resp = admin_api.get(f"/v1/tools/{tool['id']}")
         assert resp.status == 200
         fetched = resp.json()
         assert fetched["name"] == name
 
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_update_tool(self, admin_api: APIRequestContext):
         """Admin can update a tool's description."""
         name = f"update-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -154,18 +154,18 @@ class TestToolLifecycle:
         assert create_resp.status in (200, 201), f"Create tool failed: {create_resp.status} {create_resp.text()}"
         tool = create_resp.json()
 
-        resp = admin_api.put(f"/tools/{tool['id']}", data={"description": "Updated description"})
+        resp = admin_api.put(f"/v1/tools/{tool['id']}", data={"description": "Updated description"})
         assert resp.status == 200
         updated = resp.json()
         assert updated["description"] == "Updated description"
 
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_deactivate_tool(self, admin_api: APIRequestContext):
         """Admin can deactivate a tool via state endpoint."""
         name = f"deact-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -180,21 +180,21 @@ class TestToolLifecycle:
         assert create_resp.status in (200, 201), f"Create tool failed: {create_resp.status} {create_resp.text()}"
         tool = create_resp.json()
 
-        resp = admin_api.post(f"/tools/{tool['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/tools/{tool['id']}/state?activate=false")
         assert resp.status == 200
 
         # Verify inactive (should not appear in default list)
-        list_resp = admin_api.get("/tools/")
+        list_resp = admin_api.get("/v1/tools/")
         tool_ids = [t["id"] for t in list_resp.json()]
         assert tool["id"] not in tool_ids
 
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_reactivate_tool(self, admin_api: APIRequestContext):
         """Admin can reactivate a deactivated tool."""
         name = f"react-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -210,22 +210,22 @@ class TestToolLifecycle:
         tool = create_resp.json()
 
         # Deactivate then reactivate
-        admin_api.post(f"/tools/{tool['id']}/state?activate=false")
-        resp = admin_api.post(f"/tools/{tool['id']}/state?activate=true")
+        admin_api.post(f"/v1/tools/{tool['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/tools/{tool['id']}/state?activate=true")
         assert resp.status == 200
 
         # Verify active again
-        list_resp = admin_api.get("/tools/")
+        list_resp = admin_api.get("/v1/tools/")
         tool_ids = [t["id"] for t in list_resp.json()]
         assert tool["id"] in tool_ids
 
-        admin_api.delete(f"/tools/{tool['id']}")
+        admin_api.delete(f"/v1/tools/{tool['id']}")
 
     def test_delete_tool(self, admin_api: APIRequestContext):
         """Admin can delete a tool."""
         name = f"del-tool-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools/",
+            "/v1/tools/",
             data={
                 "tool": {
                     "name": name,
@@ -240,11 +240,11 @@ class TestToolLifecycle:
         assert create_resp.status in (200, 201), f"Create tool failed: {create_resp.status} {create_resp.text()}"
         tool = create_resp.json()
 
-        resp = admin_api.delete(f"/tools/{tool['id']}")
+        resp = admin_api.delete(f"/v1/tools/{tool['id']}")
         assert resp.status == 200
 
         # Verify deleted
-        get_resp = admin_api.get(f"/tools/{tool['id']}")
+        get_resp = admin_api.get(f"/v1/tools/{tool['id']}")
         assert get_resp.status == 404
 
 
@@ -260,7 +260,7 @@ class TestResourceLifecycle:
         """Admin can create a resource."""
         name = f"lifecycle-res-{uuid.uuid4().hex[:8]}"
         resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -276,11 +276,11 @@ class TestResourceLifecycle:
         resource = resp.json()
         assert resource["name"] == name
 
-        admin_api.delete(f"/resources/{resource['id']}")
+        admin_api.delete(f"/v1/resources/{resource['id']}")
 
     def test_list_resources(self, admin_api: APIRequestContext):
         """Admin can list resources."""
-        resp = admin_api.get("/resources/")
+        resp = admin_api.get("/v1/resources/")
         assert resp.status == 200
         data = resp.json()
         assert isinstance(data, list)
@@ -289,7 +289,7 @@ class TestResourceLifecycle:
         """Admin can get resource info."""
         name = f"get-res-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -304,18 +304,18 @@ class TestResourceLifecycle:
         assert create_resp.status in (200, 201), f"Create resource failed: {create_resp.status} {create_resp.text()}"
         resource = create_resp.json()
 
-        resp = admin_api.get(f"/resources/{resource['id']}/info")
+        resp = admin_api.get(f"/v1/resources/{resource['id']}/info")
         assert resp.status == 200
         fetched = resp.json()
         assert fetched["name"] == name
 
-        admin_api.delete(f"/resources/{resource['id']}")
+        admin_api.delete(f"/v1/resources/{resource['id']}")
 
     def test_update_resource(self, admin_api: APIRequestContext):
         """Admin can update a resource."""
         name = f"update-res-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -330,18 +330,18 @@ class TestResourceLifecycle:
         assert create_resp.status in (200, 201), f"Create resource failed: {create_resp.status} {create_resp.text()}"
         resource = create_resp.json()
 
-        resp = admin_api.put(f"/resources/{resource['id']}", data={"description": "Updated resource"})
+        resp = admin_api.put(f"/v1/resources/{resource['id']}", data={"description": "Updated resource"})
         assert resp.status == 200
         updated = resp.json()
         assert updated["description"] == "Updated resource"
 
-        admin_api.delete(f"/resources/{resource['id']}")
+        admin_api.delete(f"/v1/resources/{resource['id']}")
 
     def test_deactivate_resource(self, admin_api: APIRequestContext):
         """Admin can deactivate a resource."""
         name = f"deact-res-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -356,21 +356,21 @@ class TestResourceLifecycle:
         assert create_resp.status in (200, 201), f"Create resource failed: {create_resp.status} {create_resp.text()}"
         resource = create_resp.json()
 
-        resp = admin_api.post(f"/resources/{resource['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/resources/{resource['id']}/state?activate=false")
         assert resp.status == 200
 
         # Verify inactive
-        list_resp = admin_api.get("/resources/")
+        list_resp = admin_api.get("/v1/resources/")
         res_ids = [r["id"] for r in list_resp.json()]
         assert resource["id"] not in res_ids
 
-        admin_api.delete(f"/resources/{resource['id']}")
+        admin_api.delete(f"/v1/resources/{resource['id']}")
 
     def test_reactivate_resource(self, admin_api: APIRequestContext):
         """Admin can reactivate a resource."""
         name = f"react-res-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -385,21 +385,21 @@ class TestResourceLifecycle:
         assert create_resp.status in (200, 201), f"Create resource failed: {create_resp.status} {create_resp.text()}"
         resource = create_resp.json()
 
-        admin_api.post(f"/resources/{resource['id']}/state?activate=false")
-        resp = admin_api.post(f"/resources/{resource['id']}/state?activate=true")
+        admin_api.post(f"/v1/resources/{resource['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/resources/{resource['id']}/state?activate=true")
         assert resp.status == 200
 
-        list_resp = admin_api.get("/resources/")
+        list_resp = admin_api.get("/v1/resources/")
         res_ids = [r["id"] for r in list_resp.json()]
         assert resource["id"] in res_ids
 
-        admin_api.delete(f"/resources/{resource['id']}")
+        admin_api.delete(f"/v1/resources/{resource['id']}")
 
     def test_delete_resource(self, admin_api: APIRequestContext):
         """Admin can delete a resource."""
         name = f"del-res-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/resources/",
+            "/v1/resources/",
             data={
                 "resource": {
                     "uri": f"file:///test/{name}.txt",
@@ -414,10 +414,10 @@ class TestResourceLifecycle:
         assert create_resp.status in (200, 201), f"Create resource failed: {create_resp.status} {create_resp.text()}"
         resource = create_resp.json()
 
-        resp = admin_api.delete(f"/resources/{resource['id']}")
+        resp = admin_api.delete(f"/v1/resources/{resource['id']}")
         assert resp.status == 200
 
-        get_resp = admin_api.get(f"/resources/{resource['id']}/info")
+        get_resp = admin_api.get(f"/v1/resources/{resource['id']}/info")
         assert get_resp.status == 404
 
 
@@ -433,7 +433,7 @@ class TestPromptLifecycle:
         """Admin can create a prompt."""
         name = f"lifecycle-prompt-{uuid.uuid4().hex[:8]}"
         resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -448,11 +448,11 @@ class TestPromptLifecycle:
         prompt = resp.json()
         assert prompt["name"] == name
 
-        admin_api.delete(f"/prompts/{prompt['id']}")
+        admin_api.delete(f"/v1/prompts/{prompt['id']}")
 
     def test_list_prompts(self, admin_api: APIRequestContext):
         """Admin can list prompts."""
-        resp = admin_api.get("/prompts/")
+        resp = admin_api.get("/v1/prompts/")
         assert resp.status == 200
         data = resp.json()
         assert isinstance(data, list)
@@ -461,7 +461,7 @@ class TestPromptLifecycle:
         """Admin can get a prompt (returns rendered MCP messages)."""
         name = f"get-prompt-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -476,18 +476,18 @@ class TestPromptLifecycle:
         prompt = create_resp.json()
 
         # GET /prompts/{id} returns rendered MCP messages, not raw metadata
-        resp = admin_api.get(f"/prompts/{prompt['id']}")
+        resp = admin_api.get(f"/v1/prompts/{prompt['id']}")
         assert resp.status == 200
         fetched = resp.json()
         assert "messages" in fetched or "description" in fetched
 
-        admin_api.delete(f"/prompts/{prompt['id']}")
+        admin_api.delete(f"/v1/prompts/{prompt['id']}")
 
     def test_update_prompt(self, admin_api: APIRequestContext):
         """Admin can update a prompt."""
         name = f"update-prompt-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -501,18 +501,18 @@ class TestPromptLifecycle:
         assert create_resp.status in (200, 201), f"Create prompt failed: {create_resp.status} {create_resp.text()}"
         prompt = create_resp.json()
 
-        resp = admin_api.put(f"/prompts/{prompt['id']}", data={"description": "Updated prompt"})
+        resp = admin_api.put(f"/v1/prompts/{prompt['id']}", data={"description": "Updated prompt"})
         assert resp.status == 200
         updated = resp.json()
         assert updated["description"] == "Updated prompt"
 
-        admin_api.delete(f"/prompts/{prompt['id']}")
+        admin_api.delete(f"/v1/prompts/{prompt['id']}")
 
     def test_deactivate_prompt(self, admin_api: APIRequestContext):
         """Admin can deactivate a prompt."""
         name = f"deact-prompt-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -526,20 +526,20 @@ class TestPromptLifecycle:
         assert create_resp.status in (200, 201), f"Create prompt failed: {create_resp.status} {create_resp.text()}"
         prompt = create_resp.json()
 
-        resp = admin_api.post(f"/prompts/{prompt['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/prompts/{prompt['id']}/state?activate=false")
         assert resp.status == 200
 
-        list_resp = admin_api.get("/prompts/")
+        list_resp = admin_api.get("/v1/prompts/")
         prompt_ids = [p["id"] for p in list_resp.json()]
         assert prompt["id"] not in prompt_ids
 
-        admin_api.delete(f"/prompts/{prompt['id']}")
+        admin_api.delete(f"/v1/prompts/{prompt['id']}")
 
     def test_reactivate_prompt(self, admin_api: APIRequestContext):
         """Admin can reactivate a prompt."""
         name = f"react-prompt-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -553,21 +553,21 @@ class TestPromptLifecycle:
         assert create_resp.status in (200, 201), f"Create prompt failed: {create_resp.status} {create_resp.text()}"
         prompt = create_resp.json()
 
-        admin_api.post(f"/prompts/{prompt['id']}/state?activate=false")
-        resp = admin_api.post(f"/prompts/{prompt['id']}/state?activate=true")
+        admin_api.post(f"/v1/prompts/{prompt['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/prompts/{prompt['id']}/state?activate=true")
         assert resp.status == 200
 
-        list_resp = admin_api.get("/prompts/")
+        list_resp = admin_api.get("/v1/prompts/")
         prompt_ids = [p["id"] for p in list_resp.json()]
         assert prompt["id"] in prompt_ids
 
-        admin_api.delete(f"/prompts/{prompt['id']}")
+        admin_api.delete(f"/v1/prompts/{prompt['id']}")
 
     def test_delete_prompt(self, admin_api: APIRequestContext):
         """Admin can delete a prompt."""
         name = f"del-prompt-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/prompts/",
+            "/v1/prompts/",
             data={
                 "prompt": {
                     "name": name,
@@ -581,10 +581,10 @@ class TestPromptLifecycle:
         assert create_resp.status in (200, 201), f"Create prompt failed: {create_resp.status} {create_resp.text()}"
         prompt = create_resp.json()
 
-        resp = admin_api.delete(f"/prompts/{prompt['id']}")
+        resp = admin_api.delete(f"/v1/prompts/{prompt['id']}")
         assert resp.status == 200
 
-        get_resp = admin_api.get(f"/prompts/{prompt['id']}")
+        get_resp = admin_api.get(f"/v1/prompts/{prompt['id']}")
         assert get_resp.status == 404
 
 
@@ -600,7 +600,7 @@ class TestServerLifecycle:
         """Admin can create a virtual server."""
         name = f"lifecycle-srv-{uuid.uuid4().hex[:8]}"
         resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -613,11 +613,11 @@ class TestServerLifecycle:
         server = resp.json()
         assert server["name"] == name
 
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
     def test_list_servers(self, admin_api: APIRequestContext):
         """Admin can list servers."""
-        resp = admin_api.get("/servers/")
+        resp = admin_api.get("/v1/servers/")
         assert resp.status == 200
         data = resp.json()
         assert isinstance(data, list)
@@ -626,7 +626,7 @@ class TestServerLifecycle:
         """Admin can get a specific server."""
         name = f"get-srv-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -638,18 +638,18 @@ class TestServerLifecycle:
         assert create_resp.status in (200, 201), f"Create server failed: {create_resp.status} {create_resp.text()}"
         server = create_resp.json()
 
-        resp = admin_api.get(f"/servers/{server['id']}")
+        resp = admin_api.get(f"/v1/servers/{server['id']}")
         assert resp.status == 200
         fetched = resp.json()
         assert fetched["name"] == name
 
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
     def test_update_server(self, admin_api: APIRequestContext):
         """Admin can update a server."""
         name = f"update-srv-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -661,18 +661,18 @@ class TestServerLifecycle:
         assert create_resp.status in (200, 201), f"Create server failed: {create_resp.status} {create_resp.text()}"
         server = create_resp.json()
 
-        resp = admin_api.put(f"/servers/{server['id']}", data={"description": "Updated server"})
+        resp = admin_api.put(f"/v1/servers/{server['id']}", data={"description": "Updated server"})
         assert resp.status == 200
         updated = resp.json()
         assert updated["description"] == "Updated server"
 
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
     def test_deactivate_server(self, admin_api: APIRequestContext):
         """Admin can deactivate a server."""
         name = f"deact-srv-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -684,20 +684,20 @@ class TestServerLifecycle:
         assert create_resp.status in (200, 201), f"Create server failed: {create_resp.status} {create_resp.text()}"
         server = create_resp.json()
 
-        resp = admin_api.post(f"/servers/{server['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/servers/{server['id']}/state?activate=false")
         assert resp.status == 200
 
-        list_resp = admin_api.get("/servers/")
+        list_resp = admin_api.get("/v1/servers/")
         srv_ids = [s["id"] for s in list_resp.json()]
         assert server["id"] not in srv_ids
 
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
     def test_reactivate_server(self, admin_api: APIRequestContext):
         """Admin can reactivate a server."""
         name = f"react-srv-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -709,21 +709,21 @@ class TestServerLifecycle:
         assert create_resp.status in (200, 201), f"Create server failed: {create_resp.status} {create_resp.text()}"
         server = create_resp.json()
 
-        admin_api.post(f"/servers/{server['id']}/state?activate=false")
-        resp = admin_api.post(f"/servers/{server['id']}/state?activate=true")
+        admin_api.post(f"/v1/servers/{server['id']}/state?activate=false")
+        resp = admin_api.post(f"/v1/servers/{server['id']}/state?activate=true")
         assert resp.status == 200
 
-        list_resp = admin_api.get("/servers/")
+        list_resp = admin_api.get("/v1/servers/")
         srv_ids = [s["id"] for s in list_resp.json()]
         assert server["id"] in srv_ids
 
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
     def test_delete_server(self, admin_api: APIRequestContext):
         """Admin can delete a server."""
         name = f"del-srv-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/servers/",
+            "/v1/servers/",
             data={
                 "server": {
                     "name": name,
@@ -735,10 +735,10 @@ class TestServerLifecycle:
         assert create_resp.status in (200, 201), f"Create server failed: {create_resp.status} {create_resp.text()}"
         server = create_resp.json()
 
-        resp = admin_api.delete(f"/servers/{server['id']}")
+        resp = admin_api.delete(f"/v1/servers/{server['id']}")
         assert resp.status == 200
 
-        get_resp = admin_api.get(f"/servers/{server['id']}")
+        get_resp = admin_api.get(f"/v1/servers/{server['id']}")
         assert get_resp.status == 404
 
 

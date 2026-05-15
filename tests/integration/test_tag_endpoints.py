@@ -78,7 +78,7 @@ def test_list_tags_all_entities(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags")
+        response = test_client.get("/v1/tags")
 
     assert response.status_code == 200
     tags = response.json()
@@ -106,7 +106,7 @@ def test_list_tags_filtered_by_tools(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags?entity_types=tools")
+        response = test_client.get("/v1/tags?entity_types=tools")
 
     assert response.status_code == 200
     tags = response.json()
@@ -125,7 +125,7 @@ def test_list_tags_filtered_by_multiple_types(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags?entity_types=tools,resources")
+        response = test_client.get("/v1/tags?entity_types=tools,resources")
 
     assert response.status_code == 200
     tags = response.json()
@@ -141,14 +141,14 @@ def test_list_tags_no_auth():
     """Test that tag endpoint requires authentication."""
     # Create client without auth override
     client = TestClient(app)
-    response = client.get("/tags")
+    response = client.get("/v1/tags")
     assert response.status_code == 401
 
 
 def test_list_tags_empty_database(test_client):
     """Test listing tags when database is empty."""
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=[])):
-        response = test_client.get("/tags")
+        response = test_client.get("/v1/tags")
 
     assert response.status_code == 200
     tags = response.json()
@@ -167,7 +167,7 @@ def test_admin_list_tags(test_client):
         mock_service = MockTagService.return_value
         mock_service.get_all_tags = AsyncMock(return_value=mock_tags)
 
-        response = test_client.get("/admin/tags")
+        response = test_client.get("/v1/admin/tags")
 
     assert response.status_code == 200
     tags = response.json()
@@ -198,7 +198,7 @@ def test_admin_list_tags_filtered(test_client):
         mock_service = MockTagService.return_value
         mock_service.get_all_tags = AsyncMock(return_value=mock_tags)
 
-        response = test_client.get("/admin/tags?entity_types=servers,gateways")
+        response = test_client.get("/v1/admin/tags?entity_types=servers,gateways")
 
     assert response.status_code == 200
     tags = response.json()
@@ -222,7 +222,7 @@ def test_list_tags_with_entities(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags?include_entities=true")
+        response = test_client.get("/v1/tags?include_entities=true")
 
     assert response.status_code == 200
     tags = response.json()
@@ -247,7 +247,7 @@ def test_get_entities_by_tag(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
-        response = test_client.get("/tags/api/entities")
+        response = test_client.get("/v1/tags/api/entities")
 
     assert response.status_code == 200
     entities = response.json()
@@ -272,7 +272,7 @@ def test_get_entities_by_tag_filtered(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
-        response = test_client.get("/tags/api/entities?entity_types=tools")
+        response = test_client.get("/v1/tags/api/entities?entity_types=tools")
 
     assert response.status_code == 200
     entities = response.json()
@@ -294,7 +294,7 @@ def test_list_tags_with_entities_filtered_by_type(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags?entity_types=tools&include_entities=true")
+        response = test_client.get("/v1/tags?entity_types=tools&include_entities=true")
 
     assert response.status_code == 200
     tags = response.json()
@@ -309,7 +309,7 @@ def test_list_tags_with_entities_filtered_by_type(test_client):
 def test_list_tags_invalid_entity_types(test_client):
     """Test listing tags with invalid entity types."""
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=[])):
-        response = test_client.get("/tags?entity_types=invalid,also_invalid")
+        response = test_client.get("/v1/tags?entity_types=invalid,also_invalid")
 
     assert response.status_code == 200
     tags = response.json()
@@ -319,7 +319,7 @@ def test_list_tags_invalid_entity_types(test_client):
 def test_get_entities_by_tag_nonexistent_tag(test_client):
     """Test getting entities by a non-existent tag."""
     with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=[])):
-        response = test_client.get("/tags/nonexistent/entities")
+        response = test_client.get("/v1/tags/nonexistent/entities")
 
     assert response.status_code == 200
     entities = response.json()
@@ -335,7 +335,7 @@ def test_get_entities_by_tag_multiple_types(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
-        response = test_client.get("/tags/api/entities?entity_types=tools,resources,servers")
+        response = test_client.get("/v1/tags/api/entities?entity_types=tools,resources,servers")
 
     assert response.status_code == 200
     entities = response.json()
@@ -353,7 +353,7 @@ def test_list_tags_statistics_accuracy(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags")
+        response = test_client.get("/v1/tags")
 
     assert response.status_code == 200
     tags = response.json()
@@ -382,7 +382,7 @@ def test_admin_tags_with_entities(test_client):
         mock_service = MockTagService.return_value
         mock_service.get_all_tags = AsyncMock(return_value=mock_tags)
 
-        response = test_client.get("/admin/tags?include_entities=true")
+        response = test_client.get("/v1/admin/tags?include_entities=true")
 
     assert response.status_code == 200
     tags = response.json()
@@ -400,7 +400,7 @@ def test_admin_tags_error_handling(test_client):
         mock_service = MockTagService.return_value
         mock_service.get_all_tags = AsyncMock(side_effect=Exception("Database error"))
 
-        response = test_client.get("/admin/tags")
+        response = test_client.get("/v1/admin/tags")
 
     # Should handle errors gracefully
     assert response.status_code == 500
@@ -415,7 +415,7 @@ def test_list_tags_sorted_alphabetically(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags")
+        response = test_client.get("/v1/tags")
 
     assert response.status_code == 200
     tags = response.json()
@@ -432,10 +432,10 @@ def test_get_entities_by_tag_case_sensitive(test_client):
         mock_service.return_value = AsyncMock(return_value=[])
 
         # Test lowercase
-        response1 = test_client.get("/tags/api/entities")
+        response1 = test_client.get("/v1/tags/api/entities")
 
         # Test uppercase
-        response2 = test_client.get("/tags/API/entities")
+        response2 = test_client.get("/v1/tags/API/entities")
 
     assert response1.status_code == 200
     assert response2.status_code == 200
@@ -456,7 +456,7 @@ def test_list_tags_empty_include_entities_false(test_client):
     ]
 
     with patch("mcpgateway.main.tag_service.get_all_tags", AsyncMock(return_value=mock_tags)):
-        response = test_client.get("/tags?include_entities=false")
+        response = test_client.get("/v1/tags?include_entities=false")
 
     assert response.status_code == 200
     tags = response.json()
@@ -474,7 +474,7 @@ def test_get_entities_by_tag_special_characters(test_client):
 
     with patch("mcpgateway.main.tag_service.get_entities_by_tag", AsyncMock(return_value=mock_entities)):
         # Test tag with colon and dots (valid characters)
-        response = test_client.get("/tags/api:v2.0/entities")
+        response = test_client.get("/v1/tags/api:v2.0/entities")
 
     assert response.status_code == 200
     entities = response.json()

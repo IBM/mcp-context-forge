@@ -388,6 +388,35 @@ class Settings(BaseSettings):
             raise ValueError(f"AUTH_HEADER_NAME '{v}' is not a valid HTTP header token " "(RFC 7230). Use only ASCII letters, digits, and !#$%&'*+-.^_`|~.")
         return cleaned
 
+    @field_validator("app_root_path")
+    @classmethod
+    def validate_app_root_path(cls, v: str) -> str:
+        """Validate app_root_path is a path-only value (no scheme or host).
+
+        rbac.py constructs Location redirect headers as
+        ``f"{settings.app_root_path}/v1/admin/login"``.  If a reverse proxy
+        sets ``X-Forwarded-Prefix`` to an attacker-controlled value containing
+        a URL scheme or host, an open redirect (CWE-601) becomes possible.
+        This validator rejects any value that is not path-only at startup so
+        the misconfiguration is caught immediately rather than exploited at
+        runtime.
+
+        Args:
+            v: Raw configured value.
+
+        Returns:
+            The stripped path prefix (may be empty string).
+
+        Raises:
+            ValueError: When the value contains a URL scheme or host component.
+        """
+        if not v:
+            return ""
+        cleaned = str(v).strip()
+        if "://" in cleaned or cleaned.startswith("//"):
+            raise ValueError(f"APP_ROOT_PATH '{v}' must be a path-only value (no scheme or host). " "Example: '/mygateway' not 'https://example.com/mygateway'.")
+        return cleaned.rstrip("/")
+
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
@@ -1253,6 +1282,14 @@ class Settings(BaseSettings):
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
 
+    # Legacy (backward-compat) route shims
+    legacy_api_enabled: bool = Field(default=True, description="Mount backward-compat unversioned routes (deprecated aliases for /v1/*). Set false to drop shim routes entirely.")
+    legacy_api_sunset_date: str = Field(
+        default="Wed, 04 Aug 2026 00:00:00 GMT",
+        description="RFC 8594 Sunset header value sent on all legacy (unversioned) route responses. "
+        "Default is 90 days from v1.0.0 release (2026-05-06). Recommended: 90+ days for production migrations.",
+    )
+
     # LLM Settings (Internal API for LLM Chat)
     llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
@@ -1794,6 +1831,7 @@ class Settings(BaseSettings):
             r"^/servers/[^/]+/sse$",
             r"^/servers/[^/]+/message$",
             r"^/a2a(?:/|$)",
+            r"^/v1/a2a(?:/|$)",  # versioned a2a endpoint
         ],
         description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
     )

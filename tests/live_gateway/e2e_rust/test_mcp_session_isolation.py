@@ -84,7 +84,7 @@ def _request_json(
 
 def _resolve_role_id(admin_client: httpx.Client, role_name: str) -> str:
     """Resolve an RBAC role name to its UUID."""
-    roles = _request_json(admin_client, "GET", "/rbac/roles")
+    roles = _request_json(admin_client, "GET", "/v1/rbac/roles")
     for role in roles:
         if role.get("name") == role_name:
             return role["id"]
@@ -103,7 +103,7 @@ def _create_user(
     _request_json(
         admin_client,
         "POST",
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         json={
             "email": email,
             "password": TEST_PASSWORD,
@@ -118,7 +118,7 @@ def _create_user(
         _request_json(
             admin_client,
             "POST",
-            f"/teams/{team_id}/members",
+            f"/v1/teams/{team_id}/members",
             json={"email": email, "role": "member"},
         )
 
@@ -128,7 +128,7 @@ def _create_user(
         _request_json(
             admin_client,
             "POST",
-            f"/rbac/users/{email}/roles",
+            f"/v1/rbac/users/{email}/roles",
             json={"role_id": role_id, "scope": "team", "scope_id": team_id},
         )
 
@@ -143,7 +143,7 @@ def _create_user(
         token_response = _request_json(
             user_client,
             "POST",
-            "/tokens",
+            "/v1/tokens",
             json=token_payload,
         )
 
@@ -164,14 +164,14 @@ def _cleanup_user(admin_client: httpx.Client, user_info: dict[str, Any]) -> None
     token_id = user_info.get("token_id")
     if token_id:
         with suppress(Exception):
-            admin_client.delete(f"/tokens/admin/{token_id}")
+            admin_client.delete(f"/v1/tokens/admin/{token_id}")
     with suppress(Exception):
-        admin_client.delete(f"/auth/email/admin/users/{user_info['email']}")
+        admin_client.delete(f"/v1/auth/email/admin/users/{user_info['email']}")
 
 
 def _mcp_url(server_id: str) -> str:
     """Return the server-scoped MCP endpoint path."""
-    return f"/servers/{server_id}/mcp/"
+    return f"/v1/servers/{server_id}/mcp/"
 
 
 def _mcp_headers(token: str, *, session_id: str | None = None, accept: str = "application/json, text/event-stream") -> dict[str, str]:
@@ -361,7 +361,7 @@ def _revoke_team_role(admin_client: httpx.Client, user_info: dict[str, Any]) -> 
     team_id = user_info.get("team_id")
     assert role_id and team_id, f"User is missing role assignment details: {user_info}"
     response = admin_client.delete(
-        f"/rbac/users/{user_info['email']}/roles/{role_id}",
+        f"/v1/rbac/users/{user_info['email']}/roles/{role_id}",
         params={"scope": "team", "scope_id": team_id},
     )
     assert response.status_code == 200, response.text
@@ -402,13 +402,13 @@ def isolation_environment(admin_client: httpx.Client) -> Generator[dict[str, Any
     team = _request_json(
         admin_client,
         "POST",
-        "/teams/",
+        "/v1/teams/",
         json={"name": team_name, "description": "Rust MCP session isolation team", "visibility": "private"},
     )
     team_id = team["id"]
 
-    tools = _request_json(admin_client, "GET", "/tools")
-    gateways = _request_json(admin_client, "GET", "/gateways")
+    tools = _request_json(admin_client, "GET", "/v1/tools")
+    gateways = _request_json(admin_client, "GET", "/v1/gateways")
     gateway = _select_time_gateway(gateways, tools)
     gateway_id = gateway["id"]
 
@@ -418,7 +418,7 @@ def isolation_environment(admin_client: httpx.Client) -> Generator[dict[str, Any
     server = _request_json(
         admin_client,
         "POST",
-        "/servers",
+        "/v1/servers",
         json={
             "server": {
                 "name": f"{ISOLATION_PREFIX}-server-{uuid.uuid4().hex[:8]}",
@@ -460,11 +460,11 @@ def isolation_environment(admin_client: httpx.Client) -> Generator[dict[str, Any
         }
     finally:
         with suppress(Exception):
-            admin_client.delete(f"/servers/{server_id}")
+            admin_client.delete(f"/v1/servers/{server_id}")
         for user in users.values():
             _cleanup_user(admin_client, user)
         with suppress(Exception):
-            admin_client.delete(f"/teams/{team_id}")
+            admin_client.delete(f"/v1/teams/{team_id}")
 
 
 class TestMcpSessionIsolation:
@@ -673,7 +673,7 @@ class TestMcpSessionIsolation:
         try:
             _, _, session_id = _initialize_session(user["access_token"], server_id)
 
-            revoke_response = admin_client.delete(f"/tokens/admin/{user['token_id']}")
+            revoke_response = admin_client.delete(f"/v1/tokens/admin/{user['token_id']}")
             assert revoke_response.status_code == 204, revoke_response.text
 
             denied = _wait_for_session_denial(
@@ -704,7 +704,7 @@ class TestMcpSessionIsolation:
         try:
             _, _, session_id = _initialize_session(user["access_token"], server_id)
 
-            remove_response = admin_client.delete(f"/teams/{team_id}/members/{user['email']}")
+            remove_response = admin_client.delete(f"/v1/teams/{team_id}/members/{user['email']}")
             assert remove_response.status_code == 200, remove_response.text
 
             denied = _wait_for_session_denial(

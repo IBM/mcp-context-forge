@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def _observability_available(admin_api: APIRequestContext) -> bool:
     """Check if observability endpoints are enabled."""
-    resp = admin_api.get("/observability/stats?hours=1")
+    resp = admin_api.get("/v1/observability/stats?hours=1")
     return resp.status != 404
 
 
@@ -63,14 +63,14 @@ class TestMetrics:
 
     def test_get_metrics(self, admin_api: APIRequestContext):
         """Admin can retrieve aggregated metrics."""
-        resp = admin_api.get("/metrics")
+        resp = admin_api.get("/v1/metrics")
         assert resp.status == 200
         data = resp.json()
         assert isinstance(data, dict)
 
     def test_non_admin_cannot_get_metrics(self, non_admin_api: APIRequestContext):
         """Non-admin user is denied metrics access."""
-        resp = non_admin_api.get("/metrics")
+        resp = non_admin_api.get("/v1/metrics")
         assert resp.status in (401, 403), f"Non-admin metrics should be denied, got {resp.status}"
 
 
@@ -84,17 +84,17 @@ class TestObservability:
 
     def test_get_stats(self, admin_api: APIRequestContext):
         """Admin can retrieve observability stats."""
-        resp = admin_api.get("/observability/stats?hours=1")
+        resp = admin_api.get("/v1/observability/stats?hours=1")
         assert resp.status == 200
         data = resp.json()
         assert "total_traces" in data or isinstance(data, dict)
 
     def test_list_traces(self, admin_api: APIRequestContext):
         """Admin can list traces."""
-        resp = admin_api.get("/observability/traces?limit=5")
+        resp = admin_api.get("/v1/observability/traces?limit=5")
         assert resp.status == 200
 
     def test_query_performance(self, admin_api: APIRequestContext):
         """Admin can query performance analytics."""
-        resp = admin_api.get("/observability/analytics/query-performance?hours=1")
+        resp = admin_api.get("/v1/observability/analytics/query-performance?hours=1")
         assert resp.status == 200

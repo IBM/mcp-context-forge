@@ -58,15 +58,15 @@ class TokenUsageLogGenerator(BaseGenerator):
         recent_percent = self.config.get("temporal", {}).get("recent_data_percent", 80) / 100
 
         endpoints = [
-            "/tools",
-            "/resources",
-            "/prompts",
-            "/servers",
-            "/gateways",
-            "/a2a",
-            "/tools/{id}/invoke",
-            "/resources/{id}",
-            "/prompts/{name}",
+            "/v1/tools",
+            "/v1/resources",
+            "/v1/prompts",
+            "/v1/servers",
+            "/v1/gateways",
+            "/v1/a2a",
+            "/v1/tools/{id}/invoke",
+            "/v1/resources/{id}",
+            "/v1/prompts/{name}",
         ]
 
         methods = ["GET", "POST", "PUT", "DELETE"]

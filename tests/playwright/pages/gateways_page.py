@@ -490,7 +490,7 @@ class GatewaysPage(BasePage):
         # HTMX GET request that Admin.clearSearch triggers via htmx.ajax.
         try:
             with self.page.expect_response(
-                lambda r: "/admin/gateways/partial" in r.url and r.request.method == "GET",
+                lambda r: "/v1/admin/gateways/partial" in r.url and r.request.method == "GET",
                 timeout=15000,
             ):
                 self.click_locator(self.clear_search_btn)
@@ -520,7 +520,7 @@ class GatewaysPage(BasePage):
             # table structure missing after a clear. Recover by reopening the
             # gateways tab from a fresh admin navigation.
             self.page.goto("/admin#gateways", wait_until="domcontentloaded")
-            if "/admin/login" in self.page.url:
+            if "/v1/admin/login" in self.page.url:
                 return
             self.navigate_to_gateways_tab()
             self.wait_for_gateways_table_loaded()
@@ -767,7 +767,7 @@ class GatewaysPage(BasePage):
 
         # Keep deleting until no more gateways with this URL exist
         while True:
-            if "/admin/login" in self.page.url:
+            if "/v1/admin/login" in self.page.url:
                 return deleted_any
 
             # Search for the gateway by URL
@@ -804,7 +804,7 @@ class GatewaysPage(BasePage):
                 # delete.
                 try:
                     self.page.goto("/admin#gateways", wait_until="domcontentloaded")
-                    if "/admin/login" in self.page.url:
+                    if "/v1/admin/login" in self.page.url:
                         return deleted_any
                     self.navigate_to_gateways_tab()
                     self.wait_for_gateways_table_loaded()

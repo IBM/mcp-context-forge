@@ -26,7 +26,7 @@ class MCPRegistryPage(BasePage):
         previous_markup = self.registry_servers_container.inner_html(timeout=timeout)
 
         try:
-            with self.page.expect_response(lambda response: "/admin/mcp-registry/partial" in response.url and response.request.method == "GET", timeout=timeout) as response_info:
+            with self.page.expect_response(lambda response: "/v1/admin/mcp-registry/partial" in response.url and response.request.method == "GET", timeout=timeout) as response_info:
                 action()
             response = response_info.value
         except PlaywrightTimeoutError as exc:
@@ -295,7 +295,7 @@ class MCPRegistryPage(BasePage):
         """)
 
         # Trigger a single HTMX request and wait for the response to land.
-        with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
+        with self.page.expect_response("**/v1/admin/mcp-registry/partial**", timeout=5000):
             self.category_filter.select_option("")
 
         # Wait for HTMX swap to complete and DOM to settle

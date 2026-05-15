@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.query_params import QueryIdentifierDotted300, QueryToolOpsMode
-from mcpgateway.main import get_db
+from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService

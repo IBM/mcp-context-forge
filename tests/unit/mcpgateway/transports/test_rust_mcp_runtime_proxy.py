@@ -118,7 +118,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
         "type": "http",
         "method": "POST",
         "path": "/",
-        "modified_path": "/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
+        "modified_path": "/v1/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
         "query_string": b"session_id=abc123",
         "headers": [
             (b"content-type", b"application/json"),
@@ -387,7 +387,7 @@ async def test_get_requests_proxy_to_rust_runtime(monkeypatch):
             "type": "http",
             "method": "GET",
             "path": "/",
-            "modified_path": "/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
+            "modified_path": "/v1/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
             "query_string": b"session_id=abc123",
             "headers": [
                 (b"authorization", b"Bearer test-token"),
@@ -634,7 +634,7 @@ def test_build_forward_headers_skips_malformed_and_non_bytes_headers(monkeypatch
                 (b"cookie", b"jwt_token=cookie-token"),
                 (b"broken",),
             ],
-            "modified_path": "/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
+            "modified_path": "/v1/servers/123e4567-e89b-12d3-a456-426614174000/mcp",
         }
     )
 

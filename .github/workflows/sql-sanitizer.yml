@@ -154,7 +154,7 @@ jobs:
 
             - name: Verify plugins is responding
               run: |
-                  curl -sf -X GET http://localhost:4444/admin/plugins/stats \
+                  curl -sf -X GET http://localhost:4444/v1/admin/plugins/stats \
                     -H "Authorization: Bearer ${{ steps.generate_jwt.outputs.token }}" \
                     -H "Content-Type: application/json" | yq
 
@@ -202,7 +202,7 @@ jobs:
 
                   # Register gateway
                   echo "Registering fast_time gateway..."
-                  GATEWAY_RESPONSE=$(curl -s -X POST http://localhost:4444/gateways \
+                  GATEWAY_RESPONSE=$(curl -s -X POST http://localhost:4444/v1/gateways \
                     -H "Authorization: Bearer $TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{
@@ -215,7 +215,7 @@ jobs:
                   # Extract gateway ID (handle existing gateway)
                   if echo "$GATEWAY_RESPONSE" | grep -q "already exists"; then
                     echo "Gateway already exists, fetching existing ID..."
-                    GATEWAYS=$(curl -s http://localhost:4444/gateways \
+                    GATEWAYS=$(curl -s http://localhost:4444/v1/gateways \
                       -H "Authorization: Bearer $TOKEN")
                     GATEWAY_ID=$(echo "$GATEWAYS" | jq -r '.[] | select(.name=="fast_time") | .id')
                   else
@@ -226,7 +226,7 @@ jobs:
                   # Wait for tools to sync
                   echo "Waiting for tools to sync..."
                   for i in {1..30}; do
-                    TOOLS=$(curl -s http://localhost:4444/tools \
+                    TOOLS=$(curl -s http://localhost:4444/v1/tools \
                       -H "Authorization: Bearer $TOKEN")
                     TOOL_COUNT=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" '[.[] | select(.gatewayId==$gid)] | length')
                     if [ "$TOOL_COUNT" -gt 0 ]; then
@@ -238,7 +238,7 @@ jobs:
                     sleep 2
                   done
 
-                  TOOLS=$(curl -s http://localhost:4444/tools \
+                  TOOLS=$(curl -s http://localhost:4444/v1/tools \
                     -H "Authorization: Bearer $TOKEN")
                   TOOL_IDS=$(echo "$TOOLS" | jq --arg gid "$GATEWAY_ID" -c '[.[] | select(.gatewayId==$gid) | .id]')
                   echo "Tool IDs: $TOOL_IDS"
@@ -250,7 +250,7 @@ jobs:
 
                   # Create virtual server
                   echo "Creating virtual server..."
-                  SERVER_RESPONSE=$(curl -s -X POST http://localhost:4444/servers \
+                  SERVER_RESPONSE=$(curl -s -X POST http://localhost:4444/v1/servers \
                     -H "Authorization: Bearer $TOKEN" \
                     -H "Content-Type: application/json" \
                     -d "{

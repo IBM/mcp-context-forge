@@ -105,7 +105,7 @@ class TokensPage(BasePage):
 
     def _list_tokens_api(self) -> list[dict]:
         """Fetch tokens via API and normalize response shape."""
-        response = self.page.request.get("/tokens")
+        response = self.page.request.get("/v1/tokens")
         if response.status != 200:
             return []
         payload = response.json()
@@ -179,7 +179,7 @@ class TokensPage(BasePage):
         if not token_id:
             raise AssertionError(f"Token '{token_name}' was not found in UI or API list; cannot revoke.")
 
-        response = self.page.request.delete(f"/tokens/{token_id}")
+        response = self.page.request.delete(f"/v1/tokens/{token_id}")
         if response.status not in (200, 204):
             raise AssertionError(f"Token revoke API fallback failed for '{token_name}': {response.status} {response.text()}")
 

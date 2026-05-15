@@ -732,7 +732,7 @@ describe("showPluginDetails", () => {
     await showPluginDetails("test-plugin");
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/admin/plugins/test-plugin",
+      "/admin/v1/admin/plugins/test-plugin",
       expect.objectContaining({
         credentials: "same-origin", // pragma: allowlist secret
         headers: {

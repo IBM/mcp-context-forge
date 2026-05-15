@@ -36,7 +36,7 @@ export const showUserEditModal = async function (userEmail) {
   }
 
   const rootPath = window.ROOT_PATH || "";
-  const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
+  const url = `${rootPath}/v1/admin/users/${encodeURIComponent(userEmail)}/edit`;
 
   try {
     if (window.htmx && typeof window.htmx.ajax === "function") {

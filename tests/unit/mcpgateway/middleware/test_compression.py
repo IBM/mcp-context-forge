@@ -65,6 +65,6 @@ def test_is_mcp_path_variants():
 
     assert middleware._is_mcp_path("/mcp") is True
     assert middleware._is_mcp_path("/mcp/") is True
-    assert middleware._is_mcp_path("/servers/123/mcp") is True
-    assert middleware._is_mcp_path("/servers/123/mcp/") is True
-    assert middleware._is_mcp_path("/tools") is False
+    assert middleware._is_mcp_path("/v1/servers/123/mcp") is True
+    assert middleware._is_mcp_path("/v1/servers/123/mcp/") is True
+    assert middleware._is_mcp_path("/v1/tools") is False

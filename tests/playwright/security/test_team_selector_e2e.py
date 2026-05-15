@@ -77,7 +77,7 @@ def _get_admin_frame(page: Page):
     """
     for _ in range(40):
         for frame in page.frames:
-            if "/admin" in frame.url:
+            if "/v1/admin" in frame.url:
                 return frame
         page.wait_for_timeout(500)
     return page.frames[-1] if len(page.frames) > 1 else page.main_frame
@@ -279,7 +279,7 @@ class TestTeamSelectorDropdownE2E:
                 let html;
                 try {
                     const resp = await fetch(
-                        (window.ROOT_PATH || '') + '/admin/teams/partial?page=1&per_page=20&render=selector',
+                        (window.ROOT_PATH || '') + '/v1/admin/teams/partial?page=1&per_page=20&render=selector',
                         { credentials: 'same-origin' }
                     );
                     if (!resp.ok) {

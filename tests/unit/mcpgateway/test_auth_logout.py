@@ -78,7 +78,10 @@ class TestLogoutEndpoint:
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
-                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
+                response = client.post(
+                    "/v1/auth/logout",
+                    headers={"Authorization": f"Bearer {valid_token}"}
+                )
 
                 assert response.status_code == 200
                 data = response.json()
@@ -106,7 +109,7 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post("/auth/logout")
+            response = client.post("/v1/auth/logout")
 
             assert response.status_code == 401
         finally:
@@ -119,7 +122,10 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post("/auth/logout", headers={"Authorization": "InvalidFormat token"})
+            response = client.post(
+                "/v1/auth/logout",
+                headers={"Authorization": "InvalidFormat token"}
+            )
 
             assert response.status_code == 401
             detail = response.json()["detail"]
@@ -154,7 +160,10 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+            response = client.post(
+                "/v1/auth/logout",
+                headers={"Authorization": f"Bearer {token}"}
+            )
 
             assert response.status_code == 400
             assert "does not support revocation" in response.json()["detail"]
@@ -168,7 +177,10 @@ class TestLogoutEndpoint:
 
         try:
             client = TestClient(app)
-            response = client.post("/auth/logout", headers={"Authorization": "Bearer invalid.token.format"})
+            response = client.post(
+                "/v1/auth/logout",
+                headers={"Authorization": "Bearer invalid.token.format"}
+            )
 
             assert response.status_code == 401
             detail = response.json()["detail"]
@@ -188,7 +200,10 @@ class TestLogoutEndpoint:
                 mock_service.return_value = mock_blocklist
 
                 client = TestClient(app)
-                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
+                response = client.post(
+                    "/v1/auth/logout",
+                    headers={"Authorization": f"Bearer {valid_token}"}
+                )
 
                 assert response.status_code == 500
                 assert "Failed to revoke token" in response.json()["detail"]
@@ -205,7 +220,10 @@ class TestLogoutEndpoint:
                 mock_service.side_effect = Exception("Database error")
 
                 client = TestClient(app)
-                response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
+                response = client.post(
+                    "/v1/auth/logout",
+                    headers={"Authorization": f"Bearer {valid_token}"}
+                )
 
                 assert response.status_code == 500
                 assert "error" in response.json()["detail"].lower()
@@ -236,7 +254,10 @@ class TestLogoutEndpoint:
                     mock_service.return_value = mock_blocklist
 
                     client = TestClient(app)
-                    response = client.post("/auth/logout", headers={"Authorization": f"Bearer {valid_token}"})
+                    response = client.post(
+                        "/v1/auth/logout",
+                        headers={"Authorization": f"Bearer {valid_token}"}
+                    )
 
                     # Should succeed - this covers the get_secret_value() path on line 244
                     assert response.status_code == 200

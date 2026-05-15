@@ -746,9 +746,9 @@ async def test_export_servers_with_data(export_service, mock_db):
     assert server_data["name"] == "test_server"
     assert server_data["description"] == "Test server"
     assert server_data["tool_ids"] == ["tool1", "tool2"]
-    assert server_data["sse_endpoint"] == "/servers/server1/sse"
-    assert server_data["websocket_endpoint"] == "/servers/server1/ws"
-    assert server_data["jsonrpc_endpoint"] == "/servers/server1/jsonrpc"
+    assert server_data["sse_endpoint"] == "/v1/servers/server1/sse"
+    assert server_data["websocket_endpoint"] == "/v1/servers/server1/ws"
+    assert server_data["jsonrpc_endpoint"] == "/v1/servers/server1/jsonrpc"
     assert server_data["is_active"] == True
     assert server_data["tags"] == ["test", "api"]
     assert "capabilities" in server_data
@@ -1378,9 +1378,9 @@ async def test_export_selected_servers_success_and_empty_list(export_service, mo
 
     exported = await export_service._export_selected_servers(mock_db, ["server1"], root_path="/api")
     assert exported[0]["tool_ids"] == ["tool1", "tool2"]
-    assert exported[0]["sse_endpoint"] == "/api/servers/server1/sse"
-    assert exported[0]["websocket_endpoint"] == "/api/servers/server1/ws"
-    assert exported[0]["jsonrpc_endpoint"] == "/api/servers/server1/jsonrpc"
+    assert exported[0]["sse_endpoint"] == "/api/v1/servers/server1/sse"
+    assert exported[0]["websocket_endpoint"] == "/api/v1/servers/server1/ws"
+    assert exported[0]["jsonrpc_endpoint"] == "/api/v1/servers/server1/jsonrpc"
 
 
 @pytest.mark.asyncio

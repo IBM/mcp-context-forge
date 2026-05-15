@@ -85,8 +85,8 @@ def test_log_detailed_skip_endpoints_default():
 
 
 def test_log_detailed_skip_endpoints_list():
-    settings = Settings(log_detailed_skip_endpoints=["/metrics", "/health"], _env_file=None)
-    assert settings.log_detailed_skip_endpoints == ["/metrics", "/health"]
+    settings = Settings(log_detailed_skip_endpoints=["/v1/metrics", "/health"], _env_file=None)
+    assert settings.log_detailed_skip_endpoints == ["/v1/metrics", "/health"]
 
 
 # --- log_resolve_user_identity tests ---

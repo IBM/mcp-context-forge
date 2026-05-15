@@ -22,10 +22,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
-import mcpgateway.main as main_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.transports.streamablehttp_transport import _get_shared_session_registry
 
 # Initialize logging
 logging_service = LoggingService()
@@ -89,17 +89,19 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
     notification = {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": request_id, "reason": reason}}
 
     # Broadcast best-effort to all sessions
-    try:
-        session_ids = await main_module.session_registry.get_all_session_ids()
-        for sid in session_ids:
-            try:
-                await main_module.session_registry.broadcast(sid, notification)
-            except Exception as e:
-                # Per-session errors are non-fatal for cancellation (best-effort)
-                logger.warning(f"Failed to broadcast cancellation notification to session {sid}: {e}")
-    except Exception as e:
-        # Continue silently if we cannot enumerate sessions
-        logger.warning(f"Failed to enumerate sessions for cancellation notification: {e}")
+    registry = _get_shared_session_registry()
+    if registry is not None:
+        try:
+            session_ids = await registry.get_all_session_ids()
+            for sid in session_ids:
+                try:
+                    await registry.broadcast(sid, notification)
+                except Exception as e:
+                    # Per-session errors are non-fatal for cancellation (best-effort)
+                    logger.warning(f"Failed to broadcast cancellation notification to session {sid}: {e}")
+        except Exception as e:
+            # Continue silently if we cannot enumerate sessions
+            logger.warning(f"Failed to enumerate sessions for cancellation notification: {e}")
 
     return CancelResponse(status=("cancelled" if local_cancelled else "queued"), request_id=request_id, reason=reason)
 

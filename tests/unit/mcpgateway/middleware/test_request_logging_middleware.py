@@ -547,12 +547,12 @@ async def test_skip_endpoints_skips_detailed_logging(dummy_logger, mock_structur
         app=None,
         enable_gateway_logging=False,
         log_detailed_requests=True,
-        log_detailed_skip_endpoints=["/metrics", "/api/v1/status"],
+        log_detailed_skip_endpoints=["/v1/metrics", "/api/v1/status"],
     )
     scope: Scope = {
         "type": "http",
         "method": "GET",
-        "path": "/metrics",
+        "path": "/v1/metrics",
         "headers": [],
         "query_string": b"",
     }
@@ -601,7 +601,7 @@ async def test_skip_endpoints_non_matching_path_logs(dummy_logger, mock_structur
         app=None,
         enable_gateway_logging=False,
         log_detailed_requests=True,
-        log_detailed_skip_endpoints=["/metrics"],
+        log_detailed_skip_endpoints=["/v1/metrics"],
     )
     body = b'{"data": "test"}'
     request = make_request(body=body)

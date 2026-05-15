@@ -95,7 +95,7 @@ class TestUnauthenticatedForceBrowsing:
     def test_anon_cannot_access_servers_endpoint(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 401, f"/servers should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
@@ -103,15 +103,15 @@ class TestUnauthenticatedForceBrowsing:
     def test_anon_cannot_access_teams_endpoint(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/teams/")
-            assert resp.status == 401, f"/teams/ should return 401 for anonymous, got {resp.status}"
+            resp = ctx.get("/v1/teams/")
+            assert resp.status == 401, f"/v1/teams/ should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
 
     def test_anon_cannot_access_tools_endpoint(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/tools")
+            resp = ctx.get("/v1/tools")
             assert resp.status == 401, f"/tools should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
@@ -119,24 +119,24 @@ class TestUnauthenticatedForceBrowsing:
     def test_anon_cannot_access_admin_user_list(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/auth/email/admin/users")
-            assert resp.status == 401, f"/auth/email/admin/users should return 401 for anonymous, got {resp.status}"
+            resp = ctx.get("/v1/auth/email/admin/users")
+            assert resp.status == 401, f"/v1/auth/email/admin/users should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
 
     def test_anon_cannot_access_rbac_roles(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/rbac/roles")
-            assert resp.status == 401, f"/rbac/roles should return 401 for anonymous, got {resp.status}"
+            resp = ctx.get("/v1/rbac/roles")
+            assert resp.status == 401, f"/v1/rbac/roles should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
 
     def test_anon_cannot_access_token_admin_list(self, playwright: Playwright) -> None:
         ctx = _anon_context(playwright)
         try:
-            resp = ctx.get("/tokens/admin/all")
-            assert resp.status == 401, f"/tokens/admin/all should return 401 for anonymous, got {resp.status}"
+            resp = ctx.get("/v1/tokens/admin/all")
+            assert resp.status == 401, f"/v1/tokens/admin/all should return 401 for anonymous, got {resp.status}"
         finally:
             ctx.dispose()
 
@@ -160,20 +160,20 @@ class TestIDORCrossUserObjects:
 
     def test_user_b_cannot_read_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
         ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
-        resp = ctx_b.get(f"/servers/{private_server_owned_by_user_a}")
+        resp = ctx_b.get(f"/v1/servers/{private_server_owned_by_user_a}")
         assert resp.status in (403, 404), f"User B should not read User A's private server, got {resp.status}: {resp.text()}"
 
     def test_user_b_cannot_update_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
         ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
         resp = ctx_b.put(
-            f"/servers/{private_server_owned_by_user_a}",
+            f"/v1/servers/{private_server_owned_by_user_a}",
             data={"server": {"name": "idor-takeover"}, "visibility": "public"},
         )
         assert resp.status in (403, 404), f"User B should not update User A's private server, got {resp.status}: {resp.text()}"
 
     def test_user_b_cannot_delete_user_a_private_server(self, owasp_user_b_api: dict, private_server_owned_by_user_a: str) -> None:
         ctx_b: APIRequestContext = owasp_user_b_api["ctx"]
-        resp = ctx_b.delete(f"/servers/{private_server_owned_by_user_a}")
+        resp = ctx_b.delete(f"/v1/servers/{private_server_owned_by_user_a}")
         assert resp.status in (403, 404), f"User B should not delete User A's private server, got {resp.status}: {resp.text()}"
 
 
@@ -189,14 +189,14 @@ class TestIDORCrossTenantObjects:
     def test_team_a_token_cannot_read_team_b_server_by_id(self, two_teams_setup: dict) -> None:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
         server_b_id: str = two_teams_setup["server_b_id"]
-        resp = ctx_a.get(f"/servers/{server_b_id}")
+        resp = ctx_a.get(f"/v1/servers/{server_b_id}")
         assert resp.status in (403, 404), f"Team A token should not read Team B server, got {resp.status}: {resp.text()}"
 
     def test_team_a_token_cannot_update_team_b_server_by_id(self, two_teams_setup: dict) -> None:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
         server_b_id: str = two_teams_setup["server_b_id"]
         resp = ctx_a.put(
-            f"/servers/{server_b_id}",
+            f"/v1/servers/{server_b_id}",
             data={"server": {"name": "cross-tenant-takeover"}, "visibility": "public"},
         )
         assert resp.status in (403, 404), f"Team A token should not update Team B server, got {resp.status}: {resp.text()}"
@@ -204,7 +204,7 @@ class TestIDORCrossTenantObjects:
     def test_team_a_token_cannot_delete_team_b_server_by_id(self, two_teams_setup: dict) -> None:
         ctx_a: APIRequestContext = two_teams_setup["ctx_team_a"]
         server_b_id: str = two_teams_setup["server_b_id"]
-        resp = ctx_a.delete(f"/servers/{server_b_id}")
+        resp = ctx_a.delete(f"/v1/servers/{server_b_id}")
         assert resp.status in (403, 404), f"Team A token should not delete Team B server, got {resp.status}: {resp.text()}"
 
 
@@ -222,7 +222,7 @@ class TestVerticalPrivilegeEscalation:
         """Register a non-admin user via owasp_admin_api, then yield an API context for them."""
         email = f"nonadmin-a01-{uuid.uuid4().hex[:8]}@example.com"
         create_resp = owasp_admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Non-Admin A01"},
         )
         assert create_resp.status in (200, 201), f"Failed to create non-admin user: {create_resp.status} {create_resp.text()}"
@@ -231,29 +231,29 @@ class TestVerticalPrivilegeEscalation:
         yield ctx
         ctx.dispose()
         with suppress(Exception):
-            owasp_admin_api.delete(f"/auth/email/admin/users/{email}")
+            owasp_admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
     def test_non_admin_cannot_list_all_users(self, non_admin_ctx: APIRequestContext) -> None:
-        resp = non_admin_ctx.get("/auth/email/admin/users")
+        resp = non_admin_ctx.get("/v1/auth/email/admin/users")
         assert resp.status == 403, f"Non-admin should be denied user list, got {resp.status}: {resp.text()}"
 
     def test_non_admin_cannot_create_user(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.post(
-            "/admin/users",
+            "/v1/admin/users",
             data={
                 "email": f"injected-{uuid.uuid4().hex[:8]}@example.com",
                 "password": "TestP@ssw0rd!Test2026X",  # pragma: allowlist secret
-                "full_name": "Injected"
+                "full_name": "Injected",
             },
         )
         assert resp.status == 403, f"Non-admin should be denied user creation, got {resp.status}: {resp.text()}"
 
     def test_non_admin_cannot_delete_user(self, non_admin_ctx: APIRequestContext) -> None:
-        resp = non_admin_ctx.delete("/auth/email/admin/users/victim@example.com")
+        resp = non_admin_ctx.delete("/v1/auth/email/admin/users/victim@example.com")
         assert resp.status in (403, 404), f"Non-admin should be denied user deletion, got {resp.status}: {resp.text()}"
 
     def test_non_admin_cannot_list_all_tokens_admin(self, non_admin_ctx: APIRequestContext) -> None:
-        resp = non_admin_ctx.get("/tokens/admin/all")
+        resp = non_admin_ctx.get("/v1/tokens/admin/all")
         assert resp.status == 403, f"Non-admin should be denied admin token list, got {resp.status}: {resp.text()}"
 
     def test_non_admin_cannot_read_audit_events(self, non_admin_ctx: APIRequestContext) -> None:
@@ -262,7 +262,7 @@ class TestVerticalPrivilegeEscalation:
 
     def test_non_admin_cannot_approve_pending_signups(self, non_admin_ctx: APIRequestContext) -> None:
         # Attempt unlock endpoint (admin-only user management action)
-        resp = non_admin_ctx.post("/auth/email/admin/users/any@example.com/unlock")
+        resp = non_admin_ctx.post("/v1/auth/email/admin/users/any@example.com/unlock")
         assert resp.status in (403, 404), f"Non-admin should be denied unlock endpoint, got {resp.status}: {resp.text()}"
 
 
@@ -284,7 +284,7 @@ class TestJWTTampering:
         unsigned_jwt = f"{header}.{payload_b64}."
         ctx = _raw_bearer_context(playwright, unsigned_jwt)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 401, f"Unsigned JWT should be rejected with 401, got {resp.status}"
         finally:
             ctx.dispose()
@@ -297,7 +297,7 @@ class TestJWTTampering:
         tampered = _tamper_jwt_payload(valid_token, {"is_admin": True})
         ctx = _raw_bearer_context(playwright, tampered)
         try:
-            resp = ctx.get("/tokens/admin/all")
+            resp = ctx.get("/v1/tokens/admin/all")
             assert resp.status == 401, f"Tampered JWT (is_admin escalation) should be rejected with 401, got {resp.status}"
         finally:
             ctx.dispose()
@@ -310,7 +310,7 @@ class TestJWTTampering:
         )
         ctx = _raw_bearer_context(playwright, expired_token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 401, f"Expired JWT should be rejected with 401, got {resp.status}"
         finally:
             ctx.dispose()
@@ -324,7 +324,7 @@ class TestJWTTampering:
         none_alg_jwt = f"{header}.{payload_b64}."
         ctx = _raw_bearer_context(playwright, none_alg_jwt)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 401, f"alg=none JWT should be rejected with 401, got {resp.status}"
         finally:
             ctx.dispose()
@@ -337,7 +337,7 @@ class TestJWTTampering:
         )
         ctx = _raw_bearer_context(playwright, wrong_iss_token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             # Must be 401 when issuer validation is active; skip if not configured
             if resp.status == 200:
                 pytest.skip("Issuer validation not configured in this environment; skipping issuer check.")
@@ -353,7 +353,7 @@ class TestJWTTampering:
         )
         ctx = _raw_bearer_context(playwright, wrong_aud_token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             if resp.status == 200:
                 pytest.skip("Audience validation not configured in this environment; skipping audience check.")
             assert resp.status == 401, f"Wrong-audience JWT should be rejected with 401, got {resp.status}"
@@ -381,7 +381,7 @@ class TestCORSEnforcement:
             },
         )
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             acao = resp.headers.get("access-control-allow-origin", "")
             assert acao != "*", f"API must not return wildcard CORS header for arbitrary origin, got: '{acao}'"
         finally:
@@ -398,7 +398,7 @@ class TestCORSEnforcement:
             },
         )
         try:
-            resp = ctx.fetch("/servers", method="OPTIONS")
+            resp = ctx.fetch("/v1/servers", method="OPTIONS")
             acao = resp.headers.get("access-control-allow-origin", "")
             acac = resp.headers.get("access-control-allow-credentials", "")
             # Permissive: wildcard origin OR (reflect evil origin AND allow credentials)

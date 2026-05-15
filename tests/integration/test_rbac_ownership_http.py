@@ -156,7 +156,10 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Attempt to delete tool owned by user-a@example.com
-        response = client.delete("/tools/tool-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/v1/tools/tool-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -188,7 +191,11 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Attempt to update tool owned by user-a@example.com
-        response = client.put("/tools/tool-123", json={"name": "updated-tool"}, headers={"Authorization": "Bearer test-token"})
+        response = client.put(
+            "/v1/tools/tool-123",
+            json={"name": "updated-tool"},
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -221,7 +228,10 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Delete own server
-        response = client.delete("/servers/server-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/v1/servers/server-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify success
         assert response.status_code == 200
@@ -253,7 +263,10 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Attempt to delete resource owned by user-a@example.com (use resource ID, not URI)
-        response = client.delete("/resources/resource-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/v1/resources/resource-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -286,7 +299,10 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Delete team member's gateway as team admin
-        response = client.delete("/gateways/gateway-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/v1/gateways/gateway-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify success
         assert response.status_code == 200
@@ -318,7 +334,11 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Attempt to update prompt owned by team owner
-        response = client.put("/prompts/test-prompt", json={"description": "updated"}, headers={"Authorization": "Bearer test-token"})
+        response = client.put(
+            "/v1/prompts/test-prompt",
+            json={"description": "updated"},
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -350,7 +370,10 @@ class TestRBACOwnershipHTTP:
         client = TestClient(app)
 
         # Attempt to delete A2A agent owned by user-a@example.com
-        response = client.delete("/a2a/agent-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/v1/a2a/agent-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -431,7 +454,10 @@ class TestTeamIdFallbackHTTP:
         client = TestClient(app)
 
         # Call GET /gateways WITHOUT team_id parameter
-        response = client.get("/gateways", headers={"Authorization": "Bearer test-token"})
+        response = client.get(
+            "/v1/gateways",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Should succeed
         assert response.status_code == 200
@@ -496,7 +522,10 @@ class TestTeamIdFallbackHTTP:
         client = TestClient(app)
 
         # Call GET /gateways with DIFFERENT team_id parameter
-        response = client.get("/gateways?team_id=team-Y", headers={"Authorization": "Bearer test-token"})  # Mismatched team
+        response = client.get(
+            "/v1/gateways?team_id=team-Y",  # Mismatched team
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Should get 403 - team mismatch
         assert response.status_code == 403
@@ -554,7 +583,10 @@ class TestTeamIdFallbackHTTP:
         client = TestClient(app)
 
         # Call GET /servers - endpoint doesn't accept team_id parameter
-        response = client.get("/servers", headers={"Authorization": "Bearer test-token"})
+        response = client.get(
+            "/v1/servers",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Should succeed
         assert response.status_code == 200

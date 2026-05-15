@@ -237,10 +237,10 @@ class TestGatewayIdFilteringPrompts:
         """Sum of gateway-filtered partitions + null == unfiltered total."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_PROMPTS)
 
-        resp_all = test_client.get("/prompts/", headers=auth_headers)
-        resp_a = test_client.get("/prompts/?gateway_id=gw-A", headers=auth_headers)
-        resp_b = test_client.get("/prompts/?gateway_id=gw-B", headers=auth_headers)
-        resp_null = test_client.get("/prompts/?gateway_id=null", headers=auth_headers)
+        resp_all = test_client.get("/v1/prompts/", headers=auth_headers)
+        resp_a = test_client.get("/v1/prompts/?gateway_id=gw-A", headers=auth_headers)
+        resp_b = test_client.get("/v1/prompts/?gateway_id=gw-B", headers=auth_headers)
+        resp_null = test_client.get("/v1/prompts/?gateway_id=null", headers=auth_headers)
 
         assert resp_all.status_code == 200
         assert resp_a.status_code == 200
@@ -259,7 +259,7 @@ class TestGatewayIdFilteringPrompts:
         """gateway_id=null returns only prompts without a gateway."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_PROMPTS)
 
-        resp = test_client.get("/prompts/?gateway_id=null", headers=auth_headers)
+        resp = test_client.get("/v1/prompts/?gateway_id=null", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", resp.json())
         assert len(items) == 1
@@ -270,7 +270,7 @@ class TestGatewayIdFilteringPrompts:
         """Nonexistent gateway_id returns 200 with empty list."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_PROMPTS)
 
-        resp = test_client.get("/prompts/?gateway_id=does-not-exist", headers=auth_headers)
+        resp = test_client.get("/v1/prompts/?gateway_id=does-not-exist", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", resp.json())
         assert items == []
@@ -284,9 +284,9 @@ class TestGatewayIdFilteringResources:
         """Sum of gateway-filtered partitions + null == unfiltered total."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_RESOURCES)
 
-        resp_all = test_client.get("/resources/", headers=auth_headers)
-        resp_a = test_client.get("/resources/?gateway_id=gw-A", headers=auth_headers)
-        resp_null = test_client.get("/resources/?gateway_id=null", headers=auth_headers)
+        resp_all = test_client.get("/v1/resources/", headers=auth_headers)
+        resp_a = test_client.get("/v1/resources/?gateway_id=gw-A", headers=auth_headers)
+        resp_null = test_client.get("/v1/resources/?gateway_id=null", headers=auth_headers)
 
         assert resp_all.status_code == 200
         assert resp_a.status_code == 200
@@ -303,7 +303,7 @@ class TestGatewayIdFilteringResources:
         """gateway_id=null returns only resources without a gateway."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_RESOURCES)
 
-        resp = test_client.get("/resources/?gateway_id=null", headers=auth_headers)
+        resp = test_client.get("/v1/resources/?gateway_id=null", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", resp.json())
         assert len(items) == 1
@@ -314,7 +314,7 @@ class TestGatewayIdFilteringResources:
         """Nonexistent gateway_id returns 200 with empty list."""
         mock_list.side_effect = _make_gateway_side_effect(ALL_RESOURCES)
 
-        resp = test_client.get("/resources/?gateway_id=does-not-exist", headers=auth_headers)
+        resp = test_client.get("/v1/resources/?gateway_id=does-not-exist", headers=auth_headers)
         assert resp.status_code == 200
         items = resp.json() if isinstance(resp.json(), list) else resp.json().get("items", resp.json())
         assert items == []

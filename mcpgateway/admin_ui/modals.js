@@ -299,7 +299,7 @@ export const submitApiKeyForm = function (event) {
   const rootPath = window.ROOT_PATH || "";
 
   // Send registration request
-  fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
+    fetch(`${rootPath}/v1/admin/mcp-registry/${serverId}/register`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -313,8 +313,8 @@ export const submitApiKeyForm = function (event) {
         closeApiKeyModal();
         // Reload the catalog
         if (window.htmx && window.htmx.ajax) {
-          window.htmx.ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
-            target: "#mcp-registry-content",
+          window.htmx.ajax("GET", `${rootPath}/v1/admin/mcp-registry/partial`, {
+            target: "#mcp-registry-servers",
             swap: "innerHTML",
           });
         }
@@ -353,7 +353,7 @@ export const toggleGrpcTlsFields = function () {
 export const viewGrpcMethods = function (serviceId) {
   const rootPath = window.ROOT_PATH || "";
 
-  fetch(`${rootPath}/admin/grpc/${serviceId}/methods`, {
+  fetch(`${rootPath}/v1/admin/grpc/${serviceId}/methods`, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",

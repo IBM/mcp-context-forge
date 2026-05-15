@@ -38,7 +38,7 @@ def _make_id_token(exp_offset: int = 3600) -> str:
     return f"{header}.{payload}.sig"
 
 
-def _make_request(root_path: str = "/admin") -> MagicMock:
+def _make_request(root_path: str = "/v1/admin") -> MagicMock:
     request = MagicMock(spec=Request)
     request.scope = {"root_path": root_path}
     request.headers = {}
@@ -434,7 +434,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     user.password_change_required = False
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", False)
     response = await admin.admin_login_handler(request, mock_db)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/v1/admin")
 
 
 @pytest.mark.asyncio
@@ -476,7 +476,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(post_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
     # GET request with Accept: text/html (browser) should redirect to login
     get_browser_request = _make_request(root_path="/root")
@@ -485,7 +485,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_browser_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
     # GET request without Accept: text/html (OIDC front-channel) should return 200 OK
     get_oidc_request = _make_request(root_path="/root")
@@ -502,7 +502,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_htmx_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
     # GET request with admin referer should redirect to login
     get_referer_request = _make_request(root_path="/root")
@@ -511,7 +511,7 @@ async def test_admin_logout_paths():
     response = await admin._admin_logout(get_referer_request)
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
     # GET request with */* Accept header (no text/html) should return 200 OK (OIDC)
     get_wildcard_request = _make_request(root_path="/root")
@@ -545,7 +545,7 @@ async def test_admin_logout_keycloak_redirect(monkeypatch):
     params = parse_qs(parsed.query)
     assert parsed.path.endswith("/realms/mcp-gateway/protocol/openid-connect/logout")
     assert params["client_id"] == ["mcp-gateway-admin"]
-    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/v1/admin/login"]
     assert "jwt_token=" in response.headers.get("set-cookie", "")
 
 
@@ -639,7 +639,7 @@ async def test_admin_logout_keycloak_without_absolute_login_url_falls_back(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -677,7 +677,7 @@ async def test_admin_logout_verify_jwt_failure_falls_back_to_local_when_keycloak
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -697,7 +697,7 @@ async def test_admin_logout_without_auth_provider_falls_back_to_local_redirect(m
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -721,7 +721,7 @@ async def test_admin_logout_keycloak_uses_app_domain_fallback_for_login_url(monk
     assert response.status_code == 303
     location = response.headers["location"]
     params = parse_qs(urlparse(location).query)
-    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/v1/admin/login"]
 
 
 @pytest.mark.asyncio
@@ -739,7 +739,7 @@ async def test_admin_logout_keycloak_disabled_falls_back_to_local_redirect(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -759,7 +759,7 @@ async def test_admin_logout_keycloak_missing_realm_falls_back_to_local_redirect(
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/v1/admin/login"
 
 
 @pytest.mark.asyncio
@@ -1120,7 +1120,7 @@ async def test_change_password_required_handler(monkeypatch):
     with patch("sqlalchemy.inspect", return_value=SimpleNamespace(transient=False, detached=False)):
         response = await admin.change_password_required_handler(request, mock_db)
 
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/v1/admin")
     assert set_cookie.called
 
 
@@ -1542,7 +1542,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
     pagination.model_dump.return_value = {"page": 1, "per_page": 10}
 
     links = MagicMock()
-    links.model_dump.return_value = {"self": "/admin/servers?page=1&per_page=10"}
+    links.model_dump.return_value = {"self": "/v1/admin/servers?page=1&per_page=10"}
 
     async def _fake_list_servers(**_kwargs):
         return {"data": [mock_server], "pagination": pagination, "links": links}
@@ -1552,7 +1552,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
     result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
     assert result["data"] == [{"id": "server-1"}]
     assert result["pagination"] == {"page": 1, "per_page": 10}
-    assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}
+    assert result["links"] == {"self": "/v1/admin/servers?page=1&per_page=10"}
     mock_db.commit.assert_called_once()
 
 
@@ -1606,7 +1606,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
         pagination = MagicMock()
         pagination.model_dump.return_value = {"page": 1}
         links = MagicMock()
-        links.model_dump.return_value = {"self": "/admin/servers/partial?page=1"}
+        links.model_dump.return_value = {"self": "/v1/admin/servers/partial?page=1"}
         return {"data": [MagicMock()], "pagination": pagination, "links": links}
 
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db))

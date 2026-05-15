@@ -358,7 +358,7 @@ describe("showUserEditModal", () => {
 
     fetchWithAuth.mockResolvedValue({ ok: true, text: () => Promise.resolve("<div>Form</div>") });
     await showUserEditModal("test@test.com");
-    expect(fetchWithAuth).toHaveBeenCalledWith("/api/admin/users/test%40test.com/edit", { method: "GET" });
+    expect(fetchWithAuth).toHaveBeenCalledWith("/api/v1/admin/users/test%40test.com/edit", { method: "GET" });
   });
 });
 
@@ -531,7 +531,7 @@ describe("showUserEditModal - htmx integration", () => {
     await showUserEditModal("test@test.com");
     expect(window.htmx.ajax).toHaveBeenCalledWith(
       "GET",
-      "/admin/users/test%40test.com/edit",
+      "/v1/admin/users/test%40test.com/edit",
       expect.objectContaining({ target: "#user-edit-modal-content", swap: "innerHTML" })
     );
   });

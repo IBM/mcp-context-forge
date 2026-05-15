@@ -243,7 +243,14 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     if not prefix:
         return ""
     normalized = "/" + str(prefix).strip().strip("/")
-    return "" if normalized == "/" else normalized
+    if normalized == "/":
+        return ""
+    # Strip the /v1 API version prefix to align with _normalize_path_for_matching.
+    if normalized == "/v1":
+        return ""
+    if normalized.startswith("/v1/"):
+        normalized = normalized[3:]
+    return normalized
 
 
 def _normalize_scope_path(scope_path: str, root_path: str) -> str:
@@ -333,15 +340,39 @@ class TokenScopingMiddleware:
     def _normalize_path_for_matching(self, request_path: str) -> str:
         """Normalize a path for team scoping and permission matching.
 
+        **IMPORTANT:** This method strips the `/v1` API version prefix to ensure
+        scope patterns work consistently across both versioned and legacy routes.
+
+        Examples:
+            - `/v1/tools` → `/tools`
+            - `/tools` → `/tools`
+            - `/v1/admin/users` → `/admin/users`
+            - `/v1` → `/`
+
+        This means:
+            - A pattern `^/tools` matches BOTH `/tools` AND `/v1/tools`
+            - A pattern `^/v1/tools` is normalized to `^/tools` and matches both
+            - **Write patterns WITHOUT the `/v1` prefix for consistency**
+
         Args:
-            request_path: Raw request path.
+            request_path: Raw request path from HTTP request.
 
         Returns:
-            Normalized absolute path suitable for route matching.
+            Normalized path with `/v1` prefix removed (if present).
+
+        See Also:
+            - docs/docs/manage/rbac.md - Token scope pattern documentation
+            - tests/unit/mcpgateway/middleware/test_token_scoping_normalization.py
         """
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
-            return f"/{normalized}"
+            normalized = f"/{normalized}"
+        # Strip the /v1 API version prefix so all patterns match unversioned paths.
+        # This ensures scope patterns work identically for /tools and /v1/tools.
+        if normalized.startswith("/v1/"):
+            normalized = normalized[3:]
+        elif normalized == "/v1":
+            normalized = "/"
         return normalized
 
     def _get_normalized_request_path(self, request: Request) -> str:

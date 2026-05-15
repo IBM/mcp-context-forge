@@ -186,7 +186,7 @@ def cf_test_user(admin_api: APIRequestContext) -> str:
     """Ensure the Keycloak test user exists in ContextForge DB."""
     email = KEYCLOAK_TEST_USER
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={
             "email": email,
             "password": TEST_PASSWORD,
@@ -224,7 +224,7 @@ def oauth_server(admin_api: APIRequestContext) -> Generator[dict[str, Any], None
         },
         "visibility": "public",
     }
-    resp = admin_api.post("/servers", data=payload)
+    resp = admin_api.post("/v1/servers", data=payload)
     assert resp.status in (200, 201), f"Failed to create OAuth server: {resp.status} {resp.text()}"
     server = resp.json()
     logger.info("Created OAuth server: %s (id=%s)", name, server["id"])
@@ -232,7 +232,7 @@ def oauth_server(admin_api: APIRequestContext) -> Generator[dict[str, Any], None
     yield {"id": server["id"], "name": name}
 
     with suppress(Exception):
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
 
 @pytest.fixture(scope="module")
@@ -247,7 +247,7 @@ def non_oauth_server(admin_api: APIRequestContext) -> Generator[dict[str, Any], 
         },
         "visibility": "public",
     }
-    resp = admin_api.post("/servers", data=payload)
+    resp = admin_api.post("/v1/servers", data=payload)
     assert resp.status in (200, 201), f"Failed to create non-OAuth server: {resp.status} {resp.text()}"
     server = resp.json()
     logger.info("Created non-OAuth server: %s (id=%s)", name, server["id"])
@@ -255,7 +255,7 @@ def non_oauth_server(admin_api: APIRequestContext) -> Generator[dict[str, Any], 
     yield {"id": server["id"], "name": name}
 
     with suppress(Exception):
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
 
 @pytest.fixture(scope="module")
@@ -274,7 +274,7 @@ def wrong_issuer_server(admin_api: APIRequestContext) -> Generator[dict[str, Any
         },
         "visibility": "public",
     }
-    resp = admin_api.post("/servers", data=payload)
+    resp = admin_api.post("/v1/servers", data=payload)
     assert resp.status in (200, 201), f"Failed to create wrong-issuer server: {resp.status} {resp.text()}"
     server = resp.json()
     logger.info("Created wrong-issuer server: %s (id=%s)", name, server["id"])
@@ -282,7 +282,7 @@ def wrong_issuer_server(admin_api: APIRequestContext) -> Generator[dict[str, Any
     yield {"id": server["id"], "name": name}
 
     with suppress(Exception):
-        admin_api.delete(f"/servers/{server['id']}")
+        admin_api.delete(f"/v1/servers/{server['id']}")
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ def _mcp_request(playwright: Playwright, server_id: str, token: str) -> int:
         },
     )
     try:
-        resp = ctx.post(f"/servers/{server_id}/mcp", data=_INITIALIZE_REQUEST)
+        resp = ctx.post(f"/v1/servers/{server_id}/mcp", data=_INITIALIZE_REQUEST)
         return resp.status
     finally:
         ctx.dispose()

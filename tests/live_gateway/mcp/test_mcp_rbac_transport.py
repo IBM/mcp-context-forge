@@ -94,7 +94,7 @@ def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
 # RBAC helper: resolve role name -> UUID
 # ---------------------------------------------------------------------------
 def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
-    resp = admin_api.get("/rbac/roles")
+    resp = admin_api.get("/v1/rbac/roles")
     assert resp.status == 200, f"Failed to list RBAC roles: {resp.status} {resp.text()}"
     for role in resp.json():
         if role.get("name") == role_name:
@@ -121,7 +121,7 @@ def _create_user_with_token(
     """
     # 1. Create user
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={
             "email": email,
             "password": TEST_PASSWORD,
@@ -137,7 +137,7 @@ def _create_user_with_token(
 
     # 2. Add to team directly (admin is team owner/creator, so has teams.manage_members)
     if team_id:
-        add_resp = admin_api.post(f"/teams/{team_id}/members", data={"email": email, "role": "member"})
+        add_resp = admin_api.post(f"/v1/teams/{team_id}/members", data={"email": email, "role": "member"})
         if add_resp.status not in (400, 409):
             assert add_resp.status in (200, 201), f"Failed to add {email} to team: {add_resp.status} {add_resp.text()}"
         logger.info("User %s joined team %s", email, team_id)
@@ -146,7 +146,7 @@ def _create_user_with_token(
     if rbac_role and rbac_role != "platform_admin" and team_id:
         role_uuid = _resolve_role_id(admin_api, rbac_role)
         role_data: dict[str, Any] = {"role_id": role_uuid, "scope": "team", "scope_id": team_id}
-        role_resp = admin_api.post(f"/rbac/users/{email}/roles", data=role_data)
+        role_resp = admin_api.post(f"/v1/rbac/users/{email}/roles", data=role_data)
         if role_resp.status not in (409, 400):
             assert role_resp.status in (200, 201), f"Failed to assign {rbac_role} to {email}: {role_resp.status} {role_resp.text()}"
         logger.info("Assigned %s role to %s", rbac_role, email)
@@ -166,7 +166,7 @@ def _create_user_with_token(
         token_data["scope"] = token_scope
 
     try:
-        token_resp = user_ctx.post("/tokens", data=token_data)
+        token_resp = user_ctx.post("/v1/tokens", data=token_data)
         assert token_resp.status in (200, 201), f"Failed to create token for {email}: {token_resp.status} {token_resp.text()}"
         payload = token_resp.json()
         access_token = payload["access_token"]
@@ -196,15 +196,15 @@ def _cleanup_user(admin_api: APIRequestContext, user_info: dict[str, Any]) -> No
 
     if token_id:
         with suppress(Exception):
-            admin_api.delete(f"/tokens/admin/{token_id}")
+            admin_api.delete(f"/v1/tokens/admin/{token_id}")
     if role and role != "platform_admin" and team_id:
         with suppress(Exception):
-            admin_api.delete(f"/rbac/users/{email}/roles/{role}?scope=team&scope_id={team_id}")
+            admin_api.delete(f"/v1/rbac/users/{email}/roles/{role}?scope=team&scope_id={team_id}")
     if team_id:
         with suppress(Exception):
-            admin_api.delete(f"/teams/{team_id}/members/{email}")
+            admin_api.delete(f"/v1/teams/{team_id}/members/{email}")
     with suppress(Exception):
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
 
 # ---------------------------------------------------------------------------
@@ -226,13 +226,13 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
     """Create a private team for RBAC tests."""
     team_name = f"{RBAC_PREFIX}-team-{uuid.uuid4().hex[:8]}"
-    resp = admin_api.post("/teams/", data={"name": team_name, "description": "MCP RBAC E2E test team", "visibility": "private"})
+    resp = admin_api.post("/v1/teams/", data={"name": team_name, "description": "MCP RBAC E2E test team", "visibility": "private"})
     assert resp.status in (200, 201), f"Failed to create team: {resp.status} {resp.text()}"
     team = resp.json()
     logger.info("Created RBAC team: %s (id=%s)", team_name, team["id"])
     yield team
     with suppress(Exception):
-        admin_api.delete(f"/teams/{team['id']}")
+        admin_api.delete(f"/v1/teams/{team['id']}")
 
 
 @pytest.fixture(scope="module")
@@ -242,13 +242,13 @@ def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None,
 
     # Delete any pre-existing SSE gateway with same name or same URL
     with suppress(Exception):
-        gateways = admin_api.get("/gateways").json()
+        gateways = admin_api.get("/v1/gateways").json()
         for gw in gateways:
             if gw.get("name") == SSE_GATEWAY_NAME or gw.get("url") == sse_url:
-                admin_api.delete(f"/gateways/{gw['id']}")
+                admin_api.delete(f"/v1/gateways/{gw['id']}")
 
     resp = admin_api.post(
-        "/gateways",
+        "/v1/gateways",
         data={
             "name": SSE_GATEWAY_NAME,
             "url": sse_url,
@@ -264,7 +264,7 @@ def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None,
     for i in range(30):
         time.sleep(1)
         try:
-            tools = admin_api.get("/tools").json()
+            tools = admin_api.get("/v1/tools").json()
             sse_tools = [t for t in tools if t.get("gatewayId") == gw_id]
             if sse_tools:
                 logger.info("SSE gateway synced: %d tools", len(sse_tools))
@@ -277,7 +277,7 @@ def sse_gateway(admin_api: APIRequestContext) -> Generator[dict[str, Any], None,
     yield {"id": gw_id, "name": SSE_GATEWAY_NAME}
 
     with suppress(Exception):
-        admin_api.delete(f"/gateways/{gw_id}")
+        admin_api.delete(f"/v1/gateways/{gw_id}")
 
 
 @pytest.fixture(scope="module")
@@ -287,13 +287,13 @@ def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, sse_gatewa
     team_id = rbac_team["id"]
 
     # Fetch SSE tools for association
-    tools = admin_api.get("/tools").json()
+    tools = admin_api.get("/v1/tools").json()
     sse_tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gw_id]
 
     # Also fetch resources/prompts
-    resources = admin_api.get("/resources").json()
+    resources = admin_api.get("/v1/resources").json()
     sse_resource_ids = [r["id"] for r in resources if r.get("gatewayId") == gw_id] if resources else []
-    prompts = admin_api.get("/prompts").json()
+    prompts = admin_api.get("/v1/prompts").json()
     sse_prompt_ids = [p["id"] for p in prompts if p.get("gatewayId") == gw_id] if prompts else []
 
     uid = uuid.uuid4().hex[:8]
@@ -313,7 +313,7 @@ def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, sse_gatewa
         }
         if vis_team_id:
             payload["team_id"] = vis_team_id
-        resp = admin_api.post("/servers", data=payload)
+        resp = admin_api.post("/v1/servers", data=payload)
         assert resp.status in (200, 201), f"Failed to create {vis} server: {resp.status} {resp.text()}"
         srv = resp.json()
         servers[vis] = {"id": srv["id"], "name": name, "visibility": vis, "team_id": vis_team_id}
@@ -323,7 +323,7 @@ def visibility_servers(admin_api: APIRequestContext, rbac_team: dict, sse_gatewa
 
     for srv in servers.values():
         with suppress(Exception):
-            admin_api.delete(f"/servers/{srv['id']}")
+            admin_api.delete(f"/v1/servers/{srv['id']}")
 
 
 @pytest.fixture(scope="module")
@@ -513,7 +513,7 @@ class TestServerVisibilityViaAPI:
         assertion encoded the old "admin sees everything" semantics and is
         superseded by this test plus the explicit not-in assertion below.
         """
-        resp = admin_api.get("/servers")
+        resp = admin_api.get("/v1/servers")
         assert resp.status == 200
         server_ids = {s["id"] for s in resp.json()}
         assert visibility_servers["public"]["id"] in server_ids, "Admin should see public server"
@@ -525,7 +525,7 @@ class TestServerVisibilityViaAPI:
         token = test_users["developer"]["access_token"]
         ctx = _api_context(playwright, token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 200
             server_ids = {s["id"] for s in resp.json()}
             assert visibility_servers["public"]["id"] in server_ids, "Developer should see public server"
@@ -538,7 +538,7 @@ class TestServerVisibilityViaAPI:
         token = test_users["viewer"]["access_token"]
         ctx = _api_context(playwright, token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 200
             server_ids = {s["id"] for s in resp.json()}
             assert visibility_servers["public"]["id"] in server_ids, "Viewer should see public server"
@@ -551,7 +551,7 @@ class TestServerVisibilityViaAPI:
         token = outsider_user["access_token"]
         ctx = _api_context(playwright, token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 200
             server_ids = {s["id"] for s in resp.json()}
             assert visibility_servers["public"]["id"] in server_ids, "Outsider should see public server"
@@ -565,7 +565,7 @@ class TestServerVisibilityViaAPI:
         token = test_users["team_admin"]["access_token"]
         ctx = _api_context(playwright, token)
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 200
             server_ids = {s["id"] for s in resp.json()}
             assert visibility_servers["public"]["id"] in server_ids, "Team admin should see public server"
@@ -868,7 +868,7 @@ class TestDenyPaths:
         assert len(tools_before) > 0, "Token should work before revocation"
 
         # Revoke the token
-        revoke_resp = admin_api.delete(f"/tokens/admin/{token_id}")
+        revoke_resp = admin_api.delete(f"/v1/tokens/admin/{token_id}")
         assert revoke_resp.status == 204, f"Failed to revoke token: {revoke_resp.status}"
 
         # Small delay for revocation to propagate
@@ -889,7 +889,7 @@ class TestDenyPaths:
         """
         ctx = _api_context(playwright, outsider_user["access_token"])
         try:
-            resp = ctx.get("/servers")
+            resp = ctx.get("/v1/servers")
             assert resp.status == 200
             server_ids = {s["id"] for s in resp.json()}
             assert visibility_servers["team"]["id"] not in server_ids, "Outsider should NOT see team-scoped server"

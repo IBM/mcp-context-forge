@@ -801,7 +801,7 @@ describe("previewImport", () => {
     await previewImport();
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/import/preview",
+      "/v1/admin/import/preview",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -943,7 +943,7 @@ describe("handleImport", () => {
     await handleImport(true);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/import/configuration",
+      "/v1/admin/import/configuration",
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"dry_run":true'),
@@ -1031,7 +1031,7 @@ describe("handleImport", () => {
     await handleImport(false);
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/import/configuration",
+      "/v1/admin/import/configuration",
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"dry_run":false'),
@@ -1359,7 +1359,7 @@ describe("loadRecentImports", () => {
     await loadRecentImports();
 
     expect(fetchSpy).toHaveBeenCalledWith(
-      "/admin/import/status",
+      "/v1/admin/import/status",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer test-token",

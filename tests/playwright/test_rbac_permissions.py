@@ -96,7 +96,7 @@ def _inject_jwt_cookie(page: Page, email: str, is_admin: bool = False, teams: Op
 
 def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[str] = None) -> None:
     """Navigate to admin and wait for the application shell to load."""
-    url = f"/admin?team_id={team_id}" if team_id else "/admin"
+    url = f"/v1/admin?team_id={team_id}" if team_id else "/v1/admin"
     page.goto(url)
     page.wait_for_load_state("domcontentloaded")
     try:
@@ -116,7 +116,7 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[st
 def _navigate_to_gateways(page: Page, team_id: Optional[str] = None) -> GatewaysPage:
     """Navigate to the gateways tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#gateways")
+        page.goto(f"/v1/admin?team_id={team_id}#gateways")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -131,7 +131,7 @@ def _navigate_to_gateways(page: Page, team_id: Optional[str] = None) -> Gateways
 def _navigate_to_servers(page: Page, team_id: Optional[str] = None) -> ServersPage:
     """Navigate to the servers tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#catalog")
+        page.goto(f"/v1/admin?team_id={team_id}#catalog")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -154,14 +154,14 @@ def _submit_gateway_form_and_get_status(gw_page: GatewaysPage, name: str, url: s
     gw_page.fill_gateway_form(name=name, url=url, description="RBAC test gateway", tags="rbac,test", transport="SSE")
     try:
         with gw_page.page.expect_response(
-            lambda r: "/admin/gateways" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/gateways" in r.url and r.request.method == "POST",
             timeout=120000,
         ) as resp_info:
             gw_page.click_locator(gw_page.add_gateway_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
         # If no POST response intercepted, check if we were redirected to login (auth failure)
-        if "/admin/login" in gw_page.page.url:
+        if "/v1/admin/login" in gw_page.page.url:
             return 401
         return 0
 
@@ -175,13 +175,13 @@ def _submit_server_form_and_get_status(srv_page: ServersPage, name: str) -> int:
     srv_page.fill_server_form(name=name, description="RBAC test server")
     try:
         with srv_page.page.expect_response(
-            lambda r: "/admin/servers" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/servers" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             srv_page.click_locator(srv_page.add_server_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in srv_page.page.url:
+        if "/v1/admin/login" in srv_page.page.url:
             return 401
         return 0
 
@@ -204,7 +204,7 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 @pytest.fixture(scope="module")
 def rbac_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], None, None]:
     """Create a test team for RBAC tests, yield its data, then delete it."""
-    resp = admin_api.post("/teams/", data={"name": RBAC_TEAM_NAME, "description": "RBAC E2E test team", "visibility": "private"})
+    resp = admin_api.post("/v1/teams/", data={"name": RBAC_TEAM_NAME, "description": "RBAC E2E test team", "visibility": "private"})
     assert resp.status == 200 or resp.status == 201, f"Failed to create team: {resp.status} {resp.text()}"
     team = resp.json()
     team_id = team["id"]
@@ -214,7 +214,7 @@ def rbac_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], No
 
     # Cleanup: delete the team
     try:
-        del_resp = admin_api.delete(f"/teams/{team_id}")
+        del_resp = admin_api.delete(f"/v1/teams/{team_id}")
         logger.info("Deleted RBAC test team %s: %s", team_id, del_resp.status)
     except Exception as e:
         logger.warning("Failed to cleanup RBAC test team %s: %s", team_id, e)
@@ -222,7 +222,7 @@ def rbac_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], No
 
 def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
     """Resolve a role name (e.g. 'developer') to its UUID via the RBAC API."""
-    resp = admin_api.get("/rbac/roles")
+    resp = admin_api.get("/v1/rbac/roles")
     assert resp.status == 200, f"Failed to list RBAC roles: {resp.status} {resp.text()}"
     roles = resp.json()
     for role in roles:
@@ -245,7 +245,7 @@ def _create_user_and_join_team(
     """
     # 1. Create user
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         data={
             "email": email,
             "password": RBAC_TEST_PASSWORD,
@@ -262,7 +262,7 @@ def _create_user_and_join_team(
         logger.info("Created user %s", email)
 
     # 2. Invite user to team
-    invite_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
+    invite_resp = admin_api.post(f"/v1/teams/{team_id}/invitations", data={"email": email, "role": "member"})
     if invite_resp.status == 409:
         logger.info("User %s already invited/member, continuing", email)
     else:
@@ -278,7 +278,7 @@ def _create_user_and_join_team(
                 extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
             )
             try:
-                accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+                accept_resp = user_ctx.post(f"/v1/teams/invitations/{invitation_token}/accept")
                 assert accept_resp.status in (200, 201), f"Failed to accept invitation for {email}: {accept_resp.status} {accept_resp.text()}"
                 logger.info("User %s accepted team invitation", email)
             finally:
@@ -287,7 +287,7 @@ def _create_user_and_join_team(
     # 4. Assign RBAC role (resolve name → UUID)
     role_uuid = _resolve_role_id(admin_api, rbac_role)
     role_resp = admin_api.post(
-        f"/rbac/users/{email}/roles",
+        f"/v1/rbac/users/{email}/roles",
         data={"role_id": role_uuid, "scope": "team", "scope_id": team_id},
     )
     if role_resp.status == 409:
@@ -308,16 +308,16 @@ def rbac_developer_user(admin_api: APIRequestContext, rbac_test_team: Dict, play
 
     # Cleanup: revoke role and delete user
     try:
-        admin_api.delete(f"/rbac/users/{RBAC_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/rbac/users/{RBAC_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
     except Exception as e:
         logger.warning("Failed to revoke developer role: %s", e)
     try:
         # Remove from team first (required before user deletion due to FK constraints)
-        admin_api.delete(f"/teams/{team_id}/members/{RBAC_DEVELOPER_EMAIL}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{RBAC_DEVELOPER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to remove developer from team: %s", e)
     try:
-        admin_api.delete(f"/auth/email/admin/users/{RBAC_DEVELOPER_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{RBAC_DEVELOPER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to delete developer user: %s", e)
 
@@ -331,15 +331,15 @@ def rbac_viewer_user(admin_api: APIRequestContext, rbac_test_team: Dict, playwri
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{RBAC_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/rbac/users/{RBAC_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
     except Exception as e:
         logger.warning("Failed to revoke viewer role: %s", e)
     try:
-        admin_api.delete(f"/teams/{team_id}/members/{RBAC_VIEWER_EMAIL}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{RBAC_VIEWER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to remove viewer from team: %s", e)
     try:
-        admin_api.delete(f"/auth/email/admin/users/{RBAC_VIEWER_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{RBAC_VIEWER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to delete viewer user: %s", e)
 
@@ -500,7 +500,7 @@ class TestRBACGatewayDelete:
         gw_name = f"{RBAC_TEST_PREFIX}-admin-del-{uuid.uuid4().hex[:8]}"
         gw_url = VALID_MCP_SERVER_URLS[4]
         create_resp = admin_api.post(
-            "/gateways",
+            "/v1/gateways",
             data={
                 "name": gw_name,
                 "url": gw_url,
@@ -559,7 +559,7 @@ class TestRBACGatewayDelete:
             page.remove_listener("dialog", handle_dialog)
             # Cleanup: try API delete as fallback if UI delete failed
             try:
-                admin_api.delete(f"/gateways/{gateway_id}")
+                admin_api.delete(f"/v1/gateways/{gateway_id}")
             except Exception:
                 pass
 
@@ -583,7 +583,7 @@ class TestRBACRestAPI:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-gw-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/gateways",
+                "/v1/gateways",
                 data={
                     "name": name,
                     "url": VALID_MCP_SERVER_URLS[0],
@@ -600,7 +600,7 @@ class TestRBACRestAPI:
             if resp.status in (200, 201):
                 gw_id = resp.json().get("id")
                 if gw_id:
-                    ctx.delete(f"/gateways/{gw_id}")
+                    ctx.delete(f"/v1/gateways/{gw_id}")
         finally:
             ctx.dispose()
 
@@ -614,7 +614,7 @@ class TestRBACRestAPI:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-srv-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/servers",
+                "/v1/servers",
                 data={
                     "server": {
                         "name": name,
@@ -631,7 +631,7 @@ class TestRBACRestAPI:
             if resp.status in (200, 201):
                 srv_id = resp.json().get("id")
                 if srv_id:
-                    ctx.delete(f"/servers/{srv_id}")
+                    ctx.delete(f"/v1/servers/{srv_id}")
         finally:
             ctx.dispose()
 
@@ -645,7 +645,7 @@ class TestRBACRestAPI:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-gw-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/gateways",
+                "/v1/gateways",
                 data={
                     "name": name,
                     "url": VALID_MCP_SERVER_URLS[0],
@@ -667,7 +667,7 @@ class TestRBACRestAPI:
 def _navigate_to_tools(page: Page, team_id: Optional[str] = None) -> ToolsPage:
     """Navigate to the tools tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#tools")
+        page.goto(f"/v1/admin?team_id={team_id}#tools")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -682,7 +682,7 @@ def _navigate_to_tools(page: Page, team_id: Optional[str] = None) -> ToolsPage:
 def _navigate_to_resources(page: Page, team_id: Optional[str] = None) -> ResourcesPage:
     """Navigate to the resources tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#resources")
+        page.goto(f"/v1/admin?team_id={team_id}#resources")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -697,7 +697,7 @@ def _navigate_to_resources(page: Page, team_id: Optional[str] = None) -> Resourc
 def _navigate_to_prompts(page: Page, team_id: Optional[str] = None) -> PromptsPage:
     """Navigate to the prompts tab, optionally in a team-scoped view."""
     if team_id:
-        page.goto(f"/admin?team_id={team_id}#prompts")
+        page.goto(f"/v1/admin?team_id={team_id}#prompts")
         page.wait_for_load_state("domcontentloaded")
         try:
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -726,13 +726,13 @@ def _submit_tool_form_and_get_status(tools_page: ToolsPage, name: str) -> int:
     tools_page.fill_tool_form(name=name, url="https://httpbin.org/post", description="RBAC test tool", integration_type="REST")
     try:
         with tools_page.page.expect_response(
-            lambda r: "/admin/tools" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/tools" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             tools_page.click_locator(tools_page.add_tool_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in tools_page.page.url:
+        if "/v1/admin/login" in tools_page.page.url:
             return 401
         return 0
 
@@ -747,13 +747,13 @@ def _submit_resource_form_and_get_status(res_page: ResourcesPage, name: str) -> 
     res_page.fill_resource_form(uri=f"file:///rbac-test/{name}", name=name, mime_type="text/plain", description="RBAC test resource")
     try:
         with res_page.page.expect_response(
-            lambda r: "/admin/resources" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/resources" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             res_page.click_locator(res_page.add_resource_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in res_page.page.url:
+        if "/v1/admin/login" in res_page.page.url:
             return 401
         return 0
 
@@ -771,13 +771,13 @@ def _submit_prompt_form_and_get_status(pr_page: PromptsPage, name: str) -> int:
     pr_page.fill_locator(pr_page.prompt_description_input, "RBAC test prompt")
     try:
         with pr_page.page.expect_response(
-            lambda r: "/admin/prompts" in r.url and r.request.method == "POST",
+            lambda r: "/v1/admin/prompts" in r.url and r.request.method == "POST",
             timeout=30000,
         ) as resp_info:
             pr_page.click_locator(pr_page.add_prompt_btn)
         return resp_info.value.status
     except PlaywrightTimeoutError:
-        if "/admin/login" in pr_page.page.url:
+        if "/v1/admin/login" in pr_page.page.url:
             return 401
         return 0
 
@@ -931,15 +931,15 @@ def rbac_team_admin_user(admin_api: APIRequestContext, rbac_test_team: Dict, pla
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{RBAC_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
+        admin_api.delete(f"/v1/rbac/users/{RBAC_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
     except Exception as e:
         logger.warning("Failed to revoke team_admin role: %s", e)
     try:
-        admin_api.delete(f"/teams/{team_id}/members/{RBAC_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{RBAC_TEAM_ADMIN_EMAIL}")
     except Exception as e:
         logger.warning("Failed to remove team_admin from team: %s", e)
     try:
-        admin_api.delete(f"/auth/email/admin/users/{RBAC_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{RBAC_TEAM_ADMIN_EMAIL}")
     except Exception as e:
         logger.warning("Failed to delete team_admin user: %s", e)
 
@@ -960,7 +960,7 @@ class TestRBACTeamManagement:
         try:
             # POST /admin/teams/{team_id}/add-member requires teams.manage_members
             resp = ctx.post(
-                f"/admin/teams/{team_id}/add-member",
+                f"/v1/admin/teams/{team_id}/add-member",
                 data={"email": "nobody@test.example.com", "role": "member"},
             )
             assert resp.status == 403, f"Viewer should be denied adding team members but got status={resp.status}"
@@ -983,7 +983,7 @@ class TestRBACTeamManagement:
         )
         try:
             # GET /admin/teams/{team_id}/members/add requires teams.manage_members
-            resp = ctx.get(f"/admin/teams/{team_id}/members/add")
+            resp = ctx.get(f"/v1/admin/teams/{team_id}/members/add")
             assert resp.status != 401, f"Team admin authentication failed (status={resp.status})"
             body = resp.text()
             if resp.status == 403:
@@ -1014,7 +1014,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-tool-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/tools",
+                "/v1/tools",
                 data={
                     "tool": {
                         "name": name,
@@ -1034,7 +1034,7 @@ class TestRBACRestAPIEntityCreate:
             if resp.status in (200, 201):
                 tool_id = resp.json().get("id")
                 if tool_id:
-                    ctx.delete(f"/tools/{tool_id}")
+                    ctx.delete(f"/v1/tools/{tool_id}")
         finally:
             ctx.dispose()
 
@@ -1048,7 +1048,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-tool-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/tools",
+                "/v1/tools",
                 data={
                     "tool": {
                         "name": name,
@@ -1077,7 +1077,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-res-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/resources",
+                "/v1/resources",
                 data={
                     "resource": {
                         "uri": f"file:///rbac-test/{name}",
@@ -1096,7 +1096,7 @@ class TestRBACRestAPIEntityCreate:
             if resp.status in (200, 201):
                 res_id = resp.json().get("id")
                 if res_id:
-                    ctx.delete(f"/resources/{res_id}")
+                    ctx.delete(f"/v1/resources/{res_id}")
         finally:
             ctx.dispose()
 
@@ -1110,7 +1110,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-res-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/resources",
+                "/v1/resources",
                 data={
                     "resource": {
                         "uri": f"file:///rbac-test/{name}",
@@ -1138,7 +1138,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-prompt-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/prompts",
+                "/v1/prompts",
                 data={
                     "prompt": {
                         "name": name,
@@ -1157,7 +1157,7 @@ class TestRBACRestAPIEntityCreate:
             if resp.status in (200, 201):
                 prompt_id = resp.json().get("id")
                 if prompt_id:
-                    ctx.delete(f"/prompts/{prompt_id}")
+                    ctx.delete(f"/v1/prompts/{prompt_id}")
         finally:
             ctx.dispose()
 
@@ -1171,7 +1171,7 @@ class TestRBACRestAPIEntityCreate:
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-prompt-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
-                "/prompts",
+                "/v1/prompts",
                 data={
                     "prompt": {
                         "name": name,
@@ -1218,7 +1218,7 @@ class TestRPCToolExecutionRBAC:
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {
@@ -1258,7 +1258,7 @@ class TestRPCToolExecutionRBAC:
                 dev_ctx.dispose()
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
     def test_viewer_rpc_tools_call_allowed(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
         """Viewer (team-scoped) has tools.execute and can invoke tools via /rpc tools/call.
@@ -1272,7 +1272,7 @@ class TestRPCToolExecutionRBAC:
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
@@ -1305,7 +1305,7 @@ class TestRPCToolExecutionRBAC:
                 viewer_ctx.dispose()
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
     def test_developer_can_list_team_tool(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer must see their team-scoped tool in GET /tools (Layer 1 visibility check).
@@ -1320,7 +1320,7 @@ class TestRPCToolExecutionRBAC:
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
@@ -1339,7 +1339,7 @@ class TestRPCToolExecutionRBAC:
                 extra_http_headers={"Authorization": f"Bearer {token}"},
             )
             try:
-                list_resp = dev_ctx.get(f"/tools?team_id={team_id}")
+                list_resp = dev_ctx.get(f"/v1/tools?team_id={team_id}")
                 assert list_resp.status == 200, f"Developer GET /tools failed: {list_resp.status}"
                 tools = list_resp.json()
                 names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
@@ -1349,7 +1349,7 @@ class TestRPCToolExecutionRBAC:
                 dev_ctx.dispose()
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
 
 # ==================== #3515 Regression: Browser cookie session-token paths ====================
@@ -1379,7 +1379,7 @@ class TestSessionTokenCookieRBAC:
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
@@ -1411,7 +1411,7 @@ class TestSessionTokenCookieRBAC:
             logger.info("Developer cookie /rpc tools/call: error_code=%s — RBAC passed", error_code)
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
     def test_viewer_cookie_rpc_tools_call_allowed(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
         """Viewer cookie session has team-scoped tools.execute and must NOT get -32003 on /rpc tools/call."""
@@ -1422,7 +1422,7 @@ class TestSessionTokenCookieRBAC:
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
@@ -1456,7 +1456,7 @@ class TestSessionTokenCookieRBAC:
             logger.info("Viewer cookie /rpc tools/call: HTTP %d — successfully executed", result["status"])
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
 
     def test_developer_cookie_rpc_tools_list(self, page: Page, base_url: str, rbac_developer_user: Dict):
         """Developer cookie session must pass RBAC on /rpc tools/list (tools.read).
@@ -1491,13 +1491,13 @@ class TestSessionTokenCookieRBAC:
         import json as _json  # noqa: PLC0415
 
         other_team_name = f"{RBAC_TEST_PREFIX}-other-{uuid.uuid4().hex[:8]}"
-        team_resp = admin_api.post("/teams/", data={"name": other_team_name, "description": "Cross-team isolation test"})
+        team_resp = admin_api.post("/v1/teams/", data={"name": other_team_name, "description": "Cross-team isolation test"})
         assert team_resp.status in (200, 201), f"Failed to create other team: {team_resp.status}"
         other_team_id = team_resp.json()["id"]
 
         tool_name = f"{RBAC_TEST_PREFIX}-xteam-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
-            "/tools",
+            "/v1/tools",
             data=_json.dumps(
                 {
                     "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
@@ -1516,7 +1516,7 @@ class TestSessionTokenCookieRBAC:
                 extra_http_headers={"Authorization": f"Bearer {token}"},
             )
             try:
-                list_resp = dev_ctx.get(f"/tools?team_id={other_team_id}")
+                list_resp = dev_ctx.get(f"/v1/tools?team_id={other_team_id}")
                 assert list_resp.status == 200
                 tools = list_resp.json()
                 names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
@@ -1526,5 +1526,5 @@ class TestSessionTokenCookieRBAC:
                 dev_ctx.dispose()
         finally:
             if tool_id:
-                admin_api.delete(f"/tools/{tool_id}")
-            admin_api.delete(f"/teams/{other_team_id}")
+                admin_api.delete(f"/v1/tools/{tool_id}")
+            admin_api.delete(f"/v1/teams/{other_team_id}")

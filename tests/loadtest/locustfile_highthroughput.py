@@ -227,42 +227,42 @@ class HighThroughputUser(FastHttpUser):
     @tag("fast", "api")
     def list_tools(self) -> None:
         """List tools - fast DB query."""
-        with self.client.get("/tools", headers=self.auth_headers, name="/tools", catch_response=True) as response:
+        with self.client.get("/v1/tools", headers=self.auth_headers, name="/v1/tools", catch_response=True) as response:
             self._validate_response(response)
 
     @task(20)
     @tag("fast", "api")
     def list_servers(self) -> None:
         """List servers - fast DB query."""
-        with self.client.get("/servers", headers=self.auth_headers, name="/servers", catch_response=True) as response:
+        with self.client.get("/v1/servers", headers=self.auth_headers, name="/v1/servers", catch_response=True) as response:
             self._validate_response(response)
 
     @task(15)
     @tag("fast", "api")
     def list_gateways(self) -> None:
         """List gateways - fast DB query."""
-        with self.client.get("/gateways", headers=self.auth_headers, name="/gateways", catch_response=True) as response:
+        with self.client.get("/v1/gateways", headers=self.auth_headers, name="/v1/gateways", catch_response=True) as response:
             self._validate_response(response)
 
     @task(10)
     @tag("fast", "api")
     def list_resources(self) -> None:
         """List resources."""
-        with self.client.get("/resources", headers=self.auth_headers, name="/resources", catch_response=True) as response:
+        with self.client.get("/v1/resources", headers=self.auth_headers, name="/v1/resources", catch_response=True) as response:
             self._validate_response(response)
 
     @task(10)
     @tag("fast", "api")
     def list_prompts(self) -> None:
         """List prompts."""
-        with self.client.get("/prompts", headers=self.auth_headers, name="/prompts", catch_response=True) as response:
+        with self.client.get("/v1/prompts", headers=self.auth_headers, name="/v1/prompts", catch_response=True) as response:
             self._validate_response(response)
 
     @task(5)
     @tag("fast", "api")
     def list_tags(self) -> None:
         """List tags."""
-        with self.client.get("/tags", headers=self.auth_headers, name="/tags", catch_response=True) as response:
+        with self.client.get("/v1/tags", headers=self.auth_headers, name="/v1/tags", catch_response=True) as response:
             self._validate_response(response)
 
     @task(5)

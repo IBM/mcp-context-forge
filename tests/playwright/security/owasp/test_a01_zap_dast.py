@@ -235,13 +235,13 @@ def zap() -> ZAPv2:
 # The passive scan covers the full OpenAPI surface; the active scan focuses
 # on paths where access-control vulnerabilities are most likely.
 _ACTIVE_SCAN_PREFIXES = [
-    "/auth/",
-    "/rbac/",
-    "/tokens/",
-    "/servers",
-    "/teams/",
-    "/tools",
-    "/gateways",
+    "/v1/auth/",
+    "/v1/rbac/",
+    "/v1/tokens/",
+    "/v1/servers",
+    "/v1/teams/",
+    "/v1/tools",
+    "/v1/gateways",
 ]
 
 
@@ -291,7 +291,7 @@ class TestZAPAccessControlScan:
 
         Requires ZAP memory >= 4 GB (set in docker-compose.yml).
         """
-        protected_paths = ["/servers", "/tools", "/teams/", "/rbac", "/auth/email", "/tokens", "/gateways"]
+        protected_paths = ["/v1/servers", "/v1/tools", "/v1/teams/", "/v1/rbac", "/v1/auth/email", "/v1/tokens", "/v1/gateways"]
 
         # --- 1. Import OpenAPI spec (primary discovery mechanism) ---
         openapi_url = f"{ZAP_TARGET_URL}/openapi.json"

@@ -156,7 +156,7 @@ async def test_concurrent_tool_creation_same_name(client: AsyncClient):
 
     async def create_tool():
         form_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Test tool", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
-        return await client.post("/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_tool() for _ in range(10)], return_exceptions=True)
@@ -184,14 +184,14 @@ async def test_concurrent_tool_update_same_name(client: AsyncClient):
     tool1_data = {"name": tool1_name, "url": "http://example.com/tool1", "description": "Tool 1", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
     tool2_data = {"name": tool2_name, "url": "http://example.com/tool2", "description": "Tool 2", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
 
-    resp1 = await client.post("/admin/tools", data=tool1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/admin/tools", data=tool2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/admin/tools", data=tool1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/admin/tools", data=tool2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
 
     # Get tool IDs by listing tools
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
 
@@ -206,7 +206,7 @@ async def test_concurrent_tool_update_same_name(client: AsyncClient):
 
     async def update_tool(tool_id: str):
         update_data = {"name": target_name, "customName": target_name, "url": "http://example.com/updated", "requestType": "GET", "integrationType": "REST", "headers": "{}", "input_schema": "{}"}
-        return await client.post(f"/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both tools to same name concurrently
     results = await asyncio.gather(*[update_tool(tool1_id), update_tool(tool2_id)], return_exceptions=True)
@@ -222,7 +222,7 @@ async def test_concurrent_tool_update_same_name(client: AsyncClient):
     # If both succeeded, verify no data corruption occurred
     if success_count == 2:
         # Both updates succeeded - verify final state is consistent
-        final_list = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+        final_list = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
         assert final_list.status_code == 200
         final_tools = final_list.json()["data"]
         # Both tools should now have the target name (last write wins)
@@ -238,11 +238,11 @@ async def test_concurrent_tool_toggle(client: AsyncClient):
     tool_name = f"toggle-tool-{uuid.uuid4()}"
     tool_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Toggle test tool", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
 
-    resp = await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get tool ID by listing tools
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
     tool = next((t for t in tools if t["name"] == tool_name), None)
@@ -250,7 +250,7 @@ async def test_concurrent_tool_toggle(client: AsyncClient):
     tool_id = tool["id"]
 
     async def toggle():
-        return await client.post(f"/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -259,7 +259,7 @@ async def test_concurrent_tool_toggle(client: AsyncClient):
     assert all(isinstance(r, Exception) or r.status_code in [200, 303, 404, 409] for r in results), "Some requests returned unexpected status codes"
 
     # Verify final state is consistent by listing tools
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
     final_tool = next((t for t in tools if t["id"] == tool_id), None)
@@ -279,7 +279,7 @@ async def test_concurrent_gateway_creation_same_slug(client: AsyncClient):
 
     async def create_gateway():
         gateway_data = {"name": gateway_name, "url": "http://example.com/gateway", "description": "Test gateway", "visibility": "public", "transport": "SSE"}
-        return await client.post("/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name (will generate same slug)
     results = await asyncio.gather(*[create_gateway() for _ in range(10)], return_exceptions=True)
@@ -315,14 +315,14 @@ async def test_concurrent_gateway_update_same_slug(client: AsyncClient):
     gateway1_data = {"name": gateway1_name, "url": "http://example.com/gateway1", "description": "Gateway 1", "visibility": "public", "transport": "SSE"}
     gateway2_data = {"name": gateway2_name, "url": "http://example.com/gateway2", "description": "Gateway 2", "visibility": "public", "transport": "SSE"}
 
-    resp1 = await client.post("/admin/gateways", data=gateway1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/admin/gateways", data=gateway2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/admin/gateways", data=gateway1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/admin/gateways", data=gateway2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
 
     # Get gateway IDs by listing gateways
-    list_resp = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/gateways", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     gateways = list_resp.json()["data"]
 
@@ -337,7 +337,7 @@ async def test_concurrent_gateway_update_same_slug(client: AsyncClient):
 
     async def update_gateway(gateway_id: str):
         update_data = {"name": target_name, "url": "http://example.com/updated"}
-        return await client.post(f"/admin/gateways/{gateway_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/gateways/{gateway_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both gateways to same name concurrently
     results = await asyncio.gather(*[update_gateway(gateway1_id), update_gateway(gateway2_id)], return_exceptions=True)
@@ -368,11 +368,11 @@ async def test_concurrent_mixed_operations(client: AsyncClient):
     tool_name = f"mixed-tool-{uuid.uuid4()}"
     tool_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Mixed test tool", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
 
-    resp = await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get tool ID by listing tools
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
     tool = next((t for t in tools if t["name"] == tool_name), None)
@@ -390,13 +390,13 @@ async def test_concurrent_mixed_operations(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        return await client.post(f"/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     async def toggle_tool():
-        return await client.post(f"/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     async def read_tool():
-        return await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+        return await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
 
     # Mix of operations
     operations = [update_tool() for _ in range(5)] + [toggle_tool() for _ in range(5)] + [read_tool() for _ in range(5)]
@@ -407,7 +407,7 @@ async def test_concurrent_mixed_operations(client: AsyncClient):
     assert all(isinstance(r, Exception) or r.status_code in [200, 303, 404, 409] for r in results), "Some requests returned unexpected status codes"
 
     # Verify final state is consistent
-    final_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    final_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert final_resp.status_code == 200
 
 
@@ -425,7 +425,7 @@ async def test_high_concurrency_tool_creation(client: AsyncClient):
             "requestType": "GET",
             "visibility": "public",
         }
-        return await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
 
     # Create 50 tools concurrently
     results = await asyncio.gather(*[create_unique_tool(i) for i in range(50)], return_exceptions=True)
@@ -456,7 +456,7 @@ async def test_concurrent_team_tool_creation_same_name(client: AsyncClient):
 
     async def create_team_tool():
         form_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Team test tool", "integrationType": "REST", "requestType": "GET", "visibility": "team"}
-        return await client.post("/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name for team visibility
     results = await asyncio.gather(*[create_team_tool() for _ in range(10)], return_exceptions=True)
@@ -481,11 +481,11 @@ async def test_concurrent_tool_update_same_tool(client: AsyncClient):
     tool_name = f"update-test-tool-{uuid.uuid4()}"
     tool_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Update test tool", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
 
-    resp = await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get tool ID
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
     tool = next((t for t in tools if t["name"] == tool_name), None)
@@ -504,7 +504,7 @@ async def test_concurrent_tool_update_same_tool(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        return await client.post(f"/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Run concurrent updates on the same tool
     results = await asyncio.gather(*[update_description() for _ in range(5)], return_exceptions=True)
@@ -538,11 +538,11 @@ async def test_concurrent_tool_delete_operations(client: AsyncClient):
     tool_name = f"delete-tool-{uuid.uuid4()}"
     tool_data = {"name": tool_name, "url": "http://example.com/tool", "description": "Delete test tool", "integrationType": "REST", "requestType": "GET", "visibility": "public"}
 
-    resp = await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get tool ID
-    list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     tools = list_resp.json()["data"]
     tool = next((t for t in tools if t["name"] == tool_name), None)
@@ -550,7 +550,7 @@ async def test_concurrent_tool_delete_operations(client: AsyncClient):
     tool_id = tool["id"]
 
     async def delete_tool():
-        return await client.post(f"/admin/tools/{tool_id}/delete", data={}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        return await client.post(f"/v1/admin/tools/{tool_id}/delete", data={}, headers=TEST_AUTH_HEADER, follow_redirects=False)
 
     # Run concurrent deletes
     results = await asyncio.gather(*[delete_tool() for _ in range(5)], return_exceptions=True)
@@ -571,7 +571,7 @@ async def test_concurrent_tool_delete_operations(client: AsyncClient):
     assert error_count == 4, f"Expected 4 errors, got {error_count}. Redirect URLs: {[r.headers.get('location', '') for r in results if not isinstance(r, Exception)]}"
 
     # Verify tool is actually deleted
-    final_list = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    final_list = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
     assert final_list.status_code == 200
     final_tools = final_list.json()["data"]
     assert not any(t["id"] == tool_id for t in final_tools), "Tool should be deleted"
@@ -591,11 +591,11 @@ async def test_concurrent_gateway_toggle(client: AsyncClient):
     gateway_name = f"Toggle Gateway {unique_id}"
     gateway_data = {"name": gateway_name, "url": f"http://example.com/gateway-{unique_id}", "description": "Toggle test gateway", "visibility": "public", "transport": "SSE"}
 
-    resp = await client.post("/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200, f"Gateway creation failed with status {resp.status_code}: {resp.text}"
 
     # Get gateway ID
-    list_resp = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/gateways", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     gateways = list_resp.json()["data"]
     gateway = next((g for g in gateways if g["name"] == gateway_name), None)
@@ -603,7 +603,7 @@ async def test_concurrent_gateway_toggle(client: AsyncClient):
     gateway_id = gateway["id"]
 
     async def toggle():
-        return await client.post(f"/admin/gateways/{gateway_id}/state", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/gateways/{gateway_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -612,7 +612,7 @@ async def test_concurrent_gateway_toggle(client: AsyncClient):
     assert all(isinstance(r, Exception) or r.status_code in [200, 303, 404, 409] for r in results), "Some requests returned unexpected status codes"
 
     # Verify final state is consistent
-    final_resp = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+    final_resp = await client.get("/v1/admin/gateways", headers=TEST_AUTH_HEADER)
     assert final_resp.status_code == 200
 
 
@@ -624,7 +624,7 @@ async def test_concurrent_team_gateway_creation_same_slug(client: AsyncClient):
 
     async def create_team_gateway():
         gateway_data = {"name": gateway_name, "url": "http://example.com/gateway", "description": "Team test gateway", "visibility": "team", "transport": "SSE"}
-        return await client.post("/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name (will generate same slug)
     results = await asyncio.gather(*[create_team_gateway() for _ in range(10)], return_exceptions=True)
@@ -657,11 +657,11 @@ async def test_concurrent_gateway_delete_operations(client: AsyncClient):
     gateway_name = f"Delete Gateway {unique_id}"
     gateway_data = {"name": gateway_name, "url": f"http://example.com/gateway-{unique_id}", "description": "Delete test gateway", "visibility": "public", "transport": "SSE"}
 
-    resp = await client.post("/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200, f"Gateway creation failed with status {resp.status_code}: {resp.text}"
 
     # Get gateway ID
-    list_resp = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/admin/gateways", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     gateways = list_resp.json()["data"]
     gateway = next((g for g in gateways if g["name"] == gateway_name), None)
@@ -669,7 +669,7 @@ async def test_concurrent_gateway_delete_operations(client: AsyncClient):
     gateway_id = gateway["id"]
 
     async def delete_gateway():
-        return await client.post(f"/admin/gateways/{gateway_id}/delete", data={}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        return await client.post(f"/v1/admin/gateways/{gateway_id}/delete", data={}, headers=TEST_AUTH_HEADER, follow_redirects=False)
 
     # Run concurrent deletes
     results = await asyncio.gather(*[delete_gateway() for _ in range(5)], return_exceptions=True)
@@ -693,7 +693,7 @@ async def test_concurrent_gateway_delete_operations(client: AsyncClient):
         assert error_count == 4, f"Expected 4 errors when 1 succeeds, got {error_count}. Redirect URLs: {[r.headers.get('location', '') for r in results if not isinstance(r, Exception)]}"
 
     # Verify gateway is actually deleted
-    final_list = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+    final_list = await client.get("/v1/admin/gateways", headers=TEST_AUTH_HEADER)
     assert final_list.status_code == 200
     final_gateways = final_list.json()["data"]
     assert not any(g["id"] == gateway_id for g in final_gateways), "Gateway should be deleted"
@@ -722,11 +722,11 @@ async def test_skip_locked_behavior_tool_updates(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        resp = await client.post("/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/v1/admin/tools", data=tool_data, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 200, f"Failed to create tool {i}: {resp.status_code} - {resp.text[:200]}"
 
         # Get tool ID
-        list_resp = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+        list_resp = await client.get("/v1/admin/tools", headers=TEST_AUTH_HEADER)
         tools = list_resp.json()["data"]
         tool = next((t for t in tools if t["name"] == tool_name), None)
         if tool:
@@ -744,7 +744,7 @@ async def test_skip_locked_behavior_tool_updates(client: AsyncClient):
             "input_schema": "{}",
             "description": f"Updated description {index}",
         }
-        return await client.post(f"/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Update all tools concurrently
     results = await asyncio.gather(*[update_tool(tool_id, i) for i, tool_id in enumerate(tool_ids)], return_exceptions=True)
@@ -779,7 +779,7 @@ async def test_mixed_visibility_concurrent_operations(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        return await client.post("/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
 
     async def create_team_tool():
         form_data = {
@@ -792,7 +792,7 @@ async def test_mixed_visibility_concurrent_operations(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        return await client.post("/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
 
     async def create_private_tool():
         form_data = {
@@ -805,7 +805,7 @@ async def test_mixed_visibility_concurrent_operations(client: AsyncClient):
             "headers": "{}",
             "input_schema": "{}",
         }
-        return await client.post("/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/tools", data=form_data, headers=TEST_AUTH_HEADER)
 
     # Create tools with different names and visibility concurrently
     # Each visibility type has 3 concurrent requests with the same name
@@ -833,7 +833,7 @@ async def test_high_concurrency_gateway_creation(client: AsyncClient):
             "visibility": "public",
             "transport": "SSE",
         }
-        return await client.post("/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/gateways", data=gateway_data, headers=TEST_AUTH_HEADER)
 
     # Create 30 gateways concurrently
     results = await asyncio.gather(*[create_unique_gateway(i) for i in range(30)], return_exceptions=True)
@@ -864,7 +864,7 @@ async def test_concurrent_prompt_creation_same_name(client: AsyncClient):
 
     async def create_prompt():
         form_data = {"name": prompt_name, "description": "Test prompt", "template": "Test template", "arguments": "[]", "visibility": "public"}
-        return await client.post("/admin/prompts", data=form_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/prompts", data=form_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_prompt() for _ in range(10)], return_exceptions=True)
@@ -892,14 +892,14 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
     prompt1_data = {"name": prompt1_name, "description": "Prompt 1", "template": "Template 1", "arguments": "[]", "visibility": "public"}
     prompt2_data = {"name": prompt2_name, "description": "Prompt 2", "template": "Template 2", "arguments": "[]", "visibility": "public"}
 
-    resp1 = await client.post("/admin/prompts", data=prompt1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/admin/prompts", data=prompt2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/admin/prompts", data=prompt1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/admin/prompts", data=prompt2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
 
     # Get prompt IDs
-    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
 
@@ -914,7 +914,7 @@ async def test_concurrent_prompt_update_same_name(client: AsyncClient):
 
     async def update_prompt(prompt_id: str):
         update_data = {"name": target_name, "description": "Updated prompt", "template": "Updated template", "arguments": "[]"}
-        return await client.post(f"/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both prompts to same name concurrently
     results = await asyncio.gather(*[update_prompt(prompt1_id), update_prompt(prompt2_id)], return_exceptions=True)
@@ -933,11 +933,11 @@ async def test_concurrent_prompt_toggle(client: AsyncClient):
     prompt_name = f"toggle-prompt-{uuid.uuid4()}"
     prompt_data = {"name": prompt_name, "description": "Toggle test prompt", "template": "Toggle template", "arguments": "[]", "visibility": "public"}
 
-    resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get prompt ID
-    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
     prompt = next((p for p in prompts if p["name"] == prompt_name), None)
@@ -945,7 +945,7 @@ async def test_concurrent_prompt_toggle(client: AsyncClient):
     prompt_id = prompt["id"]
 
     async def toggle():
-        return await client.post(f"/admin/prompts/{prompt_id}/state", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/prompts/{prompt_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -961,11 +961,11 @@ async def test_concurrent_prompt_delete_operations(client: AsyncClient):
     prompt_name = f"delete-prompt-{uuid.uuid4()}"
     prompt_data = {"name": prompt_name, "description": "Delete test prompt", "template": "Delete template", "arguments": "[]", "visibility": "public"}
 
-    resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200
 
     # Get prompt ID
-    list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/prompts", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
     prompt = next((p for p in prompts if p["name"] == prompt_name), None)
@@ -973,7 +973,7 @@ async def test_concurrent_prompt_delete_operations(client: AsyncClient):
     prompt_id = prompt["id"]
 
     async def delete_prompt():
-        return await client.post(f"/admin/prompts/{prompt_id}/delete", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/prompts/{prompt_id}/delete", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent deletes
     results = await asyncio.gather(*[delete_prompt() for _ in range(10)], return_exceptions=True)
@@ -994,7 +994,7 @@ async def test_high_concurrency_prompt_creation(client: AsyncClient):
 
     async def create_unique_prompt(index: int):
         prompt_data = {"name": f"prompt-{uuid.uuid4()}-{index}", "description": f"Prompt {index}", "template": f"Template {index}", "arguments": "[]", "visibility": "public"}
-        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
 
     # Create 50 unique prompts concurrently
     results = await asyncio.gather(*[create_unique_prompt(i) for i in range(50)], return_exceptions=True)
@@ -1031,14 +1031,14 @@ async def test_concurrent_resource_update_same_uri(client: AsyncClient):
         "visibility": "public",
     }
 
-    resp1 = await client.post("/resources", json=resource1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/resources", json=resource2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/resources", json=resource1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/resources", json=resource2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 200, f"Failed to create resource 1: {resp1.status_code} - {resp1.text}"
     assert resp2.status_code == 200, f"Failed to create resource 2: {resp2.status_code} - {resp2.text}"
 
     # Get resource IDs
-    list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/resources", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     resources = list_resp.json()  # Returns list directly, not wrapped in {"data": [...]}
 
@@ -1054,7 +1054,7 @@ async def test_concurrent_resource_update_same_uri(client: AsyncClient):
 
     async def update_resource(resource_id: str):
         update_data = {"uri": target_uri, "name": "Updated Resource", "description": "Updated resource", "mimeType": "text/plain"}
-        return await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both resources to same URI concurrently
     results = await asyncio.gather(*[update_resource(resource1_id), update_resource(resource2_id)], return_exceptions=True)
@@ -1078,11 +1078,11 @@ async def test_concurrent_resource_toggle(client: AsyncClient):
         "visibility": "public",
     }
 
-    resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 200, f"Failed to create resource: {resp.status_code} - {resp.text}"
 
     # Get resource ID
-    list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/resources", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     resources = list_resp.json()  # Returns list directly
     resource = next((r for r in resources if r["uri"] == resource_uri), None)
@@ -1090,7 +1090,7 @@ async def test_concurrent_resource_toggle(client: AsyncClient):
     resource_id = resource["id"]
 
     async def toggle():
-        return await client.post(f"/resources/{resource_id}/state", json={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/resources/{resource_id}/state", json={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1099,7 +1099,7 @@ async def test_concurrent_resource_toggle(client: AsyncClient):
     assert all(isinstance(r, Exception) or r.status_code in [200, 303, 404, 409] for r in results), "Some requests returned unexpected status codes"
 
     # Verify final state is consistent
-    final_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+    final_resp = await client.get("/v1/resources", headers=TEST_AUTH_HEADER)
     assert final_resp.status_code == 200
     final_resources = final_resp.json()  # Returns list directly
     final_resource = next((r for r in final_resources if r["uri"] == resource_uri), None)
@@ -1121,11 +1121,11 @@ async def test_skip_locked_behavior_resource_updates(client: AsyncClient):
             "team_id": None,
             "visibility": "public",
         }
-        resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 200, f"Failed to create resource {i}: {resp.status_code} - {resp.text}"
 
         # Get resource ID
-        list_resp = await client.get("/resources", headers=TEST_AUTH_HEADER)
+        list_resp = await client.get("/v1/resources", headers=TEST_AUTH_HEADER)
         resources = list_resp.json()  # Returns list directly
         resource = next((r for r in resources if r["uri"] == resource_uri), None)
         if resource:
@@ -1134,7 +1134,7 @@ async def test_skip_locked_behavior_resource_updates(client: AsyncClient):
     async def update_resource(resource_id: str, index: int):
         resource_uri = f"file:///updated-resource-{index}-{uuid.uuid4()}.txt"
         update_data = {"uri": resource_uri, "name": f"Updated resource {index}", "description": f"Updated description {index}", "mimeType": "text/plain"}
-        return await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
     # Update all resources concurrently
     results = await asyncio.gather(*[update_resource(resource_id, i) for i, resource_id in enumerate(resource_ids)], return_exceptions=True)
@@ -1157,7 +1157,7 @@ async def test_concurrent_a2a_creation_same_name(client: AsyncClient):
 
     async def create_agent():
         agent_data = {"agent": {"name": agent_name, "description": "Test agent", "endpoint_url": "http://example.com/agent"}, "team_id": None, "visibility": "public"}
-        return await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_agent() for _ in range(10)], return_exceptions=True)
@@ -1198,14 +1198,14 @@ async def test_concurrent_a2a_update_same_name(client: AsyncClient):
     agent1_data = {"agent": {"name": agent1_name, "description": "Agent 1", "endpoint_url": "http://example.com/agent1"}, "team_id": None, "visibility": "public"}
     agent2_data = {"agent": {"name": agent2_name, "description": "Agent 2", "endpoint_url": "http://example.com/agent2"}, "team_id": None, "visibility": "public"}
 
-    resp1 = await client.post("/a2a", json=agent1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/a2a", json=agent2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/a2a", json=agent1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/a2a", json=agent2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 201, f"Failed to create agent 1: {resp1.status_code} - {resp1.text}"
     assert resp2.status_code == 201, f"Failed to create agent 2: {resp2.status_code} - {resp2.text}"
 
     # Get agent IDs
-    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/a2a", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     agents = list_resp.json()
     if isinstance(agents, dict) and "agents" in agents:
@@ -1222,7 +1222,7 @@ async def test_concurrent_a2a_update_same_name(client: AsyncClient):
 
     async def update_agent(agent_id: str):
         update_data = {"name": target_name, "description": "Updated agent", "endpoint": "http://example.com/updated"}
-        return await client.put(f"/a2a/{agent_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/a2a/{agent_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both agents to same name concurrently
     results = await asyncio.gather(*[update_agent(agent1_id), update_agent(agent2_id)], return_exceptions=True)
@@ -1241,11 +1241,11 @@ async def test_concurrent_a2a_toggle(client: AsyncClient):
     agent_name = f"toggle-agent-{uuid.uuid4()}"
     agent_data = {"agent": {"name": agent_name, "description": "Toggle test agent", "endpoint_url": "http://example.com/agent"}, "team_id": None, "visibility": "public"}
 
-    resp = await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 201, f"Failed to create agent: {resp.status_code} - {resp.text}"
 
     # Get agent ID
-    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/a2a", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     agents = list_resp.json()
     if isinstance(agents, dict) and "agents" in agents:
@@ -1255,7 +1255,7 @@ async def test_concurrent_a2a_toggle(client: AsyncClient):
     agent_id = agent["id"]
 
     async def toggle():
-        return await client.post(f"/a2a/{agent_id}/state", json={"activate": True}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/a2a/{agent_id}/state", json={"activate": True}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1271,11 +1271,11 @@ async def test_concurrent_a2a_delete_operations(client: AsyncClient):
     agent_name = f"delete-agent-{uuid.uuid4()}"
     agent_data = {"agent": {"name": agent_name, "description": "Delete test agent", "endpoint_url": "http://example.com/agent"}, "team_id": None, "visibility": "public"}
 
-    resp = await client.post("/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/a2a", json=agent_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 201, f"Failed to create agent: {resp.status_code} - {resp.text}"
 
     # Get agent ID
-    list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/a2a", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     agents = list_resp.json()
     if isinstance(agents, dict) and "agents" in agents:
@@ -1285,7 +1285,7 @@ async def test_concurrent_a2a_delete_operations(client: AsyncClient):
     agent_id = agent["id"]
 
     async def delete_agent():
-        return await client.delete(f"/a2a/{agent_id}", headers=TEST_AUTH_HEADER)
+        return await client.delete(f"/v1/a2a/{agent_id}", headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent deletes
     results = await asyncio.gather(*[delete_agent() for _ in range(10)], return_exceptions=True)
@@ -1305,7 +1305,7 @@ async def test_high_concurrency_a2a_creation(client: AsyncClient):
 
     async def create_unique_agent(index: int):
         agent_data = {"name": f"agent-{uuid.uuid4()}-{index}", "description": f"Agent {index}", "endpoint_url": f"http://example.com/agent{index}"}
-        return await client.post("/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
 
     # Create 50 unique agents concurrently
     results = await asyncio.gather(*[create_unique_agent(i) for i in range(50)], return_exceptions=True)
@@ -1343,7 +1343,7 @@ async def test_concurrent_server_creation_same_name(client: AsyncClient):
 
     async def create_server():
         server_data = {"name": server_name, "description": "Test server", "transport": "sse", "url": "http://example.com/sse"}
-        return await client.post("/servers", json={"server": server_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json={"server": server_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_server() for _ in range(10)], return_exceptions=True)
@@ -1384,14 +1384,14 @@ async def test_concurrent_server_update_same_name(client: AsyncClient):
     server1_data = {"server": {"name": server1_name, "description": "Server 1", "transport": "sse", "url": "http://example.com/sse1"}, "team_id": None, "visibility": "public"}
     server2_data = {"server": {"name": server2_name, "description": "Server 2", "transport": "sse", "url": "http://example.com/sse2"}, "team_id": None, "visibility": "public"}
 
-    resp1 = await client.post("/servers", json=server1_data, headers=TEST_AUTH_HEADER)
-    resp2 = await client.post("/servers", json=server2_data, headers=TEST_AUTH_HEADER)
+    resp1 = await client.post("/v1/servers", json=server1_data, headers=TEST_AUTH_HEADER)
+    resp2 = await client.post("/v1/servers", json=server2_data, headers=TEST_AUTH_HEADER)
 
     assert resp1.status_code == 201, f"Failed to create server 1: {resp1.status_code} - {resp1.text}"
     assert resp2.status_code == 201, f"Failed to create server 2: {resp2.status_code} - {resp2.text}"
 
     # Get server IDs
-    list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/servers", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     servers = list_resp.json()  # Returns list directly
 
@@ -1407,7 +1407,7 @@ async def test_concurrent_server_update_same_name(client: AsyncClient):
 
     async def update_server(server_id: str):
         update_data = {"name": target_name, "description": "Updated server", "transport": "sse", "url": "http://example.com/updated"}
-        return await client.put(f"/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
     # Try to update both servers to same name concurrently
     results = await asyncio.gather(*[update_server(server1_id), update_server(server2_id)], return_exceptions=True)
@@ -1426,11 +1426,11 @@ async def test_concurrent_server_toggle(client: AsyncClient):
     server_name = f"toggle-server-{uuid.uuid4()}"
     server_data = {"server": {"name": server_name, "description": "Toggle test server", "transport": "sse", "url": "http://example.com/sse"}, "team_id": None, "visibility": "public"}
 
-    resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 201, f"Failed to create server: {resp.status_code} - {resp.text}"
 
     # Get server ID
-    list_resp = await client.get("/servers", headers=TEST_AUTH_HEADER)
+    list_resp = await client.get("/v1/servers", headers=TEST_AUTH_HEADER)
     assert list_resp.status_code == 200
     servers = list_resp.json()  # Returns list directly
     server = next((s for s in servers if s["name"] == server_name), None)
@@ -1438,7 +1438,7 @@ async def test_concurrent_server_toggle(client: AsyncClient):
     server_id = server["id"]
 
     async def toggle():
-        return await client.post(f"/servers/{server_id}/state", json={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/servers/{server_id}/state", json={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1454,7 +1454,7 @@ async def test_concurrent_server_delete_operations(client: AsyncClient):
     server_name = f"delete-server-{uuid.uuid4()}"
     server_data = {"server": {"name": server_name, "description": "Delete test server", "transport": "sse", "url": "http://example.com/sse"}, "team_id": None, "visibility": "public"}
 
-    resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+    resp = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
     assert resp.status_code == 201, f"Failed to create server: {resp.status_code} - {resp.text}"
 
     # Get server ID from creation response
@@ -1462,7 +1462,7 @@ async def test_concurrent_server_delete_operations(client: AsyncClient):
     server_id = created_server["id"]
 
     async def delete_server():
-        return await client.delete(f"/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        return await client.delete(f"/v1/servers/{server_id}", headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent deletes
     results = await asyncio.gather(*[delete_server() for _ in range(10)], return_exceptions=True)
@@ -1495,7 +1495,7 @@ async def test_high_concurrency_server_creation(client: AsyncClient):
 
     async def create_unique_server(index: int):
         server_data = {"name": f"server-{uuid.uuid4()}-{index}", "description": f"Server {index}", "transport": "sse", "url": f"http://example.com/sse{index}"}
-        return await client.post("/servers", json={"server": server_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json={"server": server_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
 
     # Create 50 unique servers concurrently
     results = await asyncio.gather(*[create_unique_server(i) for i in range(50)], return_exceptions=True)
@@ -1516,7 +1516,7 @@ async def test_concurrent_team_server_creation_same_name(client: AsyncClient):
 
     async def create_team_server():
         server_data = {"server": {"name": server_name, "description": "Team server", "transport": "sse", "url": "http://example.com/sse"}, "team_id": None, "visibility": "team"}
-        return await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
 
     # Run 10 concurrent creations with same name
     results = await asyncio.gather(*[create_team_server() for _ in range(10)], return_exceptions=True)
@@ -1543,11 +1543,11 @@ async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
     for i in range(5):
         prompt_name = f"skip-lock-prompt-{i}-{uuid.uuid4()}"
         prompt_data = {"name": prompt_name, "description": f"Skip lock test prompt {i}", "template": f"Skip lock template {i}", "arguments": "[]", "visibility": "public"}
-        resp = await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 200, f"Failed to create prompt {i}: {resp.status_code}"
 
         # Get prompt ID
-        list_resp = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+        list_resp = await client.get("/v1/prompts", headers=TEST_AUTH_HEADER)
         prompts = list_resp.json()  # Returns list directly, not {"data": [...]}
         prompt = next((p for p in prompts if p["name"] == prompt_name), None)
         if prompt:
@@ -1556,7 +1556,7 @@ async def test_skip_locked_behavior_prompt_updates(client: AsyncClient):
     async def update_prompt(prompt_id: str, index: int):
         prompt_name = f"updated-prompt-{index}-{uuid.uuid4()}"
         update_data = {"name": prompt_name, "description": f"Updated description {index}", "template": f"Updated template {index}", "arguments": "[]"}
-        return await client.post(f"/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/v1/admin/prompts/{prompt_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     # Update all prompts concurrently
     results = await asyncio.gather(*[update_prompt(prompt_id, i) for i, prompt_id in enumerate(prompt_ids)], return_exceptions=True)
@@ -1575,11 +1575,11 @@ async def test_skip_locked_behavior_a2a_updates(client: AsyncClient):
     for i in range(5):
         agent_name = f"skip-lock-agent-{i}-{uuid.uuid4()}"
         agent_data = {"name": agent_name, "description": f"Skip lock test agent {i}", "endpoint_url": f"http://example.com/agent{i}"}
-        resp = await client.post("/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/v1/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 201, f"Failed to create agent {i}: {resp.status_code} - {resp.text}"
 
         # Get agent ID
-        list_resp = await client.get("/a2a", headers=TEST_AUTH_HEADER)
+        list_resp = await client.get("/v1/a2a", headers=TEST_AUTH_HEADER)
         agents = list_resp.json()
         if isinstance(agents, dict) and "agents" in agents:
             agents = agents["agents"]
@@ -1590,7 +1590,7 @@ async def test_skip_locked_behavior_a2a_updates(client: AsyncClient):
     async def update_agent(agent_id: str, index: int):
         agent_name = f"updated-agent-{index}-{uuid.uuid4()}"
         update_data = {"name": agent_name, "description": f"Updated description {index}", "endpoint_url": f"http://example.com/updated{index}"}
-        return await client.put(f"/a2a/{agent_id}", json={"agent": update_data}, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/a2a/{agent_id}", json={"agent": update_data}, headers=TEST_AUTH_HEADER)
 
     # Update all agents concurrently
     results = await asyncio.gather(*[update_agent(agent_id, i) for i, agent_id in enumerate(agent_ids)], return_exceptions=True)
@@ -1609,7 +1609,7 @@ async def test_skip_locked_behavior_server_updates(client: AsyncClient):
     for i in range(5):
         server_name = f"skip-lock-server-{i}-{uuid.uuid4()}"
         server_data = {"name": server_name, "description": f"Skip lock test server {i}", "transport": "sse", "url": f"http://example.com/sse{i}"}
-        resp = await client.post("/servers", json={"server": server_data, "team_id": None, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        resp = await client.post("/v1/servers", json={"server": server_data, "team_id": None, "visibility": "public"}, headers=TEST_AUTH_HEADER)
         assert resp.status_code == 201, f"Failed to create server {i}: {resp.status_code}"
 
         # Get server ID from creation response
@@ -1620,7 +1620,7 @@ async def test_skip_locked_behavior_server_updates(client: AsyncClient):
     async def update_server(server_id: str, index: int):
         server_name = f"updated-server-{index}-{uuid.uuid4()}"
         update_data = {"name": server_name, "description": f"Updated description {index}", "transport": "sse", "url": f"http://example.com/updated{index}"}
-        return await client.put(f"/servers/{server_id}", json={"server": update_data}, headers=TEST_AUTH_HEADER)
+        return await client.put(f"/v1/servers/{server_id}", json={"server": update_data}, headers=TEST_AUTH_HEADER)
 
     # Update all servers concurrently
     results = await asyncio.gather(*[update_server(server_id, i) for i, server_id in enumerate(server_ids)], return_exceptions=True)
@@ -1643,15 +1643,15 @@ async def test_mixed_visibility_concurrent_prompt_operations(client: AsyncClient
 
     async def create_public_prompt():
         prompt_data = {"name": f"mixed-vis-public-prompt-{base_uuid}", "description": "Public prompt", "template": "Public template", "arguments": "[]", "visibility": "public"}
-        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
 
     async def create_team_prompt():
         prompt_data = {"name": f"mixed-vis-team-prompt-{base_uuid}", "description": "Team prompt", "template": "Team template", "arguments": "[]", "visibility": "team"}
-        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
 
     async def create_private_prompt():
         prompt_data = {"name": f"mixed-vis-private-prompt-{base_uuid}", "description": "Private prompt", "template": "Private template", "arguments": "[]", "visibility": "private"}
-        return await client.post("/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/admin/prompts", data=prompt_data, headers=TEST_AUTH_HEADER)
 
     # Create prompts with different names and visibility concurrently
     results = await asyncio.gather(*[create_public_prompt() for _ in range(3)], *[create_team_prompt() for _ in range(3)], *[create_private_prompt() for _ in range(3)], return_exceptions=True)
@@ -1685,15 +1685,15 @@ async def test_mixed_visibility_concurrent_a2a_operations(client: AsyncClient):
 
     async def create_public_agent():
         agent_data = {"name": f"mixed-vis-public-agent-{base_uuid}", "description": "Public agent", "endpoint_url": "http://example.com/public"}
-        return await client.post("/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/a2a", json={"agent": agent_data, "visibility": "public"}, headers=TEST_AUTH_HEADER)
 
     async def create_team_agent():
         agent_data = {"name": f"mixed-vis-team-agent-{base_uuid}", "description": "Team agent", "endpoint_url": "http://example.com/team"}
-        return await client.post("/a2a", json={"agent": agent_data, "visibility": "team"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/a2a", json={"agent": agent_data, "visibility": "team"}, headers=TEST_AUTH_HEADER)
 
     async def create_private_agent():
         agent_data = {"name": f"mixed-vis-private-agent-{base_uuid}", "description": "Private agent", "endpoint_url": "http://example.com/private"}
-        return await client.post("/a2a", json={"agent": agent_data, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/a2a", json={"agent": agent_data, "visibility": "private"}, headers=TEST_AUTH_HEADER)
 
     # Create agents with different names and visibility concurrently
     results = await asyncio.gather(*[create_public_agent() for _ in range(3)], *[create_team_agent() for _ in range(3)], *[create_private_agent() for _ in range(3)], return_exceptions=True)
@@ -1719,15 +1719,15 @@ async def test_mixed_visibility_concurrent_server_operations(client: AsyncClient
 
     async def create_public_server():
         server_data = {"name": f"mixed-vis-public-server-{base_uuid}", "description": "Public server", "transport": "sse", "url": "http://example.com/public"}
-        return await client.post("/servers", json={"server": server_data, "team_id": None, "visibility": "public"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json={"server": server_data, "team_id": None, "visibility": "public"}, headers=TEST_AUTH_HEADER)
 
     async def create_team_server():
         server_data = {"name": f"mixed-vis-team-server-{base_uuid}", "description": "Team server", "transport": "sse", "url": "http://example.com/team"}
-        return await client.post("/servers", json={"server": server_data, "team_id": None, "visibility": "team"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json={"server": server_data, "team_id": None, "visibility": "team"}, headers=TEST_AUTH_HEADER)
 
     async def create_private_server():
         server_data = {"name": f"mixed-vis-private-server-{base_uuid}", "description": "Private server", "transport": "sse", "url": "http://example.com/private"}
-        return await client.post("/servers", json={"server": server_data, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        return await client.post("/v1/servers", json={"server": server_data, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
 
     # Create servers with different names and visibility concurrently
     results = await asyncio.gather(*[create_public_server() for _ in range(3)], *[create_team_server() for _ in range(3)], *[create_private_server() for _ in range(3)], return_exceptions=True)

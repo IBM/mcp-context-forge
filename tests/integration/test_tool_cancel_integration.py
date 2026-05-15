@@ -44,7 +44,7 @@ async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
 
     await cancellation_service.register_run("run-cancel-1", name="test_tool", cancel_callback=cb)
 
-    resp = client.post("/cancellation/cancel", json={"requestId": "run-cancel-1", "reason": "user requested"}, headers=auth_headers)
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "run-cancel-1", "reason": "user requested"}, headers=auth_headers)
 
     # May return 200 (success), 401 (auth required), or 403 (permission denied)
     assert resp.status_code in (200, 401, 403)
@@ -68,7 +68,7 @@ async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
 @pytest.mark.asyncio
 async def test_cancel_endpoint_unknown_run(auth_headers, mock_session_broadcast):
     """Test cancellation of unknown run returns 'queued' status."""
-    resp = client.post("/cancellation/cancel", json={"requestId": "unknown-run-id", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "unknown-run-id", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 
@@ -83,7 +83,7 @@ async def test_cancel_endpoint_without_reason(auth_headers, mock_session_broadca
     """Test cancellation without reason parameter."""
     await cancellation_service.register_run("run-no-reason", name="tool")
 
-    resp = client.post("/cancellation/cancel", json={"requestId": "run-no-reason"}, headers=auth_headers)
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "run-no-reason"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 
@@ -104,7 +104,7 @@ async def test_cancel_endpoint_broadcasts_to_sessions(auth_headers, monkeypatch)
 
     await cancellation_service.register_run("run-broadcast", name="tool")
 
-    resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "run-broadcast", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 
@@ -127,7 +127,7 @@ async def test_status_endpoint_success(auth_headers):
     """Test successful status retrieval via GET /cancellation/status/{request_id}."""
     await cancellation_service.register_run("run-status-1", name="test_tool")
 
-    resp = client.get("/cancellation/status/run-status-1", headers=auth_headers)
+    resp = client.get("/v1/cancellation/status/run-status-1", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 
@@ -142,7 +142,7 @@ async def test_status_endpoint_success(auth_headers):
 @pytest.mark.asyncio
 async def test_status_endpoint_not_found(auth_headers):
     """Test status endpoint returns 404 for unknown run."""
-    resp = client.get("/cancellation/status/nonexistent-run", headers=auth_headers)
+    resp = client.get("/v1/cancellation/status/nonexistent-run", headers=auth_headers)
 
     assert resp.status_code in (404, 401, 403)
 
@@ -157,7 +157,7 @@ async def test_status_endpoint_cancelled_run(auth_headers):
     await cancellation_service.register_run("run-cancelled", name="tool")
     await cancellation_service.cancel_run("run-cancelled", reason="test cancellation")
 
-    resp = client.get("/cancellation/status/run-cancelled", headers=auth_headers)
+    resp = client.get("/v1/cancellation/status/run-cancelled", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 
@@ -171,7 +171,7 @@ async def test_status_endpoint_cancelled_run(auth_headers):
 @pytest.mark.asyncio
 async def test_cancel_endpoint_requires_auth():
     """Test that cancel endpoint requires authentication."""
-    resp = client.post("/cancellation/cancel", json={"requestId": "test-run"})
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "test-run"})
 
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
@@ -180,7 +180,7 @@ async def test_cancel_endpoint_requires_auth():
 @pytest.mark.asyncio
 async def test_status_endpoint_requires_auth():
     """Test that status endpoint requires authentication."""
-    resp = client.get("/cancellation/status/test-run")
+    resp = client.get("/v1/cancellation/status/test-run")
 
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
@@ -195,7 +195,7 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
 
     await cancellation_service.register_run("run-broadcast-error", name="tool")
 
-    resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast-error", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/v1/cancellation/cancel", json={"requestId": "run-broadcast-error", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
 

@@ -99,7 +99,7 @@ def _request_json(
 
 
 def _resolve_role_id(admin_client: requests.Session, role_name: str) -> str:
-    roles = _request_json(admin_client, "GET", "/rbac/roles")
+    roles = _request_json(admin_client, "GET", "/v1/rbac/roles")
     for role in roles:
         if role.get("name") == role_name:
             return role["id"]
@@ -132,7 +132,7 @@ def _create_user(
     _request_json(
         admin_client,
         "POST",
-        "/auth/email/admin/users",
+        "/v1/auth/email/admin/users",
         json={
             "email": email,
             "password": TEST_PASSWORD,
@@ -148,7 +148,7 @@ def _create_user(
         _request_json(
             admin_client,
             "POST",
-            f"/teams/{team_id}/members",
+            f"/v1/teams/{team_id}/members",
             json={"email": email, "role": "member"},
         )
     if role_name and team_id:
@@ -156,7 +156,7 @@ def _create_user(
         _request_json(
             admin_client,
             "POST",
-            f"/rbac/users/{email}/roles",
+            f"/v1/rbac/users/{email}/roles",
             json={"role_id": role_id, "scope": "team", "scope_id": team_id},
         )
 
@@ -169,7 +169,7 @@ def _create_user(
     }
     if team_id:
         token_payload["team_id"] = team_id
-    token_response = _request_json(user_client, "POST", "/tokens", json=token_payload)
+    token_response = _request_json(user_client, "POST", "/v1/tokens", json=token_payload)
     token_obj = token_response.get("token", token_response)
     return {
         "email": email,
@@ -234,7 +234,7 @@ def _bootstrap_state() -> None:
     team = _request_json(
         admin_client,
         "POST",
-        "/teams/",
+        "/v1/teams/",
         json={
             "name": f"{ISOLATION_PREFIX}-team-{uuid.uuid4().hex[:8]}",
             "description": "Rust MCP isolation load team",
@@ -243,15 +243,15 @@ def _bootstrap_state() -> None:
     )
     team_id = team["id"]
 
-    tools = _request_json(admin_client, "GET", "/tools")
-    gateways = _request_json(admin_client, "GET", "/gateways")
+    tools = _request_json(admin_client, "GET", "/v1/tools")
+    gateways = _request_json(admin_client, "GET", "/v1/gateways")
     gateway = _select_time_gateway(gateways, tools)
     gateway_id = gateway["id"]
     tool_ids = [tool["id"] for tool in tools if tool.get("gatewayId") == gateway_id]
     server = _request_json(
         admin_client,
         "POST",
-        "/servers",
+        "/v1/servers",
         json={
             "server": {
                 "name": f"{ISOLATION_PREFIX}-server-{uuid.uuid4().hex[:8]}",
@@ -383,7 +383,7 @@ class McpIsolationOwnerUser(BaseIsolationUser):
     def tools_list_owner_session(self) -> None:
         owner = _STATE["users"]["owner"]  # type: ignore[index]
         with self.client.post(
-            f"/servers/{self.server_id}/mcp/",
+            f"/v1/servers/{self.server_id}/mcp/",
             headers=self._headers(owner["access_token"], include_session=True),
             json={"jsonrpc": "2.0", "id": random.randint(10, 10000), "method": "tools/list", "params": {}},
             catch_response=True,
@@ -403,7 +403,7 @@ class McpIsolationOwnerUser(BaseIsolationUser):
     def tools_call_owner_session(self) -> None:
         owner = _STATE["users"]["owner"]  # type: ignore[index]
         with self.client.post(
-            f"/servers/{self.server_id}/mcp/",
+            f"/v1/servers/{self.server_id}/mcp/",
             headers=self._headers(owner["access_token"], include_session=True),
             json={
                 "jsonrpc": "2.0",
@@ -434,7 +434,7 @@ class McpIsolationHijackUser(BaseIsolationUser):
     def same_team_peer_hijack(self) -> None:
         peer = _STATE["users"]["peer"]  # type: ignore[index]
         with self.client.post(
-            f"/servers/{self.server_id}/mcp/",
+            f"/v1/servers/{self.server_id}/mcp/",
             headers=self._headers(peer["access_token"], include_session=True),
             json={"jsonrpc": "2.0", "id": random.randint(10, 10000), "method": "tools/list", "params": {}},
             catch_response=True,
@@ -455,7 +455,7 @@ class McpIsolationHijackUser(BaseIsolationUser):
     def outsider_hijack(self) -> None:
         outsider = _STATE["users"]["outsider"]  # type: ignore[index]
         with self.client.post(
-            f"/servers/{self.server_id}/mcp/",
+            f"/v1/servers/{self.server_id}/mcp/",
             headers=self._headers(outsider["access_token"], include_session=True),
             json={"jsonrpc": "2.0", "id": random.randint(10, 10000), "method": "tools/list", "params": {}},
             catch_response=True,

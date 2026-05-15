@@ -43,13 +43,13 @@ class TestUserLifecycle:
         """Create a user for lifecycle tests, yield email, cleanup after class."""
         email = f"lifecycle-{uuid.uuid4().hex[:8]}@example.com"
         resp = admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Lifecycle User"},
         )
         assert resp.status in (200, 201), f"Failed to create lifecycle user: {resp.status}"
         yield email
         try:
-            admin_api.delete(f"/auth/email/admin/users/{email}")
+            admin_api.delete(f"/v1/auth/email/admin/users/{email}")
         except Exception:
             pass
 
@@ -57,18 +57,18 @@ class TestUserLifecycle:
         """Admin can create a new user via API."""
         email = f"create-{uuid.uuid4().hex[:8]}@example.com"
         resp = admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Create Test"},
         )
         assert resp.status in (200, 201)
         body = resp.json()
         assert body["email"] == email
         # Cleanup
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
     def test_list_users_includes_created(self, admin_api: APIRequestContext, lifecycle_email: str):
         """Created user appears in the admin user list."""
-        resp = admin_api.get("/auth/email/admin/users")
+        resp = admin_api.get("/v1/auth/email/admin/users")
         assert resp.status == 200
         users = resp.json()
         emails = [u["email"] for u in users]
@@ -76,7 +76,7 @@ class TestUserLifecycle:
 
     def test_get_user_details(self, admin_api: APIRequestContext, lifecycle_email: str):
         """Get specific user details by email."""
-        resp = admin_api.get(f"/auth/email/admin/users/{lifecycle_email}")
+        resp = admin_api.get(f"/v1/auth/email/admin/users/{lifecycle_email}")
         assert resp.status == 200
         user = resp.json()
         assert user["email"] == lifecycle_email
@@ -85,7 +85,7 @@ class TestUserLifecycle:
     def test_update_user(self, admin_api: APIRequestContext, lifecycle_email: str):
         """Update user's full name."""
         resp = admin_api.put(
-            f"/auth/email/admin/users/{lifecycle_email}",
+            f"/v1/auth/email/admin/users/{lifecycle_email}",
             data={"full_name": "Updated Lifecycle User"},
         )
         assert resp.status == 200
@@ -96,13 +96,13 @@ class TestUserLifecycle:
         """Admin can delete a user."""
         email = f"delete-{uuid.uuid4().hex[:8]}@example.com"
         admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Delete Me"},
         )
-        resp = admin_api.delete(f"/auth/email/admin/users/{email}")
+        resp = admin_api.delete(f"/v1/auth/email/admin/users/{email}")
         assert resp.status in (200, 204)
         # Verify deleted
-        get_resp = admin_api.get(f"/auth/email/admin/users/{email}")
+        get_resp = admin_api.get(f"/v1/auth/email/admin/users/{email}")
         assert get_resp.status == 404
 
 
@@ -117,7 +117,7 @@ class TestUserActivation:
     def test_deactivate_user(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can deactivate a user."""
         resp = admin_api.put(
-            f"/auth/email/admin/users/{temp_user}",
+            f"/v1/auth/email/admin/users/{temp_user}",
             data={"is_active": False},
         )
         assert resp.status == 200
@@ -129,27 +129,27 @@ class TestUserActivation:
         # Create and deactivate a user
         email = f"deact-login-{uuid.uuid4().hex[:8]}@example.com"
         admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": email, "password": TEST_PASSWORD, "full_name": "Deactivated"},
         )
-        admin_api.put(f"/auth/email/admin/users/{email}", data={"is_active": False})
+        admin_api.put(f"/v1/auth/email/admin/users/{email}", data={"is_active": False})
 
         # Try to login as deactivated user
         login_resp = anon_api.post(
-            "/auth/email/login",
+            "/v1/auth/email/login",
             data={"email": email, "password": TEST_PASSWORD},
         )
         assert login_resp.status in (401, 403), f"Deactivated user should be denied login, got {login_resp.status}"
 
         # Cleanup
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"/v1/auth/email/admin/users/{email}")
 
     def test_reactivate_user(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can reactivate a deactivated user."""
         # Deactivate
-        admin_api.put(f"/auth/email/admin/users/{temp_user}", data={"is_active": False})
+        admin_api.put(f"/v1/auth/email/admin/users/{temp_user}", data={"is_active": False})
         # Reactivate
-        resp = admin_api.put(f"/auth/email/admin/users/{temp_user}", data={"is_active": True})
+        resp = admin_api.put(f"/v1/auth/email/admin/users/{temp_user}", data={"is_active": True})
         assert resp.status == 200
         user = resp.json()
         assert user.get("is_active") is True
@@ -157,7 +157,7 @@ class TestUserActivation:
     def test_force_password_change(self, admin_api: APIRequestContext, temp_user: str):
         """Admin can force a user to change their password on next login."""
         resp = admin_api.put(
-            f"/auth/email/admin/users/{temp_user}",
+            f"/v1/auth/email/admin/users/{temp_user}",
             data={"password_change_required": True},
         )
         assert resp.status == 200
@@ -176,17 +176,17 @@ class TestUserManagementPermissions:
     def test_non_admin_denied_create_user(self, non_admin_api: APIRequestContext):
         """Non-admin user cannot create users."""
         resp = non_admin_api.post(
-            "/auth/email/admin/users",
+            "/v1/auth/email/admin/users",
             data={"email": "should-fail@example.com", "password": TEST_PASSWORD, "full_name": "Fail"},
         )
         assert resp.status in (401, 403), f"Non-admin should be denied, got {resp.status}"
 
     def test_non_admin_denied_list_users(self, non_admin_api: APIRequestContext):
         """Non-admin user cannot list all users."""
-        resp = non_admin_api.get("/auth/email/admin/users")
+        resp = non_admin_api.get("/v1/auth/email/admin/users")
         assert resp.status in (401, 403), f"Non-admin should be denied, got {resp.status}"
 
     def test_unauthenticated_denied_user_management(self, anon_api: APIRequestContext):
         """Unauthenticated requests are denied user management."""
-        resp = anon_api.get("/auth/email/admin/users")
+        resp = anon_api.get("/v1/auth/email/admin/users")
         assert resp.status in (401, 403), f"Unauthenticated should be denied, got {resp.status}"

@@ -671,7 +671,7 @@ class TestRBACProxyAuthentication:
             with pytest.raises(HTTPException) as exc_info:
                 await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert exc_info.value.status_code == 302
-            assert "/admin/login" in exc_info.value.headers.get("Location", "")
+            assert "/v1/admin/login" in exc_info.value.headers.get("Location", "")
 
     @pytest.mark.asyncio
     async def test_rbac_proxy_auth_looks_up_admin_status(self, mock_settings, mock_request, mock_db):
@@ -809,7 +809,7 @@ class TestWebSocketAuthentication:
 
         scope = {
             "type": "http",
-            "path": "/servers/123/mcp",
+            "path": "/v1/servers/123/mcp",
             "headers": [(b"x-authenticated-user", b"proxy-user")],
         }
 
@@ -848,7 +848,7 @@ class TestWebSocketAuthentication:
 
         scope = {
             "type": "http",
-            "path": "/servers/123/mcp",
+            "path": "/v1/servers/123/mcp",
             "headers": [],
         }
         with (

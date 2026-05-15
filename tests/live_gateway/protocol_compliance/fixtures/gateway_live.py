@@ -102,7 +102,7 @@ def runtime_mode_state(gateway_http_client: httpx.Client) -> dict:
       * ``supported_override_modes`` — what PATCH can set; typically ``["edge", "shadow"]``
       * ``mounted`` — python or rust
     """
-    resp = gateway_http_client.get("/admin/runtime/mcp-mode")
+    resp = gateway_http_client.get("/v1/admin/runtime/mcp-mode")
     if resp.status_code != 200:
         pytest.skip(f"runtime-mode admin endpoint unavailable ({resp.status_code}): {resp.text[:200]}")
     return resp.json()
@@ -126,7 +126,7 @@ def _wait_for_effective_mode(client: httpx.Client, expected: str, timeout_s: flo
     deadline = _time.monotonic() + timeout_s
     last: dict = {}
     while _time.monotonic() < deadline:
-        resp = client.get("/admin/runtime/mcp-mode")
+        resp = client.get("/v1/admin/runtime/mcp-mode")
         if resp.status_code != 200:
             # Non-200 during polling usually means the admin route is down
             # or the JWT expired mid-session; keep polling but capture the
@@ -162,7 +162,7 @@ def flip_runtime_mode(gateway_http_client: httpx.Client, runtime_mode_state: dic
     override_was_active = runtime_mode_state.get("override_active", False)
 
     def _flip(target_mode: str) -> dict:
-        resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": target_mode})
+        resp = gateway_http_client.patch("/v1/admin/runtime/mcp-mode", json={"mode": target_mode})
         if resp.status_code >= 400:
             pytest.skip(f"runtime-mode flip to {target_mode!r} refused ({resp.status_code}): " f"{resp.text[:200]}")
         return resp.json()
@@ -177,7 +177,7 @@ def flip_runtime_mode(gateway_http_client: httpx.Client, runtime_mode_state: dic
         # can correlate downstream failures.
         if override_was_active:
             try:
-                resp = gateway_http_client.patch("/admin/runtime/mcp-mode", json={"mode": original_mode})
+                resp = gateway_http_client.patch("/v1/admin/runtime/mcp-mode", json={"mode": original_mode})
                 if resp.status_code >= 400:
                     msg = f"flip_runtime_mode: failed to restore mode {original_mode!r} ({resp.status_code}): {resp.text[:200]}"
                     warnings.warn(msg, stacklevel=2)

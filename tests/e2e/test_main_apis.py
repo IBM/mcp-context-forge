@@ -407,12 +407,12 @@ class TestHealthChecks:
 class TestProtocolAPIs:
     async def test_initialize_no_body(self, client: AsyncClient):
         """Test POST /protocol/initialize with no body (should fail validation)."""
-        response = await client.post("/protocol/initialize", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/initialize", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     async def test_notifications_missing_method(self, client: AsyncClient):
         """Test POST /protocol/notifications with missing method field."""
-        response = await client.post("/protocol/notifications", json={}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/notifications", json={}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [200, 400, 422]
 
     """Test MCP protocol-related endpoints."""
@@ -429,7 +429,7 @@ class TestProtocolAPIs:
         with patch("mcpgateway.main.session_registry.handle_initialize_logic") as mock_init:
             mock_init.return_value = {"protocolVersion": "1.0.0", "capabilities": {"tools": {}, "resources": {}}, "serverInfo": {"name": "mcp-gateway", "version": "1.0.0"}}
 
-            response = await client.post("/protocol/initialize", json=request_body, headers=TEST_AUTH_HEADER)
+            response = await client.post("/v1/protocol/initialize", json=request_body, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -441,7 +441,7 @@ class TestProtocolAPIs:
         """Test POST /protocol/ping - MCP ping request."""
         request_body = {"jsonrpc": "2.0", "id": "test-123", "method": "ping"}
 
-        response = await client.post("/protocol/ping", json=request_body, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/ping", json=request_body, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -453,7 +453,7 @@ class TestProtocolAPIs:
         """Test POST /protocol/ping with invalid method."""
         request_body = {"jsonrpc": "2.0", "id": "test-123", "method": "pong"}  # Invalid method
 
-        response = await client.post("/protocol/ping", json=request_body, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/ping", json=request_body, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 400
         result = response.json()
@@ -461,24 +461,24 @@ class TestProtocolAPIs:
 
     async def test_notifications_initialized(self, client: AsyncClient):
         """Test POST /protocol/notifications - client initialized."""
-        response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_cancelled_accepts_unknown_run_as_noop(self, client: AsyncClient):
         """Test POST /protocol/notifications - unknown run is accepted as a no-op."""
-        response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
         """Test POST /protocol/notifications - owner can cancel."""
         with patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value={"owner_email": "testuser@example.com", "owner_team_ids": []})):
-            response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
+            response = await client.post("/v1/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     async def test_notifications_message(self, client: AsyncClient):
         """Test POST /protocol/notifications - log message."""
         response = await client.post(
-            "/protocol/notifications", json={"method": "notifications/message", "params": {"data": "Test log message", "level": "info", "logger": "test-logger"}}, headers=TEST_AUTH_HEADER
+            "/v1/protocol/notifications", json={"method": "notifications/message", "params": {"data": "Test log message", "level": "info", "logger": "test-logger"}}, headers=TEST_AUTH_HEADER
         )
         assert response.status_code == 200
 
@@ -489,7 +489,7 @@ class TestProtocolAPIs:
             mock_complete.return_value = {"completion": "Test completed"}
 
             request_body = {"prompt": "Complete this test"}
-            response = await client.post("/protocol/completion/complete", json=request_body, headers=TEST_AUTH_HEADER)
+            response = await client.post("/v1/protocol/completion/complete", json=request_body, headers=TEST_AUTH_HEADER)
 
             # Accept either success or permission error due to RBAC issues
             # TODO: Fix RBAC mocking to make this test properly pass
@@ -510,7 +510,7 @@ class TestProtocolAPIs:
             mock_sample.return_value = {"messageId": "msg-123", "content": "Sampled message"}
 
             request_body = {"content": "Create a sample message"}
-            response = await client.post("/protocol/sampling/createMessage", json=request_body, headers=TEST_AUTH_HEADER)
+            response = await client.post("/v1/protocol/sampling/createMessage", json=request_body, headers=TEST_AUTH_HEADER)
 
             # Accept either success or permission error due to RBAC issues
             # TODO: Fix RBAC mocking to make this test properly pass
@@ -531,7 +531,7 @@ class TestProtocolAPIs:
 class TestServerAPIs:
     async def test_get_servers_no_auth(self, client: AsyncClient):
         """Test GET /servers without auth header (should fail if auth required)."""
-        response = await client.get("/servers")
+        response = await client.get("/v1/servers")
         # Accept either auth error or RBAC decorator error
         # TODO: Fix RBAC mocking to make this test properly pass
         if response.status_code == 422:
@@ -547,7 +547,7 @@ class TestServerAPIs:
 
     async def test_list_servers_empty(self, client: AsyncClient, mock_auth):
         """Test GET /servers returns empty list initially."""
-        response = await client.get("/servers", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/servers", headers=TEST_AUTH_HEADER)
 
         # With our simplified dependency override, this should work
         assert response.status_code == 200
@@ -569,7 +569,7 @@ class TestServerAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
 
         # Accept either success or permission error due to RBAC issues
         # TODO: Fix RBAC mocking to make this test properly pass
@@ -595,11 +595,11 @@ class TestServerAPIs:
         # denies private rows to public-only tokens, even own-private.
         server_data = {"server": {"name": "get_test_server", "description": "Server for GET test"}, "team_id": None, "visibility": "public"}
 
-        create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
 
         # Get the server
-        response = await client.get(f"/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/servers/{server_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -611,12 +611,12 @@ class TestServerAPIs:
         # Create a server
         server_data = {"server": {"name": "update_test_server", "description": "Original description"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
 
         # Update the server
         update_data = {"description": "Updated description", "icon": "https://example.com/new-icon.png"}
-        response = await client.put(f"/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -628,11 +628,11 @@ class TestServerAPIs:
         # Create a server
         server_data = {"server": {"name": "state_test_server"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
 
         # Deactivate the server
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -643,7 +643,7 @@ class TestServerAPIs:
         assert result.get("enabled") is False or result.get("enabled") is False
 
         # Reactivate the server
-        response = await client.post(f"/servers/{server_id}/state?activate=true", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/servers/{server_id}/state?activate=true", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -655,17 +655,17 @@ class TestServerAPIs:
         # can DELETE it back — see ``test_get_server`` for the PR #4341 reasoning.
         server_data = {"server": {"name": "delete_test_server"}, "team_id": None, "visibility": "public"}
 
-        create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
 
         # Delete the server
-        response = await client.delete(f"/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/servers/{server_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
         # Verify it's deleted
-        response = await client.get(f"/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/servers/{server_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 404
 
     async def test_server_not_found(self, client: AsyncClient, mock_auth):
@@ -673,15 +673,15 @@ class TestServerAPIs:
         fake_id = "non-existent-server-id"
 
         # GET - returns 400 instead of 404
-        response = await client.get(f"/servers/{fake_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/servers/{fake_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]  # Accept either
 
         # PUT
-        response = await client.put(f"/servers/{fake_id}", json={"description": "test"}, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/servers/{fake_id}", json={"description": "test"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
         # DELETE
-        response = await client.delete(f"/servers/{fake_id}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/servers/{fake_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_server_name_conflict(self, client: AsyncClient, mock_auth):
@@ -692,11 +692,11 @@ class TestServerAPIs:
         server_data_3 = {"server": {"name": "duplicate_server"}, "team_id": "teamB", "visibility": "private"}
 
         # Create first server (teamA, authenticated user)
-        response = await client.post("/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
         # Try to create duplicate with same team_id, name - must return 409
-        response = await client.post("/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         resp_json = response.json()
         if "message" in resp_json:
@@ -705,34 +705,34 @@ class TestServerAPIs:
             assert response.status_code == 409
 
         # Create with different team_id (should succeed)
-        response = await client.post("/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
     async def test_create_server_success_and_missing_fields(self, client: AsyncClient, mock_auth):
         """Test POST /servers - create server success and missing fields."""
         server_data = {"server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
         result = response.json()
         assert result["name"] == server_data["server"]["name"]
         # Missing required fields
-        response = await client.post("/servers", json={}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json={}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_update_server_success_and_invalid(self, client: AsyncClient, mock_auth):
         """Test PUT /servers/{server_id} - update server success and invalid id."""
         # Create a server first
         server_data = {"server": {"name": "update_server", "description": "To update"}, "team_id": None, "visibility": "private"}
-        create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
         # Update
         update_data = {"description": "Updated description"}
-        response = await client.put(f"/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/servers/{server_id}", json=update_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["description"] == update_data["description"]
         # Invalid id
-        response = await client.put("/servers/invalid-id", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put("/v1/servers/invalid-id", json=update_data, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
 
@@ -742,14 +742,14 @@ class TestServerAPIs:
 class TestToolAPIs:
     async def test_create_tool_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /tools with no body (should fail validation)."""
-        response = await client.post("/tools", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     """Test tool management endpoints."""
 
     async def test_list_tools_empty(self, client: AsyncClient, mock_auth):
         """Test GET /tools returns empty list initially."""
-        response = await client.get("/tools", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Default response is a plain list (include_pagination=False by default)
         assert response.json() == []
@@ -767,7 +767,7 @@ class TestToolAPIs:
     #         "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "description": "City name"}, "units": {"type": "string", "enum": ["metric", "imperial"]}}, "required": ["q"]},
     #     }
 
-    #     response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+    #     response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
 
     #     assert response.status_code == 200
     #     result = response.json()
@@ -790,7 +790,7 @@ class TestToolAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
 
         # Debug: print response details if not 200
         if response.status_code != 200:
@@ -803,13 +803,13 @@ class TestToolAPIs:
     async def test_create_tool_validation_errors(self, client: AsyncClient, mock_auth):
         """Test POST /tools with various validation errors."""
         # Empty name - might succeed with generated name
-        response = await client.post("/tools", json={"tool": {"name": "", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {"name": "", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
         # Check if it returns validation error or succeeds with generated name
         if response.status_code == 422:
             assert "Tool name cannot be empty" in str(response.json())
 
         # Valid name format with dashes (per MCP spec - hyphens allowed in names)
-        response = await client.post("/tools", json={"tool": {"name": "tool-with-dashes", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {"name": "tool-with-dashes", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
         # Tool names with hyphens are valid per MCP spec
         if response.status_code == 422:
             # May fail for other reasons (duplicate, etc)
@@ -818,13 +818,13 @@ class TestToolAPIs:
             assert response.status_code == 200
 
         # Invalid URL scheme
-        response = await client.post("/tools", json={"tool": {"name": "test_tool", "url": "javascript:alert(1)"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {"name": "test_tool", "url": "javascript:alert(1)"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "must start with one of" in str(response.json())
 
         # Name too long (>255 chars)
         long_name = "a" * 300
-        response = await client.post("/tools", json={"tool": {"name": long_name, "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {"name": long_name, "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "exceeds MCP spec limit" in str(response.json())
 
@@ -833,11 +833,11 @@ class TestToolAPIs:
         # Create a tool
         tool_data = {"tool": {"name": "test_get_tool", "description": "Tool for GET test", "inputSchema": {"type": "object"}}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         tool_id = create_response.json()["id"]
 
         # Get the tool
-        response = await client.get(f"/tools/{tool_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/tools/{tool_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -849,12 +849,12 @@ class TestToolAPIs:
         # Create a tool
         tool_data = {"tool": {"name": "test_update_tool", "description": "Original description"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         tool_id = create_response.json()["id"]
 
         # Update the tool
         update_data = {"description": "Updated description", "headers": {"Authorization": "Bearer new-token"}}
-        response = await client.put(f"/tools/{tool_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/tools/{tool_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -866,11 +866,11 @@ class TestToolAPIs:
         # Create a tool
         tool_data = {"tool": {"name": "test_state_tool"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         tool_id = create_response.json()["id"]
 
         # Deactivate the tool
-        response = await client.post(f"/tools/{tool_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/tools/{tool_id}/state?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -878,7 +878,7 @@ class TestToolAPIs:
         assert "deactivated" in result["message"]
 
         # Verify it's deactivated by listing with include_inactive
-        response = await client.get("/tools?include_inactive=true", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/tools?include_inactive=true", headers=TEST_AUTH_HEADER)
         tools_response = response.json()
         # Handle both paginated and non-paginated responses
         tools = tools_response.get("tools", tools_response) if isinstance(tools_response, dict) else tools_response
@@ -891,17 +891,17 @@ class TestToolAPIs:
         # Create a tool
         tool_data = {"tool": {"name": "test_delete_tool"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         tool_id = create_response.json()["id"]
 
         # Delete the tool
-        response = await client.delete(f"/tools/{tool_id}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/tools/{tool_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
         # Verify it's deleted
-        response = await client.get(f"/tools/{tool_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/tools/{tool_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 404
 
     # API should probably return 404 instead of 400 for non-existent tool
@@ -910,11 +910,11 @@ class TestToolAPIs:
         tool_data = {"tool": {"name": "duplicate_tool"}, "team_id": None, "visibility": "private"}
 
         # Create first tool
-        response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
         # Try to create duplicate - might succeed with different ID
-        response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         # Accept 400, 409, or 200 as valid responses for duplicate
         assert response.status_code in [200, 400, 409]
         if response.status_code == 400:
@@ -923,26 +923,26 @@ class TestToolAPIs:
     async def test_create_tool_missing_required_fields(self, client: AsyncClient, mock_auth):
         """Test POST /tools with missing required fields."""
         # Missing name
-        response = await client.post("/tools", json={"tool": {"description": "desc"}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {"description": "desc"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         # Empty body
-        response = await client.post("/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_update_tool_invalid_id(self, client: AsyncClient, mock_auth):
         """Test PUT /tools/{tool_id} with invalid/nonexistent ID."""
-        response = await client.put("/tools/invalid-id", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
+        response = await client.put("/v1/tools/invalid-id", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_delete_tool_invalid_id(self, client: AsyncClient, mock_auth):
         """Test DELETE /tools/{tool_id} with invalid/nonexistent ID."""
-        response = await client.delete("/tools/invalid-id", headers=TEST_AUTH_HEADER)
+        response = await client.delete("/v1/tools/invalid-id", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_update_tool_not_found(self, client: AsyncClient, mock_auth):
         """Test PUT /tools/{tool_id} with non-existent tool returns 404 or 400."""
         fake_id = "non-existent-tool-id"
-        response = await client.put(f"/tools/{fake_id}", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/tools/{fake_id}", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
         resp_json = response.json()
         assert "not found" in str(resp_json).lower() or "does not exist" in str(resp_json).lower()
@@ -954,21 +954,21 @@ class TestToolAPIs:
 class TestResourceAPIs:
     async def test_create_resource_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /resources with no body (should fail validation)."""
-        response = await client.post("/resources", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     """Test resource management endpoints."""
 
     async def test_list_resources_empty(self, client: AsyncClient, mock_auth):
         """Test GET /resources returns empty list initially."""
-        response = await client.get("/resources", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/resources", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Default response is a plain list (include_pagination=False by default)
         assert response.json() == []
 
     async def test_list_resource_templates(self, client: AsyncClient, mock_auth):
         """Test GET /resources/templates/list."""
-        response = await client.get("/resources/templates/list", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/resources/templates/list", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -992,7 +992,7 @@ class TestResourceAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1015,7 +1015,7 @@ class TestResourceAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         # API normalizes all mime types to text/plain
@@ -1039,20 +1039,20 @@ class TestResourceAPIs:
         }
         headers = TEST_AUTH_HEADER.copy()
         headers["Content-Type"] = "application/x-www-form-urlencoded"
-        response = await client.post("/resources", data=resource_data, headers=headers)
+        response = await client.post("/v1/resources", data=resource_data, headers=headers)
         assert response.status_code in [200, 201, 400, 401, 422]
 
     async def test_resource_validation_errors(self, client: AsyncClient, mock_auth):
         """Test POST /resources with validation errors."""
         # Directory traversal in URI
         response = await client.post(
-            "/resources", json={"resource": {"uri": "../../etc/passwd", "name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER
+            "/v1/resources", json={"resource": {"uri": "../../etc/passwd", "name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER
         )
         assert response.status_code == 422
         assert "directory traversal" in str(response.json())
 
         # Empty URI
-        response = await client.post("/resources", json={"resource": {"uri": "", "name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json={"resource": {"uri": "", "name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_read_resource(self, client: AsyncClient, mock_auth):
@@ -1061,14 +1061,14 @@ class TestResourceAPIs:
         # test JWT can read it back — see ``test_get_server`` for PR #4341 reasoning.
         resource_data = {"resource": {"uri": "resource://test", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"}, "team_id": None, "visibility": "public"}
 
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource = response.json()
         print("\n----------HBD------------> Resource \n", resource, "\n----------HBD------------> Resource\n")
         assert resource["name"] == "test_doc"
         resource_id = resource["id"]
 
         # Read the resource
-        response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1082,14 +1082,14 @@ class TestResourceAPIs:
         # Create a resource
         resource_data = {"resource": {"uri": "test/update", "name": "update_test", "content": "Original content"}, "team_id": None, "visibility": "private"}
 
-        response_resource = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response_resource = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource = response_resource.json()
         assert resource["name"] == "update_test"
         resource_id = resource["id"]
 
         # Update the resource
         update_data = {"content": "Updated content", "description": "Updated description"}
-        response = await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1100,11 +1100,11 @@ class TestResourceAPIs:
         # Create a resource
         resource_data = {"resource": {"uri": "test/state", "name": "state_test", "content": "Test"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource_id = create_response.json()["id"]
 
         # Set resource state
-        response = await client.post(f"/resources/{resource_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/resources/{resource_id}/state?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1115,17 +1115,17 @@ class TestResourceAPIs:
         # Create a resource
         resource_data = {"resource": {"uri": "test/delete", "name": "delete_test", "content": "To be deleted"}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource_id = create_response.json()["id"]
 
         # Delete the resource
-        response = await client.delete(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
         # Verify it's deleted
-        response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 404
 
     # API should probably return 409 instead of 400 for non-existent resource
@@ -1134,11 +1134,11 @@ class TestResourceAPIs:
         resource_data = {"resource": {"uri": "duplicate/resource", "name": "duplicate", "content": "test", "team_id": None, "visibility": "public"}}
 
         # Create first resource
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
         # Try to create duplicate
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         resp_json = response.json()
         if "message" in resp_json:
@@ -1150,51 +1150,51 @@ class TestResourceAPIs:
     async def test_create_resource_missing_fields(self, client: AsyncClient, mock_auth):
         """Test POST /resources with missing required fields."""
         # Missing uri
-        response = await client.post("/resources", json={"resource": {"name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json={"resource": {"name": "test", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         # Missing name
-        response = await client.post("/resources", json={"resource": {"uri": "missing/name", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json={"resource": {"uri": "missing/name", "content": "data"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         # Missing content
-        response = await client.post("/resources", json={"resource": {"uri": "missing/content", "name": "test"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json={"resource": {"uri": "missing/content", "name": "test"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_update_resource_invalid_uri(self, client: AsyncClient, mock_auth):
         """Test PUT /resources/{uri:path} with invalid/nonexistent URI."""
-        response = await client.put("/resources/invalid/uri", json={"content": "update"}, headers=TEST_AUTH_HEADER)
+        response = await client.put("/v1/resources/invalid/uri", json={"content": "update"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_delete_resource_invalid_uri(self, client: AsyncClient, mock_auth):
         """Test DELETE /resources/{uri:path} with invalid/nonexistent URI."""
-        response = await client.delete("/resources/invalid/uri", headers=TEST_AUTH_HEADER)
+        response = await client.delete("/v1/resources/invalid/uri", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_create_resource_success_and_missing_fields(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create resource success and missing fields."""
         resource_data = {"resource": {"uri": "test/create", "name": "create_test", "content": "test content"}, "team_id": None, "visibility": "private"}
-        response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["uri"] == resource_data["resource"]["uri"]
         # Missing required fields
-        response = await client.post("/resources", json={"resource": {"name": "test"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/resources", json={"resource": {"name": "test"}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_update_resource_success_and_invalid(self, client: AsyncClient, mock_auth):
         """Test PUT /resources/{resource_id} - update resource success and invalid uri."""
         # Create a resource first
         resource_data = {"resource": {"uri": "test/update2", "name": "update2", "content": "original"}, "team_id": None, "visibility": "private"}
-        created_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        created_response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource_id = created_response.json()["id"]
         assert created_response.status_code == 200
         # Update
         update_data = {"content": "updated content"}
-        response = await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["uri"] == resource_data["resource"]["uri"]
         # Invalid uri
-        response = await client.put("/resources/invalid/uri", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put("/v1/resources/invalid/uri", json=update_data, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
 
@@ -1204,14 +1204,14 @@ class TestResourceAPIs:
 class TestPromptAPIs:
     async def test_create_prompt_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /prompts with no body (should fail validation)."""
-        response = await client.post("/prompts", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     """Test prompt management endpoints."""
 
     async def test_list_prompts_empty(self, client: AsyncClient, mock_auth):
         """Test GET /prompts returns empty list initially."""
-        response = await client.get("/prompts", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Default response is a plain list (include_pagination=False by default)
         assert response.json() == []
@@ -1233,7 +1233,7 @@ class TestPromptAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1256,7 +1256,7 @@ class TestPromptAPIs:
             "visibility": "private",
         }
 
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1266,7 +1266,7 @@ class TestPromptAPIs:
         """Test POST /prompts with validation errors."""
         # HTML tags in template
         response = await client.post(
-            "/prompts", json={"prompt": {"name": "test_prompt", "template": "<script>alert(1)</script>", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER
+            "/v1/prompts", json={"prompt": {"name": "test_prompt", "template": "<script>alert(1)</script>", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER
         )
         assert response.status_code == 422
         assert "HTML tags" in str(response.json())
@@ -1286,11 +1286,11 @@ class TestPromptAPIs:
             "visibility": "public",
         }
 
-        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
 
         # Execute the prompt with arguments
-        response = await client.post(f"/prompts/{prompt_id}", json={"name": "Alice", "company": "Acme Corp"}, headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/prompts/{prompt_id}", json={"name": "Alice", "company": "Acme Corp"}, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1303,11 +1303,11 @@ class TestPromptAPIs:
         # JWT can read it back — see ``test_get_server`` for PR #4341 reasoning.
         prompt_data = {"prompt": {"name": "simple_prompt", "template": "Simple message", "arguments": []}, "team_id": None, "visibility": "public"}
 
-        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
 
         # Get the prompt without arguments
-        response = await client.get(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/v1/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1318,11 +1318,11 @@ class TestPromptAPIs:
         # Create a prompt
         prompt_data = {"prompt": {"name": "state_prompt", "template": "Test prompt", "arguments": []}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
 
         # Set prompt state
-        response = await client.post(f"/prompts/{prompt_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/v1/prompts/{prompt_id}/state?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1333,11 +1333,11 @@ class TestPromptAPIs:
         # Create a prompt
         prompt_data = {"prompt": {"name": "update_prompt", "description": "Original description", "template": "Original template", "arguments": []}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
         # Update the prompt
         update_data = {"description": "Updated description", "template": "Updated template with {{ param }}"}
-        response = await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1349,10 +1349,10 @@ class TestPromptAPIs:
         # Create a prompt
         prompt_data = {"prompt": {"name": "delete_prompt", "template": "To be deleted", "arguments": []}, "team_id": None, "visibility": "private"}
 
-        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
         # Delete the prompt
-        response = await client.delete(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1367,11 +1367,11 @@ class TestPromptAPIs:
         }
 
         # Create first prompt
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
         # Try to create duplicate - must return 409 Conflict
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         resp_json = response.json()
         if "detail" in resp_json:
@@ -1385,26 +1385,26 @@ class TestPromptAPIs:
     async def test_create_prompt_missing_fields(self, client: AsyncClient, mock_auth):
         """Test POST /prompts with missing required fields."""
         # Missing name
-        response = await client.post("/prompts", json={"prompt": {"template": "Test", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json={"prompt": {"template": "Test", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         # Missing template
-        response = await client.post("/prompts", json={"prompt": {"name": "missing_template", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json={"prompt": {"name": "missing_template", "arguments": []}, "team_id": None, "visibility": "private"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_update_prompt_invalid_name(self, client: AsyncClient, mock_auth):
         """Test PUT /prompts/{name} with invalid/nonexistent name."""
-        response = await client.put("/prompts/invalid_name", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
+        response = await client.put("/v1/prompts/invalid_name", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_delete_prompt_invalid_name(self, client: AsyncClient, mock_auth):
         """Test DELETE /prompts/{name} with invalid/nonexistent name."""
-        response = await client.delete("/prompts/invalid_name", headers=TEST_AUTH_HEADER)
+        response = await client.delete("/v1/prompts/invalid_name", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
 
     async def test_update_prompt_not_found(self, client: AsyncClient, mock_auth):
         """Test PUT /prompts/{name} with non-existent prompt returns 404 or 400."""
         fake_name = "nonexistent_prompt"
-        response = await client.put(f"/prompts/{fake_name}", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/prompts/{fake_name}", json={"description": "desc"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
         resp_json = response.json()
         assert "not found" in str(resp_json).lower() or "does not exist" in str(resp_json).lower()
@@ -1417,10 +1417,10 @@ class TestPromptAPIs:
             "visibility": "private",
         }
         # Create first prompt
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Try to create duplicate
-        response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 409]
         resp_json = response.json()
         assert "already exists" in str(resp_json).lower()
@@ -1432,14 +1432,14 @@ class TestPromptAPIs:
 class TestGatewayAPIs:
     async def test_create_gateway_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /gateways with no body (should fail validation)."""
-        response = await client.post("/gateways", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     """Test gateway federation endpoints."""
 
     async def test_list_gateways_empty(self, client: AsyncClient, mock_auth):
         """Test GET /gateways returns empty list initially."""
-        response = await client.get("/gateways", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Default response is a plain list (include_pagination=False by default)
         assert response.json() == []
@@ -1447,18 +1447,18 @@ class TestGatewayAPIs:
     async def test_gateway_validation_errors(self, client: AsyncClient, mock_auth):
         """Test POST /gateways with validation errors."""
         # Invalid gateway name (special characters)
-        response = await client.post("/gateways", json={"name": "<script>alert(1)</script>", "url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/gateways", json={"name": "<script>alert(1)</script>", "url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "can only contain letters" in str(response.json())
 
         # Invalid URL
-        response = await client.post("/gateways", json={"name": "test_gateway", "url": "javascript:alert(1)", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/gateways", json={"name": "test_gateway", "url": "javascript:alert(1)", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "must start with one of" in str(response.json())
 
         # Name too long
         long_name = "a" * 300
-        response = await client.post("/gateways", json={"name": long_name, "url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/gateways", json={"name": long_name, "url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         assert "exceeds maximum length" in str(response.json())
 
@@ -1475,7 +1475,7 @@ class TestGatewayAPIs:
     async def test_update_gateway_invalid_id(self, client: AsyncClient, mock_auth):
         """Test PUT /gateways/{gateway_id} with invalid/non-existent ID returns 404 or 400."""
         fake_id = "non-existent-gateway-id"
-        response = await client.put(f"/gateways/{fake_id}", json={"url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/v1/gateways/{fake_id}", json={"url": "http://example.com", "transport": "SSE"}, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 404]
         resp_json = response.json()
         assert "not found" in str(resp_json).lower() or "does not exist" in str(resp_json).lower()
@@ -1487,14 +1487,14 @@ class TestGatewayAPIs:
 class TestRootAPIs:
     async def test_add_root_no_body(self, client: AsyncClient, mock_auth):
         """Test POST /roots with no body (should fail validation)."""
-        response = await client.post("/roots", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/roots", headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 422]
 
     """Test root management endpoints."""
 
     async def test_list_roots_empty(self, client: AsyncClient, mock_auth):
         """Test GET /roots returns empty list initially."""
-        response = await client.get("/roots", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/roots", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json() == []
 
@@ -1502,7 +1502,7 @@ class TestRootAPIs:
         """Test POST /roots - add filesystem root."""
         root_data = {"uri": "file:///test/path", "name": "Test Root"}
 
-        response = await client.post("/roots", json=root_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/roots", json=root_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1515,10 +1515,10 @@ class TestRootAPIs:
         roots = [{"uri": "file:///path1", "name": "Root 1"}, {"uri": "file:///path2", "name": "Root 2"}]
 
         for root in roots:
-            await client.post("/roots", json=root, headers=TEST_AUTH_HEADER)
+            await client.post("/v1/roots", json=root, headers=TEST_AUTH_HEADER)
 
         # List roots
-        response = await client.get("/roots", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/roots", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert len(result) >= 2
@@ -1528,10 +1528,10 @@ class TestRootAPIs:
         # Add a root
         root_data = {"uri": "file:///test/delete", "name": "To Delete"}
 
-        await client.post("/roots", json=root_data, headers=TEST_AUTH_HEADER)
+        await client.post("/v1/roots", json=root_data, headers=TEST_AUTH_HEADER)
 
         # Remove the root
-        response = await client.delete(f"/roots/{root_data['uri']}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/v1/roots/{root_data['uri']}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1605,14 +1605,14 @@ class TestUtilityAPIs:
 class TestMetricsAPIs:
     async def test_metrics_requires_auth(self, client: AsyncClient):
         """Test GET /metrics with auth header succeeds."""
-        response = await client.get("/metrics", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/metrics", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
     """Test metrics collection endpoints."""
 
     async def test_get_metrics(self, client: AsyncClient, mock_auth):
         """Test GET /metrics - aggregated metrics."""
-        response = await client.get("/metrics", headers=TEST_AUTH_HEADER)
+        response = await client.get("/v1/metrics", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
 
@@ -1634,7 +1634,7 @@ class TestMetricsAPIs:
 
     async def test_reset_metrics_global(self, client: AsyncClient, mock_auth):
         """Test POST /metrics/reset - global reset."""
-        response = await client.post("/metrics/reset", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/metrics/reset", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         assert "all entities" in response.json()["message"]
@@ -1643,14 +1643,14 @@ class TestMetricsAPIs:
         """Test POST /metrics/reset - entity-specific reset."""
         # Test each valid entity type
         for entity in ["tool", "resource", "server", "prompt"]:
-            response = await client.post(f"/metrics/reset?entity={entity}", headers=TEST_AUTH_HEADER)
+            response = await client.post(f"/v1/metrics/reset?entity={entity}", headers=TEST_AUTH_HEADER)
             assert response.status_code == 200
             assert response.json()["status"] == "success"
             assert entity in response.json()["message"]
 
     async def test_reset_metrics_invalid_entity(self, client: AsyncClient, mock_auth):
         """Test POST /metrics/reset with invalid entity type."""
-        response = await client.post("/metrics/reset?entity=invalid", headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/metrics/reset?entity=invalid", headers=TEST_AUTH_HEADER)
         assert response.status_code == 400
         assert "Invalid entity type" in response.json()["detail"]
 
@@ -1707,7 +1707,7 @@ class TestRootPath:
         # Could be either API info (200) or redirect to admin (303)
         if response.status_code == 303:
             # UI is enabled, check redirect
-            assert "/admin" in response.headers.get("location", "")
+            assert "/v1/admin" in response.headers.get("location", "")
         else:
             # UI is disabled, check API info (no version/admin status exposed)
             assert response.status_code == 200
@@ -1744,15 +1744,15 @@ class TestAuthentication:
             # Note: /rpc endpoint is not included because when dependency overrides are removed,
             # it processes requests without authentication checks
             protected_endpoints = [
-                ("/protocol/initialize", "POST"),
-                ("/protocol/ping", "POST"),
-                ("/servers", "GET"),
-                ("/tools", "GET"),
-                ("/resources", "GET"),
-                ("/prompts", "GET"),
-                ("/gateways", "GET"),
-                ("/roots", "GET"),
-                ("/metrics", "GET"),
+                ("/v1/protocol/initialize", "POST"),
+                ("/v1/protocol/ping", "POST"),
+                ("/v1/servers", "GET"),
+                ("/v1/tools", "GET"),
+                ("/v1/resources", "GET"),
+                ("/v1/prompts", "GET"),
+                ("/v1/gateways", "GET"),
+                ("/v1/roots", "GET"),
+                ("/v1/metrics", "GET"),
                 # ("/rpc", "POST"),  # Excluded - not protected when dependency overrides are removed
             ]
 
@@ -1804,12 +1804,12 @@ class TestErrorHandling:
 
     async def test_malformed_json(self, client: AsyncClient, mock_auth):
         """Test handling of malformed JSON."""
-        response = await client.post("/tools", content=b'{"invalid json', headers={**TEST_AUTH_HEADER, "Content-Type": "application/json"})
+        response = await client.post("/v1/tools", content=b'{"invalid json', headers={**TEST_AUTH_HEADER, "Content-Type": "application/json"})
         assert response.status_code == 422
 
     async def test_empty_request_body(self, client: AsyncClient, mock_auth):
         """Test handling of empty request body."""
-        response = await client.post("/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
         # Should have validation errors for required fields
         errors = response.json()["detail"]
@@ -1827,7 +1827,7 @@ class TestErrorHandling:
 
     async def test_validation_error(self, client: AsyncClient, mock_auth):
         """Test validation error for endpoint expecting required fields."""
-        response = await client.post("/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/tools", json={"tool": {}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
     async def test_database_integrity_error(self, client: AsyncClient, mock_auth):
@@ -1838,15 +1838,15 @@ class TestErrorHandling:
         server_data_3 = {"server": {"name": "unique_server"}, "team_id": "teamB", "visibility": "private"}
 
         # Create first server (teamA, authenticated user)
-        response = await client.post("/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
         # Try to create duplicate with same team_id, name - must return 409 or 400
-        response = await client.post("/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 409]
 
         # Create with different team_id (should succeed)
-        response = await client.post("/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
+        response = await client.post("/v1/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
     async def test_root_path_returns_api_info(self, client: AsyncClient, mock_settings):
@@ -1854,7 +1854,7 @@ class TestErrorHandling:
         response = await client.get("/", follow_redirects=False)
         if response.status_code == 303:
             # UI is enabled, check redirect
-            assert "/admin" in response.headers.get("location", "")
+            assert "/v1/admin" in response.headers.get("location", "")
         else:
             # UI is disabled, check API info. ``root_info()`` returns
             # ``{"name": <app_name>, "description": f"{app_name} API"}``.
@@ -1871,11 +1871,11 @@ class TestIntegrationScenarios:
     async def test_create_and_use_tool(self, client: AsyncClient, mock_auth):
         """Integration: create a tool and use it in a server association."""
         tool_data = {"tool": {"name": "integration_tool", "description": "desc", "inputSchema": {"type": "object"}}, "team_id": None, "visibility": "private"}
-        tool_resp = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
+        tool_resp = await client.post("/v1/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         assert tool_resp.status_code == 200
         tool_id = tool_resp.json()["id"]
         server_data = {"server": {"name": "integration_server", "associatedTools": [tool_id]}, "team_id": None, "visibility": "private"}
-        server_resp = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        server_resp = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         assert server_resp.status_code == 201
         server = server_resp.json()
         # The server creation might not associate tools in the same request
@@ -1892,10 +1892,10 @@ class TestIntegrationScenarios:
         # ``visibility="public"`` so the public-only test JWT can read it back —
         # see ``test_get_server`` for PR #4341 reasoning.
         resource_data = {"resource": {"uri": "resource://test", "name": "integration_resource", "content": "test"}, "team_id": None, "visibility": "public"}
-        create_resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        create_resp = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_resp.status_code == 200
         resource_id = create_resp.json()["id"]
-        get_resp = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        get_resp = await client.get(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert get_resp.status_code == 200
         assert get_resp.json()["uri"] == resource_data["resource"]["uri"]
 
@@ -1924,8 +1924,8 @@ class TestIntegrationScenarios:
             "visibility": "private",
         }
 
-        tool1_response = await client.post("/tools", json=tool1_data, headers=TEST_AUTH_HEADER)
-        tool2_response = await client.post("/tools", json=tool2_data, headers=TEST_AUTH_HEADER)
+        tool1_response = await client.post("/v1/tools", json=tool1_data, headers=TEST_AUTH_HEADER)
+        tool2_response = await client.post("/v1/tools", json=tool2_data, headers=TEST_AUTH_HEADER)
 
         tool1_id = tool1_response.json()["id"]
         tool2_id = tool2_response.json()["id"]
@@ -1933,7 +1933,7 @@ class TestIntegrationScenarios:
         # Step 2: Create virtual server with tools
         server_data = {"server": {"name": "calculator_server", "description": "Calculator utilities", "associatedTools": [tool1_id, tool2_id]}, "team_id": None, "visibility": "private"}
 
-        server_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        server_response = await client.post("/v1/servers", json=server_data, headers=TEST_AUTH_HEADER)
         assert server_response.status_code == 201
         server = server_response.json()
 
@@ -1946,7 +1946,7 @@ class TestIntegrationScenarios:
             assert server["description"] == "Calculator utilities"
         else:
             # Step 3: Verify server has tools
-            tools_response = await client.get(f"/servers/{server['id']}/tools", headers=TEST_AUTH_HEADER)
+            tools_response = await client.get(f"/v1/servers/{server['id']}/tools", headers=TEST_AUTH_HEADER)
             assert tools_response.status_code == 200
             tools = tools_response.json()
             assert len(tools) == 2
@@ -1964,29 +1964,29 @@ class TestIntegrationScenarios:
             "visibility": "public",
         }
 
-        create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/v1/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_response.status_code == 200, f"Failed to create resource: {create_response.text}"
         resource_id = create_response.json()["id"]
 
         # Read
-        read_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        read_response = await client.get(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert read_response.status_code == 200
 
         # Update
-        update_response = await client.put(f"/resources/{resource_id}", json={"content": "Updated content"}, headers=TEST_AUTH_HEADER)
+        update_response = await client.put(f"/v1/resources/{resource_id}", json={"content": "Updated content"}, headers=TEST_AUTH_HEADER)
         assert update_response.status_code == 200
 
         # Verify update
-        verify_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        verify_response = await client.get(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert verify_response.status_code == 200
         # Note: The actual content check would depend on ResourceContent model structure
 
         # Delete
-        delete_response = await client.delete(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        delete_response = await client.delete(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert delete_response.status_code == 200
 
         # Verify deletion
-        final_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
+        final_response = await client.get(f"/v1/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert final_response.status_code == 404
 
 

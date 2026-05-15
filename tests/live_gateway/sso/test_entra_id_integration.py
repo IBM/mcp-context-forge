@@ -1347,7 +1347,7 @@ class TestEntraIDEndToEndHTTP:
         with mock_patch("mcpgateway.routers.sso.settings") as mock_settings:
             mock_settings.sso_enabled = True
 
-            response = await entra_client.get("/auth/sso/providers")
+            response = await entra_client.get("/v1/auth/sso/providers")
 
         # Note: May return 404 if SSO is disabled in actual settings
         # This tests the endpoint structure

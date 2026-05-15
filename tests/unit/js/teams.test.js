@@ -331,7 +331,7 @@ describe("resetTeamCreateForm", () => {
 
   test("resets the team creation form", () => {
     const form = document.createElement("form");
-    form.setAttribute("hx-post", "/admin/teams");
+    form.setAttribute("hx-post", "/v1/admin/teams");
     const input = document.createElement("input");
     input.value = "test";
     form.appendChild(input);
@@ -346,7 +346,7 @@ describe("resetTeamCreateForm", () => {
 
   test("clears error element", () => {
     const form = document.createElement("form");
-    form.setAttribute("hx-post", "/admin/teams");
+    form.setAttribute("hx-post", "/v1/admin/teams");
     document.body.appendChild(form);
 
     const errorEl = document.createElement("div");
@@ -1338,7 +1338,7 @@ describe("handleAdminTeamAction", () => {
 
   test("resetTeamCreateForm action resets the form", () => {
     const form = document.createElement("form");
-    form.setAttribute("hx-post", "/admin/teams");
+    form.setAttribute("hx-post", "/v1/admin/teams");
     const resetSpy = vi.spyOn(form, "reset");
     document.body.appendChild(form);
 
@@ -1417,7 +1417,7 @@ describe("handleAdminTeamAction", () => {
 
   test("respects delayMs", () => {
     const form = document.createElement("form");
-    form.setAttribute("hx-post", "/admin/teams");
+    form.setAttribute("hx-post", "/v1/admin/teams");
     const resetSpy = vi.spyOn(form, "reset");
     document.body.appendChild(form);
 

@@ -105,7 +105,7 @@ def test_content_type_model_form_urlencoded(main_app_with_admin_api):
     client = TestClient(main_app_with_admin_api)
     data = {"type": "text", "text": "Form encoded content"}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    response = client.post("/admin/tools", data=data, headers=headers)
+    response = client.post("/v1/admin/tools", data=data, headers=headers)
     assert response.status_code in [200, 201, 400, 401, 415, 422]
 
 

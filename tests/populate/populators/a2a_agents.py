@@ -61,6 +61,6 @@ class A2AAgentPopulator(BasePopulator):
                     }
                 )
 
-        result = await self._batch_create(payloads, "/a2a", id_field="id")
+        result = await self._batch_create(payloads, "/v1/a2a", id_field="id")
         self.existing_data["a2a_agent_ids"] = result["ids"]
         return result

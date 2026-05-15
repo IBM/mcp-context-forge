@@ -37,7 +37,7 @@ class TestTeamMemberRoles:
     def team_with_member(self, admin_api: APIRequestContext, playwright: Playwright):
         """Create a team with a member, yield both, cleanup after test."""
         team_name = f"role-team-{uuid.uuid4().hex[:8]}"
-        team_resp = admin_api.post("/teams/", data={"name": team_name, "description": "Role tests", "visibility": "private"})
+        team_resp = admin_api.post("/v1/teams/", data={"name": team_name, "description": "Role tests", "visibility": "private"})
         assert team_resp.status in (200, 201)
         team = team_resp.json()
 
@@ -49,11 +49,11 @@ class TestTeamMemberRoles:
 
         # Cleanup
         try:
-            admin_api.delete(f"/teams/{team['id']}/members/{member_email}")
+            admin_api.delete(f"/v1/teams/{team['id']}/members/{member_email}")
         except Exception:
             pass
         try:
-            admin_api.delete(f"/teams/{team['id']}")
+            admin_api.delete(f"/v1/teams/{team['id']}")
         except Exception:
             pass
         delete_test_user(admin_api, member_email)
@@ -64,7 +64,7 @@ class TestTeamMemberRoles:
         member = team_with_member["member_email"]
 
         resp = admin_api.put(
-            f"/teams/{team_id}/members/{member}",
+            f"/v1/teams/{team_id}/members/{member}",
             data={"role": "owner"},
         )
         assert resp.status == 200
@@ -77,10 +77,10 @@ class TestTeamMemberRoles:
         member = team_with_member["member_email"]
 
         # First promote to owner
-        admin_api.put(f"/teams/{team_id}/members/{member}", data={"role": "owner"})
+        admin_api.put(f"/v1/teams/{team_id}/members/{member}", data={"role": "owner"})
 
         # Then demote back to member
-        resp = admin_api.put(f"/teams/{team_id}/members/{member}", data={"role": "member"})
+        resp = admin_api.put(f"/v1/teams/{team_id}/members/{member}", data={"role": "member"})
         assert resp.status == 200
         updated = resp.json()
         assert updated["role"] == "member"
@@ -90,11 +90,11 @@ class TestTeamMemberRoles:
         team_id = team_with_member["team"]["id"]
         member = team_with_member["member_email"]
 
-        resp = admin_api.delete(f"/teams/{team_id}/members/{member}")
+        resp = admin_api.delete(f"/v1/teams/{team_id}/members/{member}")
         assert resp.status == 200
 
         # Verify member is removed
-        members_resp = admin_api.get(f"/teams/{team_id}/members")
+        members_resp = admin_api.get(f"/v1/teams/{team_id}/members")
         members = members_resp.json()
         member_list = members if isinstance(members, list) else members.get("members", [])
         member_emails = [m["user_email"] for m in member_list]
@@ -111,7 +111,7 @@ class TestTeamMemberRoles:
             base_url=BASE_URL,
             extra_http_headers={"Authorization": f"Bearer {member_jwt}", "Accept": "application/json"},
         )
-        resp = member_ctx.delete(f"/teams/{team_id}/leave")
+        resp = member_ctx.delete(f"/v1/teams/{team_id}/leave")
         member_ctx.dispose()
         assert resp.status == 200
 
@@ -119,7 +119,7 @@ class TestTeamMemberRoles:
         """Team owner can list all team members."""
         team_id = team_with_member["team"]["id"]
 
-        resp = admin_api.get(f"/teams/{team_id}/members")
+        resp = admin_api.get(f"/v1/teams/{team_id}/members")
         assert resp.status == 200
         members = resp.json()
         member_list = members if isinstance(members, list) else members.get("members", [])
@@ -141,10 +141,10 @@ class TestTeamMemberRoles:
             base_url=BASE_URL,
             extra_http_headers={"Authorization": f"Bearer {member_jwt}", "Accept": "application/json"},
         )
-        resp = member_ctx.put(f"/teams/{team_id}/members/{second_email}", data={"role": "owner"})
+        resp = member_ctx.put(f"/v1/teams/{team_id}/members/{second_email}", data={"role": "owner"})
         member_ctx.dispose()
         assert resp.status in (403, 422), f"Non-owner should be denied role change, got {resp.status}"
 
         # Cleanup
-        admin_api.delete(f"/teams/{team_id}/members/{second_email}")
+        admin_api.delete(f"/v1/teams/{team_id}/members/{second_email}")
         delete_test_user(admin_api, second_email)

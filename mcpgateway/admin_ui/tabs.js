@@ -546,7 +546,7 @@ export const showTab = function (tabName) {
               // Use HTMX if available
               if (window.htmx && window.htmx.ajax) {
                 window.htmx
-                  .ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
+                  .ajax("GET", `${rootPath}/v1/admin/mcp-registry/partial`, {
                     target: "#mcp-registry-servers",
                     swap: "innerHTML",
                   })
@@ -555,7 +555,7 @@ export const showTab = function (tabName) {
                   });
               } else {
                 // Fallback to fetch if HTMX is not available
-                fetch(`${rootPath}/admin/mcp-registry/partial`)
+                fetch(`${rootPath}/v1/admin/mcp-registry/partial`)
                   .then((response) => response.text())
                   .then((html) => {
                     registryContent.innerHTML = html;
@@ -620,7 +620,7 @@ export const showTab = function (tabName) {
           if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
             const rootPath = window.ROOT_PATH || "";
             fetchWithTimeout(
-              `${rootPath}/admin/plugins/partial`,
+              `${rootPath}/v1/admin/plugins/partial`,
               {
                 method: "GET",
                 credentials: "same-origin", // pragma: allowlist secret

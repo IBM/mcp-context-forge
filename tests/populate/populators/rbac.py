@@ -70,7 +70,7 @@ class RBACPopulator(BasePopulator):
         for role_def in CUSTOM_ROLES:
             try:
                 resp = await self.client.post(
-                    "/rbac/roles",
+                    "/v1/rbac/roles",
                     json=role_def,
                     expected_status=[200, 201, 409],
                 )
@@ -95,7 +95,7 @@ class RBACPopulator(BasePopulator):
 
         # Fetch all roles to build complete role map (includes built-in roles)
         try:
-            resp = await self.client.get("/rbac/roles", expected_status=[200])
+            resp = await self.client.get("/v1/rbac/roles", expected_status=[200])
             if resp.status_code == 200:
                 roles_data = resp.json()
                 role_list = roles_data if isinstance(roles_data, list) else roles_data.get("items", [])
@@ -153,7 +153,7 @@ class RBACPopulator(BasePopulator):
             nonlocal assigns_created, assigns_errors, update_count
             try:
                 resp = await self.client.post(
-                    f"/rbac/users/{email}/roles",
+                    f"/v1/rbac/users/{email}/roles",
                     json=payload,
                     expected_status=[200, 201, 400, 409],
                 )

@@ -40,6 +40,7 @@ OBSERVABILITY_SKIP_EXACT: FrozenSet[str] = frozenset(
         "/healthz",  # translate.py only, kept for compatibility
         "/ready",
         "/metrics",
+        "/v1/metrics",  # versioned metrics endpoint
         "/admin/events",
     ]
 )
@@ -52,6 +53,7 @@ AUTH_CONTEXT_SKIP_EXACT: FrozenSet[str] = frozenset(
         "/healthz",  # translate.py only, kept for compatibility
         "/ready",
         "/metrics",
+        "/v1/metrics",  # versioned metrics endpoint
     ]
 )
 AUTH_CONTEXT_SKIP_PREFIXES: Tuple[str, ...] = ("/static/",)

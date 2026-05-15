@@ -88,7 +88,10 @@ class TestCrossHookContextSharing:
         3. The plugin doesn't raise any ValueError about missing context
         """
         # Make a request that triggers both HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
-        response = test_client_with_plugins.get("/tools", headers={"Authorization": "Bearer test-token"})
+        response = test_client_with_plugins.get(
+            "/v1/tools",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # If cross-hook context sharing works, the plugin won't raise ValueError
         # and the request will succeed (or fail for other reasons like auth)
@@ -155,7 +158,10 @@ class TestCrossHookContextSharing:
         created = await resource_service.register_resource(test_db, resource_data)
 
         # Make a request to read the resource
-        response = test_client_with_plugins.get(f"/resources/{created.id}", headers={"Authorization": "Bearer test-token"})
+        response = test_client_with_plugins.get(
+            f"/v1/resources/{created.id}",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # The plugin should successfully access context from HTTP hooks
         assert response.status_code != 500, "Cross-hook context sharing should work for HTTP → Resource"
@@ -183,7 +189,10 @@ class TestCrossHookContextSharing:
         created = await prompt_service.register_prompt(test_db, prompt_data, user_email="test@example.com")
 
         # Make a request to get the prompt
-        response = test_client_with_plugins.get(f"/prompts/{created.name}", headers={"Authorization": "Bearer test-token"})
+        response = test_client_with_plugins.get(
+            f"/v1/prompts/{created.name}",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # The plugin should successfully access context from HTTP hooks
         assert response.status_code != 500, "Cross-hook context sharing should work for HTTP → Prompt"
@@ -196,7 +205,10 @@ class TestCrossHookContextSharing:
         the same request_id) is used across all hooks in a single request.
         """
         # Make a request that triggers multiple hooks
-        response = test_client_with_plugins.get("/tools", headers={"Authorization": "Bearer test-token"})
+        response = test_client_with_plugins.get(
+            "/v1/tools",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # The plugin stores request_id in global context during HTTP_PRE_REQUEST
         # and verifies it's present in subsequent hooks

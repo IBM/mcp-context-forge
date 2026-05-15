@@ -960,10 +960,10 @@ class RESTBaselineUser(FastHttpUser):
         """tools/list via /rpc (REST JSON-RPC)."""
         payload = _jsonrpc("tools/list", {})
         with self.client.post(
-            "/rpc",
+            "/v1/rpc",
             data=json.dumps(payload),
             headers=self._auth_headers,
-            name="REST /rpc tools/list",
+            name="REST /v1/rpc tools/list",
             catch_response=True,
         ) as resp:
             if resp.status_code == 200:
@@ -987,10 +987,10 @@ class RESTBaselineUser(FastHttpUser):
             args = {}
         payload = _jsonrpc("tools/call", {"name": tool, "arguments": args})
         with self.client.post(
-            "/rpc",
+            "/v1/rpc",
             data=json.dumps(payload),
             headers=self._auth_headers,
-            name="REST /rpc tools/call",
+            name="REST /v1/rpc tools/call",
             catch_response=True,
         ) as resp:
             if resp.status_code == 200:
@@ -1001,11 +1001,11 @@ class RESTBaselineUser(FastHttpUser):
     @task(5)
     @tag("baseline", "rest", "list")
     def rest_list_tools(self):
-        """/tools via REST API."""
+        """/v1/tools via REST API."""
         with self.client.get(
-            "/tools",
+            "/v1/tools",
             headers=self._auth_headers,
-            name="REST /tools",
+            name="REST /v1/tools",
             catch_response=True,
         ) as resp:
             if resp.status_code == 200:

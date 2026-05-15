@@ -88,11 +88,11 @@ class LoginPage(BasePage):
 
     def is_on_login_page(self) -> bool:
         """Check if currently on login page."""
-        return "/admin/login" in self.page.url
+        return "/v1/admin/login" in self.page.url
 
     def is_on_change_password_page(self) -> bool:
         """Check if currently on change password page."""
-        return "/admin/change-password-required" in self.page.url
+        return "/v1/admin/change-password-required" in self.page.url
 
     def has_invalid_credentials_error(self) -> bool:
         """Check if URL contains invalid credentials error."""

@@ -77,7 +77,7 @@ class TokenPopulator(BasePopulator):
 
                 try:
                     resp = await self.client.post(
-                        "/tokens",
+                        "/v1/tokens",
                         json=payload,
                         token=token,  # Use login JWT, not API token
                         expected_status=[200, 201, 409],

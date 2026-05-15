@@ -65,6 +65,6 @@ class PromptPopulator(BasePopulator):
                     }
                 )
 
-        result = await self._batch_create(payloads, "/prompts", id_field="id")
+        result = await self._batch_create(payloads, "/v1/prompts", id_field="id")
         self.existing_data["prompt_ids"] = result["ids"]
         return result

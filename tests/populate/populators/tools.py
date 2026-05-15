@@ -77,6 +77,6 @@ class ToolPopulator(BasePopulator):
                 }
             )
 
-        result = await self._batch_create(payloads, "/tools", id_field="id")
+        result = await self._batch_create(payloads, "/v1/tools", id_field="id")
         self.existing_data["tool_ids"] = result["ids"]
         return result
