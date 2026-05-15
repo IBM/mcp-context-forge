@@ -1268,10 +1268,7 @@ class EmailAuthService:
             raise AuthenticationError("Current password is incorrect")
 
         # Validate new password
-        try:
-            self.validate_password(new_password, email, user.is_admin)
-        except PasswordValidationError as e:
-            raise
+        self.validate_password(new_password, email, user.is_admin)
 
         # Check password history (prevents reuse of last N passwords and current password)
         try:

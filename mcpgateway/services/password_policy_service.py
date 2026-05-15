@@ -545,9 +545,11 @@ class PasswordPolicyService:
 
         complexity_count = sum([has_lower, has_upper, has_digit, has_special])
         if complexity_count < 3:
-            failed.append(f"At least 3 of 4 character types (currently has {complexity_count}: " + ", ".join(
-                [t for t, present in [("uppercase", has_upper), ("lowercase", has_lower), ("numbers", has_digit), ("special", has_special)] if present]
-            ) + ")")
+            failed.append(
+                f"At least 3 of 4 character types (currently has {complexity_count}: "
+                + ", ".join([t for t, present in [("uppercase", has_upper), ("lowercase", has_lower), ("numbers", has_digit), ("special", has_special)] if present])
+                + ")"
+            )
 
         # Check common passwords
         if password.lower() in COMMON_PASSWORDS:
