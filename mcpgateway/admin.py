@@ -5786,7 +5786,7 @@ async def admin_view_team_members(
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">
                     Team Members: {safe_team_name}
                 </h3>
-                <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
+                <button data-action-click="hideElement" data-arg0="team-edit-modal"
                         class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round"
@@ -5942,10 +5942,10 @@ async def admin_add_team_members_view(
             <div class="flex justify-between items-center mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">Add Members to: {safe_team_name}</h3>
                 <div class="flex items-center space-x-2">
-                    <button onclick="loadTeamMembersView('{team.id}')" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <button data-action-click="loadTeamMembersView" data-arg0="{team.id}" class="px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         ← Back to Members
                     </button>
-                    <button onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <button data-action-click="hideElement" data-arg0="team-edit-modal" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                         </svg>
@@ -7007,11 +7007,11 @@ async def admin_list_join_requests(
                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">{safe_status}</span>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="approveJoinRequest('{team_id}', '{req.id}')"
+                    <button data-action-click="approveJoinRequest" data-arg0="{team_id}" data-arg1="{req.id}"
                             class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
                         Approve
                     </button>
-                    <button onclick="rejectJoinRequest('{team_id}', '{req.id}')"
+                    <button data-action-click="rejectJoinRequest" data-arg0="{team_id}" data-arg1="{req.id}"
                             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
                         Reject
                     </button>
