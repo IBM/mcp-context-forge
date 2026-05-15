@@ -2148,11 +2148,9 @@ class A2AAgentService(BaseService):
             HttpHeaderPayload,
             PluginViolationError,
         )
-        from cpex.framework.constants import A2A_AGENT_METADATA
-
         # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-        from mcpgateway.schemas import PydanticA2AAgent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
 
         agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
         plugin_manager = await self._get_plugin_manager(agent_context_id)

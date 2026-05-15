@@ -624,7 +624,8 @@ class TestA2AInvokeGlobalContext:
     ):
         """GlobalContext.metadata contains the A2A_AGENT_METADATA key."""
         # Third-Party
-        from cpex.framework.constants import A2A_AGENT_METADATA
+        # First-Party
+        from mcpgateway.schemas import A2A_AGENT_METADATA
 
         pm = _make_plugin_manager()
         mock_get_for_update.return_value = mock_agent
@@ -678,8 +679,8 @@ class TestA2AInvokeGlobalContext:
         mock_agent,
     ):
         """When content_type is provided, it is set in the agent metadata."""
-        # Third-Party
-        from cpex.framework.constants import A2A_AGENT_METADATA
+        # First-Party
+        from mcpgateway.schemas import A2A_AGENT_METADATA
 
         pm = _make_plugin_manager()
         mock_get_for_update.return_value = mock_agent

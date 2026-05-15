@@ -8470,6 +8470,14 @@ class ToolPluginBindingListResponse(BaseModelWithConfigDict):
 
 # --- A2A Agent Plugin Schemas ---
 
+A2A_AGENT_METADATA = "a2a_agent"
+"""Metadata key used in GlobalContext.metadata for A2A agent plugin context.
+
+This constant is the canonical key that plugins use to look up A2A agent
+configuration from ``global_context.metadata``.  It is defined locally to
+avoid depending on the ``cpex`` package version for a string constant.
+"""
+
 
 class PydanticA2AAgent(BaseModelWithConfigDict):
     """A2A agent metadata for plugin context.
