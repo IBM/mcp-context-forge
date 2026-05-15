@@ -51,7 +51,11 @@
             onchange="filterByTeam(this.value)">
       <option value="">All Teams</option>
       {% for team in teams %}
-      <option value="{{ team.id }}" {% if selected_team_id == team.id %}selected{% endif %}>{{ team.name }}</option>
+      {% if selected_team_id == team.id %}
+      <option value="{{ team.id }}" selected>{{ team.name }}</option>
+      {% else %}
+      <option value="{{ team.id }}">{{ team.name }}</option>
+      {% endif %}
       {% endfor %}
     </select>
   </div>
