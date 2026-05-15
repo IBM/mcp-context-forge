@@ -1863,7 +1863,7 @@ class ResourceService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ssl_context if ssl_context else get_default_verify(),  # pylint: disable=cell-var-from-loop
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=timeout if timeout else get_http_timeout(),
                             auth=auth,

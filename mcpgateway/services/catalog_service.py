@@ -511,7 +511,7 @@ class CatalogService:
 
                 client = await get_http_client()
                 # Try a simple GET request with short timeout
-                response = await client.get(server_data["url"], timeout=5.0, follow_redirects=True)
+                response = await client.get(server_data["url"], timeout=5.0, follow_redirects=False)
                 is_available = response.status_code < 500
             except Exception as e:
                 error = str(e)

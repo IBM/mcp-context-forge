@@ -17,6 +17,28 @@ Release 1.0.1 consolidates **59 PRs** focused on **security hardening**, **UI/UX
 
 ### ⚠️ Breaking Changes
 
+#### **🔒 HTTP Redirect Handling – Security Hardening**
+
+**Security Hardening**: All HTTP clients now have `follow_redirects=False` to strengthen defense-in-depth security by ensuring outbound requests go to explicitly registered destinations
+
+**What breaks**:
+
+- **Shared HTTP client** (`http_client_service.py:124`) – Used by Gateway health checks, SSE/StreamableHTTP connections, and A2A Python runtime – now returns 302 responses instead of following redirects.
+- **Gateway clients** (`gateway_service.py:3784, 5752, 5924`) – Health checks, SSE, and StreamableHTTP transports no longer follow redirects.
+- **Tools/Gateways/A2A endpoints that legitimately use redirects** will now receive 302 responses instead of the final destination content.
+
+**Impact**: Integrations relying on HTTP redirects (URL shorteners, CDN redirects, load balancer routing) will break.
+
+**Migration**:
+
+1. Audit your registered Tools, Gateways, and A2A endpoints for redirect usage.
+2. Update upstream services to return final URLs directly instead of redirects.
+3. Register final destination URLs in ContextForge configurations.
+4. Test tool invocations, gateway health checks, and A2A calls after upgrade.
+
+**Documentation**:
+- **Migration Guide**: [`docs/docs/operations/ssrf-redirect-protection-migration.md`](docs/docs/operations/ssrf-redirect-protection-migration.md) - Comprehensive breaking scenarios and mitigations
+
 #### **🧩 Plugin Framework Extracted to CPEX** ([#3754](https://github.com/IBM/mcp-context-forge/pull/3754), [#3753](https://github.com/IBM/mcp-context-forge/issues/3753))
 
 **Action Required**: The internal plugin framework (`mcpgateway/plugins/framework/`, `mcpgateway/plugins/tools/`, `plugin_templates/`) has been replaced by the external [CPEX](https://github.com/contextforge-org/contextforge-plugins-framework) package (`cpex>=0.1.0`).
