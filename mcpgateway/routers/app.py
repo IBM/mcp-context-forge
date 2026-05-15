@@ -36,7 +36,7 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 logger = logging.getLogger(__name__)
 
 # Module-level constants
-JWT_COOKIE_PATH = "/app"
+JWT_COOKIE_PATH = "/"
 
 
 def _validate_csrf_token_length() -> None:
@@ -58,10 +58,7 @@ def _validate_csrf_token_length() -> None:
     # CSRF token length validation (security check)
     expected_csrf_length = 43  # 32 bytes base64url = 43 chars
     if CSRF_TOKEN_LENGTH != expected_csrf_length:
-        raise ValueError(
-            f"CSRF token length mismatch: expected {expected_csrf_length} chars, "
-            f"got {CSRF_TOKEN_LENGTH}. This indicates a configuration error in csrf.py"
-        )
+        raise ValueError(f"CSRF token length mismatch: expected {expected_csrf_length} chars, " f"got {CSRF_TOKEN_LENGTH}. This indicates a configuration error in csrf.py")
 
     logger.debug("CSRF token length validation passed: %d chars", CSRF_TOKEN_LENGTH)
 

@@ -277,7 +277,7 @@ class TestCSRFProtection:
         assert csrf_cookie, "csrf_token cookie not found in Set-Cookie"
         assert "samesite=strict" in csrf_cookie.lower()
         assert "httponly" not in csrf_cookie.lower(), "CSRF cookie must not be httpOnly — JS needs to read it"
-        assert "path=/app" in csrf_cookie.lower()
+        assert "path=/" in csrf_cookie.lower()
 
 
 class TestSecurityVectors:

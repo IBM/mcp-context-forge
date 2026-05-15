@@ -364,7 +364,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     # First-party React fetches from the SPA. Sec-Fetch-* are forbidden request
     # headers in browsers, and the /app referer ties the request to the client UI
     # instead of allowing arbitrary cookie-authenticated API calls.
-    is_first_party_app_fetch = is_app_referer and sec_fetch_site == "same-origin" and sec_fetch_mode in {"cors", "same-origin"}
+    # Also accept X-Requested-With: XMLHttpRequest as a signal (set by React client).
+    has_xhr_header = request.headers.get("x-requested-with") == "XMLHttpRequest"
+    is_first_party_app_fetch = is_app_referer and ((sec_fetch_site == "same-origin" and sec_fetch_mode in {"cors", "same-origin"}) or has_xhr_header)
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_spa_document_request or is_first_party_app_fetch
 
     # SECURITY: Reject cookie-only authentication for API requests
