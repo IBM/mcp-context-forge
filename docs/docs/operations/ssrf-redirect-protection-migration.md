@@ -305,5 +305,5 @@ helm install contextforge contextforge/mcp-stack --version 1.0.0
 
 ---
 
-**Last Updated**: 2026-05-15  
+**Last Updated**: 2026-05-15
 **Applies To**: ContextForge versions later than v1.0.1
