@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AuthGuard, RouterProvider } from ".";
+import { I18nProvider } from "../i18n";
 
 vi.mock("../auth/AuthContext", () => ({
   useAuthContext: vi.fn(),
@@ -20,11 +21,13 @@ function renderAuthGuard(
   mockUseAuthContext.mockReturnValue(authState);
   window.history.pushState({}, "", path);
   return render(
-    <RouterProvider>
-      <AuthGuard>
-        <div>protected content</div>
-      </AuthGuard>
-    </RouterProvider>,
+    <I18nProvider>
+      <RouterProvider>
+        <AuthGuard>
+          <div>protected content</div>
+        </AuthGuard>
+      </RouterProvider>
+    </I18nProvider>,
   );
 }
 
@@ -72,7 +75,7 @@ describe("AuthGuard", () => {
 
     it("shows loading indicator while auth is loading", () => {
       renderAuthGuard("/app/", { isAuthenticated: false, isLoading: true });
-      expect(screen.getByText("Loading...")).toBeInTheDocument();
+      expect(screen.getByText("Context Forge")).toBeInTheDocument();
     });
 
     it("renders nothing when unauthenticated", () => {
