@@ -1268,7 +1268,10 @@ class EmailAuthService:
             raise AuthenticationError("Current password is incorrect")
 
         # Validate new password
-        self.validate_password(new_password, email, user.is_admin)
+        try:
+            self.validate_password(new_password, email, user.is_admin)
+        except PasswordValidationError as e:
+            raise
 
         # Check password history (prevents reuse of last N passwords and current password)
         try:
@@ -1287,7 +1290,6 @@ class EmailAuthService:
             raise PasswordValidationError(str(e)) from e
         except Exception as e:
             # Fail closed: if history check fails, reject the password change
-            logger.error("Password history check failed unexpectedly: %s", e)
             raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         success = False
