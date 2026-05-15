@@ -83,7 +83,8 @@ def upgrade() -> None:
         )
 
     # Only create association table if both referenced tables exist
-    if "server_a2a_association" not in existing_tables and "servers" in existing_tables and "a2a_agents" in existing_tables:
+    # Note: a2a_agents was just created above, so we check if servers exists
+    if "server_a2a_association" not in existing_tables and "servers" in existing_tables:
         # Create server_a2a_association table
         op.create_table(
             "server_a2a_association",
