@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 add_tags_support_to_all_entities
 
 Revision ID: cc7b95fec5d9
-Revises: e75490e949b1
+Revises: 3b17fdc40a8d
 Create Date: 2025-08-06 22:27:08.682814
 """
 
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.
-revision: str = "cc7b95fec5d9"
-down_revision: Union[str, Sequence[str], None] = "e75490e949b1"
+revision: str = "cc7b95fec5d9" # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "3b17fdc40a8d" # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
