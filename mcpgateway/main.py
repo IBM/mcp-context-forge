@@ -4998,6 +4998,10 @@ async def invoke_a2a_agent(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        content_type = request.headers.get("content-type")
+        request_headers = {k.lower(): v for k, v in request.headers.items()}
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -5008,6 +5012,8 @@ async def invoke_a2a_agent(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5083,6 +5089,10 @@ async def invoke_a2a_agent_by_id(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        content_type = request.headers.get("content-type")
+        request_headers = {k.lower(): v for k, v in request.headers.items()}
+
         return await a2a_service.invoke_agent(
             db,
             agent_name=None,  # Not using name lookup
@@ -5094,6 +5104,8 @@ async def invoke_a2a_agent_by_id(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

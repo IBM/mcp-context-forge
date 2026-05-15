@@ -8503,6 +8503,7 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
     auth_type: Optional[str] = Field(None, description="Authentication type")
     auth_value: Optional[str] = Field(None, description="Encrypted authentication value")
+    content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
 
     class Config:
         """Pydantic config for A2A agent metadata."""

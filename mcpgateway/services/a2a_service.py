@@ -1931,6 +1931,8 @@ class A2AAgentService(BaseService):
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
         bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent by name or ID (UUID/UAID).
 
@@ -1951,6 +1953,8 @@ class A2AAgentService(BaseService):
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
             bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
+            content_type: Content-Type of the inbound request (for plugin context).
+            request_headers: Inbound request headers (for plugin context in PRE_INVOKE hook).
 
         Returns:
             Agent response.
@@ -2068,7 +2072,7 @@ class A2AAgentService(BaseService):
         agent_visibility = agent.visibility
         agent_enabled = agent.enabled
         agent_tags = getattr(agent, "tags", [])
-        agent_oauth_config = agent.oauth_config
+        agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
@@ -2156,9 +2160,9 @@ class A2AAgentService(BaseService):
 
         # Build GlobalContext for plugin hooks
         global_context = GlobalContext(
-            request_id=correlation_id,
+            request_id=correlation_id or "",
             server_id=agent_context_id if agent_team_id else agent_id,
-            tenant_id=agent_team_id if agent_team_id else None,
+            tenant_id=agent_team_id if agent_team_id and isinstance(agent_team_id, str) else None,
             user=user_email,
         )
 
@@ -2176,6 +2180,8 @@ class A2AAgentService(BaseService):
                     auth_type=agent_auth_type,
                     auth_value=agent_auth_value,
                 )
+                if content_type:
+                    agent_metadata.content_type = content_type
                 global_context.metadata[A2A_AGENT_METADATA] = agent_metadata
             except Exception as e:
                 logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
@@ -2188,7 +2194,7 @@ class A2AAgentService(BaseService):
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=dict(prepared.headers)),
+                        headers=HttpHeaderPayload(root=request_headers or {}),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
