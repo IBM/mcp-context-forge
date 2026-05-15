@@ -6023,21 +6023,6 @@ def extract_json_field(column, json_path: str, dialect_name: Optional[str] = Non
     return func.json_extract(column, json_path)
 
 
-# Create all tables
-def init_db():
-    """
-    Initialize database tables.
-
-    Raises:
-        Exception: If database initialization fails.
-    """
-    try:
-        # Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-    except SQLAlchemyError as e:
-        raise Exception(f"Failed to initialize database: {str(e)}")
-
-
 # ============================================================================
 # Structured Logging Models
 # ============================================================================
