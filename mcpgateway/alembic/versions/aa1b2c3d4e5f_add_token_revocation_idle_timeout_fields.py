@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 add_token_revocation_idle_timeout_fields
 
 Revision ID: aa1b2c3d4e5f
-Revises: bb43712cae28
+Revises: 4842b831d24e
 Create Date: 2026-04-21 12:58:00.000000
 """
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "aa1b2c3d4e5f"  # pragma: allowlist secret
-down_revision = "bb43712cae28"  # pragma: allowlist secret
+down_revision = "4842b831d24e"
 branch_labels = None
 depends_on = None
 

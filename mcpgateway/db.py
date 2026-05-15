@@ -6023,21 +6023,6 @@ def extract_json_field(column, json_path: str, dialect_name: Optional[str] = Non
     return func.json_extract(column, json_path)
 
 
-# Create all tables
-def init_db():
-    """
-    Initialize database tables.
-
-    Raises:
-        Exception: If database initialization fails.
-    """
-    try:
-        # Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-    except SQLAlchemyError as e:
-        raise Exception(f"Failed to initialize database: {str(e)}")
-
-
 # ============================================================================
 # Structured Logging Models
 # ============================================================================
@@ -6595,8 +6580,6 @@ class AuditTrail(Base):
 if __name__ == "__main__":
     # Wait for database to be ready before initializing
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
-
-    init_db()
 
 
 @event.listens_for(Gateway, "before_insert")
