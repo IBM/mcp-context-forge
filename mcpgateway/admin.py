@@ -4778,6 +4778,11 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = _resolve_root_path(request)
 
+    # Get actual password requirements from PasswordPolicyService
+    from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+    password_requirements = PasswordPolicyService.get_password_requirements(is_privileged=False)
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "change-password-required.html",
@@ -4786,11 +4791,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
         },
     )
@@ -4932,7 +4933,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+            # Encode error message in URL for display to user
+            error_msg = str(e).replace(" ", "_").replace("#", "_").replace("&", "_")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg}", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
