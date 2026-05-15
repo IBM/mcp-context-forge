@@ -308,3 +308,92 @@ class TestA2APluginBindingsAdmin:
         assert response.status_code == 404
         body = response.body.decode()
         assert "Not found" in body
+
+    @pytest.mark.asyncio
+    async def test_delete_forbidden(self, mock_request, user_ctx, db_session):
+        """Delete handler returns 403 when A2AAgentPluginBindingForbiddenError is raised."""
+        # First-Party
+        from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError
+
+        with patch.object(
+            A2AAgentPluginBindingService,
+            "delete_binding",
+            side_effect=A2AAgentPluginBindingForbiddenError("cross-team access"),
+        ):
+            response = await admin_delete_a2a_plugin_binding(
+                request=mock_request,
+                binding_id="binding-001",
+                db=db_session,
+                user=user_ctx,
+            )
+        assert response.status_code == 403
+        body = response.body.decode()
+        assert "Forbidden" in body
+
+    @pytest.mark.asyncio
+    async def test_delete_generic_error(self, mock_request, user_ctx, db_session):
+        """Delete handler returns 500 on unexpected errors."""
+        with patch.object(
+            A2AAgentPluginBindingService,
+            "delete_binding",
+            side_effect=RuntimeError("unexpected failure"),
+        ):
+            response = await admin_delete_a2a_plugin_binding(
+                request=mock_request,
+                binding_id="binding-001",
+                db=db_session,
+                user=user_ctx,
+            )
+        assert response.status_code == 500
+        body = response.body.decode()
+        assert "Error" in body
+
+    # ------------------------------------------------------------------
+    # Error paths — partial render, create
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_partial_render_error(self, mock_request, user_ctx, db_session):
+        """Partial rendering returns 500 when list_bindings raises."""
+        with patch.object(
+            A2AAgentPluginBindingService,
+            "list_bindings",
+            side_effect=RuntimeError("db connection lost"),
+        ):
+            response = await get_a2a_plugin_bindings_partial(
+                request=mock_request,
+                team_id=None,
+                db=db_session,
+                user=user_ctx,
+            )
+        assert response.status_code == 500
+        body = response.body.decode()
+        assert "Error loading" in body
+
+    @pytest.mark.asyncio
+    async def test_create_service_error(self, mock_request, user_ctx, db_session):
+        """Create handler returns 500 when upsert_binding raises."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "enforce",
+                "priority": "50",
+                "on_error": "",
+                "config": "{}",
+            }
+        )
+        with patch.object(
+            A2AAgentPluginBindingService,
+            "upsert_binding",
+            side_effect=RuntimeError("persistence failure"),
+        ):
+            response = await admin_create_a2a_plugin_binding(
+                request=mock_request,
+                db=db_session,
+                user=user_ctx,
+            )
+        assert response.status_code == 500
+        body = response.body.decode()
+        assert "Error" in body

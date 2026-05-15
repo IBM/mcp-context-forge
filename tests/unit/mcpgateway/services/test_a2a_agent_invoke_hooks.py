@@ -715,3 +715,44 @@ class TestA2AInvokeGlobalContext:
         gc = captured_context["global"]
         agent_meta = gc.metadata[A2A_AGENT_METADATA]
         assert agent_meta.content_type == "application/json"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_metadata_build_error_swallowed(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """When PydanticA2AAgent construction fails, the error is logged but invocation continues."""
+        pm = _make_plugin_manager()
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch(
+            "mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"
+        ), patch("mcpgateway.schemas.PydanticA2AAgent", side_effect=ValueError("bad field")):
+            result = await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+            )
+
+        assert result["result"] == "ok"

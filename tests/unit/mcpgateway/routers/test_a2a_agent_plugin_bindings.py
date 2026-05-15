@@ -13,6 +13,9 @@ Tests cover:
     - DELETE / (by reference): non-admin scoped to own teams
 """
 
+# Standard
+from unittest.mock import patch
+
 # Third-Party
 import pytest
 from sqlalchemy import create_engine
@@ -149,6 +152,25 @@ class TestA2AAgentPluginBindingsRouter:
                 team_id="team-a",
             )
         assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_upsert_value_error(self, user_ctx, db_session):
+        """ValueError from the service is converted to HTTP 400."""
+        # Third-Party
+        from fastapi import HTTPException
+
+        # First-Party
+        from mcpgateway.routers.a2a_agent_plugin_bindings import _service
+
+        with patch.object(_service, "upsert_binding", side_effect=ValueError("invalid config")):
+            with pytest.raises(HTTPException) as exc:
+                await upsert_a2a_agent_plugin_binding(
+                    request=_make_request(config={"invalid": object()}),
+                    current_user_ctx=user_ctx,
+                    db=db_session,
+                    team_id="team-a",
+                )
+        assert exc.value.status_code == 400
 
     # ------------------------------------------------------------------
     # GET / — list all

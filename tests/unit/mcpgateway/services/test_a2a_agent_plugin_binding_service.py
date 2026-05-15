@@ -189,6 +189,35 @@ class TestUpsertBinding:
         )
         assert result2.id == result1.id
 
+    def test_upsert_ownership_transfer_warning(self, service, db_session):
+        """Changing binding_reference_id on an existing binding logs a warning."""
+        result = service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_x",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+            binding_reference_id="ref-old",
+        )
+        updated = service.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_x",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+            binding_reference_id="ref-new",
+        )
+        assert updated.id == result.id
+        assert updated.binding_reference_id == "ref-new"
+
     def test_inserts_wildcard_agent(self, service, db_session):
         result = service.upsert_binding(
             db=db_session,
