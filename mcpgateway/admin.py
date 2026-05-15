@@ -17028,7 +17028,7 @@ async def admin_delete_a2a_plugin_binding(
     request: Request,
     binding_id: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Delete an A2A agent plugin binding from the admin UI.
 
