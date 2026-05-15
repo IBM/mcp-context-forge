@@ -11913,6 +11913,16 @@ try:
 except ImportError as e:
     logger.error(f"Tool plugin bindings router not available: {e}")
 
+# A2A agent plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(a2a_agent_plugin_bindings_router)
+    logger.info("A2A agent plugin bindings router included")
+except ImportError as e:
+    logger.error(f"A2A agent plugin bindings router not available: {e}")
+
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
     try:

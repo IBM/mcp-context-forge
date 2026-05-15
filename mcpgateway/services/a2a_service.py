@@ -2064,6 +2064,12 @@ class A2AAgentService(BaseService):
         agent_auth_query_params = agent.auth_query_params
         agent_uaid = getattr(agent, "uaid", None)
         agent_uaid_native_id = getattr(agent, "uaid_native_id", None)
+        agent_team_id = agent.team_id
+        agent_visibility = agent.visibility
+        agent_enabled = agent.enabled
+        agent_tags = getattr(agent, "tags", [])
+        agent_oauth_config = agent.oauth_config
+        agent_passthrough_headers = agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
@@ -2126,6 +2132,80 @@ class A2AAgentService(BaseService):
             if agent_auth_type == "query_param" and agent_auth_query_params:
                 raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
             raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2b: Plugin context setup and PRE_INVOKE hook
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Third-Party
+        from cpex.framework import (
+            AgentHookType,
+            AgentPreInvokePayload,
+            GlobalContext,
+            HttpHeaderPayload,
+            PluginViolationError,
+        )
+        from cpex.framework.constants import A2A_AGENT_METADATA
+
+        # First-Party
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import PydanticA2AAgent  # pylint: disable=import-outside-toplevel
+
+        agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
+        plugin_manager = await self._get_plugin_manager(agent_context_id)
+        context_table: Dict[str, Any] = {}
+
+        # Build GlobalContext for plugin hooks
+        global_context = GlobalContext(
+            request_id=correlation_id,
+            server_id=agent_context_id if agent_team_id else agent_id,
+            tenant_id=agent_team_id if agent_team_id else None,
+            user=user_email,
+        )
+
+        if plugin_manager:
+            try:
+                agent_metadata = PydanticA2AAgent(
+                    id=agent_id,
+                    name=agent_name,
+                    team_id=agent_team_id,
+                    visibility=agent_visibility,
+                    enabled=agent_enabled,
+                    tags=agent_tags or [],
+                    oauth_config=agent_oauth_config,
+                    passthrough_headers=agent_passthrough_headers,
+                    auth_type=agent_auth_type,
+                    auth_value=agent_auth_value,
+                )
+                global_context.metadata[A2A_AGENT_METADATA] = agent_metadata
+            except Exception as e:
+                logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
+
+        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
+        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
+            try:
+                pre_result, context_table = await plugin_manager.invoke_hook(
+                    AgentHookType.AGENT_PRE_INVOKE,
+                    payload=AgentPreInvokePayload(
+                        agent_id=agent_id,
+                        messages=[{"role": "user", "content": parameters}] if parameters else [],
+                        headers=HttpHeaderPayload(root=dict(prepared.headers)),
+                        parameters=parameters if isinstance(parameters, dict) else {},
+                    ),
+                    global_context=global_context,
+                    local_contexts=context_table,
+                    violations_as_exceptions=True,
+                )
+                if pre_result.modified_payload:
+                    if pre_result.modified_payload.parameters is not None:
+                        parameters = pre_result.modified_payload.parameters
+                    if pre_result.modified_payload.headers is not None:
+                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+            except PluginViolationError as e:
+                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+            except Exception as e:
+                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -2346,7 +2426,35 @@ class A2AAgentService(BaseService):
 
             finally:
                 # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 3: Record metrics via buffered service (batches writes for performance)
+                # PHASE 3: Post-invoke plugin hook (non-blocking, errors do not fail request)
+                # ═══════════════════════════════════════════════════════════════════════════
+                if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
+                    try:
+                        # Third-Party
+                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+
+                        post_result, _ = await plugin_manager.invoke_hook(
+                            AgentHookType.AGENT_POST_INVOKE,
+                            payload=AgentPostInvokePayload(
+                                agent_id=agent_id,
+                                messages=[{"role": "assistant", "content": response}] if response and success else [],
+                                tool_calls=None,
+                            ),
+                            global_context=global_context,
+                            local_contexts=context_table,
+                            violations_as_exceptions=False,
+                        )
+                        if post_result and post_result.retry_delay_ms > 0:
+                            logger.info(
+                                "Plugin requested retry for A2A agent %s after %sms",
+                                agent_id,
+                                post_result.retry_delay_ms,
+                            )
+                    except Exception as e:
+                        logger.warning("Post-invoke plugin error for A2A agent %s: %s", agent_id, e)
+
+                # ═══════════════════════════════════════════════════════════════════════════
+                # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
                 end_time = datetime.now(timezone.utc)
                 response_time = (end_time - start_time).total_seconds()

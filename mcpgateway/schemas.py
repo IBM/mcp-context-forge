@@ -8579,7 +8579,5 @@ class A2AAgentPluginBindingResponse(BaseModelWithConfigDict):
 class A2AAgentPluginBindingListResponse(BaseModelWithConfigDict):
     """Response for GET /v1/a2a-agents/{team_id}/plugin-bindings."""
 
-    bindings: List[A2AAgentPluginBindingResponse] = Field(
-        default_factory=list, description="List of A2A agent plugin bindings"
-    )
+    bindings: List[A2AAgentPluginBindingResponse] = Field(default_factory=list, description="List of A2A agent plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")
