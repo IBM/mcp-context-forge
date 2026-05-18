@@ -4769,6 +4769,10 @@ class TestLifespanAdvanced:
         # First-Party
         import mcpgateway.main as main_mod
 
+        # Mock database bootstrap to prevent migration issues with in-memory DB
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
         class FakeEvent:
             def __init__(self):
                 self._set = False
@@ -5081,6 +5085,10 @@ class TestLifespanAdvanced:
         # First-Party
         import mcpgateway.main as main_mod
 
+        # Mock database bootstrap to prevent migration issues with in-memory DB
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
         await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=True)
         # The lifespan's outer handler converts errors whose message contains
         # "Plugin initialization failed" to a clean ``SystemExit(1)``; matching
@@ -5098,6 +5106,12 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_marks_degraded_when_init_factory_fails_and_plugins_disabled(self, monkeypatch):
         """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
+        # Mock database bootstrap to prevent migration issues with in-memory DB
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
         # Use fresh in-memory database to avoid state conflicts
         monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
 
@@ -5127,6 +5141,10 @@ class TestLifespanAdvanced:
 
         # First-Party
         import mcpgateway.main as main_mod
+
+        # Mock database bootstrap to prevent migration issues with in-memory DB
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
 
         await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
         # Keep startup clean so we actually reach the shutdown block.
@@ -12494,6 +12512,10 @@ class TestRemainingCoverageGaps:
 
         # First-Party
         import mcpgateway.main as main_mod
+
+        # Mock database bootstrap to prevent migration issues with in-memory DB
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
 
         def make_service():  # noqa: ANN001 - local test helper
             service = MagicMock()
