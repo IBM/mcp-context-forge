@@ -499,6 +499,11 @@ class OAuthManager:
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
 
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = runtime_credentials.get("audience")
+        if audience:
+            token_data["audience"] = audience
+
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
@@ -1442,6 +1447,11 @@ class OAuthManager:
         if scopes:
             params["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
 
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = credentials.get("audience")
+        if audience:
+            params["audience"] = audience
+
         # Add resource parameter for JWT access token (RFC 8707)
         # The resource is the MCP server URL, set by oauth_router.py
         resource = credentials.get("resource")
@@ -1512,6 +1522,11 @@ class OAuthManager:
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
             token_data["code_verifier"] = code_verifier
+
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = runtime_credentials.get("audience")
+        if audience:
+            token_data["audience"] = audience
 
         # Add resource parameter to request JWT access token (RFC 8707)
         # The resource identifies the MCP server (resource server), not the OAuth server
@@ -1617,6 +1632,11 @@ class OAuthManager:
             if client_secret:
                 token_data["client_secret"] = client_secret
             logger.debug("Using POST body for token endpoint authentication")
+
+        # Add audience parameter if configured (for Atlassian, Auth0, and other non-RFC-8707 providers)
+        audience = runtime_credentials.get("audience")
+        if audience:
+            token_data["audience"] = audience
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type

@@ -80,6 +80,7 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Client Secret (stored encrypted at rest)
    - Token URL
    - Scopes (space-separated)
+   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers)
    - Authorization URL and Redirect URI (required for Authorization Code)
 
 5. Save.
@@ -110,6 +111,33 @@ Example OAuth-enabled gateway record:
 ```
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
+
+### Audience Parameter
+
+Some OAuth providers (Atlassian, Auth0, etc.) require an `audience` parameter instead of or in addition to the RFC 8707 `resource` parameter:
+
+```json
+{
+  "name": "Atlassian MCP",
+  "url": "https://atlassian-mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "client_id": "your_atlassian_app_id",
+    "client_secret": "your_atlassian_app_secret",
+    "authorization_url": "https://auth.atlassian.com/authorize",
+    "token_url": "https://auth.atlassian.com/oauth/token",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "audience": "api.atlassian.com",
+    "scopes": ["read:jira-work", "write:jira-work"]
+  }
+}
+```
+
+The `audience` parameter:
+- Is included in both authorization and token exchange requests
+- Can coexist with `resource` parameter for providers that accept both
+- When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
 
 ---
 
@@ -165,6 +193,21 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 - Token URL: `https://github.com/login/oauth/access_token`
 - Scopes: `repo read:user`
 - Redirect URI: `https://<your-domain>/oauth/callback`
+
+### Atlassian (Authorization Code with Audience)
+
+- Authorization URL: `https://auth.atlassian.com/authorize`
+- Token URL: `https://auth.atlassian.com/oauth/token`
+- Audience: `api.atlassian.com`
+- Scopes: `read:jira-work write:jira-work read:confluence-content.all`
+- Redirect URI: `https://<your-domain>/oauth/callback`
+
+### Auth0 (Client Credentials with Audience)
+
+- Token URL: `https://<your-tenant>.auth0.com/oauth/token`
+- Audience: `https://your-api.example.com`
+- Scopes: provider-specific
+- No redirect required
 
 ### Generic OIDC (Client Credentials)
 
