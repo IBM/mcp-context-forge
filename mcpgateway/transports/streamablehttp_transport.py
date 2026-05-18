@@ -3947,7 +3947,6 @@ class SessionManagerWrapper:
         method: str,
         mcp_session_id: str,
         headers: dict[str, str],
-        path: str,
         match: Optional[Any],
         user_context: dict[str, Any],
     ) -> bool:
@@ -4134,7 +4133,7 @@ class SessionManagerWrapper:
                 logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
                 return False
 
-            elif owner == WORKER_ID and method == "POST":
+            if owner == WORKER_ID and method == "POST":
                 # Route local POST to /rpc
                 return await self._handle_local_affinity_post(scope, receive, send, mcp_session_id, headers, match, user_context)
 
@@ -4355,7 +4354,7 @@ class SessionManagerWrapper:
         # Handle affinity-forwarded requests
         if is_internally_forwarded:
             try:
-                handled = await self._handle_affinity_forwarded_request(scope, receive, send, method, mcp_session_id, headers, path, match, user_context)
+                handled = await self._handle_affinity_forwarded_request(scope, receive, send, method, mcp_session_id, headers, match, user_context)
                 if handled:
                     return
             except Exception as e:
