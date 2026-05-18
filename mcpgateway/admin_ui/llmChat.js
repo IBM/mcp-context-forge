@@ -458,6 +458,12 @@ const updateConnectButtonState = function () {
  * Connect to LLM chat
  */
 
+const CONNECT_BTN_HTML = `<svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M13 10V3L4 14h7v7l9-11h-7z" />
+    </svg>
+    Connect`;
+
 export const connectLLMChat = async function () {
   if (!llmChatState.selectedServerId) {
     showErrorMessage("Please select a virtual server first");
@@ -477,7 +483,6 @@ export const connectLLMChat = async function () {
 
   // Show loading state
   const connectBtn = safeGetElement("llm-connect-btn");
-  const originalText = connectBtn.textContent;
   connectBtn.textContent = "Connecting...";
   connectBtn.disabled = true;
 
@@ -633,7 +638,7 @@ export const connectLLMChat = async function () {
     // Display the backend error message to the user
     showConnectionError(error.message);
   } finally {
-    connectBtn.textContent = originalText;
+    connectBtn.innerHTML = CONNECT_BTN_HTML;
     connectBtn.disabled = false;
   }
 };
@@ -1075,14 +1080,26 @@ const showConnectionError = function (message) {
  * Disconnect from LLM chat
  */
 
+const DISCONNECT_BTN_HTML = `<svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+        d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+    </svg>
+    Disconnect`;
+
 export const disconnectLLMChat = async function () {
   if (!llmChatState.isConnected) {
     console.warn("No active connection to disconnect");
     return;
   }
 
+  // Re-entrancy guard: if a disconnect is already in-flight, bail out
+  if (disconnectLLMChat._inProgress) {
+    console.warn("Disconnect already in progress, skipping duplicate call");
+    return;
+  }
+  disconnectLLMChat._inProgress = true;
+
   const disconnectBtn = safeGetElement("llm-disconnect-btn");
-  const originalText = disconnectBtn.textContent;
   disconnectBtn.textContent = "Disconnecting...";
   disconnectBtn.disabled = true;
 
@@ -1233,9 +1250,10 @@ export const disconnectLLMChat = async function () {
       `Disconnection error: ${error.message}. Local session cleared.`
     );
   } finally {
-    // Reset button state only if it's still visible (error case where we didn't disconnect)
-    if (disconnectBtn && !disconnectBtn.classList.contains("hidden")) {
-      disconnectBtn.textContent = originalText;
+    disconnectLLMChat._inProgress = false;
+    // Always reset button state — even if hidden, a future connect will un-hide it
+    if (disconnectBtn) {
+      disconnectBtn.innerHTML = DISCONNECT_BTN_HTML;
       disconnectBtn.disabled = false;
     }
   }

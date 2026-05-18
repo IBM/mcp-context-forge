@@ -332,7 +332,8 @@ function clearCustomValidity(event) {
  * @param {Event} event - Input event
  */
 function autoResizeTextarea(event) {
-  const el = event.target;
+  const el = event?.target;
+  if (!el?.style) return;
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
