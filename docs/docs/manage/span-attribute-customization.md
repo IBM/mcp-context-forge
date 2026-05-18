@@ -4,7 +4,7 @@ The SpanAttributeCustomizer plugin allows you to customize OpenTelemetry span at
 
 ## Overview
 
-The plugin provides six core capabilities:
+The plugin provides seven core capabilities:
 
 1. **Attribute Name Mapping** - Rename span attribute keys for compliance/standards
 2. **Global Attributes** - Add attributes to all spans
@@ -12,6 +12,7 @@ The plugin provides six core capabilities:
 4. **Attribute Transformations** - Hash, uppercase, lowercase, or truncate values
 5. **Conditional Attributes** - Add attributes based on runtime conditions
 6. **Attribute Removal** - Remove sensitive attributes for privacy/compliance
+7. **Baggage Span Attribute Policy** - Control which OTEL baggage keys become span attributes and whether they use the `baggage.` prefix
 
 ## Quick Start
 
@@ -78,6 +79,7 @@ config:
 2. Original attribute names are replaced with mapped names
 3. Unmapped attributes retain their original names
 4. Works alongside other features (custom attributes, removals, transformations)
+5. Baggage prefix handling is controlled separately by `allowed_baggage_span_attributes` and `emit_baggage_prefixed_attributes`
 
 **Example Result:**
 
@@ -98,6 +100,43 @@ After mapping:
   "service.component.name": "weather_api"
 }
 ```
+
+### Baggage Span Attribute Policy
+
+OpenTelemetry baggage is the standards-compliant way to propagate low-cardinality request context such as tenant or user identifiers. By default, baggage copied onto spans is emitted with the `baggage.` prefix, for example `baggage.tenant.id`.
+
+Use the baggage span attribute policy when your backend expects selected baggage keys to appear as regular span attributes:
+
+```yaml
+config:
+  allowed_baggage_span_attributes:
+    - "tenant.id"
+    - "user.id"
+  emit_baggage_prefixed_attributes: false
+```
+
+With this configuration, incoming OTEL baggage like this:
+
+```text
+tenant.id=tenant-123,user.id=user-456
+```
+
+is emitted on spans as:
+
+```json
+{
+  "tenant.id": "tenant-123",
+  "user.id": "user-456"
+}
+```
+
+**Key Points:**
+
+- `allowed_baggage_span_attributes` is an allowlist of baggage keys that may be copied onto spans
+- `emit_baggage_prefixed_attributes: true` emits `baggage.tenant.id`
+- `emit_baggage_prefixed_attributes: false` emits `tenant.id`
+- If no allowlist is configured, the gateway preserves legacy behavior and emits all baggage keys
+- Use `attribute_mapping` for ordinary span attribute renaming, not for removing `baggage.` from baggage-derived attributes
 
 ### Global Attributes
 
@@ -325,6 +364,12 @@ plugins:
       remove_attributes:
         - "internal_debug_info"
         - "temporary_data"
+
+      # Baggage span attribute policy
+      allowed_baggage_span_attributes:
+        - "tenant.id"
+        - "user.id"
+      emit_baggage_prefixed_attributes: false
 ```
 
 ## Verification
@@ -383,6 +428,13 @@ grep "SpanAttributeCustomizer" logs/gateway.log
 2. Check plugin mode is not `disabled`
 3. Verify hooks are configured correctly
 4. Check observability is enabled: `OBSERVABILITY_ENABLED=true`
+
+### Baggage Attributes Still Have the `baggage.` Prefix
+
+1. Verify `SpanAttributeCustomizer` is present in `plugins/config.yaml`
+2. Set `allowed_baggage_span_attributes` to the baggage keys you want on spans
+3. Set `emit_baggage_prefixed_attributes: false`
+4. Restart the gateway so the startup telemetry policy is reloaded
 
 ### Transformation Errors
 

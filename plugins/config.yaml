@@ -38,6 +38,13 @@ plugins:
         "plugin.priority": "controls.execution.priority"
         "plugin.timeout": "controls.execution.timeout"
 
+      # Baggage span attribute emission policy
+      # Allows selected OTEL baggage keys to be emitted without the baggage. prefix
+      allowed_baggage_span_attributes:
+        - "tenant.id"
+        - "user.id"
+      emit_baggage_prefixed_attributes: false
+
   # Argument Normalizer - stabilize inputs before anything else
   - name: "ArgumentNormalizer"
     kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"
