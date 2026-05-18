@@ -74,6 +74,19 @@ async def test_empty_attribute_mapping():
     assert global_context.state["custom_span_attributes"]["env"] == "test"
 
 
+def test_baggage_span_attribute_policy_config_normalizes_allowlist():
+    """Test that baggage span attribute policy config is validated and normalized."""
+    cfg = SpanAttributeCustomizerConfig.model_validate(
+        {
+            "allowed_baggage_span_attributes": [" tenant.id ", "user.id", "tenant.id"],
+            "emit_baggage_prefixed_attributes": False,
+        }
+    )
+
+    assert cfg.allowed_baggage_span_attributes == ["tenant.id", "user.id"]
+    assert cfg.emit_baggage_prefixed_attributes is False
+
+
 @pytest.mark.asyncio
 async def test_plugin_span_attribute_mapping():
     """Test that plugin span attributes can be mapped."""
