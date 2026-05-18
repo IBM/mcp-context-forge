@@ -18,7 +18,18 @@ import pytest
 # First-Party
 from mcpgateway import observability
 from mcpgateway.config import get_settings
-from mcpgateway.observability import OpenTelemetryRequestMiddleware, create_span, inject_trace_context_headers, init_telemetry, otel_context_active, otel_tracing_enabled, trace_operation
+from mcpgateway.observability import (
+    BaggageSpanAttributePolicy,
+    configure_baggage_span_attribute_policy,
+    OpenTelemetryRequestMiddleware,
+    create_span,
+    extract_baggage_span_attribute_policy,
+    inject_trace_context_headers,
+    init_telemetry,
+    otel_context_active,
+    otel_tracing_enabled,
+    trace_operation,
+)
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
 
@@ -28,6 +39,7 @@ class TestObservability:
     def setup_method(self):
         """Reset environment before each test."""
         get_settings.cache_clear()
+        configure_baggage_span_attribute_policy()
         # Clear relevant environment variables
         env_vars = [
             "OTEL_ENABLE_OBSERVABILITY",
@@ -177,6 +189,40 @@ class TestObservability:
 
         # Verify 2 span processors: ResourceAttributeSpanProcessor + SimpleSpanProcessor
         assert provider_instance.add_span_processor.call_count == 2
+        assert result is not None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_does_not_register_baggage_attribute_processor(self, mock_processor, mock_provider, mock_exporter):
+        """init_telemetry should rely on direct baggage emission, not span processors."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        result = init_telemetry()
+
+        assert provider_instance.add_span_processor.call_count == 1
+        assert result is not None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_registers_only_export_processor(self, mock_processor, mock_provider, mock_exporter):
+        """init_telemetry should register only exporter processor for console tracing."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        result = init_telemetry()
+
+        assert provider_instance.add_span_processor.call_count == 1
         assert result is not None
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
@@ -836,6 +882,138 @@ class TestObservability:
         span_no_resource.resource = None
         processor.on_start(span_no_resource)
 
+    @staticmethod
+    def _plugin_config(name: str, kind: str, config: dict) -> MagicMock:
+        """Create a plugin config mock with concrete attribute values."""
+        plugin = MagicMock()
+        plugin.name = name
+        plugin.kind = kind
+        plugin.config = config
+        return plugin
+
+    def test_extract_baggage_span_attribute_policy_returns_configured_policy(self):
+        """Startup extraction should return SpanAttributeCustomizer baggage emission policy."""
+        plugin = self._plugin_config(
+            "SpanAttributeCustomizer",
+            "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            {
+                "allowed_baggage_span_attributes": ["tenant.id", " user.id "],
+                "emit_baggage_prefixed_attributes": False,
+            },
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id", "user.id"}))
+
+    def test_extract_baggage_span_attribute_policy_preserves_legacy_allowlist_when_missing(self):
+        """Startup extraction should preserve legacy baggage emission when no allowlist is configured."""
+        plugin = self._plugin_config(
+            "SpanAttributeCustomizer",
+            "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            {"emit_baggage_prefixed_attributes": False},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=None)
+
+    def test_extract_baggage_span_attribute_policy_defaults_invalid_prefix_config(self):
+        """Startup extraction should default to prefixed emission when prefix config is malformed."""
+        plugin = self._plugin_config(
+            "SpanAttributeCustomizer",
+            "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            {
+                "allowed_baggage_span_attributes": ["tenant.id"],
+                "emit_baggage_prefixed_attributes": "false",
+            },
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy(emit_prefixed=True, allowed_keys=frozenset({"tenant.id"}))
+
+    def test_extract_baggage_span_attribute_policy_handles_malformed_allowlist_safely(self):
+        """Startup extraction should fail closed when baggage allowlist is malformed."""
+        plugin = self._plugin_config(
+            "SpanAttributeCustomizer",
+            "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            {"allowed_baggage_span_attributes": "tenant.id", "emit_baggage_prefixed_attributes": False},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset())
+
+    def test_extract_baggage_span_attribute_policy_skips_invalid_entries(self):
+        """Startup extraction should ignore malformed allowlist entries and preserve valid ones."""
+        plugin = self._plugin_config(
+            "SpanAttributeCustomizer",
+            "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+            {"allowed_baggage_span_attributes": [" tenant.id ", "", 7], "emit_baggage_prefixed_attributes": False},
+        )
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id"}))
+
+    def test_extract_baggage_span_attribute_policy_returns_default_when_plugin_missing(self):
+        """Startup extraction should preserve legacy prefixed behavior when SpanAttributeCustomizer is absent."""
+        plugin = self._plugin_config("OtherPlugin", "plugins.other.OtherPlugin", {"allowed_baggage_span_attributes": ["tenant.id"]})
+        plugin_manager_factory = MagicMock()
+        plugin_manager_factory._base_config = MagicMock(plugins=[plugin])  # pylint: disable=protected-access
+
+        policy = extract_baggage_span_attribute_policy(plugin_manager_factory)
+
+        assert policy == BaggageSpanAttributePolicy()
+
+    def test_extract_baggage_span_attribute_policy_returns_default_when_factory_is_none(self):
+        """Startup extraction should return default policy when plugin_manager_factory is None."""
+        policy = extract_baggage_span_attribute_policy(None)
+        assert policy == BaggageSpanAttributePolicy()
+
+    def test_baggage_span_attributes_uses_prefixed_names_by_default(self):
+        """Legacy policy should emit all baggage keys with baggage. prefix."""
+        configure_baggage_span_attribute_policy()
+
+        result = observability._baggage_span_attributes({"tenant.id": "team-a", "user.id": "user@example.com"})  # pylint: disable=protected-access
+
+        assert result == {"baggage.tenant.id": "team-a", "baggage.user.id": "user@example.com"}
+
+    def test_baggage_span_attributes_returns_empty_for_empty_baggage(self):
+        """Baggage conversion should no-op when no baggage is present."""
+        configure_baggage_span_attribute_policy()
+
+        result = observability._baggage_span_attributes({})  # pylint: disable=protected-access
+
+        assert result == {}
+
+    def test_baggage_span_attributes_can_emit_unprefixed_allowed_keys(self):
+        """Configured policy should emit only allowlisted baggage keys without prefix."""
+        configure_baggage_span_attribute_policy(BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id"})))
+
+        result = observability._baggage_span_attributes({"tenant.id": "team-a", "user.id": "user@example.com"})  # pylint: disable=protected-access
+
+        assert result == {"tenant.id": "team-a"}
+
+    def test_baggage_span_attributes_skips_none_values(self):
+        """Configured policy should skip None values."""
+        configure_baggage_span_attribute_policy(BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id"})))
+
+        result = observability._baggage_span_attributes({"tenant.id": None})  # pylint: disable=protected-access
+
+        assert result == {}
+
     @patch("mcpgateway.observability.get_correlation_id", return_value="corr-123")
     def test_create_span_injects_correlation_id(self, mock_get_correlation_id):
         """Test correlation_id injection when missing from attributes."""
@@ -857,6 +1035,30 @@ class TestObservability:
 
         span.set_attribute.assert_any_call("correlation_id", "corr-123")
         span.set_attribute.assert_any_call("request_id", "corr-123")
+
+    def test_create_span_injects_configured_baggage_attributes(self):
+        """Test create_span adds baggage attributes using configured policy."""
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        observability._TRACER = mock_tracer
+        configure_baggage_span_attribute_policy(BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id"})))
+
+        mock_baggage = MagicMock()
+        mock_baggage.get_all.return_value = {"tenant.id": "tenant-123", "user.id": "user-456"}
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.otel_baggage", mock_baggage):
+                with create_span("test.operation", {"existing": "value"}) as span:
+                    assert span is mock_span
+
+        mock_span.set_attribute.assert_any_call("existing", "value")
+        mock_span.set_attribute.assert_any_call("tenant.id", "tenant-123")
+        assert all(call.args != ("user.id", "user-456") for call in mock_span.set_attribute.call_args_list)
 
     def test_create_span_correlation_id_error_logs(self):
         """Test correlation ID failures are logged and ignored."""
@@ -1287,6 +1489,50 @@ class TestObservability:
         span.set_attribute.assert_any_call("user_agent.original", "pytest")
         span.set_attribute.assert_any_call("correlation_id", "corr-123")
         span.set_attribute.assert_any_call("http.response.status_code", 200)
+        assert sent_messages[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_open_telemetry_request_middleware_injects_configured_baggage(self):
+        """Test OTEL request middleware adds configured baggage attributes to the root span."""
+        sent_messages = []
+        span = MagicMock()
+        span_context = MagicMock()
+        span_context.__enter__ = MagicMock(return_value=span)
+        span_context.__exit__ = MagicMock(return_value=None)
+        tracer = MagicMock()
+        tracer.start_as_current_span.return_value = span_context
+
+        # pylint: disable=protected-access
+        observability._TRACER = tracer
+        configure_baggage_span_attribute_policy(BaggageSpanAttributePolicy(emit_prefixed=False, allowed_keys=frozenset({"tenant.id"})))
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/rpc",
+            "headers": [],
+            "query_string": b"",
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent_messages.append(message)
+
+        mock_baggage = MagicMock()
+        mock_baggage.get_all.return_value = {"tenant.id": "tenant-123", "user.id": "user-456"}
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.otel_baggage", mock_baggage):
+                await middleware(scope, receive, send)
+
+        span.set_attribute.assert_any_call("tenant.id", "tenant-123")
+        assert all(call.args != ("user.id", "user-456") for call in span.set_attribute.call_args_list)
         assert sent_messages[0]["status"] == 200
 
     @pytest.mark.asyncio
