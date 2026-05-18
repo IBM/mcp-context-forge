@@ -251,7 +251,7 @@ class Settings(BaseSettings):
         ),
     )
     skip_migration: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Skip alembic upgrade head on startup. Use when migrations are managed externally "
             "(e.g., a dedicated init container or CI pipeline step). "

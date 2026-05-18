@@ -1456,6 +1456,7 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_with_normalization(self, mock_settings):
         """Test main function with team normalization."""
+        mock_settings.skip_migration = False
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
@@ -1526,6 +1527,7 @@ class TestMain:
     @pytest.mark.asyncio
     async def test_main_exception_handling(self, mock_settings):
         """Test main function exception handling and re-raise."""
+        mock_settings.skip_migration = False
         mock_engine = Mock()
 
         # Mock engine.connect() to raise an exception
