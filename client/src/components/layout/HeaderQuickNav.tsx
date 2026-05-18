@@ -96,7 +96,7 @@ export function HeaderQuickNav() {
           {shortcutLabel}
         </span>
       </form>
-      {/* Quick-navigation behavior will be added here once the search flow is defined for the UI rewrite. */}
+      {/* TO DO: Quick-navigation behavior will be added here once the search flow is defined for the UI rewrite. */}
     </div>
   );
 }
