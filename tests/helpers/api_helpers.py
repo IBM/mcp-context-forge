@@ -75,14 +75,20 @@ class ApiTestHelper:
     def create_tool(
         self,
         name: str,
+<<<<<<< HEAD
         url: str,
         *,
+=======
+        *,
+        url: str = "https://httpbin.org/post",
+>>>>>>> f131b1edb (chore: test cleanup)
         description: str = "test tool",
         integration_type: str = "REST",
         request_type: str = "POST",
         team_id: str | None = None,
         visibility: str | None = None,
     ) -> dict[str, Any]:
+<<<<<<< HEAD
         """Create a tool and return the decoded JSON body.
 
         Args:
@@ -94,6 +100,9 @@ class ApiTestHelper:
             team_id: Optional team ID for team-scoped tools
             visibility: Optional visibility setting
         """
+=======
+        """Create a tool and return the decoded JSON body."""
+>>>>>>> f131b1edb (chore: test cleanup)
         payload: dict[str, Any] = {
             "tool": {
                 "name": name,
@@ -182,3 +191,9 @@ class ApiTestHelper:
     def delete_gateway(self, gateway_id: str) -> None:
         """Delete a gateway, best-effort."""
         self.api.delete(f"/gateways/{gateway_id}")
+<<<<<<< HEAD
+=======
+
+
+# Made with Bob
+>>>>>>> f131b1edb (chore: test cleanup)

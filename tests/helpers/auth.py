@@ -42,21 +42,28 @@ def make_test_jwt(
     user_data: dict[str, Any] | None = None,
     extra_payload: dict[str, Any] | None = None,
 ) -> str:
+<<<<<<< HEAD
     """Create a standardized JWT for tests while preserving legacy helper semantics.
 
     When is_admin=True is passed, automatically enables include_user_data to ensure
     the is_admin claim is properly embedded in the token's user_data field.
     """
+=======
+    """Create a standardized JWT for tests while preserving legacy helper semantics."""
+>>>>>>> f131b1edb (chore: test cleanup)
     payload: dict[str, Any] = {"sub": email}
     if include_email_claim:
         payload["email"] = email
     if extra_payload:
         payload.update(extra_payload)
 
+<<<<<<< HEAD
     # Auto-enable include_user_data when is_admin=True to ensure the claim is embedded
     if is_admin and not include_user_data and user_data is None:
         include_user_data = True
 
+=======
+>>>>>>> f131b1edb (chore: test cleanup)
     resolved_user_data = user_data
     if include_user_data and resolved_user_data is None:
         resolved_user_data = {"email": email, "is_admin": is_admin, "auth_provider": auth_provider}
@@ -156,6 +163,7 @@ def make_auth_header_for_email(
 
 
 def make_playwright_api_context(playwright: Any, base_url: str, token: str, *, accept: str | None = "application/json", extra_headers: dict[str, str] | None = None) -> Any:
+<<<<<<< HEAD
     """Create a Playwright API request context with Bearer auth.
 
     DEPRECATED: Use ApiTestHelper.new_context() instead for consistency.
@@ -165,3 +173,13 @@ def make_playwright_api_context(playwright: Any, base_url: str, token: str, *, a
     from tests.helpers.api_helpers import ApiTestHelper  # pylint: disable=import-outside-toplevel
 
     return ApiTestHelper.new_context(playwright, base_url, token, accept=accept or "application/json", extra_headers=extra_headers)
+=======
+    """Create a Playwright API request context with Bearer auth."""
+    return playwright.request.new_context(
+        base_url=base_url,
+        extra_http_headers=make_auth_headers(token, accept=accept, extra_headers=extra_headers),
+    )
+
+
+# Made with Bob
+>>>>>>> f131b1edb (chore: test cleanup)
