@@ -4,6 +4,7 @@ import {
   ChartLine,
   Code,
   House,
+  MessageSquareCode,
   MessageSquareMore,
   Server,
   Settings,
@@ -15,7 +16,6 @@ import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
 import { AgentIcon } from "../icons/AgentIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
-import { PromptIcon } from "../icons/PromptIcon.tsx";
 import {
   Sidebar,
   SidebarContent,
@@ -48,7 +48,7 @@ const COMPONENTS_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.grpc", path: "/app/grpc", icon: Unplug },
   { labelKey: "navigation.tools", path: "/app/tools", icon: Wrench },
   { labelKey: "navigation.resources", path: "/app/resources", icon: Box },
-  { labelKey: "navigation.prompts", path: "/app/prompts", icon: PromptIcon },
+  { labelKey: "navigation.prompts", path: "/app/prompts", icon: MessageSquareCode },
 ];
 
 const ECOSYSTEM_NAV_ITEMS: NavItem[] = [
