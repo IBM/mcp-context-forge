@@ -1454,227 +1454,11 @@ class TestMain:
     """Test main function."""
 
     @pytest.mark.asyncio
-    async def test_main_empty_database(self, mock_settings):
-        """Test main function with empty database."""
-        mock_engine = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []  # Empty database
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        # Mock engine.connect() as context manager
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
-
-                                                        mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                        mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_command.upgrade.assert_not_called()
-                                                        mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
-
-    @pytest.mark.asyncio
-    async def test_main_existing_database(self, mock_settings):
-        """Test main function with existing database."""
-        mock_engine = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways", "tools", "alembic_version"]  # Existing tables
-        mock_execute = Mock()
-        mock_execute.fetchall.return_value = [("head-revision",)]
-        mock_conn.execute.return_value = mock_execute
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        # Mock engine.connect() as context manager
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
-
-                                                        mock_base.metadata.create_all.assert_not_called()
-                                                        mock_command.stamp.assert_not_called()
-                                                        mock_command.upgrade.assert_called_once_with(mock_config, "head")
-                                                        mock_logger.info.assert_any_call("Running Alembic migrations to ensure schema is up to date")
-
-    @pytest.mark.asyncio
-    async def test_main_alembic_version_read_exception_warns(self, mock_settings):
-        """Errors reading alembic_version should warn but still proceed."""
-        mock_engine = Mock()
-        mock_engine.dispose = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_conn.execute.side_effect = RuntimeError("boom")
-
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways", "alembic_version"]
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("mcpgateway.bootstrap_db._schema_looks_current", return_value=False):
-                    with patch("importlib.resources.files") as mock_files:
-                        mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                        with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                            with patch("mcpgateway.bootstrap_db.Base"):
-                                with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                    with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                    with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                            await main()
-
-                                                            mock_logger.warning.assert_any_call("Failed to read alembic_version table: %s", ANY)
-                                                            mock_command.upgrade.assert_called_once_with(mock_config, "head")
-
-    @pytest.mark.asyncio
-    async def test_main_raises_on_migration_failure(self, mock_settings):
-        """Unexpected errors should be logged and re-raised."""
-        # Standard
-        from contextlib import contextmanager
-
-        mock_engine = Mock()
-        mock_engine.dispose = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        @contextmanager
-        def _lock(_conn):  # noqa: D401 - test stub
-            yield
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.advisory_lock", _lock):
-                with patch("mcpgateway.bootstrap_db.inspect", side_effect=RuntimeError("boom")):
-                    with patch("importlib.resources.files") as mock_files:
-                        mock_files.return_value.joinpath.return_value = "alembic.ini"
-                        with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                    with pytest.raises(RuntimeError):
-                                        await main()
-
-                                    mock_logger.error.assert_any_call("Migration/Bootstrap failed: boom")
-                                    mock_engine.dispose.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_main_existing_database_without_revision_rows(self, mock_settings):
-        """Test main function when alembic_version exists but has no rows."""
-        mock_engine = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways", "tools", "prompts", "sso_providers", "alembic_version"]
-
-        mock_execute = Mock()
-        mock_execute.fetchall.return_value = []
-        mock_conn.execute.return_value = mock_execute
-
-        def _get_columns(table_name):
-            if table_name == "tools":
-                return [{"name": "display_name"}]
-            if table_name == "gateways":
-                return [{"name": "oauth_config"}]
-            if table_name == "prompts":
-                return [{"name": "custom_name"}]
-            if table_name == "sso_providers":
-                return [{"name": "jwks_uri"}]
-            return []
-
-        mock_inspector.get_columns.side_effect = _get_columns
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        # Mock engine.connect() as context manager
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
-
-                                                        mock_base.metadata.create_all.assert_not_called()
-                                                        mock_command.upgrade.assert_not_called()
-                                                        mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_logger.warning.assert_any_call("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
-
-    @pytest.mark.asyncio
     async def test_main_with_normalization(self, mock_settings):
         """Test main function with team normalization."""
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways"]
 
         mock_config = MagicMock()
         mock_config.attributes = {}
@@ -1686,17 +1470,17 @@ class TestMain:
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
         with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
 
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.command"):
-                            with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=5):
-                                with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command"):
+                        with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=5):
+                            with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
+                                with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
+                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
                                                 with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                                                     await main()
 
@@ -1708,8 +1492,6 @@ class TestMain:
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []
 
         mock_config = MagicMock()
         mock_config.attributes = {}
@@ -1721,26 +1503,41 @@ class TestMain:
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
         with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
 
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base"):
-                            with patch("mcpgateway.bootstrap_db.command"):
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command"):
+                        with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
+                            with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
+                                with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
+                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                    await main()
 
-                                                        # Verify all bootstrap functions were called
-                                                        mock_admin.assert_called_once()
-                                                        mock_roles.assert_called_once()
-                                                        mock_resources.assert_called_once()
-                                                        mock_logger.info.assert_any_call("Database ready")
+                                                    # Verify all bootstrap functions were called
+                                                    mock_admin.assert_called_once()
+                                                    mock_roles.assert_called_once()
+                                                    mock_resources.assert_called_once()
+                                                    mock_logger.info.assert_any_call("Database ready")
+
+    @pytest.mark.asyncio
+    async def test_main_exception_handling(self, mock_settings):
+        """Test main function exception handling and re-raise."""
+        mock_engine = Mock()
+
+        # Mock engine.connect() to raise an exception
+        mock_engine.connect.side_effect = Exception("Connection failed")
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
+            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    with pytest.raises(Exception, match="Connection failed"):
+                        await main()
+
+                    mock_logger.error.assert_called_with("Database migration failed: Connection failed")
 
 
 class TestModuleLevel:
@@ -1749,11 +1546,10 @@ class TestModuleLevel:
     def test_module_imports(self):
         """Test that module imports work correctly."""
         # First-Party
-        from mcpgateway.bootstrap_db import Base, logger, logging_service
+        from mcpgateway.bootstrap_db import logger, logging_service
 
         assert logging_service is not None
         assert logger is not None
-        assert hasattr(Base, "metadata")
         assert hasattr(logger, "info")
         assert hasattr(logger, "error")
 

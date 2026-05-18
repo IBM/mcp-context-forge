@@ -31,8 +31,7 @@ def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     tables = inspector.get_table_names()
 
-    if "gateways" not in tables:
-        print("Fresh database detected. Skipping migration.")
+    if "oauth_tokens" in tables:
         return
 
     # Create oauth_tokens table

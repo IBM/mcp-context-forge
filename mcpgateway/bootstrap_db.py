@@ -24,9 +24,6 @@ Examples:
     True
     >>> hasattr(logger, 'info')
     True
-    >>> from mcpgateway.bootstrap_db import Base
-    >>> hasattr(Base, 'metadata')
-    True
 """
 
 # Standard
@@ -46,14 +43,14 @@ from typing import cast
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, or_, text
+from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -726,34 +723,10 @@ async def main() -> None:
 
                 # Pass the LOCKED connection to Alembic config
                 cfg.attributes["connection"] = conn
-
-                # Escape '%' characters in URL to avoid configparser interpolation errors
-                # (e.g., URL-encoded passwords like %40 for '@')
                 escaped_url = settings.database_url.replace("%", "%%")
                 cfg.set_main_option("sqlalchemy.url", escaped_url)
-
-                insp = inspect(conn)
-                table_names = insp.get_table_names()
-
-                if "gateways" not in table_names:
-                    logger.info("Empty DB detected - creating baseline schema")
-                    Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
-                else:
-                    versions: list[str] = []
-                    if "alembic_version" in table_names:
-                        try:
-                            rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-                            versions = [row[0] for row in rows if row[0]]
-                        except Exception as exc:
-                            logger.warning("Failed to read alembic_version table: %s", exc)
-
-                    if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
-                        command.stamp(cfg, "head")
-                    else:
-                        logger.info("Running Alembic migrations to ensure schema is up to date")
-                        command.upgrade(cfg, "head")
+                logger.info("Running Alembic migrations to ensure schema is up to date")
+                command.upgrade(cfg, "head")
 
                 # Post-upgrade normalization passes (inside lock to be safe)
                 updated = normalize_team_visibility(conn)
@@ -772,13 +745,12 @@ async def main() -> None:
                 conn.commit()  # Ensure all migration changes are permanently committed
 
     except Exception as e:
-        logger.error(f"Migration/Bootstrap failed: {e}")
+        logger.error(f"Database migration failed: {e}")
         # Allow retry logic or container restart to handle transient issues
         raise
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()
-
     logger.info("Database ready")
 
 

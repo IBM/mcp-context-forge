@@ -124,7 +124,7 @@ spec:
           periodSeconds: 20
         securityContext:
           allowPrivilegeEscalation: false
-          runAsUser: 1001        # UBI non-root UID works with restricted SCC
+          runAsUser: 10001       # Non-root UID > 10000 avoids host conflicts
 ---
 apiVersion: v1
 kind: Service
@@ -221,7 +221,7 @@ The Postgres template already generates a PVC; you can create extra PVCs manuall
 
 | Issue                                                              | Fix                                                                        |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| `Error: container has runAsNonRoot and image has non-numeric user` | Add `runAsUser: 1001` or pick `nonroot-v2` SCC.                            |
+| `Error: container has runAsNonRoot and image has non-numeric user` | Add `runAsUser: 10001` or pick `nonroot-v2` SCC.                           |
 | PVC stuck in `Pending`                                             | Check storage class or request size > quota.                               |
 | Route returns 503                                                  | Verify pod readiness probe passes and the Service targets port 80 -> 4444. |
 

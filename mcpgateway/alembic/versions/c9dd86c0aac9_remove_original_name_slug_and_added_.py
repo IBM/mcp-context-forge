@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 remove original_name_slug and added custom_name
 
 Revision ID: c9dd86c0aac9
-Revises: add_oauth_tokens_table
+Revises: add_a2a_agents_and_metrics
 Create Date: 2025-08-19 15:15:26.509036
 """
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "c9dd86c0aac9"
-down_revision: Union[str, Sequence[str], None] = "add_oauth_tokens_table"
+down_revision: Union[str, Sequence[str], None] = "add_a2a_agents_and_metrics"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

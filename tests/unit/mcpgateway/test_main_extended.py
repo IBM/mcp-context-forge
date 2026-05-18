@@ -174,6 +174,9 @@ def _import_fresh_main_module(
     # module-level state which can be polluted by other tests that reload session_registry.
     monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
 
+    # Use fresh in-memory database for each test to avoid conflicts
+    monkeypatch.setattr(settings_mod, "database_url", "sqlite:///:memory:", raising=False)
+
     # Avoid import-time side effects (DB/Redis readiness + bootstrap).
     monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", lambda *_a, **_k: None)
 
@@ -1512,7 +1515,8 @@ class TestApplicationStartupPaths:
         monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
         monkeypatch.setattr(settings, "sso_enabled", False)
-
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
         monkeypatch.setattr(settings, "require_strong_secrets", False, raising=False)
         monkeypatch.setattr(settings, "dev_mode", True, raising=False)
 
@@ -1537,6 +1541,7 @@ class TestApplicationStartupPaths:
             mock_init_llmchat = stack.enter_context(patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock))
             mock_shared_http = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new_callable=AsyncMock))
             mock_shared_http_shutdown = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new_callable=AsyncMock))
+
 
             # Setup all mocks
             services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
@@ -4759,6 +4764,9 @@ class TestLifespanAdvanced:
 
     @pytest.mark.asyncio
     async def test_lifespan_with_feature_flags(self, monkeypatch):
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -4923,6 +4931,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_exits_on_plugin_initialization_failed(self, monkeypatch):
         """Cover lifespan startup exception branch that raises SystemExit on plugin init failure."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -4972,7 +4983,8 @@ class TestLifespanAdvanced:
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
-
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
@@ -5064,6 +5076,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_raises_when_init_factory_fails_and_plugins_enabled(self, monkeypatch):
         """Plugins explicitly enabled + factory init failure must loud-crash, not silently degrade."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -5084,6 +5099,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_marks_degraded_when_init_factory_fails_and_plugins_disabled(self, monkeypatch):
         """Plugins disabled but opportunistic init fails → gateway still boots, node is marked degraded."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
         from mcpgateway.plugins import _state as plugin_state
@@ -5105,6 +5123,9 @@ class TestLifespanAdvanced:
     @pytest.mark.asyncio
     async def test_lifespan_swallows_stop_listener_exception(self, monkeypatch):
         """``stop_plugin_invalidation_listener`` raising during shutdown must not crash lifespan teardown."""
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -12298,7 +12319,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_auto_start", True)
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_backfill_hours", 0)  # triggers early return in run_log_backfill
         monkeypatch.setattr(main_mod.settings, "metrics_aggregation_window_minutes", 0)
-
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
         # Patch services to keep startup/shutdown lightweight.
         monkeypatch.setattr(main_mod, "logging_service", make_service())
         monkeypatch.setattr(main_mod.logging_service, "configure_uvicorn_after_startup", MagicMock())
@@ -12326,7 +12348,6 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
         monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
-
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
@@ -12419,7 +12440,8 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
         monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
-
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
@@ -12462,6 +12484,9 @@ class TestRemainingCoverageGaps:
         so we capture it at init time and call it directly to cover the
         ``create_message_handler`` hand-off.
         """
+        # Use fresh in-memory database to avoid state conflicts
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -12567,6 +12592,8 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
 
         # First-Party
         import mcpgateway.cache.registry_cache as registry_cache_mod
