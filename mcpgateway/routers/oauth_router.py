@@ -19,6 +19,9 @@ import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
+# First-Party - CSP nonce support
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -651,6 +654,9 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
         # Return success page with option to return to admin
+        # Get CSP nonce for inline script
+        csp_nonce = get_csp_nonce_from_request(request)
+
         return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
@@ -669,8 +675,12 @@ async def oauth_callback(
                     text-decoration: none;
                     border-radius: 5px;
                     margin-top: 20px;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 16px;
                 }}
                 .button:hover {{ background-color: #2563eb; }}
+                .button:disabled {{ opacity: 0.6; cursor: not-allowed; }}
             </style>
         </head>
         <body>
@@ -685,7 +695,7 @@ async def oauth_callback(
             <div style="margin: 30px 0;">
                 <h3>Next Steps:</h3>
                 <p>Now that OAuth authorization is complete, you can fetch tools from the MCP server:</p>
-                <button onclick="fetchTools()" class="button" style="background-color: #059669;">
+                <button id="fetch-tools-btn" class="button" style="background-color: #059669;">
                     🔧 Fetch Tools from MCP Server
                 </button>
                 <div id="fetch-status" style="margin-top: 15px;"></div>
@@ -693,50 +703,56 @@ async def oauth_callback(
 
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
 
-            <script>
-            async function fetchTools() {{
-                const button = event.target;
+            <script nonce="{csp_nonce}">
+            (function() {{
+                const button = document.getElementById('fetch-tools-btn');
                 const statusDiv = document.getElementById('fetch-status');
 
-                button.disabled = true;
-                button.textContent = '⏳ Fetching Tools...';
-                statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
+                button.addEventListener('click', async function() {{
+                    button.disabled = true;
+                    button.textContent = '⏳ Fetching Tools...';
+                    statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
-                try {{
-                    const csrfToken = document.cookie.split('; ').find(row => row.startsWith('mcpgateway_csrf_token='))?.split('=')[1] || '';
-                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: {{ 'Accept': 'text/html', 'X-CSRF-Token': decodeURIComponent(csrfToken) }}
-                    }});
+                    try {{
+                        const csrfToken = document.cookie.split('; ').find(row => row.startsWith('mcpgateway_csrf_token='))?.split('=')[1] || '';
+                        const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
+                            method: 'POST',
+                            credentials: 'include',
+                            headers: {{
+                                'Accept': 'application/json',
+                                'Content-Type': 'application/json',
+                                'X-CSRF-Token': decodeURIComponent(csrfToken)
+                            }}
+                        }});
 
-                    const result = await response.json();
+                        const result = await response.json();
 
-                    if (response.ok) {{
+                        if (response.ok) {{
+                            statusDiv.innerHTML = `
+                                <div style="color: #059669; padding: 15px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 5px;">
+                                    <h4>✅ Tools Fetched Successfully!</h4>
+                                    <p>${{result.message}}</p>
+                                </div>
+                            `;
+                            button.textContent = '✅ Tools Fetched';
+                            button.style.backgroundColor = '#059669';
+                        }} else {{
+                            throw new Error(result.detail || 'Failed to fetch tools');
+                        }}
+                    }} catch (error) {{
                         statusDiv.innerHTML = `
-                            <div style="color: #059669; padding: 15px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 5px;">
-                                <h4>✅ Tools Fetched Successfully!</h4>
-                                <p>${{result.message}}</p>
+                            <div style="color: #dc2626; padding: 15px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 5px;">
+                                <h4>❌ Failed to Fetch Tools</h4>
+                                <p><strong>Error:</strong> ${{error.message}}</p>
+                                <p>You can still return to the admin panel and try again later.</p>
                             </div>
                         `;
-                        button.textContent = '✅ Tools Fetched';
-                        button.style.backgroundColor = '#059669';
-                    }} else {{
-                        throw new Error(result.detail || 'Failed to fetch tools');
+                        button.textContent = '❌ Retry Fetch Tools';
+                        button.style.backgroundColor = '#dc2626';
+                        button.disabled = false;
                     }}
-                }} catch (error) {{
-                    statusDiv.innerHTML = `
-                        <div style="color: #dc2626; padding: 15px; background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 5px;">
-                            <h4>❌ Failed to Fetch Tools</h4>
-                            <p><strong>Error:</strong> ${{error.message}}</p>
-                            <p>You can still return to the admin panel and try again later.</p>
-                        </div>
-                    `;
-                    button.textContent = '❌ Retry Fetch Tools';
-                    button.style.backgroundColor = '#dc2626';
-                    button.disabled = false;
-                }}
-            }}
+                }});
+            }})();
             </script>
         </body>
         </html>
