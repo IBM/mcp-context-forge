@@ -624,6 +624,47 @@ class TestAdminServerRoutes:
         assert server_create.oauth_config["token_endpoint"] == "https://idp.example.com/token"
 
     @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_oauth_with_audience(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Test adding server with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+        form_data = FakeForm(
+            {
+                "name": "Server_With_Audience",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://auth.atlassian.com",
+                "oauth_audience": "api.atlassian.com",
+                "oauth_scopes": "read:jira-work write:jira-work",
+                "oauth_token_endpoint": "https://auth.atlassian.com/oauth/token",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            },
+        )
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        server_create = mock_register_server.call_args.args[1]
+        assert server_create.oauth_enabled is True
+        assert server_create.oauth_config["authorization_servers"] == ["https://auth.atlassian.com"]
+        assert server_create.oauth_config["audience"] == "api.atlassian.com"
+        assert server_create.oauth_config["scopes_supported"] == ["read:jira-work", "write:jira-work"]
+        assert server_create.oauth_config["token_endpoint"] == "https://auth.atlassian.com/oauth/token"
+
+    @patch.object(ServerService, "register_server")
     async def test_admin_add_server_select_all_json_decode_error(self, mock_register_server, mock_request, mock_db, monkeypatch):
         """Cover JSONDecodeError fallback and invalid OAuth config branch in admin_add_server."""
         form_data = FakeForm(
@@ -763,6 +804,57 @@ class TestAdminServerRoutes:
         assert "authorization_servers" in server_update.oauth_config
         assert server_update.oauth_config["authorization_servers"] == ["https://idp.example.com"]
         assert server_update.oauth_config["scopes_supported"] == ["openid", "profile", "email"]
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_oauth_with_audience(self, mock_update_server, mock_request, mock_db):
+        """Test editing server with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+        server_id = "00000000-0000-0000-0000-000000000001"
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Server_With_Audience",
+                "description": "Server with OAuth audience",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://auth.atlassian.com",
+                "oauth_audience": "api.atlassian.com",
+                "oauth_scopes": "read:jira-work write:jira-work",
+                "oauth_token_endpoint": "https://auth.atlassian.com/oauth/token",
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {
+            "id": server_id,
+            "name": "OAuth_Server_With_Audience",
+            "oauth_enabled": True,
+            "oauth_config": {
+                "authorization_servers": ["https://auth.atlassian.com"],
+                "audience": "api.atlassian.com",
+                "scopes_supported": ["read:jira-work", "write:jira-work"],
+                "token_endpoint": "https://auth.atlassian.com/oauth/token",
+            },
+        }
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        mock_update_server.assert_called_once()
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]
+        assert server_update.oauth_enabled is True
+        assert server_update.oauth_config is not None
+        assert server_update.oauth_config["audience"] == "api.atlassian.com"
+        assert server_update.oauth_config["authorization_servers"] == ["https://auth.atlassian.com"]
+        assert server_update.oauth_config["scopes_supported"] == ["read:jira-work", "write:jira-work"]
 
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_disable_oauth(self, mock_update_server, mock_request, mock_db):
@@ -6468,6 +6560,52 @@ class TestOAuthFunctionality:
             assert gateway_create.oauth_config["scopes"] == ["a", "b", "c"]
 
     @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_oauth_with_audience(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+        form_data = FakeForm(
+            {
+                "name": "Gateway_With_Audience",
+                "url": "https://gateway.example.com",
+                "auth_type": "oauth",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_audience": "api.atlassian.com",
+                "oauth_scopes": "read:jira-work write:jira-work",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_create = mock_register_gateway.call_args.args[1]
+            assert gateway_create.oauth_config["audience"] == "api.atlassian.com"
+            assert gateway_create.oauth_config["client_id"] == "client-id"
+            assert gateway_create.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
+
+    @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_register_gateway, mock_request, mock_db):
         """Cover false branches in the OAuth form-fields assembly logic."""
         form_data = FakeForm(
@@ -6623,6 +6761,43 @@ class TestOAuthFunctionality:
             assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_oauth_with_audience_parameter(self, mock_update_gateway, mock_request, mock_db):
+        """Test editing gateway with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+        form_data = FakeForm(
+            {
+                "name": "Edited_Gateway",
+                "url": "https://edited.example.com",
+                "oauth_grant_type": "authorization_code",
+                "oauth_client_id": "client-id",
+                "oauth_client_secret": "client-secret",
+                "oauth_audience": "api.atlassian.com",
+                "oauth_scopes": "read:jira-work write:jira-work",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption,
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata") as mock_meta,
+        ):
+            mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+            mock_get_encryption.return_value = mock_encryption
+            mock_meta.return_value = {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}
+
+            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+
+            gateway_update = mock_update_gateway.call_args.args[2]
+            assert gateway_update.oauth_config["audience"] == "api.atlassian.com"
+            assert gateway_update.oauth_config["client_id"] == "client-id"
+            assert gateway_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
+
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_oauth_assembled_minimal_fields_covers_false_branches(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
@@ -17310,6 +17485,50 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 
+@pytest.mark.asyncio
+async def test_admin_add_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
+    """Test adding A2A agent with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+    form_data = FakeForm(
+        {
+            "name": "Agent_With_Audience",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_client_id": "client-id",
+            "oauth_client_secret": "client-secret",
+            "oauth_audience": "api.atlassian.com",
+            "oauth_scopes": "read:jira-work write:jira-work",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.register_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
+
+    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    assert response.status_code == 200
+    agent_data = service.register_agent.call_args.args[1]
+    assert agent_data.auth_type == "oauth"
+    assert agent_data.oauth_config["audience"] == "api.atlassian.com"
+    assert agent_data.oauth_config["client_id"] == "client-id"
+    assert agent_data.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
+
 
 @pytest.mark.asyncio
 async def test_admin_add_a2a_agent_oauth_assembled_minimal_fields_covers_false_branches(monkeypatch, mock_db):
@@ -17540,6 +17759,49 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.oauth_config is None
+
+@pytest.mark.asyncio
+async def test_admin_edit_a2a_agent_oauth_with_audience(monkeypatch, mock_db):
+    """Test editing A2A agent with OAuth audience parameter (for Atlassian, Auth0, etc.)."""
+    form_data = FakeForm(
+        {
+            "name": "Agent_With_Audience",
+            "endpoint_url": "http://agent.example.com",
+            "auth_type": "oauth",
+            "oauth_grant_type": "authorization_code",
+            "oauth_client_id": "client-id",
+            "oauth_client_secret": "client-secret",
+            "oauth_audience": "api.atlassian.com",
+            "oauth_scopes": "read:jira-work write:jira-work",
+        }
+    )
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=form_data)
+    request.scope = {"root_path": ""}
+
+    service = MagicMock()
+    service.update_agent = AsyncMock()
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+
+    team_service = MagicMock()
+    team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    encryptor = MagicMock()
+    encryptor.encrypt_secret_async = AsyncMock(return_value="enc-secret")
+    monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+        lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
+    )
+
+    response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
+    assert response.status_code == 200
+    agent_update = service.update_agent.call_args.kwargs["agent_data"]
+    assert agent_update.auth_type == "oauth"
+    assert agent_update.oauth_config["audience"] == "api.atlassian.com"
+    assert agent_update.oauth_config["client_id"] == "client-id"
+    assert agent_update.oauth_config["scopes"] == ["read:jira-work", "write:jira-work"]
 
 
 @pytest.mark.asyncio
