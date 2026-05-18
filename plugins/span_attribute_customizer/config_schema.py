@@ -217,7 +217,7 @@ class SpanAttributeCustomizerConfig(BaseModel):
             if not stripped:
                 raise ValueError("allowed_baggage_span_attributes entries cannot be empty")
             if len(stripped) > 255:
-                raise ValueError(f"Baggage key '{stripped}' exceeds 255 characters")
+                raise ValueError(f"Baggage key exceeds 255 characters (got {len(stripped)})")
             if stripped not in seen:
                 normalized.append(stripped)
                 seen.add(stripped)
@@ -242,13 +242,13 @@ class SpanAttributeCustomizerConfig(BaseModel):
 
         for key, value in v.items():
             if len(key) > 255:
-                raise ValueError(f"Attribute key '{key}' exceeds 255 characters")
+                raise ValueError(f"Attribute key exceeds 255 characters (got {len(key)})")
             if not isinstance(value, (str, int, float, bool)):
                 raise ValueError(
                     f"Attribute '{key}' has invalid type {type(value).__name__}. "
                     "Only str, int, float, and bool are supported by OTEL SDKs."
                 )
             if isinstance(value, str) and len(value) > 4096:
-                raise ValueError(f"Attribute '{key}' string value exceeds 4096 characters")
+                raise ValueError(f"Attribute string value exceeds 4096 characters (got {len(value)})")
 
         return v
