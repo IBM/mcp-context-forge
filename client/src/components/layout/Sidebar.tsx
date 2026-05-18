@@ -1,7 +1,6 @@
 import {
   Blocks,
   Box,
-  ChartLine,
   Code,
   House,
   MessageSquareCode,
@@ -37,7 +36,6 @@ interface NavItem {
 const MAIN_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.dashboard", path: "/app/", icon: House },
   { labelKey: "navigation.virtualServers", path: "/app/gateways", icon: Server },
-  { labelKey: "navigation.observability", path: "/app/observability", icon: ChartLine },
   { labelKey: "navigation.playground", path: "/app/playground", icon: MessageSquareMore },
 ];
 
