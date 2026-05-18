@@ -15499,8 +15499,11 @@ async def admin_get_agent(
         'admin_get_agent'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
+    user_email = get_user_email(user)
+    token_teams = user.get("token_teams")
+
     try:
-        agent = await a2a_service.get_agent(db, agent_id)
+        agent = await a2a_service.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
         return agent.model_dump(by_alias=True)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -15559,6 +15562,7 @@ async def admin_list_a2a_agents(
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = user.get("token_teams")
 
     # Call a2a_service.list_agents with page-based pagination
     paginated_result = await a2a_service.list_agents(
@@ -15567,6 +15571,7 @@ async def admin_list_a2a_agents(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
