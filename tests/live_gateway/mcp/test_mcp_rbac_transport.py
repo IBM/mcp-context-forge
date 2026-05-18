@@ -47,10 +47,9 @@ from fastmcp.client.auth import BearerAuth
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from ..helpers.mcp_test_helpers import (
     BASE_URL,
     skip_no_gateway,
@@ -75,19 +74,11 @@ _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
 # JWT helper (for admin bootstrap only — all test users use POST /tokens)
 # ---------------------------------------------------------------------------
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-        secret=_JWT_SECRET,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, secret=_JWT_SECRET)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +205,7 @@ def _cleanup_user(admin_api: APIRequestContext, user_info: dict[str, Any]) -> No
 def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Admin-authenticated API context using JWT (bootstrap only)."""
     token = _make_jwt("admin@example.com", is_admin=True, teams=None)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -226,9 +214,8 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 def rbac_team(admin_api: APIRequestContext) -> Generator[dict[str, Any], None, None]:
     """Create a private team for RBAC tests."""
     team_name = f"{RBAC_PREFIX}-team-{uuid.uuid4().hex[:8]}"
-    resp = admin_api.post("/teams/", data={"name": team_name, "description": "MCP RBAC E2E test team", "visibility": "private"})
-    assert resp.status in (200, 201), f"Failed to create team: {resp.status} {resp.text()}"
-    team = resp.json()
+    helper = ApiTestHelper(admin_api)
+    team = helper.create_team(team_name, description="MCP RBAC E2E test team", visibility="private")
     logger.info("Created RBAC team: %s (id=%s)", team_name, team["id"])
     yield team
     with suppress(Exception):
@@ -844,9 +831,9 @@ class TestDenyPaths:
 
     def test_wrong_secret_token_fails(self) -> None:
         """MCP with token signed by wrong secret should fail."""
-        bad_token = _create_jwt_token(
-            {"sub": "admin@example.com"},
-            user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
+        bad_token = make_test_jwt(
+            "admin@example.com",
+            is_admin=True,
             teams=None,
             secret="completely-wrong-secret-key-12345",  # pragma: allowlist secret
         )

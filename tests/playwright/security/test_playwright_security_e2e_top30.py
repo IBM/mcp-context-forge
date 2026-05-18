@@ -29,9 +29,9 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from ..pages.login_page import LoginPage
 from .conftest import BASE_URL
 
@@ -64,26 +64,18 @@ def _make_jwt(
     exp: int | None = None,
     scopes: dict[str, Any] | None = None,
 ) -> str:
-    payload: dict[str, Any] = {"sub": email}
-    if teams is not _UNSET:
-        payload["teams"] = teams
-    if exp is not None:
-        payload["exp"] = exp
-    return _create_jwt_token(
-        payload,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
+    extra_payload = {"exp": exp} if exp is not None else None
+    return make_test_jwt(
+        email,
+        is_admin=is_admin,
+        teams=teams,
         scopes=scopes,
+        extra_payload=extra_payload,
     )
 
 
 def _api_context(playwright, token: str, extra_headers: dict[str, str] | None = None) -> APIRequestContext:
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    if extra_headers:
-        headers.update(extra_headers)
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers=headers,
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token, extra_headers=extra_headers)
 
 
 def _set_jwt_cookie(context: BrowserContext, token: str) -> None:

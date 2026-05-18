@@ -53,7 +53,6 @@ from unittest.mock import patch as mock_patch
 from httpx import AsyncClient
 
 # --- Test Auth Header: Use a real JWT for authenticated requests ---
-import jwt
 from pydantic import SecretStr
 import pytest
 import pytest_asyncio
@@ -67,6 +66,7 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
     from mcpgateway.config import settings
     from mcpgateway.db import Base
     from mcpgateway.main import app, get_db
+    from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
 
@@ -89,20 +89,28 @@ else:
 def generate_test_jwt(*, is_admin: bool = False, teams=None):
     if teams is None:
         teams = []
-    payload = {
-        "sub": "test_user",
-        "exp": int(time.time()) + 3600,
-        "teams": teams,
-        "is_admin": is_admin,
-    }
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
         secret = secret.get_secret_value()
-    algorithm = settings.jwt_algorithm
-    return jwt.encode(payload, secret, algorithm=algorithm)
+    return make_legacy_test_jwt(
+        "test_user",
+        is_admin=is_admin,
+        teams=teams,
+        expires_in_minutes=60,
+        secret=secret,
+        algorithm=settings.jwt_algorithm,
+    )
 
 
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {generate_test_jwt()}"}
+TEST_AUTH_HEADER = make_auth_headers(
+    make_legacy_test_jwt(
+        "test_user",
+        teams=[],
+        expires_in_minutes=60,
+        secret=JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+)
 
 
 # -------------------------
@@ -164,7 +172,8 @@ async def temp_db(main_app_with_admin_api):
     finally:
         seed_db.close()
 
-    # Override the get_db dependency
+    # Override the get_db dependency and align module-level SessionLocal used by
+    # readiness/health helpers that do not go through dependency injection.
     def override_get_db():
         db = TestSessionLocal()
         try:
@@ -173,6 +182,12 @@ async def temp_db(main_app_with_admin_api):
             db.close()
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    original_session_local = main_mod.SessionLocal
+    main_mod.SessionLocal = TestSessionLocal
 
     # Override authentication for all tests
     # First-Party
@@ -243,6 +258,7 @@ async def temp_db(main_app_with_admin_api):
     # Cleanup
     sec_patcher.stop()
     test_user_context_db.close()
+    main_mod.SessionLocal = original_session_local
     app.dependency_overrides.clear()
     engine.dispose()
     os.close(db_fd)
@@ -1785,9 +1801,14 @@ class TestAuthentication:
             if method == "GET":
                 response = await client.get(endpoint)
 
-            # Should not return auth errors
+            # Should not return auth errors. Readiness status is validated by the
+            # dedicated readiness test above; here we only verify that the
+            # endpoint is public.
             assert response.status_code not in [401, 403], f"Endpoint {endpoint} unexpectedly required auth"
-            assert response.status_code == 200
+            if endpoint == "/ready":
+                assert response.status_code in [200, 503]
+            else:
+                assert response.status_code == 200
 
 
 # -------------------------

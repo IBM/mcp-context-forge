@@ -802,14 +802,13 @@ async def test_regular_user(
 
 def generate_test_jwt():
     """Generate a valid JWT token for testing."""
-    payload = {
-        "sub": "test_user",
-        "exp": int(time.time()) + 3600,
-        "teams": [],
-    }
-    secret = settings.jwt_secret_key.get_secret_value()
-    algorithm = settings.jwt_algorithm
-    return jwt.encode(payload, secret, algorithm=algorithm)
+    return make_test_jwt(
+        "test_user",
+        teams=[],
+        expires_in_minutes=60,
+        secret=settings.jwt_secret_key.get_secret_value(),
+        algorithm=settings.jwt_algorithm,
+    )
 
 
 @pytest_asyncio.fixture

@@ -26,24 +26,18 @@ from websockets.sync.client import connect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL
 
 
 def _make_admin_jwt() -> str:
-    return _create_jwt_token(
-        {"sub": "admin@example.com"},
-        user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
-    )
+    return make_test_jwt("admin@example.com", is_admin=True)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 def _ws_url(path: str) -> str:

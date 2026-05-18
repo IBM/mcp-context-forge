@@ -27,10 +27,10 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret
 
 # Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL, TEST_PASSWORD
 
 
@@ -40,10 +40,7 @@ def _extract_token_id(response_json: dict[str, Any]) -> str | None:
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 class TestTokenLifecycleEnforcement:
@@ -51,9 +48,10 @@ class TestTokenLifecycleEnforcement:
 
     def test_expired_jwt_token_is_rejected(self, playwright: Playwright):
         expired_at = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp())
-        expired_token = _create_jwt_token(
-            {"sub": "admin@example.com", "exp": expired_at},
-            user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
+        expired_token = make_test_jwt(
+            "admin@example.com",
+            is_admin=True,
+            extra_payload={"exp": expired_at},
         )
 
         ctx = _api_context(playwright, expired_token)
