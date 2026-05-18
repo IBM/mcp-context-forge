@@ -114,6 +114,7 @@ def _is_at_alembic_head(conn: Connection, cfg: Config) -> bool:
         False when the database is fresh, behind, or the check itself fails.
     """
     # pylint: disable=import-outside-toplevel
+    # Third-Party
     from alembic.runtime.migration import MigrationContext
     from alembic.script import ScriptDirectory
     import sqlalchemy as sa
@@ -784,10 +785,7 @@ async def main() -> None:
             with engine.connect() as conn:
                 conn.commit()
                 if not _is_at_alembic_head(conn, cfg):
-                    logger.warning(
-                        "SKIP_MIGRATION=true but schema is not at head "
-                        "(fresh DB or pending migrations) — running alembic upgrade head"
-                    )
+                    logger.warning("SKIP_MIGRATION=true but schema is not at head " "(fresh DB or pending migrations) — running alembic upgrade head")
                     with advisory_lock(conn):
                         cfg.attributes["connection"] = conn
                         command.upgrade(cfg, "head")
