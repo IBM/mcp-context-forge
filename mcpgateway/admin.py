@@ -2887,6 +2887,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                oauth_audience = str(form.get("oauth_audience", "")).strip()
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -3044,6 +3049,11 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                oauth_audience = str(form.get("oauth_audience", "")).strip()
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -12231,6 +12241,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -12258,6 +12269,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -12507,6 +12522,7 @@ async def admin_edit_gateway(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -12534,6 +12550,10 @@ async def admin_edit_gateway(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -15661,6 +15681,7 @@ async def admin_add_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -15688,6 +15709,10 @@ async def admin_add_a2a_agent(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -15925,6 +15950,7 @@ async def admin_edit_a2a_agent(
             oauth_username = str(form.get("oauth_username", ""))
             oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            oauth_audience = str(form.get("oauth_audience", ""))
 
             # If any OAuth field is provided, assemble oauth_config
             if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
@@ -15952,6 +15978,10 @@ async def admin_edit_a2a_agent(
                     oauth_config["username"] = oauth_username
                 if oauth_password:
                     oauth_config["password"] = oauth_password
+
+                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
+                if oauth_audience:
+                    oauth_config["audience"] = oauth_audience
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
