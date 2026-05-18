@@ -337,20 +337,22 @@ class TestApplyVisibilityFilter:
         assert "team_id" not in sql
 
     def test_team_scoped_in_token_teams(self, service, base_query):
-        """Team-scoped (team_id in token_teams): returns team+public and private-owner conditions."""
+        """Team-scoped (team_id in token_teams): returns team+public, private-owner, and global-public conditions."""
         result = service._apply_visibility_filter(base_query, user_email="owner@test.com", token_teams=["team-1"], team_id="team-1")
         sql = _compile_where(result)
         assert "team_id = 'team-1'" in sql
         assert "visibility IN ('team', 'public')" in sql
         assert "owner_email = 'owner@test.com'" in sql
         assert "visibility = 'private'" in sql
+        assert "visibility = 'public'" in sql  # globally public items are always included
 
     def test_team_scoped_in_token_teams_no_email(self, service, base_query):
-        """Team-scoped (team_id in token_teams, no user_email): team+public but no private-owner."""
+        """Team-scoped (team_id in token_teams, no user_email): team+public, global-public, no private-owner."""
         result = service._apply_visibility_filter(base_query, user_email=None, token_teams=["team-1"], team_id="team-1")
         sql = _compile_where(result)
         assert "team_id = 'team-1'" in sql
         assert "visibility IN ('team', 'public')" in sql
+        assert "visibility = 'public'" in sql  # globally public items are always included
         assert "owner_email" not in sql
 
     def test_team_scoped_not_in_token_teams(self, service, base_query):
@@ -360,3 +362,15 @@ class TestApplyVisibilityFilter:
         # SQLAlchemy compiles where(False) as "WHERE false" or "WHERE 1!=1"
         lower_sql = sql.lower()
         assert "false" in lower_sql or "1 != 1" in lower_sql or "1!=1" in lower_sql
+
+    def test_team_scoped_always_includes_globally_public_items(self, service, base_query):
+        """Team-scoped filter always ORs in a global public condition.
+
+        When team_id=X is supplied, items with visibility='public' owned by *other*
+        teams must still be returned.  The generated WHERE clause must contain the
+        standalone ``visibility = 'public'`` condition (not gated on team_id).
+        """
+        result = service._apply_visibility_filter(base_query, user_email=None, token_teams=["team-1"], team_id="team-1")
+        sql = _compile_where(result)
+        # The standalone public condition must be present in addition to the team-scoped one
+        assert "visibility = 'public'" in sql
