@@ -1,67 +1,88 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/integration/test_rate_limiter_plugin_bindings_e2e.py
+"""Location: ./tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Pratik Gandhi
 
-End-to-end integration test for the rate-limiter via the plugin-bindings API.
+Slow live-infrastructure lifecycle inspection harness for the rate-limiter
+plugin-bindings API.
 
-Configures a ``RateLimiterPlugin`` binding on a per-team / per-tool scope
-through the gateway's ``POST /v1/tools/plugin_bindings`` endpoint, waits for
-propagation, then invokes the bound tool repeatedly to confirm enforcement
-fires (HTTP 429 / MCP isError with rate-limit text).
+Walks the binding through POST → UPSERT → DELETE against a running docker
+stack and asserts that each step propagates correctly to the gateway plugin
+manager, surfaces in Postgres + Redis, and changes runtime enforcement
+behaviour on tool dispatch.
 
-This sits between two existing test layers:
+DEFAULT: SKIPPED.
+    These tests are intentionally skipped from *all* automated runs —
+    including ``make test``, ``make test-integration``, and
+    ``make test-live-gateway``. They are slow (~4 minutes total, ~70-90s
+    per test) and operator-driven. Opt in explicitly with
+    ``RUN_BINDING_LIFECYCLE=1``.
 
-  * ``tests/unit/mcpgateway/routers/test_tool_plugin_bindings.py`` exercises
-    the binding router in isolation; plugin invocation is mocked.
-  * ``tests/integration/test_rate_limiter.py`` (and cpex-plugins integration
-    tests) exercise the plugin against real Redis but instantiate it
-    directly, bypassing the gateway's binding API entirely.
+Why it lives under tests/live_gateway/ and not tests/integration/:
+    The diagnostic ``[inspect]`` narration (counter snapshots, request /
+    response dumps, Redis key inventory, dimension-key bookkeeping) is the
+    point of these tests — they exist to make the binding-lifecycle flow
+    inspectable by hand. Print volume + runtime make them a poor fit for
+    integration/, where sibling tests stay terse for CI. The
+    tests/live_gateway/ tree is explicitly excluded from default runs and
+    the print-friendly style there matches what these tests do.
 
-Neither covers the full path: binding API → gateway plugin manager → plugin
-instantiation with the binding's config → enforcement at tool dispatch. This
-file fills that gap.
+Position vs. existing test layers:
+    * tests/unit/mcpgateway/routers/test_tool_plugin_bindings.py — exercises
+      the binding router in isolation; plugin invocation is mocked.
+    * tests/integration/test_rate_limiter.py + sibling rate-limiter
+      integration tests — exercise the plugin against real Redis but
+      instantiate it directly, bypassing the gateway's binding API.
+    * THIS file — covers the full path: binding API → gateway plugin
+      manager → plugin instantiation with the binding's config →
+      enforcement at tool dispatch, with full per-call narration.
 
-Requirements:
-    - Running gateway at $GATEWAY_URL (default ``http://localhost:8080``)
-    - Redis reachable from the gateway pod at $BINDING_REDIS_URL
-      (default ``redis://redis:6379/0`` — the docker-compose hostname)
-    - At least one server with a registered tool
+Prerequisites:
+    - Full docker-compose stack up (gateway + nginx + postgres + redis +
+      fast_time_server). The defaults below assume the compose project name
+      is ``mcp-context-forge`` (i.e. containers named
+      ``mcp-context-forge-postgres-1`` / ``mcp-context-forge-redis-1``). If
+      you used a different ``-p <name>``, override
+      ``RATE_LIMITER_TEST_PG_CONTAINER`` + ``REDIS_CONTAINER_NAME``.
     - Admin user belongs to at least one team (true for the seeded
-      ``admin@example.com`` personal team)
-    - ``docker exec`` access to the Postgres + Redis containers (used for
-      direct cross-checks and rate-limit key inspection)
+      ``admin@example.com``).
+    - ``docker exec`` access to the Postgres + Redis containers.
 
-Setup:
-    From the repo root, bring up the standard compose stack::
+How to run:
 
-        make compose-up
+    # 1) Terse mode — opt-in only, no narration. Use when you just want to
+    # confirm the lifecycle still passes.
+    RUN_BINDING_LIFECYCLE=1 \\
+        uv run pytest \\
+        tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
+        -v
 
-    The defaults below assume the resulting compose project name is
-    ``mcp-context-forge`` (i.e. containers named
-    ``mcp-context-forge-postgres-1`` and ``mcp-context-forge-redis-1``).
-    If you use a custom project name (``docker compose -p <name> up``),
-    set the corresponding env vars below.
+    # 2) Inspect mode — full ``[inspect]`` per-call narration: counter
+    # snapshots, request/response dumps, Redis key inventory, dimension
+    # tracking. Use when debugging or studying the binding flow.
+    RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+        uv run pytest \\
+        tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
+        -v -s
 
-Usage:
-    Run all tests in this file::
+    # 3) Custom compose project — override container names:
+    RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+        RATE_LIMITER_TEST_PG_CONTAINER=rl-binding-test-postgres-1 \\
+        REDIS_CONTAINER_NAME=rl-binding-test-redis-1 \\
+        uv run pytest \\
+        tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
+        -v -s
 
-        uv run pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
-            -v --with-integration
-
-    Run only the inspection-friendly lifecycle test with phase-by-phase
-    narration (use ``-s`` so the inline ``[inspect]`` prints render in
-    real time)::
-
-        uv run pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
-            ::TestRateLimiterBindingApiEnforcesLimits::test_binding_full_lifecycle_inspectable \\
-            -v -s --with-integration -m slow
-
-    The lifecycle tests are ``@pytest.mark.slow`` (~70s each) — run them
-    one at a time when iterating.
+    # 4) A single test (each runs ~70-90s; iterate one at a time):
+    RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+        uv run pytest \\
+        tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py::TestRateLimiterBindingApiEnforcesLimits::test_binding_full_lifecycle_inspectable \\
+        -v -s
 
 Environment variables:
+    RUN_BINDING_LIFECYCLE             (required: 1/true/yes) opt-in to running
+    INSPECT                           (optional: 1) enable [inspect] narration
     GATEWAY_URL                       (default: http://localhost:8080)
     GATEWAY_EMAIL                     (default: admin@example.com)
     GATEWAY_PASSWORD                  (default: changeme)
@@ -80,13 +101,15 @@ Environment variables:
 
 Notes on flakiness:
     - Tool-path amplification varies between runs (~5×–20× plugin hook
-      invocations per user-level call). The lifecycle test's enforcement
-      transition (``allowed`` → ``blocked``) is therefore non-deterministic
-      in shape; assertion only requires ``rate_limited >= 1``.
+      invocations per user-level call; see issue #4557). The lifecycle
+      test's enforcement transition (``allowed`` → ``blocked``) is therefore
+      non-deterministic in shape; assertion only requires
+      ``rate_limited >= 1``.
     - Stale state from prior runs can interfere: if a previous test left
       ``plugin:RateLimiterPlugin:mode = "disabled"`` in Redis, the
       per-tenant manager will load the plugin as disabled and bindings
-      won't enforce. Clear with::
+      won't enforce. The autouse Redis-isolation fixture inside this file
+      clears it, but if you want to do it manually::
 
           docker exec <redis-container> redis-cli DEL plugin:RateLimiterPlugin:mode
           docker exec <redis-container> redis-cli --scan --pattern 'rl:*' \\
@@ -150,6 +173,30 @@ PLUGIN_NAME = "RateLimiterPlugin"
 PROPAGATION_WAIT = int(
     os.environ.get("PROPAGATION_WAIT", str(PLUGIN_MODE_PROPAGATION_WAIT_SECONDS))
 )
+
+
+# Opt-in to the per-call ``[inspect]`` narration. When unset, ``_make_say()``
+# returns a no-op so the test runs silently with just pass/fail and asserts.
+_INSPECT_ENABLED = os.environ.get("INSPECT", "0").lower() in {"1", "true", "yes"}
+
+
+def _make_say(capsys):
+    """Return a narration helper that prints ``[inspect]`` lines when
+    ``INSPECT=1`` is set in the environment; otherwise a no-op.
+
+    ``capsys.disabled()`` is used so the prints render in real time even when
+    pytest is capturing output. Typical invocation:
+
+        INSPECT=1 uv run pytest ... -v -s
+    """
+    if not _INSPECT_ENABLED:
+        return lambda _msg: None
+
+    def _say(msg: str) -> None:
+        with capsys.disabled():
+            print(f"\n[inspect] {msg}")
+
+    return _say
 
 
 # ---------------------------------------------------------------------------
@@ -525,10 +572,22 @@ def _mcp_initialize_session(
 # Skip-guards
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.skipif(
-    not _is_gateway_running(),
-    reason=f"Gateway not running at {GATEWAY_URL}",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        os.environ.get("RUN_BINDING_LIFECYCLE", "0").lower() not in {"1", "true", "yes"},
+        reason=(
+            "Slow lifecycle-inspection harness (~4 min, requires full docker stack). "
+            "Intentionally skipped by default — including by make test-live-gateway. "
+            "Opt in explicitly with RUN_BINDING_LIFECYCLE=1. "
+            "Add INSPECT=1 and `pytest -s` for full diagnostic narration. "
+            "See module docstring for the full command set."
+        ),
+    ),
+    pytest.mark.skipif(
+        not _is_gateway_running(),
+        reason=f"Gateway not running at {GATEWAY_URL}",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -634,10 +693,11 @@ class TestRateLimiterBindingApiEnforcesLimits:
         Designed for manual eyeballing alongside Redis Insight, not for CI.
         Run with ``-s`` to see the printed inspection pointers in real time::
 
-            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+            RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+                pytest tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
                 ::TestRateLimiterBindingApiEnforcesLimits \\
                 ::test_binding_full_lifecycle_inspectable \\
-                -v -s --with-integration -m slow
+                -v -s
 
         Walks through every layer of the binding contract:
 
@@ -709,12 +769,10 @@ class TestRateLimiterBindingApiEnforcesLimits:
         baseline_pause = 5
         post_propagation_pause = 10  # on top of PROPAGATION_WAIT
         post_burst_pause = 30
-        # capsys lets us flush prints even with pytest output capture (use -s
-        # to see them in real time as the test executes).
 
-        def _say(msg: str) -> None:
-            with capsys.disabled():
-                print(f"\n[inspect] {msg}")
+        # Narration is INSPECT-gated: prints only when INSPECT=1 is set,
+        # no-op otherwise. Use ``pytest -s`` for the prints to render live.
+        _say = _make_say(capsys)
 
         # ---- Phase 0: baseline -----------------------------------------------
         _say("Phase 0 — capturing baseline plugin state from /admin/plugins")
@@ -1065,10 +1123,11 @@ class TestRateLimiterBindingModeAndLifecycle:
         changes dispatch behaviour. Run with ``-s`` to see the inspection
         pointers in real time::
 
-            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+            RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+                pytest tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
                 ::TestRateLimiterBindingModeAndLifecycle \\
                 ::test_upsert_binding_full_lifecycle_inspectable \\
-                -v -s --with-integration -m slow
+                -v -s
 
         Phases:
           0. Baseline plugin state from ``/admin/plugins``.
@@ -1108,9 +1167,8 @@ class TestRateLimiterBindingModeAndLifecycle:
         post_propagation_pause = 10
         post_burst_pause = 30
 
-        def _say(msg: str) -> None:
-            with capsys.disabled():
-                print(f"\n[inspect] {msg}")
+        # Narration is INSPECT-gated (see _make_say docstring).
+        _say = _make_say(capsys)
 
         # Same multi-dim config used for both the initial POST and the
         # mode-flip upsert — only the mode field changes between the two.
@@ -1405,10 +1463,11 @@ class TestRateLimiterBindingModeAndLifecycle:
         write surface it landed on (API + Postgres). Run with ``-s`` to see
         the printed inspection pointers in real time::
 
-            pytest tests/integration/test_rate_limiter_plugin_bindings_e2e.py \\
+            RUN_BINDING_LIFECYCLE=1 INSPECT=1 \\
+                pytest tests/live_gateway/plugins/test_rate_limiter_bindings_lifecycle.py \\
                 ::TestRateLimiterBindingModeAndLifecycle \\
                 ::test_delete_binding_full_lifecycle_inspectable \\
-                -v -s --with-integration -m slow
+                -v -s
 
         Phases:
           0. Baseline plugin state from ``/admin/plugins``.
@@ -1449,9 +1508,8 @@ class TestRateLimiterBindingModeAndLifecycle:
         post_propagation_pause = 10
         post_delete_pause = 30
 
-        def _say(msg: str) -> None:
-            with capsys.disabled():
-                print(f"\n[inspect] {msg}")
+        # Narration is INSPECT-gated (see _make_say docstring).
+        _say = _make_say(capsys)
 
         # ---- Phase 0: baseline -----------------------------------------------
         _say("Phase 0 — capturing baseline plugin state from /admin/plugins")
