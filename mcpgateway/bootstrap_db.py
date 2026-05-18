@@ -46,6 +46,7 @@ from filelock import FileLock
 from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
+from alembic.runtime.migration import MigrationContext
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -115,7 +116,7 @@ def _is_at_alembic_head(conn: Connection, cfg: Config) -> bool:
     """
     # pylint: disable=import-outside-toplevel
     # Third-Party
-    from alembic.runtime.migration import MigrationContext
+   
     from alembic.script import ScriptDirectory
     import sqlalchemy as sa
 
