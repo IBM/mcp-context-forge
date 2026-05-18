@@ -42,11 +42,11 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
 from filelock import FileLock
 from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
-from alembic.runtime.migration import MigrationContext
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -116,7 +116,8 @@ def _is_at_alembic_head(conn: Connection, cfg: Config) -> bool:
     """
     # pylint: disable=import-outside-toplevel
     # Third-Party
-   
+
+    # Third-Party
     from alembic.script import ScriptDirectory
     import sqlalchemy as sa
 
@@ -778,18 +779,15 @@ async def main() -> None:
 
     # SKIP_MIGRATION: external tooling (init container, CI pipeline) already ran
     # alembic upgrade head — skip schema migration and run only the idempotent
-    # bootstrap helpers.  However, if the schema is not yet at head (e.g. first
-    # boot on a fresh DB before any init container has run), fall through to
-    # migrations so the app does not crash with "no such table" errors.
+    # bootstrap helpers.  If the schema is NOT at head, the init container failed
+    # or the wrong DB was targeted; fail fast so the deployment error is visible.
     if settings.skip_migration:
         try:
             with engine.connect() as conn:
                 conn.commit()
                 if not _is_at_alembic_head(conn, cfg):
-                    logger.warning("SKIP_MIGRATION=true but schema is not at head " "(fresh DB or pending migrations) — running alembic upgrade head")
-                    with advisory_lock(conn):
-                        cfg.attributes["connection"] = conn
-                        command.upgrade(cfg, "head")
+                    logger.error("SKIP_MIGRATION=true but schema is not at head — " "run 'alembic upgrade head' before starting the application")
+                    raise RuntimeError("Schema not at head; migrations required before startup")
                 else:
                     logger.info("SKIP_MIGRATION=true — schema already at head, skipping migration")
                 updated = normalize_team_visibility(conn)

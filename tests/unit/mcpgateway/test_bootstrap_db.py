@@ -1532,8 +1532,7 @@ class TestMain:
 
     @pytest.mark.asyncio
     async def test_main_skip_migration_fresh_db(self, mock_settings):
-        """skip_migration=True on a fresh DB must still run alembic upgrade head."""
-        # mock_settings.skip_migration is a truthy Mock attribute — tests skip_migration=True path
+        """skip_migration=True on a DB not at head raises RuntimeError (fail-fast)."""
         mock_engine = Mock()
         mock_conn = Mock()
         mock_conn.commit = Mock()
@@ -1543,27 +1542,14 @@ class TestMain:
         mock_connect_cm.__exit__ = Mock(return_value=None)
         mock_engine.connect = Mock(return_value=mock_connect_cm)
 
-        mock_command = Mock()
-        mock_advisory_lock_cm = MagicMock()
-        mock_advisory_lock_cm.__enter__ = Mock(return_value=None)
-        mock_advisory_lock_cm.__exit__ = Mock(return_value=None)
-
         with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine), \
              patch("importlib.resources.files") as mock_files, \
              patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})), \
-             patch("mcpgateway.bootstrap_db.command", mock_command), \
              patch("mcpgateway.bootstrap_db._is_at_alembic_head", return_value=False), \
-             patch("mcpgateway.bootstrap_db.advisory_lock", return_value=mock_advisory_lock_cm), \
-             patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0), \
-             patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()), \
-             patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()), \
-             patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()), \
              patch("mcpgateway.bootstrap_db.settings", mock_settings):
             mock_files.return_value.joinpath.return_value = "alembic.ini"
-            await main()
-
-        # upgrade must be called despite skip_migration=True (fresh DB detected)
-        mock_command.upgrade.assert_called_once_with(ANY, "head")
+            with pytest.raises(RuntimeError, match="Schema not at head; migrations required before startup"):
+                await main()
 
     @pytest.mark.asyncio
     async def test_main_exception_handling(self, mock_settings):
@@ -1627,7 +1613,7 @@ class TestIsAtAlembicHead:
         mock_cfg = Mock()
         with (
             patch("sqlalchemy.inspect") as mock_inspect,
-            patch("alembic.runtime.migration.MigrationContext") as mock_mc,
+            patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc,
             patch("alembic.script.ScriptDirectory") as mock_sd,
         ):
             mock_inspector = Mock()
