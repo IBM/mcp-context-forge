@@ -486,10 +486,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       passthroughHeaders: headersArray.length > 0 ? headersArray : undefined,
       authType: AUTH_TYPE_TO_API[authType],
       authUsername: authType === "basic" ? authUsername || undefined : undefined,
-      authPassword:
-        authType === "basic" ? authPassword || undefined : undefined,
-      authToken:
-        authType === "bearer" ? bearerToken || undefined : undefined,
+      authPassword: authType === "basic" ? authPassword || undefined : undefined,
+      authToken: authType === "bearer" ? bearerToken || undefined : undefined,
       auth_headers: (() => {
         if (authType !== "custom") return undefined;
         const headers = customHeaders
