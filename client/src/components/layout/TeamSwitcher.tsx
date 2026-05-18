@@ -6,8 +6,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import { SidebarMenuButton } from "../ui/sidebar";
 import { useQuery } from "../../hooks/useQuery";
-import { Button } from "@/components/ui/button";
 
 interface Team {
   id: string;
@@ -37,24 +37,26 @@ export function TeamSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="rounded-lg px-2 text-foreground transition-colors hover:bg-muted"
+        <SidebarMenuButton
+          size="default"
+          className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           aria-label={`Select team. Current: ${displayName}`}
           aria-haspopup="menu"
           aria-expanded={undefined}
         >
-          <Globe className="size-4 text-muted-foreground" aria-hidden="true" />
-          <span className="max-w-40 truncate" aria-live={isLoading ? "polite" : "off"}>
-            {isLoading ? "Loading..." : displayName}
-          </span>
-          <ChevronsUpDown className="size-4 text-muted-foreground" aria-hidden="true" />
-        </Button>
+          <div className="flex aspect-square size-6 items-center justify-center" aria-hidden="true">
+            <Globe className="size-3 text-sidebar-foreground" />
+          </div>
+          <div className="grid flex-1 text-left text-sm leading-tight">
+            <span className="truncate font-semibold" aria-live={isLoading ? "polite" : "off"}>
+              {isLoading ? "Loading..." : displayName}
+            </span>
+          </div>
+          <ChevronsUpDown className="ml-auto" aria-hidden="true" />
+        </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        className="min-w-56 rounded-lg w-56"
+        className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
         align="start"
         side="bottom"
         sideOffset={4}
