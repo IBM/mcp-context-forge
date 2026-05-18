@@ -73,31 +73,33 @@ class BaseService(ABC):
 
         Handles the full access-control flow for list endpoints:
         1. Admin bypass: anonymous (user_email=None AND token_teams=None) sees
-           public + team rows only. DB-resolved admin (email + token_teams=None)
-           also sees their OWN private rows. No bypass shape exposes another
-           user's private rows (PR #4341 / issue #4323). The DB-resolved admin
-           shape is detected via :func:`~mcpgateway.utils.admin_check.is_user_admin`
-           — using the broader ``is_admin_bypass_granted`` here would risk
-           re-introducing the leak this PR closes (see PR #4341 review B2/B5).
+           public + team rows only. DB-resolved admin (email provided) sees
+           public + team rows + their OWN private rows, regardless of token_teams
+           value. No bypass shape exposes another user's private rows (PR #4341 /
+           issue #4323). The DB-resolved admin shape is detected via
+           :func:`~mcpgateway.utils.admin_check.is_user_admin` — using the broader
+           ``is_admin_bypass_granted`` here would risk re-introducing the leak this
+           PR closes (see PR #4341 review B2/B5).
         2. Resolves effective teams from JWT token_teams or DB lookup.
-        3. Suppresses owner matching for public-only tokens (token_teams=[]).
+        3. Suppresses owner matching for public-only tokens (token_teams=[]) for
+           non-admin users.
         4. Delegates to _apply_visibility_filter for SQL WHERE construction.
 
         Args:
             query: SQLAlchemy query to filter.
             db: Database session (for team membership lookup when token_teams is None).
             user_email: User's email. ``None`` = no user context.
-            token_teams: Teams from JWT via normalize_token_teams().
-                ``None`` = admin bypass or no auth context.
+            token_teams: Teams from JWT via normalize_token_teams() or resolve_session_teams().
+                ``None`` = admin bypass (API token) or no auth context.
                 ``[]`` = public-only token.
-                ``[...]`` = team-scoped token.
+                ``[...]`` = team-scoped token (API or session token).
             team_id: Optional specific team filter.
 
         Returns:
             Query with visibility WHERE clauses applied. Admin bypass excludes
             another user's private rows (security invariant from PR #4341); the
-            caller's own private rows remain visible when the bypass shape is
-            DB-resolved admin with an email.
+            caller's own private rows remain visible when user is admin (detected
+            via DB check), regardless of token type.
         """
         # Admin bypass: respect PR #4341's invariant that admin bypass NEVER reveals
         # another user's private rows. Anonymous bypass (no email) sees public + team
@@ -106,7 +108,12 @@ class BaseService(ABC):
         model_cls = self._visibility_model_cls
         if user_email is None and token_teams is None:
             return query.where(model_cls.visibility != "private")
-        if token_teams is None and user_email and is_user_admin(db, user_email):
+
+        # Check if user is an admin (for both API tokens with token_teams=None
+        # and session tokens with token_teams as a list)
+        user_is_admin = user_email and is_user_admin(db, user_email)
+
+        if token_teams is None and user_is_admin:
             return query.where(
                 or_(
                     model_cls.visibility != "private",
@@ -123,7 +130,8 @@ class BaseService(ABC):
             effective_teams = [team.id for team in user_teams]
 
         # Public-only tokens (explicit token_teams=[]) must not get owner access
-        filter_email = None if (token_teams is not None and not token_teams) else user_email
+        # For admin users with session tokens (token_teams is a list), preserve owner access
+        filter_email = None if (token_teams is not None and not token_teams and not user_is_admin) else user_email
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
 
