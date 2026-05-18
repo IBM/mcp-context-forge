@@ -69,7 +69,10 @@ describe("Gateways", () => {
       associatedPrompts: [],
       associatedA2aAgents: [],
       metrics: null,
-      tags: ["team", "enabled"],
+      tags: [
+        { id: "tag-team", label: "team" },
+        { id: "tag-enabled", label: "enabled" },
+      ],
       createdBy: "admin@example.com",
       createdFromIp: "127.0.0.1",
       createdVia: "ui",
@@ -149,7 +152,7 @@ describe("Gateways", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
-  it("disables Upload and per-row action items on virtual server cards", async () => {
+  it("opens virtual server details and keeps unfinished row actions disabled", async () => {
     const user = userEvent.setup();
     const mockServer: VirtualServer = {
       id: "gateway-1",
@@ -184,13 +187,35 @@ describe("Gateways", () => {
       oauthEnabled: false,
       oauthConfig: null,
     };
+    const detailServer: VirtualServer = {
+      ...mockServer,
+      description:
+        "Virtual server endpoint: developer tooling server exposing file system utilities.",
+      associatedTools: ["Get Repo Issues", "Create New Issue"],
+      associatedToolIds: ["GITHUB_GET_REPO_ISSUES", "GITHUB_CREATE_ISSUE"],
+      associatedResources: ["github://repo/{owner}/{repo}"],
+      associatedPrompts: ["summarize_pull_request"],
+      tags: [{ id: "tag-development", label: "development" }],
+    };
 
-    mockUseQuery.mockReturnValue({
-      data: { servers: [mockServer] },
-      error: null,
-      isLoading: false,
-      execute: vi.fn(),
-      refetch: vi.fn(),
+    mockUseQuery.mockImplementation((path) => {
+      if (path === "/servers/gateway-1") {
+        return {
+          data: detailServer,
+          error: null,
+          isLoading: false,
+          execute: vi.fn(),
+          refetch: vi.fn(),
+        };
+      }
+
+      return {
+        data: { servers: [mockServer] },
+        error: null,
+        isLoading: false,
+        execute: vi.fn(),
+        refetch: vi.fn(),
+      };
     });
 
     renderWithProviders(<Gateways />);
@@ -199,10 +224,40 @@ describe("Gateways", () => {
 
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
 
-    for (const label of ["View details", "Test connection", "Edit server", "Delete"]) {
+    const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
+    expect(viewDetails).not.toHaveAttribute("data-disabled");
+
+    for (const label of ["Test connection", "Edit server", "Delete"]) {
       const item = await screen.findByRole("menuitem", { name: label });
       expect(item).toHaveAttribute("data-disabled");
     }
+
+    await user.click(viewDetails);
+
+    expect(mockUseQuery).toHaveBeenCalledWith("/servers/gateway-1", { enabled: true });
+    expect(screen.getByText("Virtual server details")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Virtual server endpoint: developer tooling server exposing file system utilities.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Visibility")).toBeInTheDocument();
+    expect(screen.getByText("Team")).toBeInTheDocument();
+    expect(screen.getByText("Server ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("Copy URL")).toBeInTheDocument();
+    expect(screen.getByText("Activity")).toBeInTheDocument();
+    expect(screen.getByText("Get Repo Issues")).toBeInTheDocument();
+    expect(screen.getByText("GITHUB_GET_REPO_ISSUES")).toBeInTheDocument();
+    expect(screen.getAllByText("github://repo/{owner}/{repo}").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("summarize_pull_request").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: "Tools" }));
+
+    expect(screen.getByText("Create New Issue")).toBeInTheDocument();
+    expect(screen.queryByText("github://repo/{owner}/{repo}")).not.toBeInTheDocument();
+    expect(screen.queryByText("summarize_pull_request")).not.toBeInTheDocument();
   });
 
   it("renders virtual server card without crashing when array fields are missing", () => {

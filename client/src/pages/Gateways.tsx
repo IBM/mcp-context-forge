@@ -13,15 +13,37 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Blocks, Bot, Box, Code, EllipsisVertical, Plus, Upload, Wrench } from "lucide-react";
+import {
+  Activity,
+  Blocks,
+  Bot,
+  Box,
+  Code,
+  Copy,
+  EllipsisVertical,
+  Filter,
+  PanelRightClose,
+  Plus,
+  Search,
+  Upload,
+  Users,
+  Wrench,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useQuery } from "@/hooks/useQuery";
-import type { VirtualServer, VirtualServersResponse } from "@/types/server";
+import type { VirtualServer, VirtualServerTag, VirtualServersResponse } from "@/types/server";
 import { Loading } from "@/components/ui/loading";
 
 const DEFAULT_PAGE_SIZE = 12;
@@ -37,11 +59,97 @@ interface ActionCard {
   disabledReason?: string;
 }
 
+type ComponentFilter = "all" | "tools" | "resources" | "prompts";
+
+interface DetailComponentItem {
+  id: string;
+  name: string;
+  secondary?: string;
+  type: Exclude<ComponentFilter, "all">;
+}
+
 function formatServerTimestamp(value?: string) {
   if (!value) return "Not synced yet";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
+}
+
+function formatServerDateTime(value?: string) {
+  if (!value) return "N/A";
+  return value.replace(/Z$/, "");
+}
+
+function formatVisibility(value?: string) {
+  if (!value) return "N/A";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function truncateMiddle(value: string, maxLength = 24) {
+  if (value.length <= maxLength) return value;
+  const edgeLength = Math.max(4, Math.floor((maxLength - 3) / 2));
+  return `${value.slice(0, edgeLength)}...${value.slice(-edgeLength)}`;
+}
+
+function getVirtualServerEndpoint(serverId: string) {
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return `/servers/${serverId}/mcp`;
+  }
+  return `${window.location.origin}/servers/${serverId}/mcp`;
+}
+
+function copyToClipboard(value: string) {
+  void navigator.clipboard?.writeText(value);
+}
+
+function getTagDisplay(tag: string | VirtualServerTag, index: number) {
+  if (typeof tag === "string") {
+    return { key: `${tag}-${index}`, label: tag };
+  }
+
+  const label = tag.label ?? tag.name ?? tag.value ?? tag.id ?? "Tag";
+  return { key: `${tag.id ?? label}-${index}`, label };
+}
+
+function getComponentIcon(type: DetailComponentItem["type"]) {
+  if (type === "tools") return <Wrench className="size-3.5" />;
+  if (type === "resources") return <Box className="size-3.5" />;
+  return <PromptIcon className="size-3.5" />;
+}
+
+function getComponentLabel(type: DetailComponentItem["type"]) {
+  if (type === "tools") return "tool";
+  if (type === "resources") return "resource";
+  return "prompt";
+}
+
+function buildComponentItems(server: VirtualServer): DetailComponentItem[] {
+  const toolNames = server.associatedTools ?? [];
+  const toolIds = server.associatedToolIds ?? [];
+  const toolItems = (toolIds.length > 0 ? toolIds : toolNames).map((idOrName, index) => {
+    const name = toolNames[index] ?? idOrName;
+    const secondary = toolIds[index] && toolIds[index] !== name ? toolIds[index] : undefined;
+    return {
+      id: `tool-${idOrName}-${index}`,
+      name,
+      secondary,
+      type: "tools" as const,
+    };
+  });
+
+  const resourceItems = (server.associatedResources ?? []).map((resource, index) => ({
+    id: `resource-${resource}-${index}`,
+    name: resource,
+    type: "resources" as const,
+  }));
+
+  const promptItems = (server.associatedPrompts ?? []).map((prompt, index) => ({
+    id: `prompt-${prompt}-${index}`,
+    name: prompt,
+    type: "prompts" as const,
+  }));
+
+  return [...toolItems, ...resourceItems, ...promptItems];
 }
 
 function ConnectSourceCard({ onAction }: { onAction: () => void }) {
@@ -77,11 +185,331 @@ function ConnectSourceCard({ onAction }: { onAction: () => void }) {
   );
 }
 
-function VirtualServerCard({ server }: { server: VirtualServer }) {
+function DetailRow({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`grid grid-cols-[96px_minmax(0,1fr)] items-start gap-4 ${className ?? ""}`}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 text-foreground">{children}</dd>
+    </div>
+  );
+}
+
+function CopyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{truncateMiddle(value)}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className="size-5 text-muted-foreground"
+        aria-label={`Copy ${label}`}
+        onClick={() => copyToClipboard(value)}
+      >
+        <Copy className="size-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+function VirtualServerDetailsDrawer({
+  server,
+  isLoading,
+  error,
+  onAddComponents,
+  onAddSources,
+  onOpenChange,
+}: {
+  server: VirtualServer | null;
+  isLoading: boolean;
+  error: { message: string } | null;
+  onAddComponents: () => void;
+  onAddSources: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const endpoint = server ? getVirtualServerEndpoint(server.id) : "";
+  const tags = (server?.tags ?? []).map(getTagDisplay);
+  const [componentFilter, setComponentFilter] = useState<ComponentFilter>("all");
+  const componentItems = server ? buildComponentItems(server) : [];
+  const visibleComponentItems =
+    componentFilter === "all"
+      ? componentItems
+      : componentItems.filter((item) => item.type === componentFilter);
+  const filterOptions: Array<{ value: ComponentFilter; label: string }> = [
+    { value: "all", label: "All" },
+    { value: "tools", label: "Tools" },
+    { value: "resources", label: "Resources" },
+    { value: "prompts", label: "Prompts" },
+  ];
+
+  return (
+    <Sheet open={Boolean(server)} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="data-[side=right]:!w-[min(1236px,calc(100vw-2rem))] data-[side=right]:!max-w-none data-[side=right]:sm:!max-w-none gap-0 overflow-hidden border-l border-border bg-background p-0 text-[13px]"
+      >
+        {server && (
+          <>
+            <SheetHeader className="sr-only">
+              <SheetTitle>{server.name} details</SheetTitle>
+              <SheetDescription>Virtual server details and activity.</SheetDescription>
+            </SheetHeader>
+
+            <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="min-w-0 overflow-y-auto px-6 py-8 lg:px-12">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-sm bg-primary text-primary-foreground">
+                      <MCPIcon className="size-4 [&_path]:fill-current" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <h2 className="truncate text-xl font-semibold text-foreground">
+                          {server.name}
+                        </h2>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`${server.name} detail actions`}
+                          className="text-muted-foreground"
+                        >
+                          <EllipsisVertical className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 bg-background"
+                    onClick={onAddSources}
+                  >
+                    <Plus className="size-3.5" />
+                    Add sources
+                  </Button>
+                </div>
+
+                <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
+                  {server.description || "No description provided."}
+                </p>
+
+                <div className="my-8 h-px bg-border" />
+
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className="text-sm font-semibold text-foreground">Components</h3>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1.5 bg-background"
+                    onClick={onAddComponents}
+                  >
+                    <Plus className="size-3.5" />
+                    Add components
+                  </Button>
+                </div>
+
+                <div className="mt-8 flex items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-6">
+                    {filterOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`text-sm font-semibold transition-colors ${
+                          componentFilter === option.value
+                            ? "text-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        onClick={() => setComponentFilter(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Search components"
+                    >
+                      <Search className="size-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Filter components"
+                    >
+                      <Filter className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {error && (
+                  <div
+                    role="alert"
+                    className="mt-6 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  >
+                    {error.message}
+                  </div>
+                )}
+
+                <div className="mt-5 divide-y divide-transparent">
+                  {isLoading && (
+                    <div className="flex items-center gap-2 py-8 text-muted-foreground">
+                      <Loading />
+                      <span>Loading server details...</span>
+                    </div>
+                  )}
+
+                  {!isLoading &&
+                    visibleComponentItems.map((item) => (
+                      <div
+                        key={item.id}
+                        className="grid min-h-10 grid-cols-[128px_minmax(0,1fr)_minmax(180px,0.9fr)_24px] items-center gap-4 py-1 text-sm"
+                      >
+                        <Badge
+                          variant="draft"
+                          className="w-fit rounded-md px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
+                        >
+                          <span className="mr-1.5 inline-flex">{getComponentIcon(item.type)}</span>
+                          {getComponentLabel(item.type)}
+                        </Badge>
+                        <span className="min-w-0 truncate text-muted-foreground">{item.name}</span>
+                        <span className="flex min-w-0 items-center gap-2 font-mono text-[13px] text-muted-foreground">
+                          <span className="truncate">{item.secondary ?? item.name}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label={`Copy ${item.name}`}
+                            className="size-5 text-muted-foreground"
+                            onClick={() => copyToClipboard(item.secondary ?? item.name)}
+                          >
+                            <Copy className="size-3.5" />
+                          </Button>
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Actions for ${item.name}`}
+                          className="text-muted-foreground"
+                        >
+                          <EllipsisVertical className="size-4" />
+                        </Button>
+                      </div>
+                    ))}
+
+                  {!isLoading && visibleComponentItems.length === 0 && (
+                    <div className="py-8 text-sm text-muted-foreground">
+                      No {componentFilter === "all" ? "components" : componentFilter} found.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <aside className="relative border-t border-border bg-background lg:border-l lg:border-t-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Close virtual server details"
+                  className="absolute right-3 top-3 text-muted-foreground"
+                  onClick={() => onOpenChange(false)}
+                >
+                  <PanelRightClose className="size-4" />
+                </Button>
+
+                <div className="border-b border-border p-4 pt-8">
+                  <h3 className="mb-7 text-sm font-semibold text-foreground">
+                    Virtual server details
+                  </h3>
+
+                  <dl className="space-y-4">
+                    <DetailRow label="Status">
+                      <span className="flex items-center gap-2">
+                        <Activity className="size-3.5 text-emerald-400" />
+                        {server.enabled ? "Active" : "Inactive"}
+                      </span>
+                    </DetailRow>
+                    <DetailRow label="Visibility">
+                      <span className="flex items-center gap-2">
+                        <Users className="size-3.5 text-muted-foreground" />
+                        {formatVisibility(server.visibility)}
+                      </span>
+                    </DetailRow>
+                    <DetailRow label="Version">{server.version ?? "N/A"}</DetailRow>
+                    <DetailRow label="Server ID">
+                      <CopyValue label="server ID" value={server.id} />
+                    </DetailRow>
+                    <DetailRow label="URL">
+                      <CopyValue label="URL" value={endpoint} />
+                    </DetailRow>
+                    <DetailRow label="Tags" className="items-center">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        {tags.map((tag) => (
+                          <Badge
+                            key={tag.key}
+                            variant="outline"
+                            className="rounded-full px-2 py-0 text-[11px] font-medium text-muted-foreground"
+                          >
+                            {tag.label}
+                          </Badge>
+                        ))}
+                        <button
+                          type="button"
+                          className="text-[12px] text-muted-foreground hover:text-foreground"
+                        >
+                          + add
+                        </button>
+                      </div>
+                    </DetailRow>
+                  </dl>
+                </div>
+
+                <div className="p-4">
+                  <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
+                  <dl className="space-y-4">
+                    <DetailRow label="Created">{formatServerDateTime(server.createdAt)}</DetailRow>
+                    <DetailRow label="Last modified">
+                      {formatServerDateTime(server.updatedAt)}
+                    </DetailRow>
+                  </dl>
+                </div>
+              </aside>
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function VirtualServerCard({
+  server,
+  onViewDetails,
+}: {
+  server: VirtualServer;
+  onViewDetails: (server: VirtualServer) => void;
+}) {
   const toolCount = server.associatedToolIds?.length ?? 0;
   const resourceCount = server.associatedResources?.length ?? 0;
   const promptCount = server.associatedPrompts?.length ?? 0;
-  const tags = server.tags ?? [];
+  const tags = (server.tags ?? []).map(getTagDisplay);
 
   return (
     <Card
@@ -121,7 +549,9 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled>View details</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onViewDetails(server)}>
+                  View details
+                </DropdownMenuItem>
                 <DropdownMenuItem disabled>Test connection</DropdownMenuItem>
                 <DropdownMenuItem disabled>Edit server</DropdownMenuItem>
                 <DropdownMenuItem disabled className="text-destructive">
@@ -153,11 +583,11 @@ function VirtualServerCard({ server }: { server: VirtualServer }) {
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
             {tags.map((tag) => (
               <Badge
-                key={tag}
+                key={tag.key}
                 variant="outline"
                 className="shrink-0 px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
               >
-                {tag}
+                {tag.label}
               </Badge>
             ))}
           </div>
@@ -263,7 +693,17 @@ function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) {
 export function Gateways() {
   const { navigate } = useRouter();
   const { data, error, isLoading } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
+  const [detailsServer, setDetailsServer] = useState<VirtualServer | null>(null);
+  const {
+    data: serverDetails,
+    error: serverDetailsError,
+    isLoading: isServerDetailsLoading,
+  } = useQuery<VirtualServer>(`/servers/${detailsServer?.id ?? "__pending__"}`, {
+    enabled: Boolean(detailsServer),
+  });
   const servers = data?.servers ?? [];
+  const hydratedDetailsServer =
+    detailsServer && serverDetails?.id === detailsServer.id ? serverDetails : detailsServer;
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -367,9 +807,20 @@ export function Gateways() {
         <div className="grid gap-6 lg:grid-cols-2">
           <ConnectSourceCard onAction={() => navigate("/app/servers?openForm=true")} />
           {servers.map((server) => (
-            <VirtualServerCard key={server.id} server={server} />
+            <VirtualServerCard key={server.id} server={server} onViewDetails={setDetailsServer} />
           ))}
         </div>
+
+        <VirtualServerDetailsDrawer
+          server={hydratedDetailsServer}
+          isLoading={Boolean(detailsServer) && isServerDetailsLoading}
+          error={serverDetailsError}
+          onAddComponents={() => navigate("/app/servers?openForm=true")}
+          onAddSources={() => navigate("/app/servers?openForm=true")}
+          onOpenChange={(open) => {
+            if (!open) setDetailsServer(null);
+          }}
+        />
       </div>
     );
   }
