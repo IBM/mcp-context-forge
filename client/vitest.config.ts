@@ -15,7 +15,7 @@ export default defineConfig({
     globals: true,
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
-    css: false,
+    css: true,
     // Vitest runs Testing-Library specs under src/; Playwright specs live
     // under e2e/ and must not be picked up here (they use @playwright/test).
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
