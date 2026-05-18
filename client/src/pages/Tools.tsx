@@ -28,7 +28,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
     <Card size="sm">
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-fuchsia-400">
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-icon-bg">
             <Wrench className="h-3.5 w-3.5 text-black" />
           </div>
 
@@ -40,7 +40,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
               {group.tools.length} {group.tools.length === 1 ? "tool" : "tools"}
             </span>
             <span
-              className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-emerald-500" : "bg-gray-500"}`}
+              className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${group.isActive ? "bg-tool-status-active" : "bg-tool-status-inactive"}`}
             />
           </div>
 
@@ -61,7 +61,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
           {visibleTools.map((tool) => (
             <span
               key={tool.id}
-              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
               title={tool.description}
             >
               {tool.name}
@@ -69,7 +69,7 @@ function ToolGroupCard({ group }: { group: ToolGroup }) {
           ))}
           {remainingCount > 0 && (
             <span
-              className="inline-flex items-center rounded bg-neutral-800 px-1.5 py-1 text-[10px] font-medium leading-none text-white"
+              className="inline-flex items-center rounded bg-tool-badge-bg px-1.5 py-1 text-[10px] font-medium leading-none text-white"
               title={`${remainingCount} more ${remainingCount === 1 ? "tool" : "tools"}`}
             >
               +{remainingCount}
@@ -85,13 +85,21 @@ function AddToolsCard({ onAddServer }: { onAddServer: () => void }) {
   return (
     <Card
       size="sm"
+      role="button"
+      tabIndex={0}
       className="cursor-pointer transition-opacity hover:opacity-90"
       onClick={onAddServer}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onAddServer();
+        }
+      }}
     >
       <CardHeader>
         <div className="flex items-center gap-3">
-          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-neutral-900 shadow-sm dark:bg-white">
-            <Plus className="h-3.5 w-3.5 text-white dark:text-neutral-900" />
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded bg-tool-add-icon-bg shadow-sm">
+            <Plus className="h-3.5 w-3.5 text-tool-add-icon-fg" />
           </div>
           <span className="text-sm font-semibold text-neutral-900 dark:text-white">Add tools</span>
         </div>
