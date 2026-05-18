@@ -1,0 +1,6 @@
+{"id":"d1b42afd-feeb-4c8d-8e39-86e02d9ffd2e","ts":"2026-05-18T15:33:25.018Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/api/client.ts","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"3291b818-f30b-4730-aa7c-d1efa5484f7e","ts":"2026-05-18T15:42:05.582Z","path":"mcpgateway/routers/app.py","version":"1.0.0","taskID":"d43d2d52-e2d7-4984-bfaa-6574d716ba21"}
+{"id":"fa72ebd7-8096-4a05-84c0-af395c1fafe8","ts":"2026-05-18T15:58:05.627Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/config.py","version":"1.0.0","taskID":"18fd43e4-96e1-40f0-ad09-d077e307b4d4"}
+{"id":"8a5a77c3-2da9-4348-b8f0-67154eb5bdc2","ts":"2026-05-18T16:01:01.328Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/middleware/csrf_middleware.py","version":"1.0.0","taskID":"18fd43e4-96e1-40f0-ad09-d077e307b4d4"}
+{"id":"fd1313fc-040b-4458-b579-2bd2f7f3a71d","ts":"2026-05-18T16:01:25.518Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/services/csrf_service.py","version":"1.0.0","taskID":"18fd43e4-96e1-40f0-ad09-d077e307b4d4"}
+{"id":"64ad96fd-2f84-4cdd-911f-b4f46b2ed9a7","ts":"2026-05-18T16:04:36.716Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/routers/app.py","version":"1.0.0","taskID":"18fd43e4-96e1-40f0-ad09-d077e307b4d4"}
