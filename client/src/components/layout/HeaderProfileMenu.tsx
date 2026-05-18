@@ -3,7 +3,7 @@ import { useIntl } from "react-intl";
 import { useAuth } from "../../auth/useAuth";
 import { useTheme } from "../../hooks/useTheme";
 import { useRouter } from "../../router";
-import { Button } from "../ui/button";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +26,7 @@ export function HeaderProfileMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        {/* TODO: User photo/avatar data does not appear to be available in the current frontend. Using fallback button for now. */}
+        {/* TODO: User photo/avatar data is not currently available, using fallback for now. */}
         <Button
           variant="ghost"
           size="sm"
@@ -45,33 +45,39 @@ export function HeaderProfileMenu() {
         <div className="flex items-center justify-between gap-3 px-3 py-2">
           <span className="text-sm">{intl.formatMessage({ id: "common.theme" })}</span>
           <div className="flex items-center gap-1 rounded-full bg-muted p-1">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setTheme("light")}
-              className={`rounded-full p-1.5 transition-colors ${theme === "light" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded-full transition-colors ${theme === "light" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.light" })}
               title={intl.formatMessage({ id: "common.theme.light" })}
             >
               <Sun className="size-4" />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setTheme("dark")}
-              className={`rounded-full p-1.5 transition-colors ${theme === "dark" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded-full transition-colors ${theme === "dark" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.dark" })}
               title={intl.formatMessage({ id: "common.theme.dark" })}
             >
               <Moon className="size-4" />
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setTheme("system")}
-              className={`rounded-full p-1.5 transition-colors ${theme === "system" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded-full transition-colors ${theme === "system" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.system" })}
               title={intl.formatMessage({ id: "common.theme.system" })}
             >
               <Monitor className="size-4" />
-            </button>
+            </Button>
           </div>
         </div>
         <DropdownMenuItem
