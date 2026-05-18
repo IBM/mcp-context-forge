@@ -129,6 +129,26 @@ describe("Tools", () => {
     }
   });
 
+  it("handles Add tools card keyboard activation", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/tools", () => HttpResponse.json([])));
+
+    renderWithRouter(<Tools />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Add tools")).toBeInTheDocument();
+    });
+
+    const addToolsCard = screen.getByRole("button");
+    expect(addToolsCard).toHaveAttribute("tabindex", "0");
+
+    // Enter key should activate the card without throwing
+    addToolsCard.focus();
+    await user.keyboard("{Enter}");
+    // Space key should also activate the card without throwing
+    await user.keyboard(" ");
+  });
+
   it("displays error message when API call fails", async () => {
     server.use(
       http.get("/tools", () => {
@@ -232,10 +252,8 @@ describe("Tools", () => {
       expect(screen.getByText("Add tools")).toBeInTheDocument();
     });
 
-    // Only Add tools card should be visible
-    const cards = screen
-      .getAllByRole("generic")
-      .filter((el) => el.getAttribute("data-slot") === "card");
+    // Only Add tools card should be visible (AddToolsCard has role="button")
+    const cards = document.querySelectorAll('[data-slot="card"]');
     expect(cards).toHaveLength(1);
   });
 
