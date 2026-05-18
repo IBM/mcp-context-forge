@@ -7,6 +7,7 @@ import { AppSidebar } from "./Sidebar";
 
 const mockNavigate = vi.fn();
 const mockUseRouter = vi.fn();
+const mockUseQuery = vi.fn();
 
 vi.mock("@/router", async () => {
   const actual = await vi.importActual<typeof import("@/router")>("@/router");
@@ -15,6 +16,10 @@ vi.mock("@/router", async () => {
     useRouter: () => mockUseRouter(),
   };
 });
+
+vi.mock("@/hooks/useQuery", () => ({
+  useQuery: () => mockUseQuery(),
+}));
 
 function renderSidebar() {
   return render(
@@ -30,6 +35,13 @@ describe("AppSidebar", () => {
   beforeEach(() => {
     mockNavigate.mockReset();
     mockUseRouter.mockReset();
+    mockUseQuery.mockReturnValue({
+      data: { teams: [{ id: "engineering", name: "Engineering" }] },
+      isLoading: false,
+      error: null,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
   });
 
   it("renders the main navigation groups and footer link", () => {
@@ -43,6 +55,9 @@ describe("AppSidebar", () => {
 
     expect(screen.getByRole("button", { name: "Home" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Virtual Servers" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select team. Current: All teams" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Components")).toBeInTheDocument();
     expect(screen.getByText("Ecosystem")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
