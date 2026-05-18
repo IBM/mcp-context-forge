@@ -26,11 +26,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, get_db
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.auth_errors import raise_auth_error
-from mcpgateway.utils.csrf import clear_csrf_cookie, generate_csrf_token, require_csrf, set_csrf_cookie
+from mcpgateway.utils.csrf import clear_csrf_cookie, require_csrf
 from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 
 logger = logging.getLogger(__name__)
@@ -125,8 +126,17 @@ async def auth_login(
         token, _ = await create_access_token(user)
         set_auth_cookie(response, token, path=JWT_COOKIE_PATH)
 
-        csrf_token = generate_csrf_token()
-        set_csrf_cookie(response, csrf_token)
+        # Generate HMAC-bound CSRF token (64-char) matching middleware expectations
+        # Extract jti from token payload for session binding
+        from mcpgateway.config import settings
+        from mcpgateway.services.csrf_service import set_csrf_cookie
+        from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+
+        payload = await verify_jwt_token_cached(token, request)
+        session_id = payload.get("jti", "")
+        csrf_service = get_csrf_service()
+        csrf_token = csrf_service.generate_csrf_token(user_id=user.email, session_id=session_id)
+        set_csrf_cookie(response, csrf_token, settings)
 
         logger.debug("User authenticated via cookie auth")
 
