@@ -69,6 +69,7 @@ dependencies = [
     "brotli>=1.2.0",
     "cpex>=0.1.0",
     "cryptography>=47.0.0",
+    "click>=8.3.3", # Transitive pin
     "fastapi>=0.136.1",
     "filelock>=3.29.0",
     "gunicorn>=25.3.0",
@@ -91,7 +92,7 @@ dependencies = [
     "pydantic-settings>=2.14.0",
     "pyjwt>=2.12.1",
     "python-json-logger>=4.1.0",
-    "python-multipart>=0.0.26", # Transitive pin (mcp, fastapi); dependabot/81
+    "python-multipart>=0.0.27", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "requests>=2.33.1", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
@@ -100,7 +101,7 @@ dependencies = [
     "starlette>=0.30.0,<1.0.0", # prometheus-fastapi-instrumentator 7.1.0 caps at <1.0.0
     "starlette-compress>=1.7.0",
     "typer>=0.25.0",
-    "urllib3>=2.6.3", # Transitive pin (requests); dependabot/76
+    "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.46.0",
 ]
 
