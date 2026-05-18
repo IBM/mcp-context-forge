@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.
-revision: str = "cc7b95fec5d9" # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "3b17fdc40a8d" # pragma: allowlist secret
+revision: str = "cc7b95fec5d9"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "3b17fdc40a8d"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
