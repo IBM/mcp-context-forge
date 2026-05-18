@@ -4369,6 +4369,7 @@ class ToolService(BaseService):
         # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
         # This is needed for upstream session registry to work correctly
         # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
         from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
         if request_headers:
             request_headers_var.set(request_headers)

@@ -9689,9 +9689,11 @@ class TestRpcHandling:
     async def test_handle_rpc_session_affinity_invalid_session_executes_locally(self, monkeypatch):
         """Cover session affinity branch when the MCP session id is invalid."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(settings, "use_stateful_sessions", False)
         payload = {"jsonrpc": "2.0", "id": "aff-1", "method": "ping", "params": {}}
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "not-valid"}
+        request.client = SimpleNamespace(host="127.0.0.1")
 
         with patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=False):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -9726,9 +9728,11 @@ class TestRpcHandling:
     async def test_handle_rpc_session_affinity_pool_not_initialized(self, monkeypatch):
         """Cover RuntimeError branch when pool isn't initialized."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(settings, "use_stateful_sessions", False)
         payload = {"jsonrpc": "2.0", "id": "aff-3", "method": "ping", "params": {}}
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "sess-123"}
+        request.client = SimpleNamespace(host="127.0.0.1")
 
         with (
             patch("mcpgateway.services.session_affinity.SessionAffinity.is_valid_mcp_session_id", return_value=True),
@@ -9740,9 +9744,11 @@ class TestRpcHandling:
     async def test_handle_rpc_session_affinity_internal_forwarded_executes_locally(self, monkeypatch):
         """Cover internally forwarded header branch."""
         monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(settings, "use_stateful_sessions", False)
         payload = {"jsonrpc": "2.0", "id": "aff-4", "method": "ping", "params": {}}
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "sess-123", "x-forwarded-internally": "true"}
+        request.client = SimpleNamespace(host="127.0.0.1")
 
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["result"] == {}
