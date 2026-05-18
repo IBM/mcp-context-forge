@@ -364,34 +364,8 @@ describe("useMCPServerForm", () => {
     });
   });
 
-  describe("getFormData - Masked Sentinel Handling", () => {
-    it("omits authToken when it is the masked sentinel", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-        result.current.setAuthType("bearer");
-        result.current.setBearerToken("*****");
-      });
-
-      expect(result.current.getFormData().authToken).toBeUndefined();
-    });
-
-    it("includes authToken when it is a different asterisk string (not the exact sentinel)", () => {
-      const { result } = renderHook(() => useMCPServerForm());
-
-      act(() => {
-        result.current.setName("Test Server");
-        result.current.setUrl("http://localhost:3000");
-        result.current.setAuthType("bearer");
-        result.current.setBearerToken("**********");
-      });
-
-      expect(result.current.getFormData().authToken).toBe("**********");
-    });
-
-    it("includes authToken when it is a real value", () => {
+  describe("getFormData - authToken scoping", () => {
+    it("includes authToken when authType is bearer and token is set", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
@@ -404,7 +378,33 @@ describe("useMCPServerForm", () => {
       expect(result.current.getFormData().authToken).toBe("real-token-abc123");
     });
 
-    it("omits authPassword when it is the masked sentinel", () => {
+    it("includes authToken when bearer token looks like a masked placeholder", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("*****");
+      });
+
+      expect(result.current.getFormData().authToken).toBe("*****");
+    });
+
+    it("omits authToken when authType is bearer but token is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("");
+      });
+
+      expect(result.current.getFormData().authToken).toBeUndefined();
+    });
+
+    it("omits authToken when authType is basic (not bearer)", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
@@ -412,13 +412,29 @@ describe("useMCPServerForm", () => {
         result.current.setUrl("http://localhost:3000");
         result.current.setAuthType("basic");
         result.current.setAuthUsername("admin");
-        result.current.setAuthPassword("*****");
+        result.current.setAuthPassword("pass");
+        result.current.setBearerToken("should-be-excluded");
       });
 
-      expect(result.current.getFormData().authPassword).toBeUndefined();
+      expect(result.current.getFormData().authToken).toBeUndefined();
     });
 
-    it("includes authPassword when it is a real value", () => {
+    it("omits authToken when authType is none", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("none");
+        result.current.setBearerToken("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authToken).toBeUndefined();
+    });
+  });
+
+  describe("getFormData - authPassword scoping", () => {
+    it("includes authPassword when authType is basic and password is set", () => {
       const { result } = renderHook(() => useMCPServerForm());
 
       act(() => {
@@ -430,6 +446,62 @@ describe("useMCPServerForm", () => {
       });
 
       expect(result.current.getFormData().authPassword).toBe("real-pass");
+    });
+
+    it("includes authPassword when it looks like a masked placeholder", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("*****");
+      });
+
+      expect(result.current.getFormData().authPassword).toBe("*****");
+    });
+
+    it("omits authPassword when authType is basic but password is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
+    });
+
+    it("omits authPassword when authType is bearer (not basic)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("my-token");
+        result.current.setAuthPassword("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
+    });
+
+    it("omits authPassword when authType is oauth (not basic)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("client_credentials");
+        result.current.setAuthPassword("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
     });
   });
 
