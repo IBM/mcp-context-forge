@@ -241,16 +241,20 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({
+  className,
+  onClick,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
-
-  return (
+  const trigger = (
     <Button
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       variant="ghost"
       size="icon-sm"
-      className={cn(className)}
+      className={cn(children ? undefined : className)}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();
@@ -261,6 +265,17 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   );
+
+  if (children) {
+    return (
+      <div className={cn("flex items-center gap-2", className)}>
+        {trigger}
+        {children}
+      </div>
+    );
+  }
+
+  return trigger;
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {

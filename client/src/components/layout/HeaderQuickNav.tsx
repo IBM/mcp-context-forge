@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { useIntl } from "react-intl";
 import { cn } from "@/lib/utils";
 import { Input } from "../ui/input";
+import { Button } from "@/components/ui/button";
 
 type ShortcutNavigator = Pick<Navigator, "platform" | "userAgent"> & {
   userAgentData?: {
@@ -56,15 +57,17 @@ export function HeaderQuickNav() {
         onSubmit={(event) => event.preventDefault()}
         className="relative flex items-center gap-2"
       >
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon-sm"
           onClick={() => inputRef.current?.focus()}
-          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label={intl.formatMessage({ id: "common.search" })}
           title={intl.formatMessage({ id: "common.search" })}
         >
           <Search className="size-4" aria-hidden="true" />
-        </button>
+        </Button>
         <Input
           ref={inputRef}
           type="search"
