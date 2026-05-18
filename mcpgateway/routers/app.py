@@ -31,7 +31,7 @@ from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.observability_service import ObservabilityService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.auth_errors import raise_auth_error
-from mcpgateway.utils.csrf import clear_csrf_cookie, require_csrf
+from mcpgateway.utils.csrf import clear_csrf_cookie
 from mcpgateway.utils.security_cookies import clear_auth_cookie, set_auth_cookie
 
 logger = logging.getLogger(__name__)
@@ -173,7 +173,6 @@ async def get_me(
 @app_router.post("/auth/logout")
 async def logout(
     response: Response,
-    _csrf: Annotated[None, Depends(require_csrf)],
     user_ctx: Annotated[tuple[EmailUser, str | None], Depends(get_current_user_from_cookie)],
 ) -> dict[str, str]:
     """Revoke JWT server-side and clear auth cookies.
@@ -249,7 +248,7 @@ async def logout(
             logger.warning("Logout: token missing jti — server-side revocation skipped", extra={"user_id": user.id})
 
         clear_auth_cookie(response, path=JWT_COOKIE_PATH)
-        clear_csrf_cookie(response)
+        clear_csrf_cookie(response, settings)
 
         logger.debug("User logged out via cookie auth")
 
