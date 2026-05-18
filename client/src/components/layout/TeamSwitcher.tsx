@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { useQuery } from "../../hooks/useQuery";
+import { Button } from "@/components/ui/button";
 
 interface Team {
   id: string;
@@ -36,9 +37,11 @@ export function TeamSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
+        <Button
           type="button"
-          className="inline-flex h-8 items-center gap-2 rounded-lg px-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+          variant="ghost"
+          size="sm"
+          className="rounded-lg px-2 text-foreground transition-colors hover:bg-muted"
           aria-label={`Select team. Current: ${displayName}`}
           aria-haspopup="menu"
           aria-expanded={undefined}
@@ -48,7 +51,7 @@ export function TeamSwitcher() {
             {isLoading ? "Loading..." : displayName}
           </span>
           <ChevronsUpDown className="size-4 text-muted-foreground" aria-hidden="true" />
-        </button>
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         className="min-w-56 rounded-lg w-56"
