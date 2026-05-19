@@ -1,0 +1,18 @@
+description: "Bell-LaPadula Mandatory Access Control (MAC) security clearance plugin"
+author: "Katia Neli"
+version: "1.1.0"
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+  - "resource_pre_fetch"
+  - "resource_post_fetch"
+  - "prompt_pre_fetch"
+default_configs:
+  enforce_no_read_up: true
+  enforce_no_write_down: true
+  allow_lateral: true
+  default_user_clearance: 0
+  default_tool_classification: 1
+  log_level_violations: true
+  audit_log_retention_days: 90
+  dynamic_rules: []
