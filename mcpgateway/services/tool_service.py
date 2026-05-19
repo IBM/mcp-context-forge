@@ -5181,6 +5181,7 @@ class ToolService(BaseService):
                             success = not getattr(tool_result, "is_error", False)
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
+                    registry_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
 
                     # Tracks whether we entered the OAuth authorization_code "no DB token" branch.
                     # When True, the auth requirement is deferred to AFTER tool_pre_invoke hooks
@@ -5448,7 +5449,7 @@ class ToolService(BaseService):
                                     gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=TransportType.SSE,
+                                    transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
@@ -5458,7 +5459,7 @@ class ToolService(BaseService):
                                     gateway_id=gateway_id_str,
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=TransportType.SSE,
+                                    transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as pooled_conn:
                                     with anyio.fail_after(effective_timeout):

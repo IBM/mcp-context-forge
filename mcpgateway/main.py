@@ -1318,6 +1318,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
+    idle_reaper_task: Optional[asyncio.Task] = None
+    idle_reaper_stop_event: Optional[asyncio.Event] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1438,10 +1440,36 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize sessionless connection pool for MCP protocol versions >= 2025-11-25
     # First-Party
-    from mcpgateway.services.sessionless_connection_pool import init_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.sessionless_connection_pool import (  # pylint: disable=import-outside-toplevel
+        get_sessionless_connection_pool,
+        init_sessionless_connection_pool,
+    )
 
     await init_sessionless_connection_pool()
     logger.info("Sessionless connection pool initialized")
+
+    # Start idle connection reaper background task
+    idle_reaper_stop_event = asyncio.Event()
+
+    async def run_idle_reaper() -> None:
+        """Periodically reap idle connections from the sessionless pool."""
+        pool = get_sessionless_connection_pool()
+        # Use 1 second interval during tests for faster cleanup, 60 seconds in production
+        reap_interval = 1 if "pytest" in sys.modules else 60
+        while not idle_reaper_stop_event.is_set():
+            try:
+                await asyncio.wait_for(idle_reaper_stop_event.wait(), timeout=reap_interval)
+                break  # Stop event was set
+            except asyncio.TimeoutError:
+                # Timeout means we should reap
+                try:
+                    reaped = await pool.reap_idle_connections()
+                    if reaped > 0:
+                        logger.info("Reaped %d idle connections from sessionless pool", reaped)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error reaping idle connections: %s", exc)
+
+    idle_reaper_task = asyncio.create_task(run_idle_reaper())
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
@@ -1735,6 +1763,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 with suppress(asyncio.CancelledError):
                     await task
 
+        # Stop idle reaper task
+        if idle_reaper_stop_event is not None:
+            idle_reaper_stop_event.set()
+        if idle_reaper_task is not None:
+            idle_reaper_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await idle_reaper_task
+
         # Stop the plugin invalidation listener before the factory so in-flight
         # messages don't race with a half-torn-down cache.
         try:
@@ -1847,6 +1883,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
 
         await shutdown_upstream_session_registry()
+
+        # Shutdown sessionless connection pool
+        # First-Party
+        from mcpgateway.services.sessionless_connection_pool import get_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+
+        try:
+            pool = get_sessionless_connection_pool()
+            await pool.shutdown()
+            logger.info("Sessionless connection pool shutdown complete")
+        except Exception as exc:
+            logger.debug("Error shutting down sessionless connection pool: %s", exc)
 
         # Drain sessionless connection pool
         # First-Party

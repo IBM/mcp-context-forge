@@ -55,6 +55,10 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)
 
+# Default pool size limits
+_DEFAULT_MAX_POOL_SIZE = 100  # Maximum number of pooled connections
+_DEFAULT_MAX_IDLE_SECONDS = 300  # 5 minutes - close connections idle longer than this
+
 
 class SessionlessConnectionPoolNotInitializedError(RuntimeError):
     """Raised when get_sessionless_connection_pool() is called before init_sessionless_connection_pool()."""
@@ -95,6 +99,12 @@ class PooledConnection:
     is_closed: bool = False
     """Whether this connection has been closed."""
 
+    owner_task: Optional[asyncio.Task] = None
+    """The task that created this connection and owns its context managers."""
+
+    shutdown_event: Optional[asyncio.Event] = None
+    """Event to signal the owner task to shut down."""
+
     @property
     def idle_seconds(self) -> float:
         """Seconds since last use."""
@@ -106,6 +116,14 @@ def _compute_auth_fingerprint(headers: Optional[dict[str, str]]) -> str:
 
     Used to isolate connections by auth context in multi-tenant scenarios.
     Returns empty string if no auth headers are present.
+
+    The fingerprint is computed by:
+    1. Extracting auth-related headers (authorization, x-api-key, x-auth-token)
+    2. Normalizing keys to lowercase before sorting (ensures case-insensitive deduplication)
+    3. Hashing with SHA256 and truncating to 16 hex chars (~64 bits)
+       - 64 bits provides sufficient collision resistance for auth contexts
+       - Birthday paradox: ~4 billion unique auth contexts before 50% collision probability
+       - Truncation trades security margin for shorter pool keys (acceptable for this use case)
     """
     if not headers:
         return ""
@@ -113,15 +131,18 @@ def _compute_auth_fingerprint(headers: Optional[dict[str, str]]) -> str:
     # Only consider auth-related headers for the fingerprint
     auth_keys = {"authorization", "x-api-key", "x-auth-token"}
     auth_values = []
-    for key, value in sorted(headers.items()):
-        if key.lower() in auth_keys and value:
-            auth_values.append(f"{key.lower()}:{value}")
+    # Lowercase keys before sorting to ensure case-insensitive deduplication
+    # (e.g., "Authorization" and "authorization" produce the same fingerprint)
+    for key, value in sorted((k.lower(), v) for k, v in headers.items()):
+        if key in auth_keys and value:
+            auth_values.append(f"{key}:{value}")
 
     if not auth_values:
         return ""
 
     # Hash the auth values to avoid storing sensitive data in the key
     fingerprint_input = "|".join(auth_values)
+    # Truncate SHA256 to 16 hex chars (~64 bits) for shorter pool keys
     return hashlib.sha256(fingerprint_input.encode()).hexdigest()[:16]
 
 
@@ -143,6 +164,8 @@ class SessionlessConnectionPool:
         health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
         session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
         shutdown_timeout_seconds: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+        max_pool_size: int = _DEFAULT_MAX_POOL_SIZE,
+        max_idle_seconds: float = _DEFAULT_MAX_IDLE_SECONDS,
     ) -> None:
         """Initialize the sessionless connection pool.
 
@@ -151,11 +174,15 @@ class SessionlessConnectionPool:
             health_check_timeout_seconds: Timeout for health check operations
             session_create_timeout_seconds: Timeout for creating new connections
             shutdown_timeout_seconds: Timeout for closing connections during shutdown
+            max_pool_size: Maximum number of pooled connections (LRU eviction when exceeded)
+            max_idle_seconds: Close connections idle longer than this (0 to disable)
         """
         self._idle_validation_seconds = idle_validation_seconds
         self._health_check_timeout_seconds = health_check_timeout_seconds
         self._session_create_timeout_seconds = session_create_timeout_seconds
         self._shutdown_timeout_seconds = shutdown_timeout_seconds
+        self._max_pool_size = max_pool_size
+        self._max_idle_seconds = max_idle_seconds
 
         # Pool storage: key is (gateway_id, url, transport_type, auth_fingerprint)
         self._connections: dict[tuple[str, str, str, str], PooledConnection] = {}
@@ -166,6 +193,8 @@ class SessionlessConnectionPool:
         self._creates = 0
         self._reuses = 0
         self._health_check_recreates = 0
+        self._lru_evictions = 0
+        self._idle_evictions = 0
 
     async def _get_key_lock(self, key: tuple[str, str, str, str]) -> asyncio.Lock:
         """Get or create the lock for a specific connection key."""
@@ -190,7 +219,7 @@ class SessionlessConnectionPool:
                 if method is None:
                     continue
 
-                async with anyio.fail_after(self._health_check_timeout_seconds):  # pylint: disable=not-async-context-manager
+                with anyio.fail_after(self._health_check_timeout_seconds):
                     await method()
                 logger.debug("Health check succeeded via %s", method_name)
                 return True
@@ -209,20 +238,57 @@ class SessionlessConnectionPool:
         return False
 
     async def _close_connection(self, connection: PooledConnection) -> None:
-        """Close a pooled connection."""
+        """Close a pooled connection by signaling its owner task.
+
+        This ensures __aexit__() is called in the same task that called __aenter__(),
+        avoiding anyio's "Attempted to exit cancel scope in a different task" error.
+
+        For connections without an owner task (e.g., in tests), falls back to direct cleanup.
+        """
         if connection.is_closed:
             return
 
+        connection.is_closed = True
+
+        # If connection has an owner task, signal it to shut down
+        if connection.owner_task is not None and connection.shutdown_event is not None:
+            connection.shutdown_event.set()
+
+            if not connection.owner_task.done():
+                owner_task = connection.owner_task
+
+                # Give the task a graceful shutdown window
+                done, _pending = await asyncio.wait({owner_task}, timeout=self._shutdown_timeout_seconds)
+                if owner_task in done:
+                    # Task finished cleanly; consume any exception
+                    if not owner_task.cancelled():
+                        exc = owner_task.exception()
+                        if exc is not None:
+                            logger.debug("Owner task for connection exited with %s: %s", type(exc).__name__, exc)
+                    return
+
+                # Grace period elapsed - force cancel
+                logger.warning("Connection owner cleanup timed out for %s; force-cancelling", sanitize_url_for_logging(connection.url))
+                owner_task.cancel()
+                done, _pending = await asyncio.wait({owner_task}, timeout=self._shutdown_timeout_seconds)
+                if owner_task not in done:
+                    logger.warning(
+                        "Force-cancel of owner task did not complete within %.1fs for %s - task is orphaned but shutdown is proceeding",
+                        self._shutdown_timeout_seconds,
+                        sanitize_url_for_logging(connection.url),
+                    )
+            return
+
+        # Fallback for connections without owner task (e.g., in tests or legacy code)
+        # This path has the cross-task __aexit__ issue but is kept for backward compatibility
         try:
-            async with anyio.fail_after(self._shutdown_timeout_seconds):  # pylint: disable=not-async-context-manager
+            with anyio.fail_after(self._shutdown_timeout_seconds):
                 # Close the session first
                 await connection.session.__aexit__(None, None, None)
                 # Then close the transport context
                 await connection.transport_ctx.__aexit__(None, None, None)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Error closing connection: %s", exc)
-        finally:
-            connection.is_closed = True
 
     async def _create_connection(
         self,
@@ -233,7 +299,11 @@ class SessionlessConnectionPool:
         transport_type: TransportType,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
     ) -> PooledConnection:
-        """Create a new pooled connection."""
+        """Create a new pooled connection with an owner task for lifecycle management.
+
+        The owner task ensures __aenter__() and __aexit__() are called in the same task,
+        avoiding anyio cancel-scope violations during cross-task cleanup.
+        """
         sanitized_url = sanitize_url_for_logging(url)
         logger.info(
             "Creating sessionless connection (gateway=%s, transport=%s, url=%s)",
@@ -242,42 +312,93 @@ class SessionlessConnectionPool:
             sanitized_url,
         )
 
-        try:
-            async with anyio.fail_after(self._session_create_timeout_seconds):  # pylint: disable=not-async-context-manager
-                if transport_type == TransportType.SSE:
-                    transport_ctx = sse_client(
+        shutdown_event = asyncio.Event()
+        connection_ref: list[Optional[PooledConnection]] = [None]  # Mutable container for task communication
+
+        async def connection_owner_task() -> None:
+            """Owner task that manages the connection lifecycle in a single task context."""
+            transport_ctx = None
+            session = None
+            try:
+                with anyio.fail_after(self._session_create_timeout_seconds):
+                    if transport_type == TransportType.SSE:
+                        transport_ctx = sse_client(
+                            url=url,
+                            headers=headers,
+                            httpx_client_factory=httpx_client_factory,
+                        )
+                    elif transport_type == TransportType.STREAMABLE_HTTP:
+                        transport_ctx = streamablehttp_client(
+                            url=url,
+                            headers=headers,
+                            httpx_client_factory=httpx_client_factory,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported transport type: {transport_type}")
+
+                    # Enter contexts in this task
+                    streams = await transport_ctx.__aenter__()  # noqa: PLC2801  # pylint: disable=no-member
+                    read_stream, write_stream = streams[0], streams[1]
+
+                    session = ClientSession(read_stream, write_stream)
+                    await session.__aenter__()  # noqa: PLC2801  # pylint: disable=no-member
+                    await session.initialize()
+
+                    # Store connection for caller
+                    connection_ref[0] = PooledConnection(
+                        session=session,
                         url=url,
-                        headers=headers,
-                        httpx_client_factory=httpx_client_factory,
+                        transport_type=transport_type,
+                        transport_ctx=transport_ctx,
+                        auth_fingerprint=_compute_auth_fingerprint(headers),
+                        shutdown_event=shutdown_event,
+                        owner_task=asyncio.current_task(),
                     )
-                elif transport_type == TransportType.STREAMABLE_HTTP:
-                    transport_ctx = streamablehttp_client(
-                        url=url,
-                        headers=headers,
-                        httpx_client_factory=httpx_client_factory,
-                    )
-                else:
-                    raise ValueError(f"Unsupported transport type: {transport_type}")
 
-                # Enter the transport context manually (context must stay open for pooled connection)
-                # ruff: noqa: PLC2801
-                streams = await transport_ctx.__aenter__()  # pylint: disable=no-member
-                read_stream, write_stream = streams[0], streams[1]
+                # Wait for shutdown signal
+                await shutdown_event.wait()
 
-                # Create and initialize the session (context must stay open for pooled connection)
-                # ruff: noqa: PLC2801
-                session = ClientSession(read_stream, write_stream)
-                await session.__aenter__()  # pylint: disable=no-member
-                await session.initialize()
-
-                return PooledConnection(
-                    session=session,
-                    url=url,
-                    transport_type=transport_type,
-                    transport_ctx=transport_ctx,
-                    auth_fingerprint=_compute_auth_fingerprint(headers),
+            except Exception as exc:
+                logger.error(
+                    "Connection owner task failed (gateway=%s, url=%s): %s",
+                    gateway_id,
+                    sanitized_url,
+                    exc,
                 )
+                raise
+            finally:
+                # Exit contexts in the same task that entered them
+                if session is not None:
+                    try:
+                        await session.__aexit__(None, None, None)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Error closing session: %s", exc)
+                if transport_ctx is not None:
+                    try:
+                        await transport_ctx.__aexit__(None, None, None)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Error closing transport: %s", exc)
+
+        # Start the owner task
+        owner_task = asyncio.create_task(connection_owner_task())
+
+        # Wait for connection to be created (with timeout)
+        try:
+            with anyio.fail_after(self._session_create_timeout_seconds):
+                while connection_ref[0] is None:
+                    if owner_task.done():
+                        # Task failed during creation
+                        await owner_task  # Re-raise the exception
+                    await asyncio.sleep(0.01)  # Small delay to avoid busy-wait
         except Exception as exc:
+            # Creation failed - clean up the owner task
+            shutdown_event.set()
+            owner_task.cancel()
+            with anyio.fail_after(self._shutdown_timeout_seconds):
+                try:
+                    await owner_task
+                except asyncio.CancelledError:
+                    pass
             logger.error(
                 "Failed to create sessionless connection (gateway=%s, url=%s): %s",
                 gateway_id,
@@ -285,6 +406,8 @@ class SessionlessConnectionPool:
                 exc,
             )
             raise
+
+        return connection_ref[0]
 
     @asynccontextmanager
     async def acquire(
@@ -338,6 +461,10 @@ class SessionlessConnectionPool:
                     should_create = True
 
             if should_create:
+                # Before creating, check if we need to evict LRU connection
+                if len(self._connections) >= self._max_pool_size:
+                    await self._evict_lru_connection()
+
                 connection = await self._create_connection(
                     gateway_id=gateway_id,
                     url=url,
@@ -370,6 +497,59 @@ class SessionlessConnectionPool:
                 self._connections.pop(key, None)
             raise
 
+    async def _evict_lru_connection(self) -> None:
+        """Evict the least recently used connection to make room for a new one.
+
+        Must be called with _global_lock held.
+        """
+        if not self._connections:
+            return
+
+        # Find the connection with the oldest last_used timestamp
+        lru_key = min(self._connections.keys(), key=lambda k: self._connections[k].last_used)
+        lru_connection = self._connections[lru_key]
+
+        logger.info(
+            "Evicting LRU connection (pool_size=%d, max=%d, idle=%.1fs)",
+            len(self._connections),
+            self._max_pool_size,
+            lru_connection.idle_seconds,
+        )
+
+        await self._close_connection(lru_connection)
+        self._connections.pop(lru_key, None)
+        self._lru_evictions += 1
+
+    async def reap_idle_connections(self) -> int:
+        """Close connections that have been idle longer than max_idle_seconds.
+
+        Returns:
+            Number of connections reaped
+        """
+        if self._max_idle_seconds <= 0:
+            return 0
+
+        reaped = 0
+        async with self._global_lock:
+            keys_to_remove = []
+            for key, connection in self._connections.items():
+                if connection.idle_seconds > self._max_idle_seconds:
+                    logger.info(
+                        "Reaping idle connection (idle=%.1fs, max=%.1fs)",
+                        connection.idle_seconds,
+                        self._max_idle_seconds,
+                    )
+                    await self._close_connection(connection)
+                    keys_to_remove.append(key)
+                    reaped += 1
+
+            for key in keys_to_remove:
+                self._connections.pop(key, None)
+
+            self._idle_evictions += reaped
+
+        return reaped
+
     async def shutdown(self) -> None:
         """Close all pooled connections."""
         logger.info("Shutting down sessionless connection pool")
@@ -385,7 +565,10 @@ class SessionlessConnectionPool:
             "creates": self._creates,
             "reuses": self._reuses,
             "health_check_recreates": self._health_check_recreates,
+            "lru_evictions": self._lru_evictions,
+            "idle_evictions": self._idle_evictions,
             "active_connections": len(self._connections),
+            "max_pool_size": self._max_pool_size,
         }
 
 
@@ -400,11 +583,21 @@ async def init_sessionless_connection_pool(
     health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
     session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
     shutdown_timeout_seconds: float = _DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+    max_pool_size: int = _DEFAULT_MAX_POOL_SIZE,
+    max_idle_seconds: float = _DEFAULT_MAX_IDLE_SECONDS,
 ) -> SessionlessConnectionPool:
     """Initialize the global sessionless connection pool singleton.
 
     This should be called during application startup. Multiple calls are safe
     and will return the existing instance.
+
+    Args:
+        idle_validation_seconds: How long a connection can be idle before health check
+        health_check_timeout_seconds: Timeout for health check operations
+        session_create_timeout_seconds: Timeout for creating new connections
+        shutdown_timeout_seconds: Timeout for closing connections during shutdown
+        max_pool_size: Maximum number of pooled connections (LRU eviction when exceeded)
+        max_idle_seconds: Close connections idle longer than this (0 to disable)
     """
     global _sessionless_pool  # noqa: PLW0603
     async with _sessionless_pool_lock:
@@ -414,8 +607,10 @@ async def init_sessionless_connection_pool(
                 health_check_timeout_seconds=health_check_timeout_seconds,
                 session_create_timeout_seconds=session_create_timeout_seconds,
                 shutdown_timeout_seconds=shutdown_timeout_seconds,
+                max_pool_size=max_pool_size,
+                max_idle_seconds=max_idle_seconds,
             )
-            logger.info("Sessionless connection pool initialized")
+            logger.info("Sessionless connection pool initialized (max_size=%d, max_idle=%.1fs)", max_pool_size, max_idle_seconds)
         return _sessionless_pool
 
 

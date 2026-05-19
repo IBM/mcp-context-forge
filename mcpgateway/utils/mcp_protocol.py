@@ -14,25 +14,29 @@ Phase 5 adds deprecation warnings for sessionful protocol usage.
 """
 
 # Standard
+from functools import lru_cache
 import logging
 from typing import Optional
 
 # Third-Party
 from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_PROTOCOL_VERSIONS = list(MCP_SUPPORTED_PROTOCOL_VERSIONS)
-DEFAULT_PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 
 # Sessionless semantics start with the post-session SEP-aligned protocol.
 SESSIONLESS_PROTOCOL_MIN_VERSION = "2025-11-25"
 
-# Track if we've already logged the deprecation warning to avoid spam
-_deprecation_warning_logged = False
+# Default to the latest sessionful version for backward compatibility.
+# This prevents clients that don't send a protocol version from being
+# silently pulled into sessionless mode when LATEST_PROTOCOL_VERSION
+# advances to >= 2025-11-25. Clients must explicitly opt into sessionless
+# semantics by sending protocolVersion >= "2025-11-25" in initialize.
+DEFAULT_PROTOCOL_VERSION = "2024-11-05"  # Latest sessionful version
 
 
+@lru_cache(maxsize=None)
 def normalize_mcp_protocol_version(protocol_version: Optional[str]) -> str:
     """Return a validated MCP protocol version or the default.
 
@@ -53,6 +57,20 @@ def is_supported_mcp_protocol_version(protocol_version: Optional[str]) -> bool:
     return normalized in SUPPORTED_PROTOCOL_VERSIONS
 
 
+@lru_cache(maxsize=128)
+def _log_deprecation_warning_once(normalized_version: str) -> None:
+    """Log deprecation warning once per unique version (thread-safe via lru_cache)."""
+    logger.warning(
+        "DEPRECATION: MCP protocol version %s uses legacy sessionful semantics. "
+        "Sessionful protocols (< %s) are deprecated and will be removed in a future release. "
+        "Please upgrade to protocol version %s or later for sessionless semantics. "
+        "See https://github.com/modelcontextprotocol/specification/pull/2567 for details.",
+        normalized_version,
+        SESSIONLESS_PROTOCOL_MIN_VERSION,
+        SESSIONLESS_PROTOCOL_MIN_VERSION,
+    )
+
+
 def uses_sessionless_mcp_semantics(protocol_version: Optional[str]) -> bool:
     """Return whether the protocol version should use sessionless MCP semantics.
 
@@ -68,22 +86,14 @@ def uses_sessionless_mcp_semantics(protocol_version: Optional[str]) -> bool:
     Returns:
         ``True`` for protocol versions at or after the sessionless cutoff.
     """
-    global _deprecation_warning_logged
-
     normalized = normalize_mcp_protocol_version(protocol_version)
+    # Lexical comparison is safe because MCP versions use ISO-8601 date format (YYYY-MM-DD).
+    # This ensures correct ordering: "2024-11-05" < "2025-11-25" < "2026-01-01".
+    # If MCP ever adopts non-date version labels, this comparison will need updating.
     is_sessionless = normalized >= SESSIONLESS_PROTOCOL_MIN_VERSION
 
-    # Log deprecation warning for sessionful protocols (once per process)
-    if not is_sessionless and not _deprecation_warning_logged:
-        logger.warning(
-            "DEPRECATION: MCP protocol version %s uses legacy sessionful semantics. "
-            "Sessionful protocols (< %s) are deprecated and will be removed in a future release. "
-            "Please upgrade to protocol version %s or later for sessionless semantics. "
-            "See https://github.com/modelcontextprotocol/specification/pull/2567 for details.",
-            normalized,
-            SESSIONLESS_PROTOCOL_MIN_VERSION,
-            SESSIONLESS_PROTOCOL_MIN_VERSION,
-        )
-        _deprecation_warning_logged = True
+    # Log deprecation warning for sessionful protocols (once per unique version, thread-safe)
+    if not is_sessionless:
+        _log_deprecation_warning_once(normalized)
 
     return is_sessionless
