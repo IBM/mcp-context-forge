@@ -350,7 +350,7 @@ async def test_llmguardplugin_sanitizers_anonymize_deanonymize():
     payload = PromptPrehookPayload(prompt_id="test_prompt", args={"arg0": "My name is John Doe"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(payload, context)
-    _, vault_id, _ = plugin.llmguard_instance._retreive_vault()
+    _, vault_id, _ = plugin.llmguard_instance._retrieve_vault()
     assert "[REDACTED_PERSON_1]" in result.modified_payload.args["arg0"]
     messages = [
         Message(role=Role.USER, content=TextContent(type="text", text=result.modified_payload.args["arg0"])),
@@ -877,8 +877,8 @@ async def test_llmguard_shutdown():
 
 
 @pytest.mark.asyncio
-async def test_retreive_vault_no_sanitizers():
-    """Test _retreive_vault when no sanitizers are configured."""
+async def test_retrieve_vault_no_sanitizers():
+    """Test _retrieve_vault when no sanitizers are configured."""
     config_input_filter = {
         "input": {"filters": {"PromptInjection": {"threshold": 0.9, "use_onnx": False}}},
     }
@@ -892,8 +892,8 @@ async def test_retreive_vault_no_sanitizers():
 
     plugin = LLMGuardPlugin(config)
 
-    # Call _retreive_vault when no sanitizers exist
-    vault, vault_id, vault_tuples = plugin.llmguard_instance._retreive_vault()
+    # Call _retrieve_vault when no sanitizers exist
+    vault, vault_id, vault_tuples = plugin.llmguard_instance._retrieve_vault()
 
     # Should return None values
     assert vault is None
@@ -902,8 +902,8 @@ async def test_retreive_vault_no_sanitizers():
 
 
 @pytest.mark.asyncio
-async def test_retreive_vault_with_error():
-    """Test _retreive_vault error handling."""
+async def test_retrieve_vault_with_error():
+    """Test _retrieve_vault error handling."""
     # Third-Party
     from unittest.mock import PropertyMock, patch
 
@@ -925,7 +925,7 @@ async def test_retreive_vault_with_error():
         mock_vault.side_effect = Exception("Test error")
 
         # Should handle the error gracefully
-        vault, _vault_id, _vault_tuples = plugin.llmguard_instance._retreive_vault()
+        vault, _vault_id, _vault_tuples = plugin.llmguard_instance._retrieve_vault()
 
         # Should still return the scanner's vault despite error
         assert vault is not None
