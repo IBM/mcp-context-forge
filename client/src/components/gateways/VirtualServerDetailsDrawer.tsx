@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Activity,
@@ -36,6 +36,13 @@ import {
   getVirtualServerEndpoint,
   truncateMiddle,
 } from "@/components/gateways/utils";
+
+const COMPONENT_FILTER_OPTIONS: Array<{ value: ComponentFilter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "tools", label: "Tools" },
+  { value: "resources", label: "Resources" },
+  { value: "prompts", label: "Prompts" },
+];
 
 function DetailRow({
   label,
@@ -101,17 +108,14 @@ export function VirtualServerDetailsDrawer({
     setComponentFilter("all");
   }, [server?.id]);
 
-  const componentItems = server ? buildComponentItems(server) : [];
-  const visibleComponentItems =
-    componentFilter === "all"
-      ? componentItems
-      : componentItems.filter((item) => item.type === componentFilter);
-  const filterOptions: Array<{ value: ComponentFilter; label: string }> = [
-    { value: "all", label: "All" },
-    { value: "tools", label: "Tools" },
-    { value: "resources", label: "Resources" },
-    { value: "prompts", label: "Prompts" },
-  ];
+  const componentItems = useMemo(() => (server ? buildComponentItems(server) : []), [server]);
+  const visibleComponentItems = useMemo(
+    () =>
+      componentFilter === "all"
+        ? componentItems
+        : componentItems.filter((item) => item.type === componentFilter),
+    [componentFilter, componentItems],
+  );
 
   return (
     <Sheet open={Boolean(server)} onOpenChange={onOpenChange}>
@@ -177,7 +181,7 @@ export function VirtualServerDetailsDrawer({
 
                 <div className="mt-8 flex items-center justify-between gap-4">
                   <div className="flex min-w-0 items-center gap-6">
-                    {filterOptions.map((option) => (
+                    {COMPONENT_FILTER_OPTIONS.map((option) => (
                       <button
                         key={option.value}
                         type="button"
@@ -223,7 +227,11 @@ export function VirtualServerDetailsDrawer({
 
                 <div className="mt-5 divide-y divide-transparent">
                   {isLoading && (
-                    <div className="flex items-center gap-2 py-8 text-muted-foreground">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="flex items-center gap-2 py-8 text-muted-foreground"
+                    >
                       <Loading />
                       <span>Loading server details...</span>
                     </div>
