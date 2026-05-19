@@ -148,6 +148,9 @@ def wait_for_redis_ready(
             so actual sleep can be ±25% of this value.
         logger : logging.Logger, optional
             Logger instance to use. If not provided, a default logger is configured.
+        ssl_kwargs : dict, optional
+            Extra keyword arguments passed to the Redis client for TLS/SSL configuration
+            (e.g. ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``). Pass ``None`` for plain TCP.
         sync : bool
             If True, runs the probe synchronously. If False (default), runs it asynchronously.
 
