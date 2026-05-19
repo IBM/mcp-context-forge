@@ -126,6 +126,7 @@ jobs:
             UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest
             NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest
             UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest
+            PYTHON_VERSION=3.11
 
       - name: FedRAMP post-build compliance validation
         run: |
