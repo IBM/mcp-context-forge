@@ -252,13 +252,13 @@ streamable_http_session = SessionManagerWrapper()
 # Wait for redis to be ready
 if settings.cache_type == "redis" and settings.redis_url is not None:
     # First-Party
-    from mcpgateway.utils.redis_client import _build_ssl_context
+    from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
     wait_for_redis_ready(
         redis_url=settings.redis_url,
         max_retries=int(settings.redis_max_retries),
         retry_interval_ms=int(settings.redis_retry_interval_ms),
-        ssl_context=_build_ssl_context(settings),
+        ssl_kwargs=_build_ssl_kwargs(settings),
         sync=True,
     )
 

@@ -24,7 +24,6 @@ Usage:
 
 # Standard
 import logging
-import ssl
 from typing import Any, Optional
 
 # First-Party
@@ -39,37 +38,37 @@ _client: Optional[Any] = None
 _initialized: bool = False
 
 
-def _build_ssl_context(settings: Any) -> Optional[ssl.SSLContext]:
-    """Build an SSL context for Redis TLS connections.
+def _build_ssl_kwargs(settings: Any) -> dict[str, Any]:
+    """Build SSL keyword arguments for Redis TLS connections (redis-py 7.x).
 
-    Returns ``None`` when TLS is disabled (local dev default).  In
-    production set ``REDIS_SSL=true`` (and use a ``rediss://`` URL) then
-    optionally supply ``REDIS_SSL_CA_CERTS``, ``REDIS_SSL_CERTFILE``, and
-    ``REDIS_SSL_KEYFILE`` for certificate verification / mutual TLS.
+    redis-py 7.x SSLConnection accepts individual ssl_* params, not an SSLContext object.
+    Returns an empty dict when TLS is disabled so callers can unconditionally
+    do ``connection_kwargs.update(_build_ssl_kwargs(settings))``.
 
     Args:
         settings: Application settings instance.
 
     Returns:
-        ssl.SSLContext configured for Redis, or None when TLS is off.
+        Dict of ssl_* kwargs to spread into Redis.from_url() / aioredis.from_url().
     """
     if not settings.redis_ssl:
-        return None
+        return {}
 
-    ctx = ssl.create_default_context(cafile=settings.redis_ssl_ca_certs or None)
+    kwargs: dict[str, Any] = {}
 
+    if settings.redis_ssl_ca_certs:
+        kwargs["ssl_ca_certs"] = settings.redis_ssl_ca_certs
     if settings.redis_ssl_certfile:
-        ctx.load_cert_chain(
-            certfile=settings.redis_ssl_certfile,
-            keyfile=settings.redis_ssl_keyfile or None,
-        )
+        kwargs["ssl_certfile"] = settings.redis_ssl_certfile
+    if settings.redis_ssl_keyfile:
+        kwargs["ssl_keyfile"] = settings.redis_ssl_keyfile
 
     if not settings.redis_ssl_check_hostname:
-        # Allow self-signed certs in non-production environments only
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        # Skip server-cert hostname verification for self-signed certs
+        kwargs["ssl_cert_reqs"] = "none"
+        kwargs["ssl_check_hostname"] = False
 
-    return ctx
+    return kwargs
 
 
 def _is_hiredis_available() -> bool:
@@ -187,11 +186,9 @@ async def get_redis_client() -> Optional[Any]:
         if parser_class is not None:
             connection_kwargs["parser_class"] = parser_class
 
-        # Inject TLS context when REDIS_SSL=true (production).
-        # Local dev: returns None → no ssl kwarg → plain TCP connection.
-        ssl_context = _build_ssl_context(settings)
-        if ssl_context is not None:
-            connection_kwargs["ssl"] = ssl_context
+        # Inject TLS kwargs when REDIS_SSL=true (production).
+        # Local dev: returns {} → no ssl kwarg → plain TCP connection.
+        connection_kwargs.update(_build_ssl_kwargs(settings))
 
         _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
         await _client.ping()
