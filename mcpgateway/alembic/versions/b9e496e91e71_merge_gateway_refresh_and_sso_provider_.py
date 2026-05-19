@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 Merge gateway_refresh and sso_provider_metadata heads.
 
 Revision ID: b9e496e91e71
-Revises: a8f3b2c1d4e5, u5f6g7h8i9j0
+Revises: a8f3b2c1d4e5
 Create Date: 2026-01-17
 """
 
@@ -16,7 +16,7 @@ from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
 revision: str = "b9e496e91e71"
-down_revision: Union[str, Sequence[str], None] = ("a8f3b2c1d4e5", "u5f6g7h8i9j0")
+down_revision: Union[str, Sequence[str], None] = "a8f3b2c1d4e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

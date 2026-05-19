@@ -140,7 +140,7 @@ class BaseService(ABC):
         tokens. Use _apply_access_control() which handles this automatically.
 
         Access rules:
-        - public: visible to all (global listing only; excluded when team_id is set)
+        - public: visible to all — always included, even when team_id is set
         - team: visible to team members (token_teams contains team_id)
         - private: visible only to owner (requires user_email)
 
@@ -159,7 +159,10 @@ class BaseService(ABC):
             if team_id not in token_teams:
                 return query.where(False)
 
-            access_conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
+            access_conditions = [
+                and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])),
+                model_cls.visibility == "public",  # globally public items from any team are always visible
+            ]
             if user_email:
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))

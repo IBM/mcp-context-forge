@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 add prompt namespacing fields
 
 Revision ID: r2b3c4d5e6f7
-Revises: k5e6f7g8h9i0, 4f07c116f917, z1a2b3c4d5e6
+Revises: 4f07c116f917
 Create Date: 2025-12-19 00:00:00.000000
 """
 

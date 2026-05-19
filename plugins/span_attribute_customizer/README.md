@@ -59,6 +59,12 @@ plugins:
       # Global removal list
       remove_attributes:
         - "internal_debug_info"
+
+      # Baggage span attribute emission policy
+      allowed_baggage_span_attributes:
+        - "tenant.id"
+        - "user.id"
+      emit_baggage_prefixed_attributes: false
 ```
 
 ## Configuration Options
@@ -100,6 +106,24 @@ attribute_mapping:
   "controls.enforcement.mode": "enforce"
 }
 ```
+
+### Baggage Span Attributes
+
+Control how OpenTelemetry baggage is promoted into span attributes:
+
+```yaml
+allowed_baggage_span_attributes:
+  - "tenant.id"
+  - "user.id"
+emit_baggage_prefixed_attributes: false
+```
+
+**Key Points:**
+- Baggage remains the standards-compliant propagation mechanism
+- The allowlist controls which baggage keys may be copied onto spans
+- `emit_baggage_prefixed_attributes: true` emits `baggage.tenant.id`
+- `emit_baggage_prefixed_attributes: false` emits `tenant.id`
+- If no allowlist is configured, the gateway preserves legacy behavior and emits all baggage keys
 
 ### Global Attributes
 

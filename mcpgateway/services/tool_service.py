@@ -5270,7 +5270,7 @@ class ToolService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,

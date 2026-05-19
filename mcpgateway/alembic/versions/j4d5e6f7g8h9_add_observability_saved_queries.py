@@ -51,8 +51,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove observability_saved_queries table."""
-    op.drop_index("ix_observability_saved_queries_name", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_created_at", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_is_shared", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_user_email", table_name="observability_saved_queries")
+    op.drop_index("ix_observability_saved_queries_name", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_created_at", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_is_shared", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_user_email", table_name="observability_saved_queries", if_exists=True)
     op.drop_table("observability_saved_queries")
