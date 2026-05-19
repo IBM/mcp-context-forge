@@ -251,7 +251,7 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
         >>> call_kwargs['path']
         '/'
     """
-    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+    cookie_name = settings.csrf_cookie_name
     response.set_cookie(
         key=cookie_name,
         value=token,
@@ -287,7 +287,7 @@ def clear_csrf_cookie(response: Any, settings: Any) -> None:
         >>> call_kwargs['secure']
         True
     """
-    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+    cookie_name = settings.csrf_cookie_name
     response.set_cookie(
         key=cookie_name,
         value="",

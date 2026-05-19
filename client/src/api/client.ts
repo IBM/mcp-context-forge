@@ -103,7 +103,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   };
 
   if (method !== "GET") {
-    const csrfToken = getCookie("csrf_token");
+    const csrfToken = getCookie("mcpgateway_csrf_token");
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken;
     }
@@ -114,7 +114,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    credentials: "same-origin",
+    credentials: "same-origin", // pragma: allowlist secret
   };
 
   if (signal && canUseSignal(requestUrl, signal)) {

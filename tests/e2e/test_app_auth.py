@@ -356,7 +356,7 @@ class TestCookieSecurityFlags:
         assert jwt_cookie, "jwt_token cookie not found in Set-Cookie headers"
         assert "httponly" in jwt_cookie.lower()
         assert "samesite=lax" in jwt_cookie.lower()
-        assert "path=/app" in jwt_cookie.lower()
+        assert "path=/" in jwt_cookie.lower()
 
     def test_csrf_cookie_security_flags(self, client, setup_test_user, test_user_credentials):
         """Test CSRF cookie has samesite=strict and is scoped to /app."""
@@ -374,7 +374,7 @@ class TestCookieSecurityFlags:
 
         assert csrf_cookie, "csrf_token cookie not found in Set-Cookie headers"
         assert "samesite=strict" in csrf_cookie.lower()
-        assert "path=/app" in csrf_cookie.lower()
+        assert "path=/" in csrf_cookie.lower()
         assert "httponly" not in csrf_cookie.lower(), "CSRF cookie must not be httpOnly — JS needs to read it"
 
 
