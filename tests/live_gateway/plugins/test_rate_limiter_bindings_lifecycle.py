@@ -488,6 +488,12 @@ def _redis_rl_keys() -> list[tuple[str, str, str]]:
     Default container name matches ``docker compose up`` from the repo root
     (project name = ``mcp-context-forge``). Override via REDIS_CONTAINER_NAME
     if you use a custom project name (e.g. ``docker compose -p <name> up``).
+
+    Raises a ``pytest.skip`` (via the exception path) when the Redis
+    container is unreachable. The empty-list sentinel is reserved for
+    "container is reachable, no rl:* keys present" — otherwise a docker
+    outage would surface as a misleading "counter is missing" assertion
+    failure instead of a test-infra problem.
     """
     container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
     try:
@@ -495,8 +501,13 @@ def _redis_rl_keys() -> list[tuple[str, str, str]]:
             ["docker", "exec", container, "redis-cli", "--scan", "--pattern", "rl:*"],
             capture_output=True, text=True, timeout=10, check=True,
         ).stdout.strip()
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        return []
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        pytest.skip(
+            f"Redis container {container!r} unreachable via docker exec — "
+            f"cannot inspect rl:* keys ({type(exc).__name__}: {exc}). "
+            f"Set REDIS_CONTAINER_NAME if your compose project uses a "
+            f"different container name."
+        )
     rows: list[tuple[str, str, str]] = []
     for k in (line.strip() for line in keys_out.splitlines() if line.strip()):
         try:
