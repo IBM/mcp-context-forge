@@ -375,7 +375,7 @@ class SessionlessConnectionPool:
                         logger.debug("Error closing session: %s", exc)
                 if transport_ctx is not None:
                     try:
-                        await transport_ctx.__aexit__(None, None, None)
+                        await transport_ctx.__aexit__(None, None, None)  # pylint: disable=no-member
                     except Exception as exc:  # noqa: BLE001
                         logger.debug("Error closing transport: %s", exc)
 
