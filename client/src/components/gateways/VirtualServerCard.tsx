@@ -1,6 +1,5 @@
-import { Box, EllipsisVertical, Upload, Wrench } from "lucide-react";
+import { Box, EllipsisVertical, MessageSquareCode, Upload, Wrench } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { PromptIcon } from "@/components/icons/PromptIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -89,7 +88,7 @@ export function VirtualServerCard({
           </span>
           <span className="text-border">•</span>
           <span className="flex items-center gap-2" data-testid="prompt-count">
-            <PromptIcon className="size-4 text-muted-foreground" />
+            <MessageSquareCode className="size-4 text-muted-foreground" />
             {promptCount}
           </span>
         </div>

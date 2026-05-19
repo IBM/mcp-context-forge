@@ -19,19 +19,7 @@ export function Gateways() {
   const { navigate } = useRouter();
   const { data, error, isLoading } = useQuery<VirtualServersResponse>(SERVERS_QUERY_PATH);
   const [detailsServer, setDetailsServer] = useState<VirtualServer | null>(null);
-  const {
-    data: serverDetails,
-    error: serverDetailsError,
-    isLoading: isServerDetailsLoading,
-  } = useQuery<VirtualServer>(
-    `/servers/${detailsServer ? encodeURIComponent(detailsServer.id) : "__pending__"}`,
-    {
-      enabled: Boolean(detailsServer),
-    },
-  );
   const servers = data?.servers ?? [];
-  const hydratedDetailsServer =
-    detailsServer && serverDetails?.id === detailsServer.id ? serverDetails : detailsServer;
 
   const actionCards: ActionCard[] = useMemo(
     () => [
@@ -132,19 +120,49 @@ export function Gateways() {
           ))}
         </div>
 
-        <VirtualServerDetailsDrawer
-          server={hydratedDetailsServer}
-          isLoading={Boolean(detailsServer) && isServerDetailsLoading}
-          error={serverDetailsError}
-          onAddComponents={() => navigate("/app/servers?openForm=true")}
-          onAddSources={() => navigate("/app/servers?openForm=true")}
-          onOpenChange={(open) => {
-            if (!open) setDetailsServer(null);
-          }}
-        />
+        {detailsServer && (
+          <VirtualServerDetailsDrawerContainer
+            server={detailsServer}
+            onAddComponents={() => navigate("/app/servers?openForm=true")}
+            onAddSources={() => navigate("/app/servers?openForm=true")}
+            onOpenChange={(open) => {
+              if (!open) setDetailsServer(null);
+            }}
+          />
+        )}
       </div>
     );
   }
 
   return <SourceSelection actionCards={actionCards} />;
+}
+
+function VirtualServerDetailsDrawerContainer({
+  server,
+  onAddComponents,
+  onAddSources,
+  onOpenChange,
+}: {
+  server: VirtualServer;
+  onAddComponents: () => void;
+  onAddSources: () => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const {
+    data: serverDetails,
+    error,
+    isLoading,
+  } = useQuery<VirtualServer>(`/servers/${encodeURIComponent(server.id)}`);
+  const hydratedServer = serverDetails?.id === server.id ? serverDetails : server;
+
+  return (
+    <VirtualServerDetailsDrawer
+      server={hydratedServer}
+      isLoading={isLoading}
+      error={error}
+      onAddComponents={onAddComponents}
+      onAddSources={onAddSources}
+      onOpenChange={onOpenChange}
+    />
+  );
 }

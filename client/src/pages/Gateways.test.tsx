@@ -286,9 +286,8 @@ describe("Gateways", () => {
 
     await user.click(viewDetails);
 
-    expect(mockUseQuery).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddetail", {
-      enabled: true,
-    });
+    expect(mockUseQuery).toHaveBeenCalledWith("/servers/gateway%2F1%3Fmode%3Ddetail");
+    expect(mockUseQuery).not.toHaveBeenCalledWith("/servers/__pending__", expect.anything());
     expect(screen.getByText("Virtual server details")).toBeInTheDocument();
     expect(
       screen.getByText(

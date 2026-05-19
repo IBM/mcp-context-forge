@@ -33,8 +33,8 @@ export function SourceSelection({ actionCards }: { actionCards: ActionCard[] }) 
             const isSelected = index === selectedIndex && !isDisabled;
             const cardClasses = isDisabled
               ? "group/action-card flex cursor-not-allowed flex-col opacity-60"
-              : `group/action-card flex cursor-pointer flex-col transition-all hover:border-[#FF832B] hover:shadow-md hover:ring-[#FF832B] ${
-                  isSelected ? "border-[#FF832B] shadow-md ring-1 ring-[#FF832B]" : ""
+              : `group/action-card flex cursor-pointer flex-col transition-all hover:border-primary hover:shadow-md hover:ring-primary ${
+                  isSelected ? "border-primary shadow-md ring-1 ring-primary" : ""
                 }`;
             return (
               <Card

@@ -9,8 +9,7 @@ export function formatServerTimestamp(value?: string) {
 }
 
 export function formatServerDateTime(value?: string) {
-  if (!value) return "N/A";
-  return value.replace(/Z$/, "");
+  return formatServerTimestamp(value);
 }
 
 export function formatVisibility(value?: string) {

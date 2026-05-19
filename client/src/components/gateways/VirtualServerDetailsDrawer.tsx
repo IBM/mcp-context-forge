@@ -6,6 +6,7 @@ import {
   Copy,
   EllipsisVertical,
   Filter,
+  MessageSquareCode,
   PanelRightClose,
   Plus,
   Search,
@@ -13,7 +14,6 @@ import {
   Wrench,
 } from "lucide-react";
 import { MCPIcon } from "@/components/icons/MCPIcon";
-import { PromptIcon } from "@/components/icons/PromptIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loading } from "@/components/ui/loading";
@@ -75,7 +75,7 @@ function CopyValue({ label, value }: { label: string; value: string }) {
 function getComponentIcon(type: Exclude<ComponentFilter, "all">) {
   if (type === "tools") return <Wrench className="size-3.5" />;
   if (type === "resources") return <Box className="size-3.5" />;
-  return <PromptIcon className="size-3.5" />;
+  return <MessageSquareCode className="size-3.5" />;
 }
 
 export function VirtualServerDetailsDrawer({
