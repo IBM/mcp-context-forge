@@ -128,10 +128,10 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             'C /root/.cshrc        600 root root - /usr/share/rootfiles/.cshrc' \
             'C /root/.tcshrc       600 root root - /usr/share/rootfiles/.tcshrc' \
             > /etc/tmpfiles.d/rootfiles.conf \
-        && cp -f /usr/share/rootfiles/.bash_profile /root/.bash_profile 2>/dev/null || true \
-        && cp -f /usr/share/rootfiles/.bashrc /root/.bashrc 2>/dev/null || true \
-        && cp -f /usr/share/rootfiles/.bash_logout /root/.bash_logout 2>/dev/null || true \
-        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout 2>/dev/null || true; \
+        && printf '' >> /root/.bash_profile \
+        && printf '' >> /root/.bashrc \
+        && printf '' >> /root/.bash_logout \
+        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout; \
     else \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi
