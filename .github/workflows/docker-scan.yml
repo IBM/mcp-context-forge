@@ -112,6 +112,44 @@ jobs:
           cache-from: type=gha,scope=containerfile-lite-amd64
           cache-to: type=gha,mode=max,scope=containerfile-lite-amd64
 
+      - name: Build image locally (FIPS enabled)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:fedramp-validate
+          build-args: |
+            ENABLE_FIPS=true
+
+      - name: FedRAMP post-build compliance validation
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            ${{ env.IMAGE_NAME }}:fedramp-validate \
+            -c "
+              PASS=0; FAIL=0
+              check() {
+                local desc=\$1 cmd=\$2 expect=\$3
+                if eval \"\$cmd\" 2>/dev/null | grep -q \"\$expect\"; then
+                  echo \"  PASS: \$desc\"; PASS=\$((PASS+1))
+                else
+                  echo \"  FAIL: \$desc\"; FAIL=\$((FAIL+1))
+                fi
+              }
+              echo '=== FedRAMP Compliance Validation ==='
+              check 'FIPS policy (findings 1/2/3)'    'update-crypto-policies --show'                           'FIPS'
+              check 'rootfiles tmpfile.d (finding 8)'  'test -f /etc/tmpfiles.d/rootfiles.conf && echo PRESENT'  'PRESENT'
+              check 'SSH RekeyLimit (finding 9)'       'cat /etc/ssh/ssh_config.d/02-rekey-limit.conf'           'RekeyLimit 512M 1h'
+              check '.bash_profile perms (finding 7)'  'stat -c \"%a\" /root/.bash_profile'                      '740'
+              check '.bashrc perms (finding 7)'        'stat -c \"%a\" /root/.bashrc'                            '740'
+              echo ''
+              echo \"=== Results: \$((5-FAIL)) passed, \$FAIL failed ===\"
+              [ \"\$FAIL\" -eq 0 ]
+            "
+
       - name: Generate SBOM (Syft)
         run: |
           docker run --rm \
