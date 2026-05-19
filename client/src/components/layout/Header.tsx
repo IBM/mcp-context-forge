@@ -5,6 +5,9 @@ import { SidebarTrigger } from "../ui/sidebar";
 import { HeaderProfileMenu } from "./HeaderProfileMenu";
 import { HeaderQuickNav } from "./HeaderQuickNav";
 
+const GITHUB_URL = "https://github.com/IBM/mcp-context-forge";
+const DOCS_URL = "https://ibm.github.io/mcp-context-forge/latest/";
+
 interface VersionResponse {
   app?: {
     version?: string;
@@ -26,22 +29,20 @@ export function Header() {
           </span>
         ) : null}
         <a
-          href="https://github.com/IBM/mcp-context-forge"
+          href={GITHUB_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="GitHub"
-          title="GitHub"
         >
           <GitHubIcon className="size-4" aria-hidden="true" />
         </a>
         <a
-          href="https://ibm.github.io/mcp-context-forge/latest/"
+          href={DOCS_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           aria-label="Documentation"
-          title="Documentation"
         >
           <BookOpen className="size-4" aria-hidden="true" />
         </a>
