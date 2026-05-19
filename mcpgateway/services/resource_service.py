@@ -1882,6 +1882,7 @@ class ResourceService(BaseService):
                         # ═══════════════════════════════════════════════════════════════════════════
                         gateway_url = gateway.url
                         gateway_transport = gateway.transport
+                        registry_transport_type = TransportType.SSE if str(gateway_transport or "streamable_http").lower() == "sse" else TransportType.STREAMABLE_HTTP
                         gateway_auth_type = gateway.auth_type
                         gateway_auth_value = gateway.auth_value
                         gateway_oauth_config = gateway.oauth_config
@@ -2047,7 +2048,7 @@ class ResourceService(BaseService):
                                         gateway_id=gateway_id,
                                         url=server_url,
                                         headers=authentication,
-                                        transport_type=TransportType.SSE,
+                                        transport_type=registry_transport_type,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
                                         resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
@@ -2057,7 +2058,7 @@ class ResourceService(BaseService):
                                         gateway_id=gateway_id,
                                         url=server_url,
                                         headers=authentication,
-                                        transport_type=TransportType.SSE,
+                                        transport_type=registry_transport_type,
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as pooled_conn:
                                         resource_response = await _read_resource_with_meta(pooled_conn.session, uri, meta_data)

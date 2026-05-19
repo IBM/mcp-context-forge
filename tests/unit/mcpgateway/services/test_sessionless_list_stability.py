@@ -13,13 +13,18 @@ This module verifies that tools/list, resources/list, and prompts/list endpoints
 Issue: #4686 - Implement sessionless MCP protocol semantics
 """
 
+# Standard
+import inspect
+
 # Third-Party
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.db import Tool, Resource, Prompt
 
 
 @pytest.fixture
@@ -50,28 +55,132 @@ class TestListStabilityInvariants:
     """
 
     @pytest.mark.asyncio
-    async def test_tools_list_auth_scoped_not_connection_scoped(
+    async def test_tools_list_same_auth_returns_same_results(
         self, tool_service, test_db
     ):
         """
-        Verify that tools/list results depend on auth scope, not connection state.
+        Verify that tools/list returns identical results for the same auth context.
 
-        This is the key invariant for sessionless protocols: the same auth
-        context should always see the same list, regardless of prior requests
-        or connection identity.
+        This tests that list results depend only on auth scope (user_email, token_teams)
+        and not on connection-scoped state.
         """
-        # This test uses the real database and services to verify behavior
-        # The key assertion is that repeated calls with the same auth return
-        # identical results, which is already tested by existing test suite
+        # Create test tools with different visibility levels
+        tool1 = Tool(
+            original_name="public_tool",
+            custom_name="public_tool",
+            name="public_tool",
+            description="Public tool",
+            input_schema={},
+            visibility="public",
+            enabled=True,
+        )
+        tool2 = Tool(
+            original_name="team_tool",
+            custom_name="team_tool",
+            name="team_tool",
+            description="Team tool",
+            input_schema={},
+            visibility="team",
+            team_id="team1",
+            enabled=True,
+        )
+        test_db.add(tool1)
+        test_db.add(tool2)
+        test_db.commit()
 
-        # For sessionless protocols, this behavior is enforced by:
-        # 1. list_tools() not accepting or using session_id parameter
-        # 2. Filtering based only on token_teams, user_email, visibility
-        # 3. No connection-scoped caching or state
+        # Same auth context should return same results
+        tools1, _ = await tool_service.list_tools(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+        tools2, _ = await tool_service.list_tools(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
 
-        # The existing test suite already validates this behavior extensively
-        # This test serves as documentation of the requirement
-        pass
+        # Results should be identical
+        assert len(tools1) == len(tools2)
+        assert {t.name for t in tools1} == {t.name for t in tools2}
+
+    @pytest.mark.asyncio
+    async def test_tools_list_different_auth_returns_different_results(
+        self, tool_service, test_db
+    ):
+        """
+        Verify that tools/list returns different results for different auth contexts.
+
+        This tests auth-scoped isolation - different users should see different tools
+        based on their team membership.
+        """
+        # Create test tools with different visibility levels
+        tool1 = Tool(
+            original_name="public_tool",
+            custom_name="public_tool",
+            name="public_tool",
+            description="Public tool",
+            input_schema={},
+            visibility="public",
+            enabled=True,
+        )
+        tool2 = Tool(
+            original_name="team1_tool",
+            custom_name="team1_tool",
+            name="team1_tool",
+            description="Team 1 tool",
+            input_schema={},
+            visibility="team",
+            team_id="team1",
+            enabled=True,
+        )
+        tool3 = Tool(
+            original_name="team2_tool",
+            custom_name="team2_tool",
+            name="team2_tool",
+            description="Team 2 tool",
+            input_schema={},
+            visibility="team",
+            team_id="team2",
+            enabled=True,
+        )
+        test_db.add_all([tool1, tool2, tool3])
+        test_db.commit()
+
+        # User in team1 should see public + team1 tools
+        tools_team1, _ = await tool_service.list_tools(
+            db=test_db,
+            user_email="user1@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+
+        # User in team2 should see public + team2 tools
+        tools_team2, _ = await tool_service.list_tools(
+            db=test_db,
+            user_email="user2@example.com",
+            token_teams=["team2"],
+            team_id=None,
+            visibility=None,
+        )
+
+        # Results should be different
+        names_team1 = {t.name for t in tools_team1}
+        names_team2 = {t.name for t in tools_team2}
+
+        # Tool names are normalized (underscores to hyphens)
+        assert "public-tool" in names_team1
+        assert "team1-tool" in names_team1
+        assert "team2-tool" not in names_team1
+
+        assert "public-tool" in names_team2
+        assert "team2-tool" in names_team2
+        assert "team1-tool" not in names_team2
 
     @pytest.mark.asyncio
     async def test_resources_list_auth_scoped_not_connection_scoped(
@@ -80,8 +189,44 @@ class TestListStabilityInvariants:
         """
         Verify that resources/list results depend on auth scope, not connection state.
         """
-        # Same principle as tools/list test above
-        pass
+        # Create test resources
+        resource1 = Resource(
+            uri="resource://public",
+            name="public_resource",
+            mime_type="text/plain",
+            visibility="public",
+            enabled=True,
+        )
+        resource2 = Resource(
+            uri="resource://team",
+            name="team_resource",
+            mime_type="text/plain",
+            visibility="team",
+            team_id="team1",
+            enabled=True,
+        )
+        test_db.add_all([resource1, resource2])
+        test_db.commit()
+
+        # Same auth context should return same results
+        resources1, _ = await resource_service.list_resources(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+        resources2, _ = await resource_service.list_resources(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+
+        # Results should be identical
+        assert len(resources1) == len(resources2)
+        assert {r.uri for r in resources1} == {r.uri for r in resources2}
 
     @pytest.mark.asyncio
     async def test_prompts_list_auth_scoped_not_connection_scoped(
@@ -90,8 +235,50 @@ class TestListStabilityInvariants:
         """
         Verify that prompts/list results depend on auth scope, not connection state.
         """
-        # Same principle as tools/list test above
-        pass
+        # Create test prompts
+        prompt1 = Prompt(
+            original_name="public_prompt",
+            custom_name="public_prompt",
+            name="public_prompt",
+            description="Public prompt",
+            template="Test template",
+            argument_schema={},
+            visibility="public",
+            enabled=True,
+        )
+        prompt2 = Prompt(
+            original_name="team_prompt",
+            custom_name="team_prompt",
+            name="team_prompt",
+            description="Team prompt",
+            template="Test template",
+            argument_schema={},
+            visibility="team",
+            team_id="team1",
+            enabled=True,
+        )
+        test_db.add_all([prompt1, prompt2])
+        test_db.commit()
+
+        # Same auth context should return same results
+        prompts1, _ = await prompt_service.list_prompts(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+        prompts2, _ = await prompt_service.list_prompts(
+            db=test_db,
+            user_email="user@example.com",
+            token_teams=["team1"],
+            team_id=None,
+            visibility=None,
+        )
+
+        # Results should be identical
+        assert len(prompts1) == len(prompts2)
+        assert {p.name for p in prompts1} == {p.name for p in prompts2}
 
     def test_list_methods_do_not_accept_session_id_parameter(
         self, tool_service, resource_service, prompt_service
@@ -103,8 +290,6 @@ class TestListStabilityInvariants:
         methods must not accept session identifiers as parameters.
         """
         # Check tool_service.list_tools signature
-        import inspect
-
         tool_sig = inspect.signature(tool_service.list_tools)
         assert "session_id" not in tool_sig.parameters
         assert "mcp_session_id" not in tool_sig.parameters
@@ -134,8 +319,6 @@ class TestListStabilityInvariants:
         - team_id: filters to specific team
         - visibility: filters by visibility level
         """
-        import inspect
-
         # Check tool_service.list_tools has auth parameters
         tool_sig = inspect.signature(tool_service.list_tools)
         assert "user_email" in tool_sig.parameters
@@ -187,36 +370,9 @@ class TestSessionlessProtocolBehavior:
         # Test with future protocol version
         assert uses_sessionless_mcp_semantics("2026-01-01")
 
-        # Test with None (defaults to LATEST_PROTOCOL_VERSION which is >= 2025-11-25)
-        # So None actually defaults to sessionless in current implementation
-        assert uses_sessionless_mcp_semantics(None)
-
-    def test_downstream_session_id_returns_none_for_sessionless(self):
-        """
-        Verify that downstream_session_id_from_request_context returns None
-        for sessionless protocols.
-        """
-        # First-Party
-        from mcpgateway.services.upstream_session_registry import (
-            downstream_session_id_from_request_context,
-        )
-
-        # Create a mock request with sessionless protocol
-        class MockRequest:
-            def __init__(self):
-                self.state = type('obj', (object,), {
-                    'mcp_sessionless_semantics': True,
-                    'mcp_session_id': 'test-session-123'
-                })()
-                self.headers = {'mcp-session-id': 'test-session-123'}
-
-        request = MockRequest()
-
-        # Should return None for sessionless protocols (function takes no args, uses request_context)
-        # This test documents the expected behavior but cannot easily test it
-        # without a full request context. The actual behavior is tested by
-        # integration tests that use real requests.
-        pass
+        # Test with None (defaults to "2024-11-05" for backward compatibility)
+        # Clients must explicitly opt into sessionless semantics
+        assert not uses_sessionless_mcp_semantics(None)
 
 
 class TestDocumentationAndGuidance:
@@ -244,3 +400,5 @@ class TestDocumentationAndGuidance:
         """
         # This is a documentation requirement, not a code requirement
         pass
+
+# Made with Bob
