@@ -76,7 +76,7 @@ export function HeaderQuickNav() {
           onFocus={() => setIsExpanded(true)}
           onBlur={() => setIsExpanded(query.length > 0)}
           aria-label={intl.formatMessage({ id: "common.search" })}
-          data-expanded={isExpanded || query.length > 0}
+          data-expanded={isExpanded}
           placeholder={
             isExpanded || query.length > 0 ? intl.formatMessage({ id: "common.search" }) : ""
           }
