@@ -440,7 +440,9 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         && printf '' >> /root/.bash_profile \
         && printf '' >> /root/.bashrc \
         && printf '' >> /root/.bash_logout \
-        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout; \
+        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout \
+        && echo "DEBUG perms after chmod:" \
+        && stat -c '%a %n' /root/.bash_profile /root/.bashrc /root/.bash_logout; \
     else \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi
