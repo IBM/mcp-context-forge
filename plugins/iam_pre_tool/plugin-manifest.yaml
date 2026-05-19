@@ -1,0 +1,12 @@
+description: "IAM pre-tool plugin for token acquisition and credential injection into MCP server requests"
+author: "Ioannis Ioannou"
+version: "0.1.0"
+tags: ["auth", "iam", "oauth2", "token", "security", "mcp"]
+available_hooks:
+  - "http_pre_request"
+default_config:
+  enabled: true
+  token_cache_ttl_seconds: 3600
+  oauth2_client_credentials_enabled: false
+  token_exchange_enabled: false
+  inject_bearer_token: true
