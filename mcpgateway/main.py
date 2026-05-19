@@ -1859,9 +1859,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await shutdown_upstream_session_registry()
 
         # Shutdown sessionless connection pool
-        # First-Party
-        from mcpgateway.services.sessionless_connection_pool import get_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
-
         try:
             pool = get_sessionless_connection_pool()
             await pool.shutdown()
