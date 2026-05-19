@@ -99,6 +99,10 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
+try:
+    from plugins.sbom_generator.storage.models import SBOMComponentDB, SBOMDocumentDB  # noqa: F401
+except ImportError:
+    pass
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
