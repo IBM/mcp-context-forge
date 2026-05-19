@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/mocks/server";
 import { useMCPServerForm } from "./useMCPServerForm";
 
 describe("useMCPServerForm", () => {
@@ -307,6 +309,584 @@ describe("useMCPServerForm", () => {
       expect(formData.description).toBe("Test description");
       expect(formData.transport).toBe("STREAMABLEHTTP");
       expect(formData.visibility).toBe("public");
+    });
+  });
+
+  describe("getFormData - Auth Type Mapping", () => {
+    it('sends authType "" when auth type is "none" to clear existing auth', () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("none");
+      });
+
+      expect(result.current.getFormData().authType).toBe("");
+    });
+
+    it('maps "custom" to "authheaders" for the API', () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([{ id: "1", key: "X-API-Key", value: "secret" }]);
+      });
+
+      expect(result.current.getFormData().authType).toBe("authheaders");
+    });
+
+    it('maps "query" to "query_param" for the API', () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("query");
+        result.current.setQueryParamName("api_key");
+        result.current.setQueryParamApiKey("secret");
+      });
+
+      expect(result.current.getFormData().authType).toBe("query_param");
+    });
+
+    it('passes "basic", "bearer", and "oauth" auth types through unchanged', () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      for (const type of ["basic", "bearer", "oauth"] as const) {
+        act(() => {
+          result.current.setAuthType(type);
+        });
+        expect(result.current.getFormData().authType).toBe(type);
+      }
+    });
+  });
+
+  describe("getFormData - authToken scoping", () => {
+    it("includes authToken when authType is bearer and token is set", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("real-token-abc123");
+      });
+
+      expect(result.current.getFormData().authToken).toBe("real-token-abc123");
+    });
+
+    it("includes authToken when bearer token looks like a masked placeholder", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("*****");
+      });
+
+      expect(result.current.getFormData().authToken).toBe("*****");
+    });
+
+    it("omits authToken when authType is bearer but token is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("");
+      });
+
+      expect(result.current.getFormData().authToken).toBeUndefined();
+    });
+
+    it("omits authToken when authType is basic (not bearer)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("pass");
+        result.current.setBearerToken("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authToken).toBeUndefined();
+    });
+
+    it("omits authToken when authType is none", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("none");
+        result.current.setBearerToken("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authToken).toBeUndefined();
+    });
+  });
+
+  describe("getFormData - authPassword scoping", () => {
+    it("includes authPassword when authType is basic and password is set", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("real-pass");
+      });
+
+      expect(result.current.getFormData().authPassword).toBe("real-pass");
+    });
+
+    it("includes authPassword when it looks like a masked placeholder", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("*****");
+      });
+
+      expect(result.current.getFormData().authPassword).toBe("*****");
+    });
+
+    it("omits authPassword when authType is basic but password is empty", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setAuthUsername("admin");
+        result.current.setAuthPassword("");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
+    });
+
+    it("omits authPassword when authType is bearer (not basic)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("bearer");
+        result.current.setBearerToken("my-token");
+        result.current.setAuthPassword("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
+    });
+
+    it("omits authPassword when authType is oauth (not basic)", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("client_credentials");
+        result.current.setAuthPassword("should-be-excluded");
+      });
+
+      expect(result.current.getFormData().authPassword).toBeUndefined();
+    });
+  });
+
+  describe("getFormData - Custom Headers", () => {
+    it("sends auth_headers array for custom auth type", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-API-Key", value: "secret" },
+          { id: "2", key: "X-Tenant", value: "acme" },
+        ]);
+      });
+
+      expect(result.current.getFormData().auth_headers).toEqual([
+        { key: "X-API-Key", value: "secret" },
+        { key: "X-Tenant", value: "acme" },
+      ]);
+    });
+
+    it("excludes headers without keys", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-API-Key", value: "secret" },
+          { id: "2", key: "", value: "orphan" },
+        ]);
+      });
+
+      expect(result.current.getFormData().auth_headers).toEqual([
+        { key: "X-API-Key", value: "secret" },
+      ]);
+    });
+
+    it("sends remaining headers when one is removed", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("custom");
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-First", value: "one" },
+          { id: "2", key: "X-Second", value: "two" },
+          { id: "3", key: "X-Third", value: "three" },
+        ]);
+      });
+
+      act(() => {
+        result.current.setCustomHeaders([
+          { id: "1", key: "X-First", value: "one" },
+          { id: "3", key: "X-Third", value: "three" },
+        ]);
+      });
+
+      expect(result.current.getFormData().auth_headers).toEqual([
+        { key: "X-First", value: "one" },
+        { key: "X-Third", value: "three" },
+      ]);
+    });
+
+    it("returns undefined auth_headers when auth type is not custom", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setCustomHeaders([{ id: "1", key: "X-API-Key", value: "secret" }]);
+      });
+
+      expect(result.current.getFormData().auth_headers).toBeUndefined();
+    });
+  });
+
+  describe("getFormData - Query Parameter Auth", () => {
+    it("sends snake_case auth_query_param fields with query_param auth type", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("query");
+        result.current.setQueryParamName("api_key");
+        result.current.setQueryParamApiKey("my-secret");
+      });
+
+      const data = result.current.getFormData();
+      expect(data.authType).toBe("query_param");
+      expect(data.auth_query_param_key).toBe("api_key");
+      expect(data.auth_query_param_value).toBe("my-secret");
+    });
+
+    it("omits query param fields when auth type is not query", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+        result.current.setQueryParamName("api_key");
+        result.current.setQueryParamApiKey("secret");
+      });
+
+      const data = result.current.getFormData();
+      expect(data.auth_query_param_key).toBeUndefined();
+      expect(data.auth_query_param_value).toBeUndefined();
+    });
+  });
+
+  describe("getFormData - OAuth Config", () => {
+    it("includes store_tokens and auto_refresh in oauth_config", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("client_credentials");
+        result.current.setOAuthStoreTokens(true);
+        result.current.setOAuthAutoRefresh(false);
+      });
+
+      const config = result.current.getFormData().oauth_config;
+      expect(config?.store_tokens).toBe(true);
+      expect(config?.auto_refresh).toBe(false);
+    });
+
+    it("sends client_credentials fields without auth/redirect URLs", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("client_credentials");
+        result.current.setOAuthClientId("client-id");
+        result.current.setOAuthTokenUrl("https://auth.example.com/token");
+      });
+
+      const config = result.current.getFormData().oauth_config;
+      expect(config?.grant_type).toBe("client_credentials");
+      expect(config?.client_id).toBe("client-id");
+      expect(config?.token_url).toBe("https://auth.example.com/token");
+      expect(config?.authorization_url).toBeUndefined();
+      expect(config?.redirect_uri).toBeUndefined();
+    });
+
+    it("sends authorization_code fields including auth and redirect URLs", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("authorization_code");
+        result.current.setOAuthTokenUrl("https://auth.example.com/token");
+        result.current.setOAuthAuthorizationUrl("https://auth.example.com/authorize");
+        result.current.setOAuthRedirectUri("https://gateway.example.com/callback");
+      });
+
+      const config = result.current.getFormData().oauth_config;
+      expect(config?.grant_type).toBe("authorization_code");
+      expect(config?.authorization_url).toBe("https://auth.example.com/authorize");
+      expect(config?.redirect_uri).toBe("https://gateway.example.com/callback");
+    });
+
+    it("sends password grant type with username and password, no auth/redirect URLs", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("oauth");
+        result.current.setOAuthGrantType("password");
+        result.current.setOAuthUsername("service-account");
+        result.current.setOAuthPassword("svc-pass");
+      });
+
+      const config = result.current.getFormData().oauth_config;
+      expect(config?.grant_type).toBe("password");
+      expect(config?.username).toBe("service-account");
+      expect(config?.password).toBe("svc-pass");
+      expect(config?.authorization_url).toBeUndefined();
+      expect(config?.redirect_uri).toBeUndefined();
+    });
+
+    it("returns undefined oauth_config when auth type is not oauth", () => {
+      const { result } = renderHook(() => useMCPServerForm());
+
+      act(() => {
+        result.current.setName("Test Server");
+        result.current.setUrl("http://localhost:3000");
+        result.current.setAuthType("basic");
+      });
+
+      expect(result.current.getFormData().oauth_config).toBeUndefined();
+    });
+  });
+
+  describe("Edit Mode - Form Population from API", () => {
+    it("maps 'authheaders' from API response to 'custom' auth type", async () => {
+      server.use(
+        http.get("/gateways/gw-1", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "authheaders",
+            authHeaders: [{ key: "X-API-Key", value: "*****" }],
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-1"));
+
+      await waitFor(() => expect(result.current.authType).toBe("custom"));
+    });
+
+    it("maps 'query_param' from API response to 'query' auth type", async () => {
+      server.use(
+        http.get("/gateways/gw-2", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "query_param",
+            authQueryParamKey: "api_key",
+            authQueryParamValueMasked: "*****",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-2"));
+
+      await waitFor(() => expect(result.current.authType).toBe("query"));
+      expect(result.current.queryParamName).toBe("api_key");
+      expect(result.current.queryParamApiKey).toBe("*****");
+    });
+
+    it("populates basic auth username and masked password from API", async () => {
+      server.use(
+        http.get("/gateways/gw-3", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "basic",
+            authUsername: "admin",
+            authPassword: "*****",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-3"));
+
+      await waitFor(() => expect(result.current.authType).toBe("basic"));
+      expect(result.current.authUsername).toBe("admin");
+      expect(result.current.authPassword).toBe("*****");
+    });
+
+    it("populates bearer token from API response", async () => {
+      server.use(
+        http.get("/gateways/gw-4", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "bearer",
+            authToken: "*****",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-4"));
+
+      await waitFor(() => expect(result.current.authType).toBe("bearer"));
+      expect(result.current.bearerToken).toBe("*****");
+    });
+
+    it("populates multiple custom headers from API response", async () => {
+      server.use(
+        http.get("/gateways/gw-5", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "authheaders",
+            authHeaders: [
+              { key: "X-API-Key", value: "*****" },
+              { key: "X-Tenant", value: "*****" },
+            ],
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-5"));
+
+      await waitFor(() => expect(result.current.customHeaders).toHaveLength(2));
+      expect(result.current.customHeaders[0].key).toBe("X-API-Key");
+      expect(result.current.customHeaders[1].key).toBe("X-Tenant");
+    });
+
+    it("populates oauth store_tokens and auto_refresh as true from API", async () => {
+      server.use(
+        http.get("/gateways/gw-6", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "oauth",
+            oauthConfig: {
+              grant_type: "client_credentials",
+              store_tokens: true,
+              auto_refresh: true,
+            },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-6"));
+
+      await waitFor(() => expect(result.current.authType).toBe("oauth"));
+      expect(result.current.oauthStoreTokens).toBe(true);
+      expect(result.current.oauthAutoRefresh).toBe(true);
+    });
+
+    it("populates oauth store_tokens and auto_refresh as false from API", async () => {
+      server.use(
+        http.get("/gateways/gw-7", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "oauth",
+            oauthConfig: {
+              grant_type: "client_credentials",
+              store_tokens: false,
+              auto_refresh: false,
+            },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-7"));
+
+      await waitFor(() => expect(result.current.authType).toBe("oauth"));
+      expect(result.current.oauthStoreTokens).toBe(false);
+      expect(result.current.oauthAutoRefresh).toBe(false);
+    });
+
+    it("defaults oauth store_tokens and auto_refresh to false when absent from API response", async () => {
+      server.use(
+        http.get("/gateways/gw-8", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "oauth",
+            oauthConfig: { grant_type: "client_credentials" },
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-8"));
+
+      await waitFor(() => expect(result.current.authType).toBe("oauth"));
+      expect(result.current.oauthStoreTokens).toBe(false);
+      expect(result.current.oauthAutoRefresh).toBe(false);
+    });
+
+    it("opens the advanced panel when server has auth configured", async () => {
+      server.use(
+        http.get("/gateways/gw-9", () =>
+          HttpResponse.json({
+            name: "My Server",
+            url: "http://localhost:3000",
+            authType: "bearer",
+            authToken: "*****",
+          }),
+        ),
+      );
+
+      const { result } = renderHook(() => useMCPServerForm("gw-9"));
+
+      await waitFor(() => expect(result.current.advancedOpen).toBe(true));
     });
   });
 });

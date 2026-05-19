@@ -20,6 +20,8 @@ interface OAuth2AuthProps {
   scopes: string;
   storeTokens: boolean;
   autoRefresh: boolean;
+  username: string;
+  password: string;
   onGrantTypeChange: (value: string) => void;
   onIssuerUrlChange: (value: string) => void;
   onRedirectUriChange: (value: string) => void;
@@ -30,6 +32,9 @@ interface OAuth2AuthProps {
   onScopesChange: (value: string) => void;
   onStoreTokensChange: (checked: boolean) => void;
   onAutoRefreshChange: (checked: boolean) => void;
+  onUsernameChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  errors?: { username?: string; password?: string };
 }
 
 export function OAuth2Auth({
@@ -43,6 +48,8 @@ export function OAuth2Auth({
   scopes,
   storeTokens,
   autoRefresh,
+  username,
+  password,
   onGrantTypeChange,
   onIssuerUrlChange,
   onRedirectUriChange,
@@ -53,6 +60,9 @@ export function OAuth2Auth({
   onScopesChange,
   onStoreTokensChange,
   onAutoRefreshChange,
+  onUsernameChange,
+  onPasswordChange,
+  errors,
 }: OAuth2AuthProps) {
   return (
     <div className="space-y-4">
@@ -104,26 +114,81 @@ export function OAuth2Auth({
         </p>
       </div>
 
-      <div className="space-y-1">
-        <label
-          htmlFor="oauth-redirect-uri"
-          className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-        >
-          Redirect URI<span className="text-red-500">*</span>
-          <span className="sr-only">(required)</span>
-        </label>
-        <Input
-          id="oauth-redirect-uri"
-          type="text"
-          value={redirectUri}
-          onChange={(e) => onRedirectUriChange(e.target.value)}
-          placeholder="e.g. https://gateway.example.com/oauth/callback"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-        />
-        <p className="text-xs text-neutral-600 dark:text-neutral-500">
-          {"Copy URI into the OAuth application's allowed redirect URI"}
-        </p>
-      </div>
+      {grantType === "authorization_code" && (
+        <div className="space-y-1">
+          <label
+            htmlFor="oauth-redirect-uri"
+            className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+          >
+            Redirect URI<span className="text-red-500">*</span>
+            <span className="sr-only">(required)</span>
+          </label>
+          <Input
+            id="oauth-redirect-uri"
+            type="text"
+            value={redirectUri}
+            onChange={(e) => onRedirectUriChange(e.target.value)}
+            placeholder="e.g. https://gateway.example.com/oauth/callback"
+            className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          />
+          <p className="text-xs text-neutral-600 dark:text-neutral-500">
+            {"Copy URI into the OAuth application's allowed redirect URI"}
+          </p>
+        </div>
+      )}
+
+      {grantType === "password" && (
+        <>
+          <div className="space-y-1">
+            <label
+              htmlFor="oauth-username"
+              className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+            >
+              Username<span className="text-red-500">*</span>
+              <span className="sr-only">(required)</span>
+            </label>
+            <Input
+              id="oauth-username"
+              type="text"
+              value={username}
+              onChange={(e) => onUsernameChange(e.target.value)}
+              placeholder="e.g. service-account"
+              aria-invalid={!!errors?.username}
+              aria-describedby={errors?.username ? "oauth-username-error" : undefined}
+              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+            />
+            {errors?.username && (
+              <p id="oauth-username-error" className="text-sm text-red-500">
+                {errors.username}
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <label
+              htmlFor="oauth-password"
+              className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+            >
+              Password<span className="text-red-500">*</span>
+              <span className="sr-only">(required)</span>
+            </label>
+            <Input
+              id="oauth-password"
+              type="password"
+              value={password}
+              onChange={(e) => onPasswordChange(e.target.value)}
+              placeholder="••••••••"
+              aria-invalid={!!errors?.password}
+              aria-describedby={errors?.password ? "oauth-password-error" : undefined}
+              className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+            />
+            {errors?.password && (
+              <p id="oauth-password-error" className="text-sm text-red-500">
+                {errors.password}
+              </p>
+            )}
+          </div>
+        </>
+      )}
 
       <div className="space-y-1">
         <label
@@ -186,26 +251,28 @@ export function OAuth2Auth({
         </p>
       </div>
 
-      <div className="space-y-1">
-        <label
-          htmlFor="oauth-authorization-url"
-          className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
-        >
-          Authorization URL<span className="text-red-500">*</span>
-          <span className="sr-only">(required)</span>
-        </label>
-        <Input
-          id="oauth-authorization-url"
-          type="text"
-          value={authorizationUrl}
-          onChange={(e) => onAuthorizationUrlChange(e.target.value)}
-          placeholder="e.g. https://oauth.example.com/authorize"
-          className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
-        />
-        <p className="text-xs text-neutral-600 dark:text-neutral-500">
-          Where users are redirected to log in and grant access
-        </p>
-      </div>
+      {grantType === "authorization_code" && (
+        <div className="space-y-1">
+          <label
+            htmlFor="oauth-authorization-url"
+            className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
+          >
+            Authorization URL<span className="text-red-500">*</span>
+            <span className="sr-only">(required)</span>
+          </label>
+          <Input
+            id="oauth-authorization-url"
+            type="text"
+            value={authorizationUrl}
+            onChange={(e) => onAuthorizationUrlChange(e.target.value)}
+            placeholder="e.g. https://oauth.example.com/authorize"
+            className="rounded-md border-neutral-300 bg-white px-4 text-sm text-neutral-900 shadow-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-0 placeholder:text-neutral-400 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          />
+          <p className="text-xs text-neutral-600 dark:text-neutral-500">
+            Where users are redirected to log in and grant access
+          </p>
+        </div>
+      )}
 
       <div className="space-y-1">
         <label
