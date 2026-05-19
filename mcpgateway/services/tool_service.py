@@ -1079,6 +1079,7 @@ class ToolService(BaseService):
                 "capabilities": gateway.capabilities or {},
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "auth_type": gateway.auth_type,
+                "auth_value": getattr(gateway, "auth_value", None),
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
                 "enabled": bool(gateway.enabled),

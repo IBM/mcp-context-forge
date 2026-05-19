@@ -281,6 +281,133 @@ class TestVaultPluginFunctionality:
         # No Authorization header should be added since there's no match
         assert "Authorization" not in result.modified_payload.headers.root
         assert result.continue_processing
+    @pytest.mark.asyncio
+    async def test_case_insensitive_vault_header_detection(self, plugin_config, plugin_context):
+        """Test that vault header is detected case-insensitively (RFC 7230)."""
+        plugin = Vault(plugin_config)
+
+        # Create vault tokens
+        vault_tokens = {"github.com": "ghp_test_case_insensitive"}
+
+        # Test with different case variations
+        test_cases = [
+            "X-Vault-Tokens",  # Original case
+            "x-vault-tokens",  # All lowercase
+            "X-VAULT-TOKENS",  # All uppercase
+            "x-Vault-Tokens",  # Mixed case
+        ]
+
+        for header_name in test_cases:
+            payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", header_name: json.dumps(vault_tokens)}))
+
+            result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+            # Should work regardless of case
+            assert result.modified_payload is not None, f"Failed for header case: {header_name}"
+            assert "Authorization" in result.modified_payload.headers.root, f"Authorization not found for case: {header_name}"
+            assert result.modified_payload.headers.root["Authorization"] == "Bearer ghp_test_case_insensitive"
+            # Vault header should be removed (check all possible cases)
+            for key in result.modified_payload.headers.root.keys():
+                assert key.lower() != "x-vault-tokens", f"Vault header not removed for case: {header_name}"
+
+    @pytest.mark.asyncio
+    async def test_copyonwritedict_root_attribute_access(self, plugin_config, plugin_context):
+        """Test that plugin correctly accesses headers via .root attribute.
+        
+        This test validates the fix for the CopyOnWriteDict.model_dump() bug where
+        model_dump() returned an empty dict in production (with real HTTP requests)
+        instead of the actual headers. While model_dump() works in unit tests,
+        the plugin now uses .root directly for consistency and reliability.
+        """
+        plugin = Vault(plugin_config)
+
+        # Create vault tokens
+        vault_tokens = {"github.com": "ghp_root_access_test"}
+
+        # Create payload with vault header
+        payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", "X-Vault-Tokens": json.dumps(vault_tokens), "X-Custom-Header": "custom_value"}))
+
+        # Verify .root contains actual headers (the correct access pattern)
+        assert len(payload.headers.root) == 3, "Headers.root should contain all headers"
+        assert "X-Vault-Tokens" in payload.headers.root
+        assert "X-Custom-Header" in payload.headers.root
+        assert "Content-Type" in payload.headers.root
+
+        # Plugin should work correctly by using .root
+        result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+        # Verify plugin processed the headers correctly
+        assert result.modified_payload is not None
+        assert "Authorization" in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["Authorization"] == "Bearer ghp_root_access_test"
+        assert "X-Vault-Tokens" not in result.modified_payload.headers.root
+        # Custom header should be preserved
+        assert "X-Custom-Header" in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["X-Custom-Header"] == "custom_value"
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_header_with_config_variations(self, plugin_context):
+        """Test that vault header detection works with all case combinations of header and config.
+        
+        This validates that the plugin correctly handles:
+        - Config specifies "X-Vault-Tokens" but request has "x-vault-tokens"
+        - Config specifies "x-vault-tokens" but request has "X-Vault-Tokens"
+        - Any other case combination
+        """
+        vault_tokens = {"github.com": "ghp_case_test"}
+
+        # Test matrix: (config_header_name, request_header_name)
+        test_cases = [
+            ("X-Vault-Tokens", "X-Vault-Tokens"),  # Both standard case
+            ("X-Vault-Tokens", "x-vault-tokens"),  # Config upper, request lower
+            ("X-Vault-Tokens", "X-VAULT-TOKENS"),  # Config mixed, request upper
+            ("x-vault-tokens", "X-Vault-Tokens"),  # Config lower, request mixed
+            ("x-vault-tokens", "x-vault-tokens"),  # Both lower
+            ("X-VAULT-TOKENS", "x-vault-tokens"),  # Config upper, request lower
+            ("X-VAULT-TOKENS", "X-Vault-Tokens"),  # Config upper, request mixed
+        ]
+
+        for config_header, request_header in test_cases:
+            # Create plugin config with specific header name case
+            plugin_config = PluginConfig(
+                name="TestVault",
+                description="Test Vault Plugin",
+                author="Test",
+                kind="plugins.vault.vault_plugin.Vault",
+                version="1.0",
+                hooks=[ToolHookType.TOOL_PRE_INVOKE],
+                tags=["test", "vault"],
+                mode=PluginMode.SEQUENTIAL,
+                priority=10,
+                config={
+                    "system_tag_prefix": "system",
+                    "vault_header_name": config_header,  # Variable case
+                    "vault_handling": "raw",
+                    "system_handling": "tag",
+                    "auth_header_tag_prefix": "AUTH_HEADER",
+                },
+            )
+
+            plugin = Vault(plugin_config)
+
+            # Create payload with specific request header case
+            payload = ToolPreInvokePayload(
+                name="test_tool",
+                arguments={},
+                headers=HttpHeaderPayload(root={"Content-Type": "application/json", request_header: json.dumps(vault_tokens)}),  # Variable case
+            )
+
+            result = await plugin.tool_pre_invoke(payload, plugin_context)
+
+            # Should work regardless of case combination
+            assert result.modified_payload is not None, f"Failed for config='{config_header}', request='{request_header}'"
+            assert "Authorization" in result.modified_payload.headers.root, f"Authorization not found for config='{config_header}', request='{request_header}'"
+            assert result.modified_payload.headers.root["Authorization"] == "Bearer ghp_case_test"
+
+            # Vault header should be removed (check all possible cases)
+            for key in result.modified_payload.headers.root.keys():
+                assert key.lower() != config_header.lower(), f"Vault header not removed for config='{config_header}', request='{request_header}'"
+
 
 
 if __name__ == "__main__":

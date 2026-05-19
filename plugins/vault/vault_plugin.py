@@ -173,33 +173,46 @@ class Vault(Plugin):
             logger.warning("System cannot be determined from gateway metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
             if payload.headers:
-                safe_headers = payload.headers.model_dump()
-                if self._sconfig.vault_header_name in safe_headers:
-                    del safe_headers[self._sconfig.vault_header_name]
+                # CopyOnWriteDict.model_dump() returns empty dict, need to access .root attribute
+                safe_headers = dict(payload.headers.root)
+                # Case-insensitive header lookup
+                headers_lower = {k.lower(): k for k in safe_headers.keys()}
+                vault_header_lower = self._sconfig.vault_header_name.lower()
+                if vault_header_lower in headers_lower:
+                    actual_header = headers_lower[vault_header_lower]
+                    del safe_headers[actual_header]
                     payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
                     return ToolPreInvokeResult(modified_payload=payload)
             return ToolPreInvokeResult()
 
         modified = False
-        headers: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
+        # CopyOnWriteDict.model_dump() returns empty dict, need to access .root attribute
+        headers: dict[str, str] = payload.headers.root if payload.headers else {}
+        
+        # Create case-insensitive header lookup (HTTP headers are case-insensitive)
+        headers_lower = {k.lower(): k for k in headers.keys()}
+        vault_header_lower = self._sconfig.vault_header_name.lower()
 
-        # Check if vault header exists
-        if self._sconfig.vault_header_name not in headers:
+        # Check if vault header exists (case-insensitive)
+        if vault_header_lower not in headers_lower:
             logger.debug("Vault header '%s' not found in headers", self._sconfig.vault_header_name)
             return ToolPreInvokeResult()
 
+        # Get the actual header key with original case
+        actual_vault_header = headers_lower[vault_header_lower]
+
         try:
-            vault_tokens = orjson.loads(headers[self._sconfig.vault_header_name])
+            vault_tokens = orjson.loads(headers[actual_vault_header])
         except (orjson.JSONDecodeError, TypeError) as e:
             logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
-            del headers[self._sconfig.vault_header_name]
+            del headers[actual_vault_header]
             payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
 
         # SECURITY: Always remove vault header immediately after successful parsing
         # This header should NEVER be sent to the MCP server
-        del headers[self._sconfig.vault_header_name]
+        del headers[actual_vault_header]
 
         if not isinstance(vault_tokens, dict):
             logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
