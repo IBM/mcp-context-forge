@@ -8,6 +8,23 @@
 ###############################################################################
 
 ###########################
+# Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
+#
+# FedRAMP/Dreadnought deployments MUST override these with images pulled from
+# an approved internal registry (issue WatsonOrchestrate/wo-tracker#68373).
+# Public registry defaults (registry.access.redhat.com) are for standard builds only.
+#
+# Example (Dreadnought):
+#   docker build -f Containerfile \
+#     --build-arg ENABLE_FIPS=true \
+#     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
+#     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
+#     .
+###########################
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+
+###########################
 # Frontend builder stage
 ###########################
 FROM node:lts-alpine AS frontend-builder
@@ -30,7 +47,7 @@ RUN npm run vite:build
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468 AS node-builder
+FROM ${NODEJS_IMAGE} AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -51,7 +68,8 @@ RUN npm ci && \
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+FROM ${UBI_MINIMAL}
+ARG ENABLE_FIPS=false
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="1.0.0-RC-2" \
@@ -104,6 +122,30 @@ RUN python3 -m venv /app/.venv && \
 # update the user permissions
 RUN chown -R 1001:0 /app && \
     chmod -R g=u /app
+
+# hadolint ignore=DL3041
+# FedRAMP compliance block — only active when ENABLE_FIPS=true
+# Resolves findings: 1 (FIPS policy), 2+3 (SSH ciphers/MACs via FIPS), 7 (init perms), 8 (rootfiles), 9 (SSH RekeyLimit)
+RUN if [ "$ENABLE_FIPS" = "true" ]; then \
+        microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
+        && microdnf clean all \
+        && update-crypto-policies --set FIPS \
+        && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
+        && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
+        && printf '%s\n' \
+            'C /root/.bash_logout  600 root root - /usr/share/rootfiles/.bash_logout' \
+            'C /root/.bash_profile 600 root root - /usr/share/rootfiles/.bash_profile' \
+            'C /root/.bashrc       600 root root - /usr/share/rootfiles/.bashrc' \
+            'C /root/.cshrc        600 root root - /usr/share/rootfiles/.cshrc' \
+            'C /root/.tcshrc       600 root root - /usr/share/rootfiles/.tcshrc' \
+            > /etc/tmpfiles.d/rootfiles.conf \
+        && printf '' >> /root/.bash_profile \
+        && printf '' >> /root/.bashrc \
+        && printf '' >> /root/.bash_logout \
+        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout; \
+    else \
+        echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
+    fi
 
 # Expose the application port
 EXPOSE 4444
