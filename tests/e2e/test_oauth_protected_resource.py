@@ -31,13 +31,11 @@ Well-Known Files Test Scenarios:
 # Standard Library
 import os
 import tempfile
-import time
 from typing import AsyncGenerator
 from unittest.mock import MagicMock
 from unittest.mock import patch as mock_patch
 
 # Third-Party
-import jwt
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
@@ -52,6 +50,7 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
     from mcpgateway.db import Base
     from mcpgateway.db import get_db as db_get_db
     from mcpgateway.main import app, get_db
+    from tests.helpers.auth import make_auth_header_for_email, make_test_jwt
 
 
 # Test Configuration
@@ -67,19 +66,25 @@ else:
 
 def generate_test_jwt():
     """Generate a valid JWT token for testing."""
-    payload = {
-        "sub": "test_user",
-        "exp": int(time.time()) + 3600,
-        "teams": [],
-    }
     secret = settings.jwt_secret_key
     if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
         secret = secret.get_secret_value()
-    algorithm = settings.jwt_algorithm
-    return jwt.encode(payload, secret, algorithm=algorithm)
+    return make_test_jwt(
+        "test_user",
+        teams=[],
+        expires_in_minutes=60,
+        secret=secret,
+        algorithm=settings.jwt_algorithm,
+    )
 
 
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {generate_test_jwt()}"}
+TEST_AUTH_HEADER = make_auth_header_for_email(
+    "test_user",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm=settings.jwt_algorithm,
+)
 
 
 @pytest_asyncio.fixture

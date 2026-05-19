@@ -26,8 +26,8 @@ from locust import HttpUser, between, events, task
 from locust.runners import MasterRunner, WorkerRunner
 import requests
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
+# Local
+from tests.helpers.auth import make_auth_headers, make_test_jwt
 
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
@@ -73,16 +73,11 @@ def _cfg(key: str, default: str = "") -> str:
 
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
     """Create a JWT suitable for compose-backed setup calls."""
-    return _create_jwt_token(
-        {"sub": email},
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-        secret=JWT_SECRET,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, secret=JWT_SECRET)
 
 
 def _json_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    return make_auth_headers(token)
 
 
 def _request_json(
