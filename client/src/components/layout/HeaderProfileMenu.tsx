@@ -21,7 +21,7 @@ export function HeaderProfileMenu() {
 
   if (!user) return null;
 
-  const displayName = user.full_name || user.email;
+  const displayName = user.full_name || user.email || "Profile";
 
   return (
     <DropdownMenu>
@@ -52,7 +52,6 @@ export function HeaderProfileMenu() {
               onClick={() => setTheme("light")}
               className={`rounded-full transition-colors ${theme === "light" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.light" })}
-              title={intl.formatMessage({ id: "common.theme.light" })}
             >
               <Sun className="size-4" />
             </Button>
@@ -63,7 +62,6 @@ export function HeaderProfileMenu() {
               onClick={() => setTheme("dark")}
               className={`rounded-full transition-colors ${theme === "dark" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.dark" })}
-              title={intl.formatMessage({ id: "common.theme.dark" })}
             >
               <Moon className="size-4" />
             </Button>
@@ -74,7 +72,6 @@ export function HeaderProfileMenu() {
               onClick={() => setTheme("system")}
               className={`rounded-full transition-colors ${theme === "system" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               aria-label={intl.formatMessage({ id: "common.theme.system" })}
-              title={intl.formatMessage({ id: "common.theme.system" })}
             >
               <Monitor className="size-4" />
             </Button>
