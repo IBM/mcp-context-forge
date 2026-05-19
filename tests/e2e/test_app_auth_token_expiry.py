@@ -155,7 +155,7 @@ class TestTokenExpirySynchronization:
         # Verify security flags
         assert "httponly" not in csrf_cookie.lower() or "httponly=false" in csrf_cookie.lower(), "CSRF cookie must NOT be httpOnly (JS needs to read it for X-CSRF-Token header)"
         assert "samesite=strict" in csrf_cookie.lower(), "CSRF cookie must have SameSite=Strict"
-        assert "path=/app" in csrf_cookie.lower(), "CSRF cookie must be scoped to /app path"
+        assert "path=/" in csrf_cookie.lower(), "CSRF cookie must be scoped to / path"
 
     def test_jwt_cookie_security_flags(self, client: TestClient, setup_test_user: EmailUser, test_user_credentials: Dict[str, str]) -> None:
         """Test JWT cookie has correct security flags."""
@@ -171,4 +171,4 @@ class TestTokenExpirySynchronization:
         # Verify security flags
         assert "httponly" in jwt_cookie.lower(), "JWT cookie must be httpOnly (prevent XSS)"
         assert "samesite=lax" in jwt_cookie.lower(), "JWT cookie should have SameSite=Lax"
-        assert "path=/app" in jwt_cookie.lower(), "JWT cookie should be scoped to /app path"
+        assert "path=/" in jwt_cookie.lower(), "JWT cookie should be scoped to / path"
