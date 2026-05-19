@@ -2534,7 +2534,7 @@ class Settings(BaseSettings):
     redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
     redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
     redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
-    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the hostname in the Redis TLS certificate (disable only for self-signed certs in non-prod)")
+    redis_ssl_check_hostname: bool = Field(default=False, description="Verify the hostname in the Redis TLS certificate (enable only when Redis presents a valid CA-signed cert)")
 
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
