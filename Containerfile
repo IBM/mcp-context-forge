@@ -9,6 +9,17 @@
 
 ###########################
 # Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
+#
+# FedRAMP/Dreadnought deployments MUST override these with images pulled from
+# an approved internal registry (issue WatsonOrchestrate/wo-tracker#68373).
+# Public registry defaults (registry.access.redhat.com) are for standard builds only.
+#
+# Example (Dreadnought):
+#   docker build -f Containerfile \
+#     --build-arg ENABLE_FIPS=true \
+#     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
+#     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
+#     .
 ###########################
 ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
 ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
