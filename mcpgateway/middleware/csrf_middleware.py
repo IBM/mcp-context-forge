@@ -158,7 +158,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 7. Double-submit cookie validation: compare cookie token with header/form token
-        cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+        cookie_name = settings.csrf_cookie_name
         cookie_token = request.cookies.get(cookie_name)
 
         if not cookie_token:
