@@ -1,0 +1,36 @@
+# Auto-generated from pyproject.toml [project].dependencies
+# Direct dependencies only (no transitive deps)
+# DO NOT EDIT — regenerate with: make requirements
+alembic>=1.18.4
+argon2-cffi>=25.1.0
+cryptography>=46.0.5
+fastapi>=0.135.1
+filelock>=3.25.0
+gunicorn>=25.1.0
+httpx>=0.28.1
+httpx[http2]>=0.28.1
+jinja2>=3.1.6
+jq>=1.11.0
+jsonpath-ng>=1.8.0
+jsonschema>=4.26.0
+mcp>=1.26.0
+orjson>=3.11.7
+parse>=1.21.1
+prometheus_client>=0.24.1
+prometheus-fastapi-instrumentator>=7.1.0
+psutil>=7.2.2
+pydantic>=2.12.5
+pydantic[email]>=2.12.5
+pydantic-settings>=2.13.1
+pyjwt>=2.11.0
+python-json-logger>=4.0.0
+python-multipart>=0.0.22
+PyYAML>=6.0.3
+requests-oauthlib>=2.0.0
+sqlalchemy>=2.0.48
+sse-starlette>=3.3.2
+starlette>=0.52.1
+starlette-compress>=1.7.0
+typer>=0.24.1
+urllib3>=2.6.3
+uvicorn[standard]>=0.41.0

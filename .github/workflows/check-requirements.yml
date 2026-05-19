@@ -1,0 +1,56 @@
+# ===============================================================
+# Check requirements.txt - Sync Verification
+# ===============================================================
+#
+#   Verifies that requirements.txt is in sync with pyproject.toml.
+#   Fails with actionable instructions if the file is stale.
+# ---------------------------------------------------------------
+
+name: Check requirements.txt
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+      - "scripts/generate_requirements.py"
+      - ".github/workflows/check-requirements.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+      - "scripts/generate_requirements.py"
+      - ".github/workflows/check-requirements.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-requirements:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Verify requirements.txt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Verify requirements.txt is in sync
+        run: python3 scripts/generate_requirements.py --check
