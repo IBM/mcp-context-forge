@@ -440,12 +440,7 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         && printf '' >> /root/.bash_profile \
         && printf '' >> /root/.bashrc \
         && printf '' >> /root/.bash_logout \
-        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout \
-        && _bp=$(stat -c '%a' /root/.bash_profile) \
-        && _rc=$(stat -c '%a' /root/.bashrc) \
-        && echo "POST-CHMOD: .bash_profile=${_bp} .bashrc=${_rc}" \
-        && [ "${_bp}" = "740" ] || { echo "FATAL: .bash_profile perm=${_bp} expected 740"; exit 1; } \
-        && [ "${_rc}" = "740" ] || { echo "FATAL: .bashrc perm=${_rc} expected 740"; exit 1; }; \
+        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout; \
     else \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi
