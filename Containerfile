@@ -8,6 +8,12 @@
 ###############################################################################
 
 ###########################
+# Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
+###########################
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
+
+###########################
 # Frontend builder stage
 ###########################
 FROM node:lts-alpine AS frontend-builder
@@ -30,7 +36,7 @@ RUN npm run vite:build
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi9/nodejs-20:latest AS node-builder
+FROM ${NODEJS_IMAGE} AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -51,7 +57,7 @@ RUN npm ci && \
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM ${UBI_MINIMAL}
 ARG ENABLE_FIPS=false
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
