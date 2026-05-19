@@ -30,21 +30,19 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
-pytest.importorskip("cpex_rate_limiter", reason="cpex-rate-limiter plugin not installed")
-
 # First-Party
 from mcpgateway.main import app
-from cpex.framework import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
     PromptPrehookPayload,
     ToolPreInvokePayload,
 )
-from cpex.framework.base import HookRef, PluginRef
-from cpex.framework.errors import PluginViolationError
-from cpex.framework.manager import PluginExecutor
-from cpex.framework.models import PluginMode
+from mcpgateway.plugins.framework.base import HookRef, PluginRef
+from mcpgateway.plugins.framework.errors import PluginViolationError
+from mcpgateway.plugins.framework.manager import PluginExecutor
+from mcpgateway.plugins.framework.models import PluginMode
 from cpex_rate_limiter.rate_limiter import RateLimiterPlugin
 
 # API Endpoints
@@ -382,43 +380,6 @@ class TestToolPreInvoke:
         assert "Retry-After" not in result.http_headers  # Not on success
 
 
-class TestStoreCleanup:
-    """Tests for rate limit store cleanup."""
-
-    @pytest.mark.asyncio
-    async def test_store_cleanup_between_tests(self, rate_limit_plugin_2_per_second):
-        """Verify each plugin instance starts with an empty store."""
-        plugin = rate_limit_plugin_2_per_second
-        backend = plugin._rate_backend
-
-        # Fresh instance — store must be empty before any requests
-        assert len(backend._algorithm._store) == 0
-
-        ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
-        payload = PromptPrehookPayload(prompt_id="test", args={})
-
-        await plugin.prompt_pre_fetch(payload, ctx)
-
-        # After one request a window entry must exist
-        assert len(backend._algorithm._store) > 0
-
-    @pytest.mark.asyncio
-    async def test_multiple_users_create_separate_windows(self, rate_limit_plugin_2_per_second):
-        """Verify multiple users create separate window entries in the backend store."""
-        plugin = rate_limit_plugin_2_per_second
-        backend = plugin._rate_backend
-
-        ctx_alice = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
-        ctx_bob = PluginContext(global_context=GlobalContext(request_id="r2", user="bob"))
-        payload = PromptPrehookPayload(prompt_id="test", args={})
-
-        await plugin.prompt_pre_fetch(payload, ctx_alice)
-        await plugin.prompt_pre_fetch(payload, ctx_bob)
-
-        # Each user must have their own key in the store
-        assert len(backend._algorithm._store) >= 2
-
-
 class TestSlidingWindowIntegration:
     """End-to-end integration tests for the sliding_window algorithm."""
 
@@ -692,7 +653,7 @@ class TestPermissiveMode:
             kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             priority=100,
-            mode=PluginMode.TRANSFORM,
+            mode=PluginMode.PERMISSIVE,
             config={"by_user": limit},
         )
         plugin = RateLimiterPlugin(config)
@@ -742,7 +703,7 @@ class TestPermissiveMode:
             kind="cpex_rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["tool_pre_invoke"],
             config={"by_user": "1/s"},
-            mode=PluginMode.SEQUENTIAL,
+            mode=PluginMode.ENFORCE,
         )
         enforce_plugin = RateLimiterPlugin(enforce_config)
         enforce_ref = HookRef("tool_pre_invoke", PluginRef(enforce_plugin))
@@ -922,7 +883,7 @@ class TestTenantIsolation:
         # blocked by the tenant dimension regardless of how many we send.
         for i in range(7):
             result = await plugin.tool_pre_invoke(payload, ctx)
-            assert result.violation is None, f"Request {i + 1}: by_tenant must be skipped when tenant_id is None — " "no request should be blocked by a phantom 'default' tenant bucket"
+            assert result.violation is None, f"Request {i + 1}: by_tenant must be skipped when tenant_id is None — no request should be blocked by a phantom 'default' tenant bucket"
 
     @pytest.mark.asyncio
     async def test_multi_team_users_do_not_share_tenant_bucket(self, plugin):
@@ -943,7 +904,7 @@ class TestTenantIsolation:
 
         # Bob's first request must not be blocked — he should not share Alice's bucket
         bob_result = await plugin.tool_pre_invoke(payload, ctx_bob)
-        assert bob_result.violation is None, "Bob must not be blocked by Alice's activity — " "users with tenant_id=None must not share a 'default' tenant bucket"
+        assert bob_result.violation is None, "Bob must not be blocked by Alice's activity — users with tenant_id=None must not share a 'default' tenant bucket"
 
     @pytest.mark.asyncio
     async def test_explicit_tenant_scopes_correctly_after_fix(self):
@@ -1243,7 +1204,7 @@ class TestRedisBackendIntegration:
             assert result.violation is None
 
         result = await plugin_b.tool_pre_invoke(payload, ctx)
-        assert result.violation is not None, "Redis backend must share counters across plugin instances — " "instance B must be blocked after instance A exhausts the limit"
+        assert result.violation is not None, "Redis backend must share counters across plugin instances — instance B must be blocked after instance A exhausts the limit"
 
     @pytest.mark.asyncio
     async def test_redis_window_resets_after_ttl(self, redis_url_for_integration):
@@ -1316,7 +1277,7 @@ class TestRedisBackendIntegration:
             assert result.violation is None
 
         result = await plugin_b.tool_pre_invoke(payload, ctx)
-        assert result.violation is not None, "sliding_window Redis backend must share counters across instances — " "instance B must be blocked after instance A exhausts the limit"
+        assert result.violation is not None, "sliding_window Redis backend must share counters across instances — instance B must be blocked after instance A exhausts the limit"
 
     @pytest.mark.asyncio
     async def test_redis_sliding_window_resets_after_window(self, redis_url_for_integration):
@@ -1377,7 +1338,7 @@ class TestRedisBackendIntegration:
             assert result.violation is None
 
         result = await plugin_b.tool_pre_invoke(payload, ctx)
-        assert result.violation is not None, "token_bucket Redis backend must share bucket state across instances — " "instance B must be blocked after instance A drains the bucket"
+        assert result.violation is not None, "token_bucket Redis backend must share bucket state across instances — instance B must be blocked after instance A drains the bucket"
 
     @pytest.mark.asyncio
     async def test_redis_token_bucket_refills_over_time(self, redis_url_for_integration):

@@ -16,6 +16,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# External
+from cpex.framework import PluginViolationError, ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchResult
+from cpex.framework.models import PluginViolation, PluginResult
+
 # First-Party
 from mcpgateway.db import Base
 from mcpgateway.common.models import ResourceContent
@@ -47,14 +51,16 @@ class TestResourcePluginIntegration:
                 # Standard
                 from unittest.mock import AsyncMock
 
-                # First-Party
-                from cpex.framework.models import PluginResult
-
                 mock_manager = MagicMock()
                 mock_manager._initialized = True
                 mock_manager.initialize = AsyncMock()
                 # Add default invoke_hook mock that returns success
-                mock_manager.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, modified_payload=None), None))  # contexts
+                mock_manager.invoke_hook = AsyncMock(
+                    return_value=(
+                        PluginResult(continue_processing=True, modified_payload=None),
+                        None,  # contexts
+                    )
+                )
                 MockPluginManager.return_value = mock_manager
                 service = ResourceService()
                 service._plugin_manager = mock_manager
@@ -124,138 +130,123 @@ class TestResourcePluginIntegration:
                 "PLUGINS_CONFIG_FILE": "plugins/config.yaml",
             },
         ):
-            # Use real plugin manager but mock its initialization
-            with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
-                # First-Party
-                from cpex.framework import (
-                    ResourcePostFetchPayload,
-                    ResourcePostFetchResult,
-                    ResourcePreFetchResult,
-                )
+            # Create a mock that simulates content filtering
+            class MockFilterManager:
+                def __init__(self, config_file):
+                    self._initialized = False
 
-                # Create a mock that simulates content filtering
-                class MockFilterManager:
-                    def __init__(self, config_file):
-                        self._initialized = False
+                async def initialize(self):
+                    self._initialized = True
 
-                    async def initialize(self):
-                        self._initialized = True
+                @property
+                def initialized(self) -> bool:
+                    return self._initialized
 
-                    @property
-                    def initialized(self) -> bool:
-                        return self._initialized
+                def has_hooks_for(self, hook_type) -> bool:
+                    """Return True for resource hooks this mock handles."""
+                    return hook_type in (ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH)
 
-                    def has_hooks_for(self, hook_type) -> bool:
-                        """Return True for resource hooks this mock handles."""
-                        # First-Party
-                        from cpex.framework import ResourceHookType
-
-                        return hook_type in (ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH)
-
-                    async def invoke_hook(self, hook_type, payload, global_context, local_contexts=None, **kwargs):
-                        # First-Party
-                        from cpex.framework import ResourceHookType
-
-                        if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
-                            # Allow test:// protocol
-                            if payload.uri.startswith("test://"):
-                                return (
-                                    ResourcePreFetchResult(
-                                        continue_processing=True,
-                                        modified_payload=payload,
-                                    ),
-                                    {"validated": True},
-                                )
-                            else:
-                                # First-Party
-                                from cpex.framework.models import PluginViolation
-
-                                raise PluginViolationError(
-                                    message="Protocol not allowed",
-                                    violation=PluginViolation(
-                                        reason="Protocol not allowed",
-                                        description="Protocol is not in the allowed list",
-                                        code="PROTOCOL_BLOCKED",
-                                        details={"protocol": payload.uri.split(":")[0], "uri": payload.uri},
-                                    ),
-                                )
-                        elif hook_type == ResourceHookType.RESOURCE_POST_FETCH:
-                            # Filter sensitive content
-                            if payload.content and payload.content.text:
-                                filtered_text = payload.content.text.replace(
-                                    "password: secret123",
-                                    "password: [REDACTED]",
-                                )
-                                filtered_content = ResourceContent(
-                                    id=payload.content.id,
-                                    type=payload.content.type,
-                                    uri=payload.content.uri,
-                                    text=filtered_text,
-                                )
-                                modified_payload = ResourcePostFetchPayload(
-                                    uri=payload.uri,
-                                    content=filtered_content,
-                                )
-                                return (
-                                    ResourcePostFetchResult(
-                                        continue_processing=True,
-                                        modified_payload=modified_payload,
-                                    ),
-                                    None,
-                                )
+                async def invoke_hook(self, hook_type, payload, global_context, local_contexts=None, **kwargs):
+                    if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                        # Allow test:// protocol
+                        if payload.uri.startswith("test://"):
                             return (
-                                ResourcePostFetchResult(continue_processing=True),
-                                None,
+                                ResourcePreFetchResult(
+                                    continue_processing=True,
+                                    modified_payload=payload,
+                                ),
+                                {"validated": True},
                             )
                         else:
-                            # Other hook types - just return success
-                            # First-Party
-                            from cpex.framework.models import PluginResult
+                            raise PluginViolationError(
+                                message="Protocol not allowed",
+                                violation=PluginViolation(
+                                    reason="Protocol not allowed",
+                                    description="Protocol is not in the allowed list",
+                                    code="PROTOCOL_BLOCKED",
+                                    details={"protocol": payload.uri.split(":")[0], "uri": payload.uri},
+                                ),
+                            )
+                    elif hook_type == ResourceHookType.RESOURCE_POST_FETCH:
+                        # Filter sensitive content
+                        if payload.content and payload.content.text:
+                            filtered_text = payload.content.text.replace(
+                                "password: secret123",
+                                "password: [REDACTED]",
+                            )
+                            filtered_content = ResourceContent(
+                                id=payload.content.id,
+                                type=payload.content.type,
+                                uri=payload.content.uri,
+                                text=filtered_text,
+                            )
+                            modified_payload = ResourcePostFetchPayload(
+                                uri=payload.uri,
+                                content=filtered_content,
+                            )
+                            return (
+                                ResourcePostFetchResult(
+                                    continue_processing=True,
+                                    modified_payload=modified_payload,
+                                ),
+                                None,
+                            )
+                        return (
+                            ResourcePostFetchResult(continue_processing=True),
+                            None,
+                        )
+                    else:
+                        # Other hook types - just return success
+                        return (PluginResult(continue_processing=True), None)
 
-                            return (PluginResult(continue_processing=True), None)
+            # Create the mock manager
+            mock_manager = MockFilterManager("test.yaml")
+            await mock_manager.initialize()
 
-                MockPluginManager.return_value = MockFilterManager("test.yaml")
-                service = ResourceService()
+            # Create service and patch its _get_plugin_manager method
+            service = ResourceService()
 
-                # Create a resource with sensitive content
-                resource_data = ResourceCreate(
-                    uri="test://sensitive",
-                    name="Sensitive Resource",
-                    content="Config:\npassword: secret123\nport: 8080",
-                    mime_type="text/plain",
-                )
+            async def mock_get_plugin_manager(server_id=None):
+                return mock_manager
 
-                create_response = await service.register_resource(test_db, resource_data)
+            service._get_plugin_manager = mock_get_plugin_manager
 
-                # Read the resource - should be filtered
-                content = await service.read_resource(test_db, create_response.id)
-                assert "[REDACTED]" in content.text
-                assert "secret123" not in content.text
-                assert "port: 8080" in content.text
+            # Create a resource with sensitive content
+            resource_data = ResourceCreate(
+                uri="test://sensitive",
+                name="Sensitive Resource",
+                content="Config:\npassword: secret123\nport: 8080",
+                mime_type="text/plain",
+            )
 
-                # Try to read a blocked protocol
-                # First-Party
-                from cpex.framework import PluginViolationError
+            create_response = await service.register_resource(test_db, resource_data)
 
-                blocked_resource = ResourceCreate(
-                    uri="file:///etc/passwd",
-                    name="Blocked Resource",
-                    content="Should not be accessible",
-                    mime_type="text/plain",
-                )
-                await service.register_resource(test_db, blocked_resource)
+            # Read the resource - should be filtered
+            content = await service.read_resource(test_db, create_response.id)
+            assert "[REDACTED]" in content.text
+            assert "secret123" not in content.text
+            assert "port: 8080" in content.text
 
-                # Find the blocked resource by uri to get its id
-                blocked, _ = await service.list_resources(test_db)
-                blocked_id = None
-                for r in blocked:
-                    if r.uri == "file:///etc/passwd":
-                        blocked_id = r.id
-                        break
-                assert blocked_id is not None
-                with pytest.raises(PluginViolationError) as exc_info:
-                    await service.read_resource(test_db, blocked_id)
-                assert "Protocol not allowed" in str(exc_info.value)
+            # Try to read a blocked protocol
+            blocked_resource = ResourceCreate(
+                uri="file:///etc/passwd",
+                name="Blocked Resource",
+                content="Should not be accessible",
+                mime_type="text/plain",
+            )
+            await service.register_resource(test_db, blocked_resource)
+
+            # Find the blocked resource by uri to get its id
+            blocked, _ = await service.list_resources(test_db)
+            blocked_id = None
+            for r in blocked:
+                if r.uri == "file:///etc/passwd":
+                    blocked_id = r.id
+                    break
+            assert blocked_id is not None
+            with pytest.raises(PluginViolationError) as exc_info:
+                await service.read_resource(test_db, blocked_id)
+            assert "Protocol not allowed" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_plugin_context_flow(self, test_db, resource_service_with_mock_plugins):
@@ -263,9 +254,6 @@ class TestResourcePluginIntegration:
         service, mock_manager = resource_service_with_mock_plugins
 
         # Track context flow
-        # First-Party
-        from cpex.framework.models import PluginResult
-        from cpex.framework import ResourceHookType
 
         contexts_from_pre = {"plugin_data": "test_value", "validated": True}
 
@@ -356,7 +344,7 @@ class TestResourcePluginIntegration:
 
         # Try to read inactive resource
         # First-Party
-        from mcpgateway.services.resource_service import ResourceNotFoundError
+        from mcpgateway.services.resource_service import ResourceNotFoundError  # Import for test
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
             await service.read_resource(test_db, created.id)
