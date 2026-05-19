@@ -1048,16 +1048,39 @@ def init_telemetry() -> Optional[Any]:
             header_dict = _resolve_otlp_headers(endpoint)
             if _is_langfuse_otlp_endpoint(endpoint):
                 protocol = "http"
-            # Note: some versions of OTLP exporters may not accept 'insecure' kwarg; avoid passing it.
-            # Use endpoint scheme or env to control TLS externally.
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
-                exporter = cast(Any, OTLP_SPAN_EXPORTER)(endpoint=endpoint, headers=header_dict or None)
+                exporter = cast(Any, OTLP_SPAN_EXPORTER)(
+                    endpoint=endpoint,
+                    headers=header_dict or None,
+                    insecure=cfg.otel_exporter_otlp_insecure
+                )
             elif HTTP_EXPORTER:
-                # Use HTTP exporter as fallback
+                # Use HTTP exporter as fallback.
+                #
+                # Per the OTEL spec (OTLP/HTTP), the URL scheme is the source of truth
+                # for transport TLS. The `insecure` flag is meaningful only for OTLP/gRPC.
+                # We deliberately do NOT munge the scheme here based on `insecure`:
+                #   - upgrading http://  -> https:// would break standard local-collector
+                #     setups like http://localhost:4318
+                #   - downgrading https:// -> http:// would silently strip TLS from an
+                #     explicitly-secure endpoint (the default value of insecure is True,
+                #     so any user who sets only OTEL_EXPORTER_OTLP_ENDPOINT=https://...
+                #     would otherwise get plaintext, leaking auth headers)
                 ep = str(endpoint) if endpoint is not None else ""
-                http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
-                exporter = cast(Any, HTTP_EXPORTER)(endpoint=http_ep, headers=header_dict or None)
+                http_ep = ep
+                # If the user supplied the gRPC default port but ended up on the HTTP
+                # transport (e.g. via _is_langfuse_otlp_endpoint forcing protocol=http),
+                # rewrite the port and append the OTLP/HTTP traces path. Skip the path
+                # append when the endpoint already targets a /v1/ resource.
+                if ":4317" in http_ep:
+                    http_ep = http_ep.replace(":4317", ":4318")
+                    if "/v1/" not in http_ep:
+                        http_ep = http_ep.rstrip("/") + "/v1/traces"
+                exporter = cast(Any, HTTP_EXPORTER)(
+                    endpoint=http_ep,
+                    headers=header_dict or None
+                )
             else:
                 logger.error("No OTLP exporter available")
                 return None
