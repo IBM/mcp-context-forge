@@ -123,6 +123,9 @@ jobs:
           tags: ${{ env.IMAGE_NAME }}:fedramp-validate
           build-args: |
             ENABLE_FIPS=true
+            UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest
+            NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest
+            UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest
 
       - name: FedRAMP post-build compliance validation
         run: |
