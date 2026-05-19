@@ -3981,10 +3981,8 @@ async def admin_ui(
                 if isinstance(jwt_cookie, str) and jwt_cookie:
                     try:
                         existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
-                        existing_user = existing_payload.get("user")
-                        provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
-                        if not provider_from_token:
-                            provider_from_token = existing_payload.get("auth_provider")
+                        # Use flattened auth_provider field (user object removed from tokens)
+                        provider_from_token = existing_payload.get("auth_provider")
                         if isinstance(provider_from_token, str) and provider_from_token.strip():
                             auth_provider = provider_from_token.strip()
                     except Exception as provider_error:  # nosec B110 - best-effort provider preservation
@@ -4539,12 +4537,7 @@ async def _admin_logout(request: Request) -> Response:
                 return "keycloak"
             return None
 
-        user_payload = payload.get("user")
-        if isinstance(user_payload, dict):
-            user_provider = user_payload.get("auth_provider")
-            if isinstance(user_provider, str) and user_provider:
-                return user_provider
-
+        # Use flattened auth_provider field (user object removed from tokens)
         auth_provider = payload.get("auth_provider")
         if isinstance(auth_provider, str) and auth_provider:
             return auth_provider

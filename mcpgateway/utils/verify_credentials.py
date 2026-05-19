@@ -509,7 +509,23 @@ async def _enforce_revocation_and_active_user(payload: dict) -> None:
         except Exception as exc:
             logger.warning("Token revocation check failed for JTI %s: %s", jti, exc)
 
-    username = payload.get("sub") or payload.get("email") or payload.get("username")
+    # Resolve user email from token (supports both ID and email formats)
+    # First-Party
+    from mcpgateway.db import EmailUser, SessionLocal  # pylint: disable=import-outside-toplevel
+
+    sub = payload.get("sub")
+    if not sub:
+        username = payload.get("username")
+    elif isinstance(sub, str) and sub.isdigit():
+        # New format: numeric user ID - need DB lookup
+        with SessionLocal() as db:
+            user_id = int(sub)
+            user_obj = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+            username = user_obj.email if user_obj else None
+    else:
+        # Legacy format: email address (pass through)
+        username = sub
+
     if not username:
         return
 
@@ -1390,7 +1406,11 @@ async def require_admin_auth(
                     # Decode and verify JWT token (use cached version for performance)
                     payload = await verify_jwt_token_cached(token, request)
                     await _enforce_revocation_and_active_user(payload)
-                    username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
+                    # Import here to avoid circular dependency
+                    # First-Party
+                    from mcpgateway.auth import get_user_email_from_token  # pylint: disable=import-outside-toplevel
+
+                    username = await get_user_email_from_token(payload, db_session) or payload.get("username")
 
                     if username:
                         # Get user from database
