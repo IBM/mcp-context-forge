@@ -274,6 +274,14 @@ services:
       - SQLALCHEMY_ECHO=false
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
+      # Redis TLS (disabled by default for local dev).
+      # For production with TLS: change REDIS_URL to rediss://redis:6380/0, set REDIS_SSL=true,
+      # mount certs via a volume (see the redis service below), and set the paths below.
+      # - REDIS_SSL=false
+      # - REDIS_SSL_CA_CERTS=/certs/ca.crt
+      # - REDIS_SSL_CERTFILE=/certs/client.crt
+      # - REDIS_SSL_KEYFILE=/certs/client.key
+      # - REDIS_SSL_CHECK_HOSTNAME=true
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
       # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
@@ -1134,6 +1142,38 @@ services:
       - "300"
       - "--maxclients"
       - "10000"
+    # ── Production TLS override ────────────────────────────────────────────────
+    # To enable TLS, replace the command block above with the one below and
+    # mount your certificate files into the container via a volume:
+    #
+    #   volumes:
+    #     - ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
+    #
+    # command:
+    #   - "redis-server"
+    #   - "--tls-port"
+    #   - "6380"
+    #   - "--port"
+    #   - "0"                         # disable plain-text port in production
+    #   - "--tls-cert-file"
+    #   - "/certs/server.crt"
+    #   - "--tls-key-file"
+    #   - "/certs/server.key"
+    #   - "--tls-ca-cert-file"
+    #   - "/certs/ca.crt"
+    #   - "--maxmemory"
+    #   - "1gb"
+    #   - "--maxmemory-policy"
+    #   - "allkeys-lru"
+    #   - "--tcp-backlog"
+    #   - "2048"
+    #   - "--timeout"
+    #   - "0"
+    #   - "--tcp-keepalive"
+    #   - "300"
+    #   - "--maxclients"
+    #   - "10000"
+    # ──────────────────────────────────────────────────────────────────────────
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]

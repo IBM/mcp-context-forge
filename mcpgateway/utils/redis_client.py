@@ -24,6 +24,7 @@ Usage:
 
 # Standard
 import logging
+import ssl
 from typing import Any, Optional
 
 # First-Party
@@ -36,6 +37,39 @@ _parser_info: Optional[str] = None
 
 _client: Optional[Any] = None
 _initialized: bool = False
+
+
+def _build_ssl_context(settings: Any) -> Optional[ssl.SSLContext]:
+    """Build an SSL context for Redis TLS connections.
+
+    Returns ``None`` when TLS is disabled (local dev default).  In
+    production set ``REDIS_SSL=true`` (and use a ``rediss://`` URL) then
+    optionally supply ``REDIS_SSL_CA_CERTS``, ``REDIS_SSL_CERTFILE``, and
+    ``REDIS_SSL_KEYFILE`` for certificate verification / mutual TLS.
+
+    Args:
+        settings: Application settings instance.
+
+    Returns:
+        ssl.SSLContext configured for Redis, or None when TLS is off.
+    """
+    if not settings.redis_ssl:
+        return None
+
+    ctx = ssl.create_default_context(cafile=settings.redis_ssl_ca_certs or None)
+
+    if settings.redis_ssl_certfile:
+        ctx.load_cert_chain(
+            certfile=settings.redis_ssl_certfile,
+            keyfile=settings.redis_ssl_keyfile or None,
+        )
+
+    if not settings.redis_ssl_check_hostname:
+        # Allow self-signed certs in non-production environments only
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+    return ctx
 
 
 def _is_hiredis_available() -> bool:
@@ -152,6 +186,12 @@ async def get_redis_client() -> Optional[Any]:
         # Only specify parser_class if explicitly set (not auto)
         if parser_class is not None:
             connection_kwargs["parser_class"] = parser_class
+
+        # Inject TLS context when REDIS_SSL=true (production).
+        # Local dev: returns None → no ssl kwarg → plain TCP connection.
+        ssl_context = _build_ssl_context(settings)
+        if ssl_context is not None:
+            connection_kwargs["ssl"] = ssl_context
 
         _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
         await _client.ping()

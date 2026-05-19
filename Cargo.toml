@@ -31,7 +31,7 @@ pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
 pyo3-log = "0.13.3"
 pyo3-stub-gen = "0.19"
 rand = "0.8"
-redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
+redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager", "tls-native-tls"] }
 regex = "1.12.2"
 rmcp = { version = "1.4.0", default-features = false }
 sha2 = "0.10.9"

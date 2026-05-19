@@ -116,6 +116,7 @@ def wait_for_redis_ready(
     retry_interval_ms: int = REDIS_RETRY_INTERVAL_MS,
     max_backoff: float = REDIS_MAX_BACKOFF_SECONDS,
     logger: Optional[logging.Logger] = None,
+    ssl_context: Any = None,
     sync: bool = False,
 ) -> None:
     """
@@ -206,7 +207,12 @@ def wait_for_redis_ready(
             sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
             sys.exit(2)
 
-        redis_client = Redis.from_url(redis_url)
+        # Pass the TLS context when provided (production). In local dev
+        # ssl_context is None so redis-py uses a plain TCP connection.
+        from_url_kwargs: dict[str, Any] = {}
+        if ssl_context is not None:
+            from_url_kwargs["ssl_context"] = ssl_context
+        redis_client = Redis.from_url(redis_url, **from_url_kwargs)
         interval_s = retry_interval_ms / 1000.0  # Convert to seconds
         for attempt in range(1, max_retries + 1):
             try:
