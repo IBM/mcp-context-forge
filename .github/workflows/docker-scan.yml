@@ -128,6 +128,7 @@ jobs:
       - name: FedRAMP post-build compliance validation
         run: |
           docker run --rm \
+            --user root \
             --entrypoint /bin/bash \
             ${{ env.IMAGE_NAME }}:fedramp-validate \
             -c "
