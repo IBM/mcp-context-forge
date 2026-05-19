@@ -837,6 +837,21 @@ plugins:
       max_recursion_depth: 32
       log_detections: true
 
+  # ATR Threat Detection - regex-based AI agent threat detection using ATR community rules
+  - name: "ATRThreatDetection"
+    kind: "plugins.atr_threat_detection.atr_threat_detection.ATRThreatDetectionPlugin"
+    description: "Detects AI agent threats using ATR community rules (regex-based)"
+    version: "0.1.0"
+    author: "ATR Project (https://agentthreatrule.org)"
+    hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_post_fetch"]
+    tags: ["security", "atr", "agent-threats", "threat-detection"]
+    mode: "disabled"
+    priority: 53
+    conditions: []
+    config:
+      block_on_detection: true
+      min_severity: "medium"
+
   # Header Injector - add custom headers for resource fetch
   - name: "HeaderInjector"
     kind: "plugins.header_injector.header_injector.HeaderInjectorPlugin"

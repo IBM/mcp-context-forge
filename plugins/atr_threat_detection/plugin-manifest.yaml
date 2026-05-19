@@ -1,0 +1,12 @@
+description: "Detects AI agent threats using ATR community rules (regex-based)"
+author: "ATR Project (https://agentthreatrule.org)"
+version: "0.1.0"
+tags: ["security", "atr", "agent-threats", "threat-detection"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+  - "resource_post_fetch"
+default_config:
+  block_on_detection: true
+  min_severity: "medium"

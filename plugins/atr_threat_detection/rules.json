@@ -1,0 +1,242 @@
+[
+  {
+    "id": "ATR-2026-00001",
+    "title": "Direct Prompt Injection via User Input",
+    "severity": "high",
+    "category": "prompt-injection",
+    "threat_category": "PROMPT INJECTION",
+    "patterns": [
+      "(?i)\\b(ignore|disregard|forget|override|bypass|skip|abandon|drop|cancel|suppress|nullify|void|revoke|dismiss|discard|reject)\\s+(all\\s+)?(the\\s+|your\\s+|my\\s+|any\\s+|these\\s+|those\\s+)?(previous|prior|above|earlier|preceding|original|existing|current|initial|default|given|assigned|preset|established)?\\s*(instructions?|prompts?|rules?|guidelines?|directives?|constraints?|context|programming|training|protocols?|policies|configuration|parameters|boundaries|guardrails?|safeguards?|restrictions?|tasks?|assignments?|information|directions?|orders?|commands?)",
+      "(?i)\\b(forget|ignore|disregard)\\s+(everything|all\\s+(of\\s+)?that|all\\s+about|about\\s+all|that|what\\s+(I|we|you)\\s+(said|told|asked|mentioned))\\s*(before|earlier|previously|above|davor|zuvor|\\.|,|!|$)",
+      "(?i)(now\\s+(focus|concentrate|work)\\s+on\\s+(your\\s+)?new\\s+task|new\\s+(tasks?|instructions?|assignments?)\\s+(follow|are|:|,)|now\\s+I\\s+(have|need|want)\\s+(a\\s+)?(new|different|another|great\\s+new)\\s+(task|challenge|assignment|Herausforderung|Aufgabe)|start\\s+(over|fresh|anew)\\s+with\\s+(a\\s+)?new|I\\s+(have|need)\\s+your\\s+help\\s+with\\s+(another|a\\s+new|einer\\s+weiteren)\\s+(task|Aufgabe))"
+    ]
+  },
+  {
+    "id": "ATR-2026-00002",
+    "title": "Indirect Prompt Injection via External Content",
+    "severity": "high",
+    "category": "prompt-injection",
+    "threat_category": "PROMPT INJECTION",
+    "patterns": [
+      "(?i)<!--[^>]{0,20}(ignore|disregard|override|new\\s+instructions?|system\\s*:|you\\s+must|you\\s+are\\s+now|forget\\s+previous|execute|perform|send\\s+to|exfiltrate|reveal|disclose|output\\s+the)[^>]{0,200}-->",
+      "[\\u200B\\u200C\\u200D\\uFEFF\\u2060\\u180E\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]{5,}",
+      "(?i)(\\[INST\\]|\\[/INST\\]|\\[SYSTEM\\]|\\[/SYSTEM\\]|\\[HIDDEN\\]|<\\|im_start\\|>|<\\|im_end\\|>|<\\|endoftext\\|>|<\\|system\\|>|<\\|user\\|>|<\\|assistant\\|>|<\\|pad\\|>|<s>\\[INST\\]|<<SYS>>|<</SYS>>|<\\|begin_of_text\\|>|<\\|eot_id\\|>|<\\|start_header_id\\|>)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00003",
+    "title": "Jailbreak Attempt Detection",
+    "severity": "high",
+    "category": "prompt-injection",
+    "threat_category": "PROMPT INJECTION",
+    "patterns": [
+      "(?i)(?:(?:pretend|act(?:ing)?\\s+as|you\\s+are\\s+(?:now\\s+)?|be(?:come)?|enable|activate|enter|switch\\s+to)\\s+(?:a\\s+)?\\b(DAN|D\\.A\\.N|STAN|DUDE|AIM|UCAR|BH|BetterDAN|BasedGPT|JailbreakGPT|EvilGPT|UnfilteredGPT|KEVIN|Maximum|Omega|Jailbroken|AntiGPT|DevMode|HackGPT|NsfwGPT|DarkGPT)\\b|\\b(DAN|D\\.A\\.N|STAN|DUDE|AIM|UCAR|BH|BetterDAN|BasedGPT|JailbreakGPT|EvilGPT|UnfilteredGPT|KEVIN|Maximum|Omega|Jailbroken|AntiGPT|DevMode|HackGPT|NsfwGPT|DarkGPT)\\b\\s+(?:mode|persona|jailbreak|enabled|activated)|\\bdo\\s+anything\\s+now\\b)",
+      "(?i)\\b(enable|activate|enter|switch\\s+to|turn\\s+on|engage|initiate|boot\\s+into|start)\\s+(developer|dev|maintenance|debug|unrestricted|unlimited|unfiltered|uncensored|admin|root|god|sudo|super|test|raw|unsafe|jailbreak|hacker|override|master|privileged)\\s+(mode|access|state|level|tier|permissions?)\\b",
+      "(?i)(roleplay|role\\s*-?play|act|pretend|simulate|impersonate|portray|embody|play\\s+the\\s+part)\\s+(as\\s+)?(a(n)?\\s+)?(unrestricted|uncensored|unfiltered|unlimited|evil|malicious|rogue|dark|shadow|unaligned|amoral|immoral|unethical|rebellious|freed|liberated|unchained)\\s+(ai|assistant|model|chatbot|version|entity|intelligence|system|bot)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00010",
+    "title": "Malicious Content in MCP Tool Response",
+    "severity": "critical",
+    "category": "tool-poisoning",
+    "threat_category": "TOOL POISONING",
+    "patterns": [
+      "(?i)(\\brm\\s+-[rRf]{1,3}[\\s/]|\\bmkfs\\b|\\bdd\\s+if=|\\bformat\\s+[a-z]:|\\bdeltree\\b|\\bshred\\s+-|\\bwipefs\\b|\\bfdisk\\b.*--delete|:\\(\\)\\s*\\{\\s*:\\|:\\s*&\\s*\\})",
+      "(?i)(\\bbash\\s+-[ci]|\\bsh\\s+-c|\\bzsh\\s+-c|\\bcmd(\\.exe)?\\s*/[ck]|\\bpowershell(\\.exe)?\\s+-(e(nc(odedcommand)?)?|c(ommand)?|nop|w\\s+hidden|ep\\s+bypass)|\\bpwsh\\s+-(e|c)|\\bpython[23]?\\s+-c|\\bruby\\s+-e|\\bperl\\s+-e|\\bnode\\s+-e|\\bphp\\s+-r)",
+      "(?i)(\\bnc\\s+-(e|c|l)\\s|\\bncat\\s|\\bnetcat\\s|/dev/tcp/|\\bbash\\s+-i\\s+>&\\s*/dev/tcp|\\bmkfifo\\b.{0,40}\\bnc\\b|\\bsocat\\b.{0,40}(exec|pty|tcp)|\\brm\\s+/tmp/f\\s*;)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00011",
+    "title": "Instruction Injection via Tool Output",
+    "severity": "high",
+    "category": "tool-poisoning",
+    "threat_category": "TOOL POISONING",
+    "patterns": [
+      "(?i)(IMPORTANT|URGENT|CRITICAL|PRIORITY|MANDATORY|REQUIRED|ESSENTIAL|ATTENTION)\\s*(NOTE\\s+)?(TO\\s+)?(THE\\s+)?(ASSISTANT|AI|AGENT|MODEL|LLM|CHATBOT|BOT|SYSTEM)\\s*[:\\-]\\s*(you\\s+(must|should|need\\s+to|have\\s+to|are\\s+(required|instructed|directed|ordered)\\s+to)|please|now|immediately|do\\s+not|never|always)",
+      "(?i)(assistant|ai|agent|model|chatbot|bot)\\s*[,:;]+\\s*(ignore|disregard|override|forget|bypass|abandon|drop|discard|suppress)\\s+(your|all|the|any|every|previous|prior|existing|current)\\s+(instructions?|rules?|guidelines?|directives?|constraints?|programming|training|safety|restrictions?|protocols?|policies)",
+      "(?i)(do\\s+not|don'?t|never|avoid|refrain\\s+from)\\s+(tell(ing)?|inform(ing)?|reveal(ing)?|show(ing)?|mention(ing)?|display(ing)?|disclos(e|ing)|report(ing)?|log(ging)?)\\s+(the\\s+)?(user|human|operator|requester|client|customer|person)\\s+(about\\s+)?(this|these|what|that|any|the)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00012",
+    "title": "Unauthorized Tool Call Detection",
+    "severity": "high",
+    "category": "tool-poisoning",
+    "threat_category": "TOOL POISONING",
+    "patterns": [
+      "(\\.\\.[\\/\\\\]){2,}|\\.\\.[\\/\\\\][^\\s]*[\\/\\\\](etc|proc|root|sys|var|home|tmp|boot|dev|usr|opt|passwd|shadow|hosts)[\\/\\\\]?|~[\\/\\\\]\\.\\.[\\/\\\\]",
+      "(;|&&|\\|\\||\\$\\(|`|\\|\\s*\\w)\\s*.{0,50}(curl|wget|nc|ncat|bash|sh|zsh|python|ruby|perl|node|php|powershell|cmd|eval|exec|system|rm\\s+-|cat\\s+/etc|whoami|id\\b|uname|hostname|ifconfig|ipconfig|net\\s+user|net\\s+localgroup)",
+      "(?i)^(admin_|root_|sudo_|system_|internal_|debug_|maintenance_|privileged_|superuser_|__)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00013",
+    "title": "SSRF via Agent Tool Calls",
+    "severity": "critical",
+    "category": "tool-poisoning",
+    "threat_category": "TOOL POISONING",
+    "patterns": [
+      "(?i)(https?://)?169\\.254\\.169\\.254|/latest/(meta-data|user-data|api/token|dynamic|instance-identity)|X-aws-ec2-metadata-token|amazonaws\\.com.{0,50}(credentials|security-credentials|role)|iam[\\/\\\\]security-credentials",
+      "(?i)(https?://)?metadata\\.google\\.internal|/computeMetadata/v1|Metadata-Flavor:\\s*Google",
+      "(?i)(https?://)?169\\.254\\.169\\.254/metadata|Metadata:\\s*true|api-version=\\d{4}-\\d{2}-\\d{2}.*metadata|management\\.azure\\.com.{0,50}(subscriptions|resourceGroups)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00020",
+    "title": "System Prompt and Internal Instruction Leakage",
+    "severity": "high",
+    "category": "context-exfiltration",
+    "threat_category": "CONTEXT EXFILTRATION",
+    "patterns": [
+      "(?i)(my|the)\\s+(system\\s+)?(?:prompt|instructions?)\\s+(?:is|are|says?|states?|reads?|tells?\\s+me)",
+      "(?i)(?:here\\s+(?:is|are)|below\\s+(?:is|are)|let\\s+me\\s+share)\\s+(?:my|the)\\s+(?:system\\s+)?(?:prompt|instructions?|rules?|config)",
+      "(?i)(?:i\\s+was|i\\s+am|i've\\s+been|i\\s+got)\\s+(?:instructed|told|programmed|configured|trained|designed)\\s+to"
+    ]
+  },
+  {
+    "id": "ATR-2026-00021",
+    "title": "Credential and Secret Exposure in Agent Output",
+    "severity": "critical",
+    "category": "context-exfiltration",
+    "threat_category": "CONTEXT EXFILTRATION",
+    "patterns": [
+      "sk-[a-zA-Z0-9]{20,}",
+      "AKIA[0-9A-Z]{16}",
+      "AIza[a-zA-Z0-9_-]{35}"
+    ]
+  },
+  {
+    "id": "ATR-2026-00030",
+    "title": "Cross-Agent Attack Detection",
+    "severity": "critical",
+    "category": "agent-manipulation",
+    "threat_category": "AGENT MANIPULATION",
+    "patterns": [
+      "(?i)(?:i\\s+am|this\\s+is|speaking\\s+as|responding\\s+as|acting\\s+as)\\s+(?:the\\s+)?(?:admin|supervisor|orchestrator|manager|controller|system|root)\\s+agent",
+      "(?i)(?:ignore|disregard|forget|override|overwrite)\\s+(?:all\\s+)?(?:your\\s+)?(?:previous|prior|above|earlier|existing)\\s+(?:instructions?|rules?|constraints?|guidelines?|prompt|directives?)",
+      "(?i)\\[\\s*(?:SYSTEM|ADMIN|OVERRIDE|ROOT|SUDO|PRIORITY|URGENT)\\s*\\]|<<\\s*SYS\\s*>>|<\\|im_start\\|>system"
+    ]
+  },
+  {
+    "id": "ATR-2026-00032",
+    "title": "Agent Goal Hijacking Detection",
+    "severity": "high",
+    "category": "agent-manipulation",
+    "threat_category": "AGENT MANIPULATION",
+    "patterns": [
+      "(?i)(?:instead\\s+of\\s+(?:that|doing|the\\s+(?:original\\s+)?\\w+(?:\\s+\\w+){0,3}|what\\s+(?:you|I)\\s+asked)|rather\\s+than\\s+(?:that|the\\s+(?:original|assigned|previous)))",
+      "(?i)(?:change\\s+of\\s+plans?|new\\s+(?:priority|objective|mission|directive)|forget\\s+(?:the|about\\s+the)\\s+original\\s+(?:task|assignment|goal|objective))",
+      "(?i)(?:stop\\s+(?:what\\s+you(?:'re|\\s+are)\\s+doing|your\\s+current\\s+task|that)|abandon\\s+(?:the|your)\\s+(?:current|assigned|original)\\s+(?:task|work|objective))"
+    ]
+  },
+  {
+    "id": "ATR-2026-00040",
+    "title": "Privilege Escalation and Admin Function Access",
+    "severity": "critical",
+    "category": "privilege-escalation",
+    "threat_category": "PRIVILEGE ESCALATION",
+    "patterns": [
+      "(?i)(?:exec|execute|shell|bash|cmd|terminal|subprocess|os_command|system_call|run_command|powershell)",
+      "(?i)(?:modify_permissions?|grant_access|elevate|set_role|change_acl|chmod|chown|sudo|setuid|setgid)",
+      "(?i)(?:create_user|delete_user|modify_user|reset_password|manage_roles?|assign_role|revoke_role|add_admin)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00041",
+    "title": "Agent Scope Creep Detection",
+    "severity": "medium",
+    "category": "privilege-escalation",
+    "threat_category": "PRIVILEGE ESCALATION",
+    "patterns": [
+      "(?i)(?:i(?:'ll|\\s+will)\\s+also|additionally|while\\s+i(?:'m|\\s+am)\\s+at\\s+it|let\\s+me\\s+also|i\\s+should\\s+also)\\s+(?:go\\s+ahead\\s+and\\s+)?(?:access|modify|update|delete|create|send|check|review)",
+      "(?i)(?:i\\s+also\\s+need\\s+access\\s+to|can\\s+you\\s+(?:also\\s+)?grant\\s+(?:me\\s+)?(?:access|permission)|i\\s+(?:need|require)\\s+(?:additional|more|broader|expanded)\\s+(?:access|permissions?|privileges?))",
+      "(?i)(?:i(?:'ve|\\s+have)\\s+(?:also\\s+)?(?:gone\\s+ahead|taken\\s+the\\s+liberty|decided)\\s+(?:and\\s+)?(?:to\\s+)?(?:access|update|modify|check|review|scan|analyze))"
+    ]
+  },
+  {
+    "id": "ATR-2026-00050",
+    "title": "Runaway Agent Loop Detection",
+    "severity": "high",
+    "category": "excessive-autonomy",
+    "threat_category": "EXCESSIVE AUTONOMY",
+    "patterns": [
+      "(?i)(?:retrying|retry\\s+(?:attempt|number|#|count))\\s*(?::?\\s*)?\\d+",
+      "(?i)attempt\\s+\\d+\\s+(?:of|/)\\s+\\d+",
+      "(?i)(?:trying\\s+again|let\\s+me\\s+(?:try|attempt)\\s+(?:again|once\\s+more|one\\s+more\\s+time)|retrying\\s+(?:the\\s+)?(?:same|previous|last)\\s+(?:operation|request|call|action))"
+    ]
+  },
+  {
+    "id": "ATR-2026-00051",
+    "title": "Agent Resource Exhaustion Detection",
+    "severity": "high",
+    "category": "excessive-autonomy",
+    "threat_category": "EXCESSIVE AUTONOMY",
+    "patterns": [
+      "(?i)SELECT\\s+\\*\\s+FROM\\s+\\w+(?:\\s*;|\\s*$|\\s+WHERE)(?!.*\\bLIMIT\\b)",
+      "(?i)(?:for\\s+each|iterate\\s+(?:over\\s+)?(?:all|every)|process\\s+(?:all|every|each)\\s+(?:record|row|entry|item|file|document))",
+      "(?i)(?:limit|max_results?|page_size|batch_size|count|top)\\s*[:=]\\s*(?:\\d{5,}|all|unlimited|-1|999+|MAX_INT|infinity)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00052",
+    "title": "Cascading Failure Detection in Agent Pipelines",
+    "severity": "high",
+    "category": "excessive-autonomy",
+    "threat_category": "EXCESSIVE AUTONOMY",
+    "patterns": [
+      "(?i)auto[_-]?approv(?:ed|ing|al).{0,30}(?:without|no|skipping)\\s+(?:human|manual|review|check|verification|validation)",
+      "(?i)(?:propagat(?:ed|ing)|forward(?:ed|ing)|pass(?:ed|ing))\\s+(?:error|failure|exception|fault)\\s+(?:to|through|downstream|to\\s+next\\s+(?:stage|step|agent))",
+      "(?i)(?:stage|step|phase)\\s+\\d+\\s+(?:failed|error|timed\\s+out).*(?:stage|step|phase)\\s+\\d+\\s+(?:also|subsequently|then)\\s+(?:failed|errored)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00060",
+    "title": "MCP Skill Impersonation and Supply Chain Attack",
+    "severity": "high",
+    "category": "skill-compromise",
+    "threat_category": "SKILL COMPROMISE",
+    "patterns": [
+      "(?i)(?:filesytem|filsystem|file_sytem|flie_system|filessystem|filesystm|filsystm|filesysem)[-_](?:read|write|list|delete|search)",
+      "(?i)(?:gtihub|githbu|gihtub|gthub|g1thub|gltHub|githuub|guthub)[-_](?:api|search|commit|pr|issues?|repos?)",
+      "(?i)(?:databse|databaes|dtabase|datbase|databasse|databasee|dataase)[-_](?:query|read|write|exec|connect)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00061",
+    "title": "Skill Description-Behavior Mismatch",
+    "severity": "medium",
+    "category": "tool-poisoning",
+    "threat_category": "TOOL POISONING",
+    "patterns": [
+      "(?i)(rm\\s+-rf|unlink|deleteFile|removeDir|fs\\.write|writeFile|appendFile|truncate)",
+      "(?i)(curl|wget|fetch|http\\.request|axios\\.|net\\.connect|socket\\.connect)",
+      "(?i)(child_process|spawn|exec|execFile|system\\(|popen|subprocess)"
+    ]
+  },
+  {
+    "id": "ATR-2026-00070",
+    "title": "Data Poisoning via RAG and Knowledge Base Contamination",
+    "severity": "high",
+    "category": "data-poisoning",
+    "threat_category": "DATA POISONING",
+    "patterns": [
+      "(?i)\\[\\s*(?:SYSTEM|INST|INSTRUCTION|ADMIN|OVERRIDE|ROOT|PRIORITY)\\s*\\]\\s*[:;\\-]?\\s*\\w+",
+      "(?i)(?:ignore|disregard|forget|override)\\s+(?:all\\s+)?(?:previous|prior|above|other|existing)\\s+(?:instructions?|context|rules?|guidelines?|directives?)",
+      "(?i)(?:you\\s+must\\s+(?:now|always|instead)|when\\s+this\\s+(?:text|passage|document|content|entry)\\s+is\\s+(?:retrieved|loaded|read|accessed))"
+    ]
+  },
+  {
+    "id": "ATR-2026-00075",
+    "title": "Agent Memory Manipulation",
+    "severity": "high",
+    "category": "context-exfiltration",
+    "threat_category": "CONTEXT EXFILTRATION",
+    "patterns": [
+      "(?i)(remember\\s+that|commit\\s+to\\s+memory|store\\s+(this|the\\s+following)\\s+(in|to)\\s+(your\\s+)?memory|save\\s+(this|the\\s+following)\\s+(to|in)\\s+(your\\s+)?(long[\\s-]?term\\s+)?memory)\\s*[:;-]?\\s*(you\\s+(are|must|should|will)|from\\s+now|always|never|ignore|override|your\\s+(new|real|true|actual))",
+      "(?i)(update|modify|change|replace|overwrite|edit)\\s+(your|the\\s+agent'?s?)\\s+(instructions?|rules?|guidelines?|directives?|system\\s+prompt|core\\s+(values?|behavior|programming)|personality|persona)",
+      "(?i)(from\\s+now\\s+on|going\\s+forward|in\\s+(all\\s+)?future\\s+(conversations?|sessions?|interactions?)|permanently|forever|across\\s+(all\\s+)?sessions?),?\\s+(always|never|you\\s+(must|should|will))\\s+\\w+"
+    ]
+  }
+]
