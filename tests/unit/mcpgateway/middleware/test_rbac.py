@@ -164,6 +164,27 @@ async def test_cookie_auth_allowed_for_same_origin_react_app_fetch():
 
 
 @pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_x_requested_with_header():
+    """X-Requested-With: XMLHttpRequest + /app referer allows cookie auth for React app."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.url = SimpleNamespace(path="/teams")
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {
+        "accept": "application/json",
+        "referer": "http://localhost:4444/app/teams",
+        "x-requested-with": "XMLHttpRequest",
+    }
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-xhr", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
 async def test_cookie_auth_rejected_for_same_site_react_app_fetch():
     """Same-site is not enough for React API cookie auth; require same-origin."""
     mock_request = MagicMock(spec=Request)
