@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
+from mcpgateway.db import Server as DbServer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -37,6 +38,9 @@ router = APIRouter(tags=["well-known"])
 
 # UUID validation pattern for RFC 9728 endpoint
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$", re.IGNORECASE)
+
+# Server name pattern: alphanumeric, hyphens, underscores (prevents path traversal/injection)
+SERVER_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,253}[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
 
 # Well-known URI registry with validation
 WELL_KNOWN_REGISTRY = {
@@ -169,21 +173,27 @@ async def get_oauth_protected_resource_rfc9728(
         logger.debug(f"Invalid RFC 9728 path format: {sanitize_for_log(path)}")
         raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
-    server_id = path_parts[1]
-
-    # Validate server_id is a valid UUID (prevents path traversal and injection)
-    if not UUID_PATTERN.match(server_id):
-        # Sanitize untrusted server_id before logging to prevent log injection
-        logger.warning(f"Invalid server_id format (not a UUID): {sanitize_for_log(server_id)}")
-        raise HTTPException(status_code=404, detail="Invalid server_id format. Must be a valid UUID.")
+    server_id_or_name = path_parts[1]
 
     # Reject paths with extra segments after /mcp (e.g., servers/uuid/mcp/extra)
     if len(path_parts) > 3:
-        # Sanitize untrusted path before logging to prevent log injection
         logger.warning(f"RFC 9728 path has unexpected segments: {sanitize_for_log(path)}")
         raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
-    # Build resource URL with /mcp suffix per MCP specification
+    # Resolve server_id: accept UUID or server name
+    if UUID_PATTERN.match(server_id_or_name):
+        server_id = server_id_or_name
+    elif SERVER_NAME_PATTERN.match(server_id_or_name):
+        # Resolve server name to UUID via DB lookup
+        server = db.query(DbServer).filter(DbServer.name == server_id_or_name, DbServer.enabled.is_(True)).first()
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
+        server_id = server.id
+    else:
+        logger.warning(f"Invalid server identifier format: {sanitize_for_log(server_id_or_name)}")
+        raise HTTPException(status_code=404, detail="Invalid server identifier format. Must be a UUID or a valid server name.")
+
+    # Build resource URL with canonical UUID (ensures stable resource identifiers per RFC 9728)
     base_url = get_base_url_with_protocol(request)
     resource_url = f"{base_url}/servers/{server_id}/mcp"
 
