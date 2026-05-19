@@ -12,8 +12,8 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 import base64
 from contextlib import nullcontext
 from dataclasses import dataclass
-import inspect
 from importlib import import_module as _im
+import inspect
 import logging
 import os
 from typing import Any, Callable, cast, Dict, Mapping, Optional
@@ -217,7 +217,7 @@ def _configured_otlp_insecure(cfg: Any) -> Optional[bool]:
     return cfg.otel_exporter_otlp_insecure
 
 
-def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], protocol: str, insecure: Optional[bool]) -> Dict[str, Any]:
+def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], _protocol: str, insecure: Optional[bool]) -> Dict[str, Any]:
     """Build OTLP exporter kwargs while preserving exporter-version compatibility.
 
     Args:
@@ -1108,12 +1108,12 @@ def init_telemetry() -> Optional[Any]:
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
                 exporter_cls = cast(Any, OTLP_SPAN_EXPORTER)
-                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, protocol="grpc", insecure=insecure))
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, _protocol="grpc", insecure=insecure))
             elif HTTP_EXPORTER:
                 # Use HTTP exporter as fallback
                 http_ep = (endpoint.replace(":4317", ":4318") + "/v1/traces") if ":4317" in endpoint else endpoint
                 exporter_cls = cast(Any, HTTP_EXPORTER)
-                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, protocol="http", insecure=insecure))
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, _protocol="http", insecure=insecure))
             else:
                 logger.error("No OTLP exporter available")
                 return None
