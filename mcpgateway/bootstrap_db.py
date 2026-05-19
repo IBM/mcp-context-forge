@@ -788,8 +788,7 @@ async def main() -> None:
                 if not _is_at_alembic_head(conn, cfg):
                     logger.error("SKIP_MIGRATION=true but schema is not at head — " "run 'alembic upgrade head' before starting the application")
                     raise RuntimeError("Schema not at head; migrations required before startup")
-                else:
-                    logger.info("SKIP_MIGRATION=true — schema already at head, skipping migration")
+                logger.info("SKIP_MIGRATION=true — schema already at head, skipping migration")
                 updated = normalize_team_visibility(conn)
                 if updated:
                     logger.info(f"Normalized {updated} team record(s) to supported visibility values")
