@@ -29,6 +29,127 @@ import {
   showSuccessMessage,
 } from "./utils.js";
 
+// ===================================================================
+// EXTRA AUTH PARAMS (Key-Value UI)
+// ===================================================================
+let _extraAuthParamCounter = 0;
+
+/**
+ * Add a new extra auth param row to the specified container.
+ * @param {string} containerId - ID of the container div
+ * @param {string} [key=""] - Pre-populated key
+ * @param {string} [value=""] - Pre-populated value
+ * @param {boolean} [focus=true] - Whether to focus the key input
+ */
+export function addExtraAuthParam(containerId, key = "", value = "", focus = true) {
+  const container = safeGetElement(containerId);
+  if (!container) {
+    console.error(`Container with ID ${containerId} not found`);
+    return;
+  }
+
+  const rowId = `extra-param-row-${++_extraAuthParamCounter}`;
+  const row = document.createElement("div");
+  row.id = rowId;
+  row.className = "flex items-center space-x-2";
+
+  row.innerHTML = `
+    <div class="flex-1">
+      <input
+        type="text"
+        placeholder="Parameter Key (e.g., access_type)"
+        class="extra-auth-param-key block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+      />
+    </div>
+    <div class="flex-1">
+      <input
+        type="text"
+        placeholder="Parameter Value (e.g., offline)"
+        class="extra-auth-param-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+      />
+    </div>
+    <button
+      type="button"
+      class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+      title="Remove parameter"
+    >
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+      </svg>
+    </button>
+  `;
+
+  const keyInput = row.querySelector(".extra-auth-param-key");
+  const valueInput = row.querySelector(".extra-auth-param-value");
+  const removeBtn = row.querySelector("button");
+
+  keyInput.value = key;
+  valueInput.value = value;
+
+  keyInput.addEventListener("input", () => updateExtraAuthParamsJSON(containerId));
+  valueInput.addEventListener("input", () => updateExtraAuthParamsJSON(containerId));
+  removeBtn.addEventListener("click", () => {
+    row.remove();
+    updateExtraAuthParamsJSON(containerId);
+  });
+
+  container.appendChild(row);
+  updateExtraAuthParamsJSON(containerId);
+
+  if (focus && keyInput) {
+    keyInput.focus();
+  }
+}
+
+/**
+ * Sync all extra auth param rows into the hidden JSON input.
+ * @param {string} containerId - ID of the container div
+ */
+export function updateExtraAuthParamsJSON(containerId) {
+  const container = safeGetElement(containerId);
+  if (!container) return;
+
+  const result = {};
+  const rows = container.querySelectorAll('[id^="extra-param-row-"]');
+  rows.forEach((row) => {
+    const key = row.querySelector(".extra-auth-param-key")?.value?.trim();
+    const value = row.querySelector(".extra-auth-param-value")?.value?.trim() ?? "";
+    if (key) {
+      result[key] = value;
+    }
+  });
+
+  const hiddenId = containerId.replace("-container", "-json");
+  const hiddenInput = safeGetElement(hiddenId);
+  if (hiddenInput) {
+    hiddenInput.value = Object.keys(result).length > 0 ? JSON.stringify(result) : "";
+  }
+}
+
+/**
+ * Populate extra auth param rows from an existing object.
+ * @param {string} containerId - ID of the container div
+ * @param {Object} params - Key-value pairs to populate
+ */
+export function loadExtraAuthParams(containerId, params) {
+  const container = safeGetElement(containerId);
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  if (!params || typeof params !== "object") {
+    updateExtraAuthParamsJSON(containerId);
+    return;
+  }
+
+  Object.entries(params).forEach(([key, value]) => {
+    addExtraAuthParam(containerId, key, String(value ?? ""), false);
+  });
+
+  updateExtraAuthParamsJSON(containerId);
+}
+
+
 /**
  * SECURE: View Gateway function
  */
@@ -526,6 +647,10 @@ export const editGateway = async function (gatewayId) {
               ? config.scopes.join(" ")
               : "";
           }
+          loadExtraAuthParams(
+            "extra-auth-params-container-gw-edit",
+            config.extra_auth_params || {}
+          );
         }
         break;
       case "query_param":

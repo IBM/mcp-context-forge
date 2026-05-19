@@ -2846,7 +2846,10 @@ class GatewayCreate(BaseModelWithConfigDict):
     auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
+    )
 
     # Query Parameter Authentication (INSECURE)
     auth_query_param_key: Optional[str] = Field(
@@ -3203,7 +3206,10 @@ class GatewayUpdate(BaseModelWithConfigDict):
     auth_value: Optional[str] = Field(None, validate_default=True)
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
+    )
 
     # Query Parameter Authentication (INSECURE)
     auth_query_param_key: Optional[str] = Field(
@@ -3556,7 +3562,10 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+    oauth_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, and extra_auth_params (optional dict of additional authorization URL parameters, e.g. {'access_type': 'offline', 'prompt': 'consent'})",
+    )
 
     # Query Parameter Authentication (masked for security)
     auth_query_param_key: Optional[str] = Field(
