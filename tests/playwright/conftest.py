@@ -310,7 +310,7 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
                 is_admin=True,
                 teams=None,
                 auth_provider="test",
-                extra_payload={"full_name": "Test Admin"},
+                user_data={"email": ADMIN_EMAIL, "is_admin": True, "auth_provider": "test", "full_name": "Test Admin"},
             )
         except Exception:
             pass  # Use empty if generation fails

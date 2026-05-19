@@ -42,12 +42,20 @@ def make_test_jwt(
     user_data: dict[str, Any] | None = None,
     extra_payload: dict[str, Any] | None = None,
 ) -> str:
-    """Create a standardized JWT for tests while preserving legacy helper semantics."""
+    """Create a standardized JWT for tests while preserving legacy helper semantics.
+
+    When is_admin=True is passed, automatically enables include_user_data to ensure
+    the is_admin claim is properly embedded in the token's user_data field.
+    """
     payload: dict[str, Any] = {"sub": email}
     if include_email_claim:
         payload["email"] = email
     if extra_payload:
         payload.update(extra_payload)
+
+    # Auto-enable include_user_data when is_admin=True to ensure the claim is embedded
+    if is_admin and not include_user_data and user_data is None:
+        include_user_data = True
 
     resolved_user_data = user_data
     if include_user_data and resolved_user_data is None:
@@ -148,11 +156,12 @@ def make_auth_header_for_email(
 
 
 def make_playwright_api_context(playwright: Any, base_url: str, token: str, *, accept: str | None = "application/json", extra_headers: dict[str, str] | None = None) -> Any:
-    """Create a Playwright API request context with Bearer auth."""
-    return playwright.request.new_context(
-        base_url=base_url,
-        extra_http_headers=make_auth_headers(token, accept=accept, extra_headers=extra_headers),
-    )
+    """Create a Playwright API request context with Bearer auth.
 
+    DEPRECATED: Use ApiTestHelper.new_context() instead for consistency.
+    This function delegates to ApiTestHelper.new_context().
+    """
+    # Import here to avoid circular dependency
+    from tests.helpers.api_helpers import ApiTestHelper  # pylint: disable=import-outside-toplevel
 
-# Made with Bob
+    return ApiTestHelper.new_context(playwright, base_url, token, accept=accept or "application/json", extra_headers=extra_headers)

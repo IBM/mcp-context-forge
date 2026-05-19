@@ -75,15 +75,25 @@ class ApiTestHelper:
     def create_tool(
         self,
         name: str,
+        url: str,
         *,
-        url: str = "https://httpbin.org/post",
         description: str = "test tool",
         integration_type: str = "REST",
         request_type: str = "POST",
         team_id: str | None = None,
         visibility: str | None = None,
     ) -> dict[str, Any]:
-        """Create a tool and return the decoded JSON body."""
+        """Create a tool and return the decoded JSON body.
+
+        Args:
+            name: Tool name
+            url: Tool URL (required to avoid external dependencies in tests)
+            description: Tool description
+            integration_type: Integration type (REST, MCP, etc.)
+            request_type: HTTP method for REST tools
+            team_id: Optional team ID for team-scoped tools
+            visibility: Optional visibility setting
+        """
         payload: dict[str, Any] = {
             "tool": {
                 "name": name,
@@ -172,6 +182,3 @@ class ApiTestHelper:
     def delete_gateway(self, gateway_id: str) -> None:
         """Delete a gateway, best-effort."""
         self.api.delete(f"/gateways/{gateway_id}")
-
-
-# Made with Bob
