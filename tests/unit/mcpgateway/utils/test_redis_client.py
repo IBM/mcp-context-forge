@@ -17,6 +17,7 @@ import pytest
 
 # First-Party
 from mcpgateway.utils.redis_client import (
+    _build_ssl_kwargs,
     _get_async_parser_class,
     _is_hiredis_available,
     _reset_client,
@@ -510,3 +511,33 @@ async def test_get_redis_client_parser_configuration_error_returns_none():
 
                 assert client is None
                 mock_from_url.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _build_ssl_kwargs
+# ---------------------------------------------------------------------------
+
+
+def test_build_ssl_kwargs_returns_empty_dict_when_ssl_disabled():
+    """_build_ssl_kwargs returns {} when redis_ssl is False (line 55)."""
+    mock_settings = MagicMock()
+    mock_settings.redis_ssl = False
+
+    result = _build_ssl_kwargs(mock_settings)
+
+    assert result == {}
+
+
+def test_build_ssl_kwargs_sets_no_hostname_check_when_check_hostname_false():
+    """_build_ssl_kwargs sets ssl_cert_reqs and ssl_check_hostname when check_hostname is False (lines 68-69)."""
+    mock_settings = MagicMock()
+    mock_settings.redis_ssl = True
+    mock_settings.redis_ssl_ca_certs = None
+    mock_settings.redis_ssl_certfile = None
+    mock_settings.redis_ssl_keyfile = None
+    mock_settings.redis_ssl_check_hostname = False
+
+    result = _build_ssl_kwargs(mock_settings)
+
+    assert result["ssl_cert_reqs"] == "none"
+    assert result["ssl_check_hostname"] is False
