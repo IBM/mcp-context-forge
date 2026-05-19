@@ -9,7 +9,7 @@ Targets lines: 191, 194-196, 198-201, 203-204, 209, 219, 221
 """
 
 # Standard
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -81,8 +81,8 @@ class TestHealthCheckMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -106,8 +106,8 @@ class TestHealthCheckMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -146,8 +146,8 @@ class TestHealthCheckMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -175,8 +175,8 @@ class TestHealthCheckMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -201,8 +201,8 @@ class TestHealthCheckMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -252,8 +252,8 @@ class TestCloseConnectionMissingLines:
 
         # Patch anyio.fail_after to be a pass-through context manager
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(*args, **kwargs):
+            @contextmanager
+            def passthrough_cm(*args, **kwargs):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
