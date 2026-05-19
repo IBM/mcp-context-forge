@@ -10,7 +10,7 @@ Covers all missing lines from the diff-cover report.
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import hashlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -412,9 +412,9 @@ class TestSessionlessConnectionPool:
         """Test creating SSE connection (line 237-238, 245-248)."""
         with patch("mcpgateway.services.sessionless_connection_pool.sse_client") as mock_sse:
             with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-                # Make fail_after a pass-through context manager
-                @asynccontextmanager
-                async def passthrough_cm(timeout):
+                # Make fail_after a pass-through context manager (synchronous, not async)
+                @contextmanager
+                def passthrough_cm(timeout):
                     yield
                 mock_fail_after.side_effect = passthrough_cm
 
@@ -447,9 +447,9 @@ class TestSessionlessConnectionPool:
         """Test creating StreamableHTTP connection (line 253-254)."""
         with patch("mcpgateway.services.sessionless_connection_pool.streamablehttp_client") as mock_http:
             with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-                # Make fail_after a pass-through context manager
-                @asynccontextmanager
-                async def passthrough_cm(timeout):
+                # Make fail_after a pass-through context manager (synchronous, not async)
+                @contextmanager
+                def passthrough_cm(timeout):
                     yield
                 mock_fail_after.side_effect = passthrough_cm
 
@@ -484,8 +484,8 @@ class TestSessionlessConnectionPool:
             value = "invalid"
 
         with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
-            @asynccontextmanager
-            async def passthrough_cm(timeout):
+            @contextmanager
+            def passthrough_cm(timeout):
                 yield
             mock_fail_after.side_effect = passthrough_cm
 
@@ -503,8 +503,8 @@ class TestSessionlessConnectionPool:
         with patch("mcpgateway.services.sessionless_connection_pool.sse_client") as mock_sse:
             with patch("mcpgateway.services.sessionless_connection_pool.anyio.fail_after") as mock_fail_after:
                 # Make fail_after raise TimeoutError
-                @asynccontextmanager
-                async def timeout_cm(timeout):
+                @contextmanager
+                def timeout_cm(timeout):
                     raise TimeoutError("Connection timeout")
                     yield  # Never reached
                 mock_fail_after.side_effect = timeout_cm
