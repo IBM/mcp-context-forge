@@ -61,7 +61,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         httponly=False,  # JS must read for X-CSRF-Token header (double-submit pattern)
         secure=(settings.environment == "production") or settings.secure_cookies,  # HTTPS only in prod
         samesite="strict",  # Prevents CSRF attacks (no cross-site requests)
-        path="/app",  # Scoped to React client routes only
+        path="/",  # Application-wide scope to match jwt_token cookie
         max_age=settings.token_expiry * 60,  # Synchronized with JWT expiry
     )
 
@@ -113,7 +113,7 @@ def clear_csrf_cookie(response: Response) -> None:
     """Clear CSRF token cookie."""
     response.delete_cookie(
         key="csrf_token",
-        path="/app",
+        path="/",
         samesite="strict",
         secure=(settings.environment == "production") or settings.secure_cookies,
     )

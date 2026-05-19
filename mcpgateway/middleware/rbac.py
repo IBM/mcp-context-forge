@@ -360,10 +360,27 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     is_spa_document_request = request_path == "/app"
     referer_path = urlparse(referer).path if referer else ""
     is_app_referer = referer_path == "/app" or referer_path.startswith("/app/")
+
+    # Validate full origin (scheme + host) when using X-Requested-With fallback
+    # to prevent forged referers like https://evil.example/app/...
+    referer_origin_valid = False
+    if referer:
+        parsed_referer = urlparse(referer)
+        referer_origin = f"{parsed_referer.scheme}://{parsed_referer.netloc}"
+        # Get allowed origins from app_domain and trusted origins
+        app_domain = str(settings.app_domain)
+        parsed_app = urlparse(app_domain)
+        app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+        allowed_origins = {app_origin}
+        allowed_origins.update(settings.csrf_trusted_origins)
+        referer_origin_valid = referer_origin in allowed_origins
+
     # First-party React fetches from the SPA. Sec-Fetch-* are forbidden request
     # headers in browsers, and the /app referer ties the request to the client UI
     # instead of allowing arbitrary cookie-authenticated API calls.
-    is_first_party_app_fetch = is_app_referer and sec_fetch_site == "same-origin" and sec_fetch_mode in {"cors", "same-origin"}
+    # X-Requested-With: XMLHttpRequest requires both /app path AND valid origin.
+    has_xhr_header = request.headers.get("x-requested-with") == "XMLHttpRequest"
+    is_first_party_app_fetch = is_app_referer and ((sec_fetch_site == "same-origin" and sec_fetch_mode in {"cors", "same-origin"}) or (has_xhr_header and referer_origin_valid))
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request or is_spa_document_request or is_first_party_app_fetch
 
     # SECURITY: Reject cookie-only authentication for API requests

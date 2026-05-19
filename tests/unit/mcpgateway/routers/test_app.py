@@ -264,7 +264,7 @@ class TestCSRFProtection:
         assert len(token2) == CSRF_TOKEN_LENGTH
 
     def test_csrf_cookie_security_flags(self):
-        """Test CSRF cookie has samesite=strict, non-httpOnly, and path=/app (not /app/auth)."""
+        """Test CSRF cookie has samesite=strict, non-httpOnly, and path=/ (application-wide scope)."""
         from fastapi import Response
         from mcpgateway.utils.csrf import set_csrf_cookie
 
@@ -277,7 +277,7 @@ class TestCSRFProtection:
         assert csrf_cookie, "csrf_token cookie not found in Set-Cookie"
         assert "samesite=strict" in csrf_cookie.lower()
         assert "httponly" not in csrf_cookie.lower(), "CSRF cookie must not be httpOnly — JS needs to read it"
-        assert "path=/app" in csrf_cookie.lower()
+        assert "path=/" in csrf_cookie.lower()
 
 
 class TestSecurityVectors:
