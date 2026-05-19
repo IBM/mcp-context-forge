@@ -797,6 +797,28 @@ export const handleEditGatewayFormSubmit = async function (e) {
 
     formData.append("passthrough_headers", JSON.stringify(passthroughHeaders));
 
+    // Process tools_include - convert comma-separated string to JSON array
+    const toolsIncludeString = formData.get("tools_include") || "";
+    const toolsInclude = toolsIncludeString
+      .split(",")
+      .map((pattern) => pattern.trim())
+      .filter((pattern) => pattern.length > 0);
+    if (toolsInclude.length > 0) {
+      formData.delete("tools_include");
+      formData.append("tools_include", JSON.stringify(toolsInclude));
+    }
+
+    // Process tools_exclude - convert comma-separated string to JSON array
+    const toolsExcludeString = formData.get("tools_exclude") || "";
+    const toolsExclude = toolsExcludeString
+      .split(",")
+      .map((pattern) => pattern.trim())
+      .filter((pattern) => pattern.length > 0);
+    if (toolsExclude.length > 0) {
+      formData.delete("tools_exclude");
+      formData.append("tools_exclude", JSON.stringify(toolsExclude));
+    }
+
     // Handle OAuth configuration
     // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
     // The backend assembles individual form fields into oauth_config with proper field names
@@ -893,6 +915,28 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     }
 
     formData.append("passthrough_headers", JSON.stringify(passthroughHeaders));
+
+    // Process tools_include - convert comma-separated string to JSON array
+    const editToolsIncludeString = formData.get("tools_include") || "";
+    const editToolsInclude = editToolsIncludeString
+      .split(",")
+      .map((pattern) => pattern.trim())
+      .filter((pattern) => pattern.length > 0);
+    if (editToolsInclude.length > 0) {
+      formData.delete("tools_include");
+      formData.append("tools_include", JSON.stringify(editToolsInclude));
+    }
+
+    // Process tools_exclude - convert comma-separated string to JSON array
+    const editToolsExcludeString = formData.get("tools_exclude") || "";
+    const editToolsExclude = editToolsExcludeString
+      .split(",")
+      .map((pattern) => pattern.trim())
+      .filter((pattern) => pattern.length > 0);
+    if (editToolsExclude.length > 0) {
+      formData.delete("tools_exclude");
+      formData.append("tools_exclude", JSON.stringify(editToolsExclude));
+    }
 
     // Handle auth_headers JSON field
     const authHeadersJson = formData.get("auth_headers");

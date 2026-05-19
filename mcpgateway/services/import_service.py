@@ -1302,6 +1302,8 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport", "SSE"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tools_include=gateway_data.get("tools_include"),
+            tools_exclude=gateway_data.get("tools_exclude"),
             tags=gateway_data.get("tags", []),
             **auth_kwargs,
         )
@@ -1366,6 +1368,8 @@ class ImportService:
             description=gateway_data.get("description"),
             transport=gateway_data.get("transport"),
             passthrough_headers=gateway_data.get("passthrough_headers"),
+            tools_include=gateway_data.get("tools_include"),
+            tools_exclude=gateway_data.get("tools_exclude"),
             tags=gateway_data.get("tags"),
             **auth_kwargs,
         )

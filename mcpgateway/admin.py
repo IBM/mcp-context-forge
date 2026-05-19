@@ -12279,6 +12279,24 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         else:
             passthrough_headers = None
 
+        # Handle tools_include filter
+        tools_include_str = str(form.get("tools_include", ""))
+        tools_include: Optional[list[str]] = None
+        if tools_include_str and tools_include_str.strip():
+            try:
+                tools_include = orjson.loads(tools_include_str)
+            except (orjson.JSONDecodeError, ValueError):
+                tools_include = [p.strip() for p in tools_include_str.split(",") if p.strip()]
+
+        # Handle tools_exclude filter
+        tools_exclude_str = str(form.get("tools_exclude", ""))
+        tools_exclude: Optional[list[str]] = None
+        if tools_exclude_str and tools_exclude_str.strip():
+            try:
+                tools_exclude = orjson.loads(tools_exclude_str)
+            except (orjson.JSONDecodeError, ValueError):
+                tools_exclude = [p.strip() for p in tools_exclude_str.split(",") if p.strip()]
+
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
         LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
@@ -12329,6 +12347,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_config=oauth_config,
             one_time_auth=form.get("one_time_auth", False),
             passthrough_headers=passthrough_headers,
+            tools_include=tools_include,
+            tools_exclude=tools_exclude,
             visibility=visibility,
             ca_certificate=ca_certificate,
             ca_certificate_sig=sig if sig else None,
@@ -12479,6 +12499,25 @@ async def admin_edit_gateway(
         else:
             passthrough_headers = None
 
+        # Handle tools_include filter
+        # Use [] (empty list) to signal "user cleared the filter" vs None (not provided)
+        tools_include_str = str(form.get("tools_include", ""))
+        tools_include: Optional[List[str]] = []
+        if tools_include_str and tools_include_str.strip():
+            try:
+                tools_include = orjson.loads(tools_include_str)
+            except (orjson.JSONDecodeError, ValueError):
+                tools_include = [p.strip() for p in tools_include_str.split(",") if p.strip()]
+
+        # Handle tools_exclude filter
+        tools_exclude_str = str(form.get("tools_exclude", ""))
+        tools_exclude: Optional[List[str]] = []
+        if tools_exclude_str and tools_exclude_str.strip():
+            try:
+                tools_exclude = orjson.loads(tools_exclude_str)
+            except (orjson.JSONDecodeError, ValueError):
+                tools_exclude = [p.strip() for p in tools_exclude_str.split(",") if p.strip()]
+
         # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
@@ -12580,6 +12619,8 @@ async def admin_edit_gateway(
             auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
             one_time_auth=form.get("one_time_auth", False),
             passthrough_headers=passthrough_headers,
+            tools_include=tools_include,
+            tools_exclude=tools_exclude,
             oauth_config=oauth_config,
             visibility=visibility,
             owner_email=user_email,
