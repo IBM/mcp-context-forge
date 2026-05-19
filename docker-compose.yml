@@ -746,6 +746,25 @@ services:
         soft: 5000
         hard: 5000
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Security Context - Container Hardening (Issue: Security pen test findings)
+    # ──────────────────────────────────────────────────────────────────────
+    security_opt:
+      - no-new-privileges:true              # Prevent privilege escalation via setuid/sudo
+      - apparmor=docker-default             # AppArmor MAC (Mandatory Access Control) profile
+      # For SELinux systems (RHEL/CentOS), uncomment the line below and comment out apparmor:
+      # - label=type:container_runtime_t    # SELinux type enforcement
+    cap_drop:
+      - ALL                                 # Drop all Linux capabilities
+    privileged: false                       # Explicitly disable privileged mode
+    read_only: true                         # Read-only root filesystem prevents tampering
+
+    # Temporary filesystem mounts required for read-only root filesystem
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/tmp:size=50M,mode=1777
+      - /run:size=10M,mode=0755
+
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
         condition: service_healthy   # ▶ wait for connection pooler
