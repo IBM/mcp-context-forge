@@ -189,6 +189,8 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
+logger = logging.getLogger(__name__)
+
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
     # First-Party
@@ -19662,6 +19664,236 @@ async def get_resource_performance(
             db.commit()  # Commit read-only transaction to avoid implicit rollback
         finally:
             db.close()
+
+
+@admin_router.get("/security-scanner")
+async def admin_security_scanner(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Admin endpoint to run security scanner and return results.
+    Args:
+        request: FastAPI request object
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered security scanner dashboard
+    """
+    try:
+        # First-Party
+        from plugins.source_scanner.storage.repository import ScanRepository
+
+        repo = ScanRepository(db)
+        latest_scan = repo.get_all_scans(limit=1)
+
+        # Prepare scan data for template
+        if latest_scan:
+            scan = latest_scan[0]
+            findings = repo.get_findings_for_scan(scan.id)
+
+            # Convert to JSON-serializable format
+            scan_data = {
+                "source": scan.repo_url,
+                "generated_at": scan.created_at.isoformat(),
+                "languages": scan.languages.split(",") if scan.languages else [],
+                "blocked": scan.blocked,
+                "summary": {
+                    "total_issues": scan.error_count + scan.warning_count + scan.info_count,
+                    "ERROR": scan.error_count,
+                    "WARNING": scan.warning_count,
+                    "INFO": scan.info_count,
+                },
+                "findings": [
+                    {
+                        "severity": f.severity,
+                        "scanner": f.scanner,
+                        "rule_id": f.rule_id,
+                        "message": f.message,
+                        "file_path": f.file_path,
+                        "line": f.line,
+                        "column": f.column,
+                        "code_snippet": f.code_snippet,
+                        "help_url": f.help_url,
+                    }
+                    for f in findings
+                ],
+            }
+        else:
+            # No scans available yet
+            scan_data = {
+                "source": None,
+                "generated_at": None,
+                "languages": [],
+                "blocked": False,
+                "summary": {
+                    "total_issues": 0,
+                    "ERROR": 0,
+                    "WARNING": 0,
+                    "INFO": 0,
+                },
+                "findings": [],
+            }
+
+        # Import json for safe serialization
+        # Standard
+        import json
+
+        scan_data_json = json.dumps(scan_data)
+
+        # Get the Jinja2 templates environment
+        # First-Party
+        from mcpgateway.main import templates
+
+        # Render the template
+        return templates.TemplateResponse(
+            "scanner_partial.html",
+            {
+                "request": request,
+                "root_path": request.scope.get("root_path", ""),
+                "scan_data_json": scan_data_json,
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"Error rendering security scanner page: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load security scanner dashboard: {str(e)}")
+
+
+@admin_router.get("/admin/scanner/results")
+async def get_scanner_results(
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """API endpoint to fetch latest scan results.
+
+    Used by the scanner dashboard for AJAX refresh.
+
+    Args:
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: Latest scan data
+
+    Raises:
+        HTTPException: 404 if no scans found
+    """
+    try:
+        # First-Party
+        from plugins.source_scanner.storage.repository import ScanRepository
+
+        repo = ScanRepository(db)
+        latest_scan = repo.get_all_scans(limit=1)
+
+        if not latest_scan:
+            raise HTTPException(status_code=404, detail="No scan results available")
+
+        scan = latest_scan[0]
+        findings = repo.get_findings_for_scan(scan.id)
+
+        return JSONResponse(
+            {
+                "source": scan.repo_url,
+                "generated_at": scan.created_at.isoformat(),
+                "languages": scan.languages.split(",") if scan.languages else [],
+                "blocked": scan.blocked,
+                "summary": {
+                    "total_issues": scan.error_count + scan.warning_count + scan.info_count,
+                    "ERROR": scan.error_count,
+                    "WARNING": scan.warning_count,
+                    "INFO": scan.info_count,
+                },
+                "findings": [
+                    {
+                        "severity": f.severity,
+                        "scanner": f.scanner,
+                        "rule_id": f.rule_id,
+                        "message": f.message,
+                        "file_path": f.file_path,
+                        "line": f.line,
+                        "column": f.column,
+                        "code_snippet": f.code_snippet,
+                        "help_url": f.help_url,
+                    }
+                    for f in findings
+                ],
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching scanner results: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch scan results: {str(e)}")
+
+
+@admin_router.get("/admin/scanner/scans")
+async def list_scanner_scans(
+    limit: int = 20,
+    offset: int = 0,
+    repo_url: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """List all scans with pagination.
+
+    Args:
+        limit: Maximum number of scans to return (default 20)
+        offset: Number of scans to skip (default 0)
+        repo_url: Optional filter by repository URL
+        db: Database session dependency
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        JSONResponse: List of scan summaries
+
+    Raises:
+        HTTPException: 503 if scanner plugin not available
+    """
+    try:
+        # First-Party
+        from plugins.source_scanner.storage.repository import ScanRepository
+
+        repo = ScanRepository(db)
+
+        # Get scans (filtered by repo_url if provided)
+        if repo_url:
+            scans = repo.get_scans_for_repo(repo_url, limit=limit, offset=offset)
+        else:
+            scans = repo.get_all_scans(limit=limit, offset=offset)
+
+        # Return scan summaries (without detailed findings)
+        return JSONResponse(
+            {
+                "scans": [
+                    {
+                        "id": s.id,
+                        "repo_url": s.repo_url,
+                        "ref": s.ref,
+                        "commit_sha": s.commit_sha,
+                        "created_at": s.created_at.isoformat(),
+                        "blocked": s.blocked,
+                        "error_count": s.error_count,
+                        "warning_count": s.warning_count,
+                        "info_count": s.info_count,
+                        "total_issues": s.error_count + s.warning_count + s.info_count,
+                    }
+                    for s in scans
+                ],
+                "limit": limit,
+                "offset": offset,
+                "count": len(scans),
+            }
+        )
+
+    except ImportError as e:
+        logger.error(f"Security scanner plugin not available: {e}")
+        raise HTTPException(status_code=503, detail="Security scanner plugin is not installed or configured")
+    except Exception as e:
+        logger.error(f"Error listing scans: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list scans: {str(e)}")
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
