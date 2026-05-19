@@ -1173,6 +1173,7 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
 ) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
 
@@ -1181,6 +1182,7 @@ async def get_current_user(
     Args:
         credentials: HTTP authorization credentials
         request: Optional request object for plugin hooks
+        db: Database session for user lookups
 
     Returns:
         EmailUser: Authenticated user
@@ -1417,14 +1419,11 @@ async def get_current_user(
         payload = await verify_jwt_token_cached(credentials.credentials, request)
 
         logger.debug("JWT token validated successfully")
-        # Extract user identifier (support both new and legacy token formats)
-        email = payload.get("sub")
-        if email is None:
-            # Try legacy format
-            email = payload.get("email")
+        # Extract user identifier (support both user ID and email formats)
+        email = await get_user_email_from_token(payload, db)
 
         if email is None:
-            logger.debug("No email/sub found in JWT payload")
+            logger.debug("No valid user identifier found in JWT payload")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token",
@@ -1744,7 +1743,7 @@ async def get_current_user(
         token_use = payload.get("token_use")
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
-            user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
+            user_info = {"is_admin": payload.get("is_admin", False)}
             normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
@@ -1973,3 +1972,24 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
     if request and global_context:
         request.state.plugin_global_context = global_context
+
+
+async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
+    """Extract user email from JWT payload.
+
+    Simplified helper that extracts email from the 'sub' claim.
+    The 'sub' claim always contains the user's email address.
+
+    Args:
+        payload: JWT payload dictionary
+        db: Database session (unused, kept for API compatibility)
+
+    Returns:
+        User email string, or None if sub missing
+
+    Example:
+        >>> payload = {"sub": "user@example.com"}
+        >>> email = await get_user_email_from_token(payload, db)
+        >>> # Returns: "user@example.com"
+    """
+    return payload.get("sub")

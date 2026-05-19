@@ -410,7 +410,7 @@ def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optio
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
-            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+            is_admin = payload.get("is_admin", False)
 
     if token_teams is not None and len(token_teams) == 0:
         is_admin = False

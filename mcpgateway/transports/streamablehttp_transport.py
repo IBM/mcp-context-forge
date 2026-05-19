@@ -2088,11 +2088,22 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    # Resolve user email from token (supports both ID and email formats)
+    # First-Party
+    from mcpgateway.db import EmailUser, SessionLocal  # pylint: disable=import-outside-toplevel
+
+    sub = payload.get("sub")
+    if sub and isinstance(sub, str) and sub.isdigit():
+        # New format: numeric user ID - need DB lookup
+        with SessionLocal() as db:
+            user_id = int(sub)
+            user_obj = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+            email = user_obj.email if user_obj else None
+    else:
+        # Legacy format: email address (pass through)
+        email = sub
+
     jwt_is_admin = payload.get("is_admin", False)
-    if not jwt_is_admin:
-        user_info = payload.get("user", {})
-        jwt_is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
 
     # SECURITY: Check for effective admin status (DB is_admin OR RBAC platform_admin).
     # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
@@ -4942,9 +4953,22 @@ class _StreamableHttpAuthHandler:
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
-            nested_user = user_payload.get("user", {})
-            nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
+            # Resolve user email from token (supports both ID and email formats)
+            # First-Party
+            from mcpgateway.db import EmailUser, SessionLocal  # pylint: disable=import-outside-toplevel
+
+            sub = user_payload.get("sub")
+            if sub and isinstance(sub, str) and sub.isdigit():
+                # New format: numeric user ID - need DB lookup
+                with SessionLocal() as db:
+                    user_id = int(sub)
+                    user_obj = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+                    user_email = user_obj.email if user_obj else None
+            else:
+                # Legacy format: email address (pass through)
+                user_email = sub
+
+            nested_is_admin = user_payload.get("is_admin", False)
             is_admin = user_payload.get("is_admin", False) or nested_is_admin
             token_use = user_payload.get("token_use")
             db_user_is_admin = False

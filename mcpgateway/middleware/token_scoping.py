@@ -27,7 +27,7 @@ from sqlalchemy import and_, func, select
 from mcpgateway.auth import normalize_token_teams, resolve_session_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import Permissions
+from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -744,7 +744,25 @@ class TokenScopingMiddleware:
             bool: True if team membership is valid, False otherwise
         """
         teams = payload.get("teams", [])
-        user_email = payload.get("sub")
+
+        # Resolve user email from token (sync version for sync function)
+        sub = payload.get("sub")
+        if not sub:
+            logger.warning("Token missing sub claim")
+            return False
+
+        # Check if sub is numeric user ID or email
+        if isinstance(sub, str) and sub.isdigit():
+            # New format: numeric user ID - need DB lookup
+            # First-Party
+            from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+            user_id = int(sub)
+            user = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+            user_email = user.email if user else None
+        else:
+            # Legacy format: email address (pass through)
+            user_email = sub
 
         # PUBLIC-ONLY TOKEN: No team validation needed
         if not teams or len(teams) == 0:
@@ -1240,7 +1258,25 @@ class TokenScopingMiddleware:
 
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
-            user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
+            # Import here to avoid circular dependency
+            # First-Party
+            from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+            # Create DB session for user lookup
+            db = SessionLocal()
+            try:
+                # Resolve user email from token (supports both ID and email formats)
+                sub = payload.get("sub")
+                if sub and isinstance(sub, str) and sub.isdigit():
+                    # New format: numeric user ID - need DB lookup
+                    user_id = int(sub)
+                    user = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+                    user_email = user.email if user else None
+                else:
+                    # Legacy format: email address (pass through)
+                    user_email = sub
+            finally:
+                db.close()
 
             # Resolve teams based on token_use claim
             token_use = payload.get("token_use")
@@ -1248,7 +1284,7 @@ class TokenScopingMiddleware:
                 # Session token: resolve teams from DB/cache directly
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
-                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                is_admin = payload.get("is_admin", False)
                 user_info = {"is_admin": is_admin}
                 token_teams = await resolve_session_teams(payload, user_email, user_info)
             else:

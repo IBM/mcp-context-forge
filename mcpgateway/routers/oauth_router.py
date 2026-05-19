@@ -19,9 +19,6 @@ import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
-# First-Party - CSP nonce support
-from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -41,6 +38,9 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+
+# First-Party - CSP nonce support
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -218,7 +218,7 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             _, payload = cached
             if payload:
                 token_teams = normalize_token_teams(payload)
-                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
+                is_admin = bool(payload.get("is_admin", False))
         # Fail closed when request.state contains an unexpected token_teams value.
         if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
             token_teams = _not_set

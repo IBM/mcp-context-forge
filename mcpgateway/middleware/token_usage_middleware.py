@@ -146,7 +146,21 @@ class TokenUsageMiddleware:
                     try:
                         payload = await verify_jwt_token_cached(token, request)
                         jti = jti or payload.get("jti")
-                        user_email = user_email or payload.get("sub") or payload.get("email")
+                        # Resolve user email from token (supports both ID and email formats)
+                        if not user_email:
+                            # First-Party
+                            from mcpgateway.db import EmailUser, SessionLocal  # pylint: disable=import-outside-toplevel
+
+                            sub = payload.get("sub")
+                            if sub and isinstance(sub, str) and sub.isdigit():
+                                # New format: numeric user ID - need DB lookup
+                                with SessionLocal() as db:
+                                    user_id = int(sub)
+                                    user_obj = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+                                    user_email = user_obj.email if user_obj else None
+                            else:
+                                # Legacy format: email address (pass through)
+                                user_email = sub
                     except Exception as decode_error:
                         logger.debug(f"Failed to decode token for usage logging: {decode_error}")
                         return

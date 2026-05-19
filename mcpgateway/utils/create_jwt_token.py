@@ -485,15 +485,12 @@ def main() -> None:  # pragma: no cover
     scopes_dict = None
 
     if args.admin or args.teams or args.scopes or args.full_name:
-        user_email = payload.get("sub") or payload.get("username", "admin@example.com")
+        # For CLI tokens, sub is typically username/email (not user ID)
+        payload.get("sub") or payload.get("username", "admin@example.com")
 
-        # Build user data
-        user_data = {
-            "email": user_email,
-            "full_name": args.full_name or "CLI User",
-            "is_admin": bool(args.admin),
-            "auth_provider": "cli",  # Mark as CLI-generated for auditing
-        }
+        # Build minimal user data (no PII in nested objects)
+        payload["is_admin"] = bool(args.admin)
+        payload["auth_provider"] = "cli"  # Mark as CLI-generated for auditing
 
         # Build teams claim. In rich-token mode, explicit null preserves
         # normalize_token_teams semantics for admin bypass when intended.
