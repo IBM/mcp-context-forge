@@ -80,7 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.post<LoginResponse>(
         "/app/auth/login",
         { email, password },
-        { unauthenticated: true },
+        { authenticated: false },
       );
 
       authVersion.current += 1;
