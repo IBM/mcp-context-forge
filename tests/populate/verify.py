@@ -122,7 +122,7 @@ async def verify_entities(base_url: str, email_domain: str = "loadtest.example.c
             login_resp = await client.post(
                 "/auth/email/login",
                 headers={"Content-Type": "application/json"},
-                json={"email": f"user1@{email_domain}", "password": "LoadTest1234!"},
+                json={"email": f"user1@{email_domain}", "password": "LoadTest1234!"},  # pragma: allowlist secret
             )
             results["user_login_test"] = {
                 "status": "ok" if login_resp.status_code == 200 else f"http_{login_resp.status_code}",

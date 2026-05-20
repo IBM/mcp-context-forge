@@ -285,7 +285,7 @@ class TestSecurityValidation:
         "https://0.0.0.0",  # All interfaces
         "https://169.254.169.254",  # AWS metadata
         "https://example.com:99999",  # Invalid port
-        "https://user:pass@example.com",  # Credentials in URL
+        "https://user:pass@example.com",  # Credentials in URL  # pragma: allowlist secret
         "https://example.com/path?param=<script>",  # XSS in URL
         "https://exam ple.com",  # Space in domain
         "https://example.com\r\nX-Injection: true",  # CRLF in URL
@@ -2067,7 +2067,7 @@ class TestSecurityBestPractices:
 
         try:
             # Create tool with sensitive auth
-            tool = ToolCreate(name="test_tool", url="https://example.com", auth_type="basic", auth_username="admin", auth_password="super-secret-password")
+            tool = ToolCreate(name="test_tool", url="https://example.com", auth_type="basic", auth_username="admin", auth_password="super-secret-password")  # pragma: allowlist secret
 
             # Log the tool (this might happen in real code)
             logger.debug(f"Created tool: {tool}")

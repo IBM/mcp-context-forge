@@ -1,5 +1,6 @@
 [pycodestyle]
 max-line-length = 200
+exclude = .venv,venv,build,dist,.tox,.eggs,node_modules
 #count = False
 #ignore = E226,E302,E71
 statistics = True

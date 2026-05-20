@@ -91,7 +91,7 @@ def test_login_blocks_user_with_password_change_required(client, test_user, db_s
 
             response = client.post(
                 "/auth/email/login",
-                json={"email": "test@example.com", "password": "test_password"},
+                json={"email": "test@example.com", "password": "test_password"},  # pragma: allowlist secret
             )
 
             assert response.status_code == 403
@@ -151,7 +151,7 @@ def test_password_change_api_endpoint_accessible(authenticated_client, test_user
 
             response = authenticated_client.post(
                 "/auth/email/change-password",
-                json={"old_password": "old_pass", "new_password": "new_pass"},
+                json={"old_password": "old_pass", "new_password": "new_pass"},  # pragma: allowlist secret
             )
 
             # Should NOT redirect (allow password change)

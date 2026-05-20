@@ -732,7 +732,7 @@ class SSOService:
             >>> service._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC(' + s + ')')
             >>> data = {
             ...     'id': 'github', 'name': 'github', 'display_name': 'GitHub', 'provider_type': 'oauth2',
-            ...     'client_id': 'cid', 'client_secret': 'sec',
+            ...     'client_id': 'cid', 'client_secret': 'sec',  # pragma: allowlist secret
             ...     'authorization_url': 'https://example/auth', 'token_url': 'https://example/token',
             ...     'userinfo_url': 'https://example/user', 'scope': 'user:email'
             ... }
@@ -782,7 +782,7 @@ class SSOService:
             >>> svc._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC-' + s)
             >>> svc.db.commit = lambda: None
             >>> svc.db.refresh = lambda obj: None
-            >>> updated = asyncio.run(svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'}))
+            >>> updated = asyncio.run(svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'}))  # pragma: allowlist secret
             >>> updated.client_id
             'new'
             >>> updated.client_secret_encrypted

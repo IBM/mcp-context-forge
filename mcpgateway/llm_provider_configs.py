@@ -305,7 +305,7 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
                 label="AWS Access Key ID",
                 field_type="text",
                 required=False,
-                placeholder="AKIAIOSFODNN7EXAMPLE",
+                placeholder="AKIAIOSFODNN7EXAMPLE",  # pragma: allowlist secret
                 help_text="Optional: Leave empty to use IAM role or default credentials",
             ),
             ProviderFieldDefinition(
@@ -313,7 +313,7 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
                 label="AWS Secret Access Key",
                 field_type="password",
                 required=False,
-                placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",  # pragma: allowlist secret
                 help_text="Optional: Leave empty to use IAM role or default credentials",
             ),
             ProviderFieldDefinition(
