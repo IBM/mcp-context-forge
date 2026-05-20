@@ -62,7 +62,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name="pk_a2a_agent_plugin_bindings"),
         sa.UniqueConstraint(
-            "team_id", "agent_name", "plugin_id",
+            "team_id",
+            "agent_name",
+            "plugin_id",
             name="uq_a2a_agent_plugin_binding",
         ),
     )

@@ -5041,9 +5041,6 @@ async def invoke_a2a_agent(
 
 
 @a2a_router.post("/invoke", response_model=Dict[str, Any])
-
-
-@a2a_router.post("/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent_by_id(
     request: Request,

@@ -16933,7 +16933,7 @@ async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, tea
     plugin_service = get_plugin_service()
     await _sync_plugin_service_from_runtime(request, plugin_service)
     binding_service = A2AAgentPluginBindingService()
-    bindings, total = binding_service.list_bindings(db, team_id=team_id)
+    bindings, _ = binding_service.list_bindings(db, team_id=team_id)
     agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
     agent_names = [a[0] for a in agents]
     plugin_ids = [p.plugin_id for p in plugin_service.get_all_plugins()]
