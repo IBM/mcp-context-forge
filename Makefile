@@ -4764,6 +4764,7 @@ jsonlint:                         ## 📑 JSON validation (jq)
 tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
 	@find . -type f -name '*.toml' \
+	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
