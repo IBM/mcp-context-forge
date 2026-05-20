@@ -93,6 +93,8 @@ class Vault(Plugin):
             self._sconfig = VaultConfig.model_validate(self._config.config or {})
         except Exception:
             self._sconfig = VaultConfig()
+        # Normalize vault header name to lowercase for case-insensitive lookup (ASGI headers are lowercase)
+        self._vault_header_key = self._sconfig.vault_header_name.lower()
 
     def _parse_vault_token_key(self, key: str) -> tuple[str, str | None, str | None, str | None]:
         """Parse vault token key in format: system[:scope][:token_type][:token_name].
@@ -173,39 +175,39 @@ class Vault(Plugin):
             logger.warning("System cannot be determined from gateway metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
             if payload.headers:
-                safe_headers = payload.headers.model_dump()
-                if self._sconfig.vault_header_name in safe_headers:
-                    del safe_headers[self._sconfig.vault_header_name]
+                safe_headers = {k.lower(): v for k, v in payload.headers.root.items()}
+                if self._vault_header_key in safe_headers:
+                    del safe_headers[self._vault_header_key]
                     payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
                     return ToolPreInvokeResult(modified_payload=payload)
             return ToolPreInvokeResult()
 
         modified = False
-        headers: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
+        headers: dict[str, str] = {k.lower(): v for k, v in payload.headers.root.items()} if payload.headers else {}
 
         # Check if vault header exists
-        if self._sconfig.vault_header_name not in headers:
-            logger.debug("Vault header '%s' not found in headers", self._sconfig.vault_header_name)
+        if self._vault_header_key not in headers:
+            logger.debug("Vault header '%s' not found in headers", self._vault_header_key)
             return ToolPreInvokeResult()
 
         try:
-            vault_tokens = orjson.loads(headers[self._sconfig.vault_header_name])
+            vault_tokens = orjson.loads(headers[self._vault_header_key])
         except (orjson.JSONDecodeError, TypeError) as e:
             logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
-            del headers[self._sconfig.vault_header_name]
+            del headers[self._vault_header_key]
             payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
 
         # SECURITY: Always remove vault header immediately after successful parsing
         # This header should NEVER be sent to the MCP server
-        del headers[self._sconfig.vault_header_name]
+        del headers[self._vault_header_key]
 
         if not isinstance(vault_tokens, dict):
             logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
             payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
-        logger.debug("Removed vault header '%s' from headers", self._sconfig.vault_header_name)
+        logger.debug("Removed vault header '%s' from headers", self._vault_header_key)
 
         vault_handling = self._sconfig.vault_handling
 
@@ -237,24 +239,24 @@ class Vault(Plugin):
                 # Check if AUTH_HEADER tag is defined
                 if auth_header:
                     logger.debug("Using AUTH_HEADER tag for %s: header=%s", parsed_system, auth_header)
-                    headers[auth_header] = str(token_value)
+                    headers[auth_header.lower()] = str(token_value)
                     modified = True
                 else:
                     # No AUTH_HEADER tag, use default Bearer token
                     logger.debug("No AUTH_HEADER tag found for %s, using Bearer token", parsed_system)
-                    headers["Authorization"] = f"Bearer {token_value}"
+                    headers["authorization"] = f"Bearer {token_value}"
                     modified = True
             elif token_type == "OAUTH2" or token_type is None:
                 # Handle OAuth2 token or default behavior (when token_type is missing)
                 if vault_handling == VaultHandling.RAW:
                     logger.debug("Set Bearer token for system: %s", parsed_system)
-                    headers["Authorization"] = f"Bearer {token_value}"
+                    headers["authorization"] = f"Bearer {token_value}"
                     modified = True
             else:
                 # Unknown token type, use default behavior
                 logger.warning("Unknown token type '%s', using default Bearer token", token_type)
                 if vault_handling == VaultHandling.RAW:
-                    headers["Authorization"] = f"Bearer {token_value}"
+                    headers["authorization"] = f"Bearer {token_value}"
                     modified = True
 
         if modified:
