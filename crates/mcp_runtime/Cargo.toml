@@ -28,7 +28,7 @@ rand.workspace = true
 regex.workspace = true
 redis.workspace = true
 reqwest.workspace = true
-reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "stream", "rustls"], optional = true }
+reqwest-rmcp = { package = "reqwest", version = "0.13.3", default-features = false, features = ["json", "stream", "rustls"], optional = true }
 rmcp = { workspace = true, optional = true, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 rustls = "0.23.37"
 rustls-native-certs = "0.8.3"
