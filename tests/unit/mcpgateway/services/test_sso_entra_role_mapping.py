@@ -994,3 +994,184 @@ class TestIsAdminSyncOnLogin:
                 assert mock_user.is_admin is False
                 # Verify admin_origin was cleared
                 assert mock_user.admin_origin is None
+
+
+class TestGenericOIDCBeltAndSuspendersPromotion:
+    """Belt-and-suspenders is_admin promotion via role_mappings after role sync (issue #4232 gap 3).
+
+    When _should_user_be_admin() returns False but _map_groups_to_roles() assigns platform_admin
+    (e.g. via default_role), the post-sync block must still promote is_admin and set admin_origin="sso".
+    The canonical case is default_role="platform_admin" with no explicit role_mappings entry for the
+    user's groups.
+    """
+
+    @pytest.fixture
+    def generic_provider(self):
+        """Generic OIDC provider (e.g. Authentik) with default_role=platform_admin."""
+        return SSOProvider(
+            id="authentik",
+            name="authentik",
+            display_name="Authentik",
+            provider_type="oidc",
+            client_id="authentik-client",
+            client_secret_encrypted="encrypted",
+            is_enabled=True,
+            trusted_domains=[],
+            auto_create_users=True,
+            provider_metadata={
+                "groups_claim": "groups",
+                "role_mappings": {},
+                "default_role": "platform_admin",  # all users get platform_admin by default
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_belt_and_suspenders_promotes_when_map_groups_returns_platform_admin(self, sso_service, generic_provider):
+        """Existing user with is_admin=False is promoted when _map_groups_to_roles returns platform_admin.
+
+        _should_user_be_admin() returns False (empty role_mappings in metadata), but the
+        mocked _map_groups_to_roles() returns a platform_admin assignment (simulating the
+        default_role path or any other scenario where role sync assigns platform_admin without
+        _should_user_be_admin catching it). The post-sync block must detect this and set
+        is_admin=True with admin_origin="sso".
+
+        _map_groups_to_roles is mocked because its internals require real DB Role lookups,
+        which are outside the scope of this unit test.
+        """
+        mock_user = MagicMock()
+        mock_user.email = "user@authentik.example.com"
+        mock_user.full_name = "Authentik User"
+        mock_user.is_admin = False
+        mock_user.admin_origin = None
+        mock_user.auth_provider = "authentik"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=generic_provider)
+
+        # Empty role_mappings so _should_user_be_admin returns False for this user,
+        # but _map_groups_to_roles (mocked) returns platform_admin via default_role.
+        generic_provider.provider_metadata = {
+            "groups_claim": "groups",
+            "role_mappings": {},  # no explicit mapping → _should_user_be_admin returns False
+            "default_role": "platform_admin",
+        }
+
+        user_info = {
+            "email": "user@authentik.example.com",
+            "full_name": "Authentik User",
+            "provider": "authentik",
+            "groups": ["cf-users"],
+            "email_verified": True,
+        }
+
+        platform_admin_assignment = [{"role_name": "platform_admin", "scope": "global", "scope_id": None}]
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            with patch.object(sso_service, "_map_groups_to_roles", new=AsyncMock(return_value=platform_admin_assignment)):
+                with patch.object(sso_service, "_sync_user_roles", new=AsyncMock()):
+                    with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                        mock_jwt.return_value = "mock_token"
+                        await sso_service.authenticate_or_create_user(user_info)
+
+        assert mock_user.is_admin is True, "is_admin should be promoted via belt-and-suspenders when platform_admin is in role_assignments"
+        assert mock_user.admin_origin == "sso", "admin_origin must be 'sso' so the user is subject to SSO-level demotion if removed from the group"
+
+    @pytest.mark.asyncio
+    async def test_belt_and_suspenders_does_not_fire_for_non_admin_role(self, sso_service, generic_provider):
+        """Belt-and-suspenders must not promote users when role_assignments contains only non-admin roles."""
+        mock_user = MagicMock()
+        mock_user.email = "user@authentik.example.com"
+        mock_user.full_name = "Authentik User"
+        mock_user.is_admin = False
+        mock_user.admin_origin = None
+        mock_user.auth_provider = "authentik"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=generic_provider)
+
+        developer_assignment = [{"role_name": "developer", "scope": "team", "scope_id": None}]
+
+        user_info = {
+            "email": "user@authentik.example.com",
+            "full_name": "Authentik User",
+            "provider": "authentik",
+            "groups": ["cf-users"],
+            "email_verified": True,
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            with patch.object(sso_service, "_map_groups_to_roles", new=AsyncMock(return_value=developer_assignment)):
+                with patch.object(sso_service, "_sync_user_roles", new=AsyncMock()):
+                    with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                        mock_jwt.return_value = "mock_token"
+                        await sso_service.authenticate_or_create_user(user_info)
+
+        assert mock_user.is_admin is False, "developer role must not trigger is_admin promotion"
+
+    @pytest.mark.asyncio
+    async def test_belt_and_suspenders_skips_when_already_admin(self, sso_service, generic_provider):
+        """Belt-and-suspenders must not double-set is_admin when _should_user_be_admin already promoted the user."""
+        mock_user = MagicMock()
+        mock_user.email = "admin@authentik.example.com"
+        mock_user.full_name = "Authentik Admin"
+        mock_user.is_admin = False  # starts False
+        mock_user.admin_origin = None
+        mock_user.auth_provider = "authentik"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=generic_provider)
+
+        # role_mappings maps the user's group to platform_admin → _should_user_be_admin returns True
+        generic_provider.provider_metadata = {
+            "groups_claim": "groups",
+            "role_mappings": {"cf-platform-admin": "platform_admin"},
+            "default_role": None,
+        }
+
+        user_info = {
+            "email": "admin@authentik.example.com",
+            "full_name": "Authentik Admin",
+            "provider": "authentik",
+            "groups": ["cf-platform-admin"],
+            "email_verified": True,
+        }
+
+        platform_admin_assignment = [{"role_name": "platform_admin", "scope": "global", "scope_id": None}]
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            with patch.object(sso_service, "_map_groups_to_roles", new=AsyncMock(return_value=platform_admin_assignment)):
+                with patch.object(sso_service, "_sync_user_roles", new=AsyncMock()):
+                    with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                        mock_jwt.return_value = "mock_token"
+                        await sso_service.authenticate_or_create_user(user_info)
+
+        # _should_user_be_admin promoted the user in the first block
+        assert mock_user.is_admin is True
+        assert mock_user.admin_origin == "sso"

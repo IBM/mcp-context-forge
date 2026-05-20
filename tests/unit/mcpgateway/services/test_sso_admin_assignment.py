@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SSOProvider
-from mcpgateway.services.sso_service import SSOService
+from mcpgateway.services.sso_service import SSOProviderContext, SSOService
 
 
 @pytest.fixture
@@ -151,3 +151,185 @@ class TestSSOAdminAssignment:
             # User with no groups
             user_info_no_groups = {"full_name": "Test User", "provider": "entra", "groups": []}
             assert sso_service._should_user_be_admin("user@company.com", user_info_no_groups, entra_provider) is False
+
+
+class TestGenericOIDCAdminAssignment:
+    """Test admin promotion for generic OIDC providers (gap 2 fix — issue #4232).
+
+    Covers:
+    - sso_generic_admin_groups explicit group list
+    - role_mappings → platform_admin promotion (provider-agnostic)
+    - Scope isolation: sso_generic_admin_groups must not bleed into other providers
+    """
+
+    def _make_generic_provider(self, provider_id: str = "authentik", role_mappings: dict | None = None, groups_claim: str = "groups", default_role: str | None = None) -> SSOProviderContext:
+        return SSOProviderContext(
+            id=provider_id,
+            provider_metadata={
+                "groups_claim": groups_claim,
+                "role_mappings": role_mappings or {},
+                "default_role": default_role,
+            },
+        )
+
+    def test_generic_admin_groups_grants_admin(self, sso_service):
+        """User in sso_generic_admin_groups receives is_admin=True."""
+        provider = self._make_generic_provider()
+        user_info = {"groups": ["cf-platform-admin", "cf-dev"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = ["cf-platform-admin"]
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is True
+
+    def test_generic_admin_groups_case_insensitive(self, sso_service):
+        """sso_generic_admin_groups comparison is case-insensitive."""
+        provider = self._make_generic_provider()
+        user_info = {"groups": ["CF-Platform-Admin"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = ["cf-platform-admin"]
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is True
+
+    def test_generic_admin_groups_no_match_returns_false(self, sso_service):
+        """User not in sso_generic_admin_groups does not receive is_admin=True."""
+        provider = self._make_generic_provider()
+        user_info = {"groups": ["cf-dev", "cf-viewer"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = ["cf-platform-admin"]
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is False
+
+    def test_generic_admin_groups_scoped_to_generic_provider_id(self, sso_service):
+        """sso_generic_admin_groups must not apply to a Keycloak provider (scope isolation)."""
+        keycloak_provider = SSOProviderContext(
+            id="keycloak",
+            provider_metadata={
+                "groups_claim": "groups",
+                "role_mappings": {},
+                "default_role": None,
+            },
+        )
+        user_info = {"groups": ["cf-platform-admin"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = ["cf-platform-admin"]
+            mock_settings.sso_generic_provider_id = "authentik"  # different from "keycloak"
+
+            # Keycloak login must not be granted admin via sso_generic_admin_groups
+            assert sso_service._should_user_be_admin("user@example.com", user_info, keycloak_provider) is False
+
+    def test_role_mappings_platform_admin_grants_admin(self, sso_service):
+        """A group mapped to platform_admin in provider_metadata.role_mappings grants is_admin=True."""
+        provider = self._make_generic_provider(role_mappings={"cf-platform-admin": "platform_admin", "cf-dev": "developer"})
+        user_info = {"groups": ["cf-platform-admin"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is True
+
+    def test_role_mappings_platform_admin_case_insensitive(self, sso_service):
+        """role_mappings lookup is case-insensitive: IdP casing differences must not block promotion."""
+        # Operator configured lowercase key; IdP sends mixed-case value
+        provider = self._make_generic_provider(role_mappings={"cf-platform-admin": "platform_admin"})
+        user_info = {"groups": ["CF-Platform-Admin"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is True
+
+    def test_role_mappings_non_admin_role_does_not_grant_admin(self, sso_service):
+        """A group mapped to a non-admin role does not grant is_admin=True."""
+        provider = self._make_generic_provider(role_mappings={"cf-dev": "developer"})
+        user_info = {"groups": ["cf-dev"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is False
+
+    def test_role_mappings_check_is_provider_agnostic(self, sso_service):
+        """role_mappings → platform_admin promotion works for any provider with role_mappings (e.g. Keycloak)."""
+        keycloak_provider = SSOProviderContext(
+            id="keycloak",
+            provider_metadata={"role_mappings": {"gateway-admins": "platform_admin"}},
+        )
+        user_info = {"groups": ["gateway-admins"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, keycloak_provider) is True
+
+    def test_no_groups_in_user_info_returns_false(self, sso_service):
+        """User with no groups claim in token is not promoted to admin."""
+        provider = self._make_generic_provider(role_mappings={"cf-platform-admin": "platform_admin"})
+        user_info = {}  # no "groups" key
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = ["cf-platform-admin"]
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is False
+
+    def test_empty_role_mappings_returns_false(self, sso_service):
+        """Provider with empty role_mappings does not promote any user via that path."""
+        provider = self._make_generic_provider(role_mappings={})
+        user_info = {"groups": ["cf-platform-admin"]}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_generic_admin_groups = []
+            mock_settings.sso_generic_provider_id = "authentik"
+
+            assert sso_service._should_user_be_admin("user@example.com", user_info, provider) is False
