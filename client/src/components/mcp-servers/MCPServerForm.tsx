@@ -315,8 +315,13 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
               )}
 
               {oauthPending && (
-                <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/50 dark:bg-blue-950/50">
-                  <p className="text-sm text-blue-700 dark:text-blue-300">Waiting for OAuth authorization in the popup window…</p>
+                <div
+                  role="status"
+                  className="rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/50 dark:bg-blue-950/50"
+                >
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    Waiting for OAuth authorization in the popup window…
+                  </p>
                 </div>
               )}
 
@@ -363,7 +368,11 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                   disabled={!isValid || isSubmitting || oauthPending}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
-                  {isSubmitting ? "Connecting..." : oauthPending ? "Waiting for OAuth…" : "Connect server"}
+                  {isSubmitting
+                    ? "Connecting..."
+                    : oauthPending
+                      ? "Waiting for OAuth…"
+                      : "Connect server"}
                 </Button>
               </div>
             </div>

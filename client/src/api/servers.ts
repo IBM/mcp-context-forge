@@ -113,7 +113,11 @@ export const serversApi = {
       );
 
       if (!authWindow) {
-        reject(new Error("Failed to open OAuth authorization window. Please check your popup blocker settings."));
+        reject(
+          new Error(
+            "Failed to open OAuth authorization window. Please check your popup blocker settings.",
+          ),
+        );
         return;
       }
 
