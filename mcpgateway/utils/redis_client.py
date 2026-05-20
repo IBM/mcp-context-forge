@@ -24,6 +24,8 @@ Usage:
 
 # Standard
 import logging
+import os
+import ssl as _ssl
 from typing import Any, Optional
 
 # First-Party
@@ -38,12 +40,57 @@ _client: Optional[Any] = None
 _initialized: bool = False
 
 
+def _validate_ssl_settings(settings: Any) -> None:
+    """Validate Redis SSL file paths and cert content before the client is created.
+
+    Raises:
+        ValueError: On any misconfiguration — missing files, unparseable certs,
+                    or incomplete mTLS pair (certfile without keyfile or vice versa).
+    """
+    errors: list[str] = []
+
+    for attr, label in [
+        ("redis_ssl_ca_certs", "CA certificate (REDIS_SSL_CA_CERTS)"),
+        ("redis_ssl_certfile", "client certificate (REDIS_SSL_CERTFILE)"),
+        ("redis_ssl_keyfile", "private key (REDIS_SSL_KEYFILE)"),
+    ]:
+        path = getattr(settings, attr, None)
+        if path and not os.path.isfile(path):
+            errors.append(f"{label} file not found: {path!r}")
+
+    if errors:
+        raise ValueError("Redis SSL misconfiguration:\n" + "\n".join(f"  - {e}" for e in errors))
+
+    # Verify CA bundle is parseable
+    ca_certs = getattr(settings, "redis_ssl_ca_certs", None)
+    if ca_certs and os.path.isfile(ca_certs):
+        try:
+            _ssl.create_default_context(cafile=ca_certs)
+        except (_ssl.SSLError, OSError) as exc:
+            raise ValueError(f"Invalid CA certificate {ca_certs!r}: {exc}") from exc
+
+    # Verify client cert and key load cleanly when both are provided
+    certfile = getattr(settings, "redis_ssl_certfile", None)
+    keyfile = getattr(settings, "redis_ssl_keyfile", None)
+    if certfile and keyfile and os.path.isfile(certfile) and os.path.isfile(keyfile):
+        try:
+            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+            ctx.load_cert_chain(certfile, keyfile)
+        except (_ssl.SSLError, OSError) as exc:
+            raise ValueError(f"Invalid client certificate/key ({certfile!r}, {keyfile!r}): {exc}") from exc
+
+
 def _build_ssl_kwargs(settings: Any) -> dict[str, Any]:
     """Build SSL keyword arguments for Redis TLS connections (redis-py 7.x).
 
     redis-py 7.x SSLConnection accepts individual ssl_* params, not an SSLContext object.
     Returns an empty dict when TLS is disabled so callers can unconditionally
     do ``connection_kwargs.update(_build_ssl_kwargs(settings))``.
+
+    Raises:
+        ValueError: If REDIS_SSL=true but cert paths are missing, files not found,
+                    or cert content is unparseable. Callers should treat this as a
+                    fatal startup error.
 
     Args:
         settings: Application settings instance.
@@ -53,6 +100,8 @@ def _build_ssl_kwargs(settings: Any) -> dict[str, Any]:
     """
     if not settings.redis_ssl:
         return {}
+
+    _validate_ssl_settings(settings)
 
     kwargs: dict[str, Any] = {}
 
@@ -200,6 +249,10 @@ async def get_redis_client() -> Optional[Any]:
         )
     except ImportError as e:
         logger.error(f"Redis parser configuration error: {_sanitize(str(e))}")
+        _client = None
+    except ValueError as e:
+        # SSL misconfiguration — bad paths or unparseable certs; treat as fatal
+        logger.error(f"Redis SSL misconfiguration — client not started: {_sanitize(str(e))}")
         _client = None
     except Exception as e:
         logger.warning(f"Failed to connect to Redis: {_sanitize(str(e))}")
