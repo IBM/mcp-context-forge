@@ -37,6 +37,7 @@ import pytest
 import requests
 
 from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+from tests.helpers.mcp_session import initialize_mcp_session
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -134,13 +135,43 @@ def _get_plugin_state() -> dict:
 def _send_tool_burst(server_id: str, tool_name: str, count: int) -> dict:
     """Send a burst of tool calls and return counts of allowed vs rate-limited.
 
+    Performs an MCP initialize + initialized handshake first to obtain a
+    session id, then issues all ``count`` tools/call requests with that
+    id in the ``Mcp-Session-Id`` header.
+
     Returns:
         {"allowed": int, "rate_limited": int, "errors": int, "total": int}
     """
     allowed = 0
     rate_limited = 0
     errors = 0
-    headers = _fresh_headers()
+
+    # Single token reused for the handshake and every burst call below; the
+    # gateway doesn't bind sessions to the originating token, but two independent
+    # `_fresh_headers()` calls cost two POST /auth/login round-trips and obscure
+    # which token is actually paired with `Mcp-Session-Id`.
+    base_headers = _fresh_headers()
+
+    sid = initialize_mcp_session(
+        GATEWAY_URL, server_id, base_headers,
+        client_name="rate-limiter-dynamic-test",
+    )
+    if sid is None:
+        # Returning an all-errors counter would let
+        # `test_burst_all_allowed_when_disabled` evaluate `0 == 0` and
+        # `0 == BURST_SIZE - BURST_SIZE` — both pass, so a total handshake
+        # failure looks like a green test. Mirror the multi-tenant file's
+        # pattern (PR #4635 R4) and surface a descriptive failure instead.
+        pytest.fail(
+            f"MCP session handshake failed for server {server_id!r} — "
+            f"see logger output for the failing step"
+        )
+
+    headers = {
+        **base_headers,
+        "Accept": "application/json, text/event-stream",
+        "Mcp-Session-Id": sid,
+    }
 
     for i in range(count):
         payload = {
@@ -269,14 +300,33 @@ class TestRateLimiterRedisState:
         assert resp["mode"] == "enforce"
 
     def test_mode_visible_in_admin_api_after_change(self, server_and_tool):
-        """After changing mode, GET /admin/plugins reflects the new mode."""
+        """After changing mode, GET /admin/plugins reflects an active (non-disabled) mode.
+
+        The admin-mode API accepts ``"enforce"`` / ``"permissive"`` / ``"disabled"``
+        from the operator. Since the cpex framework refactor, ``GET /admin/plugins``
+        reports the framework's internal mode label, which differs from the
+        operator-facing label (``"enforce"`` becomes ``"sequential"``,
+        ``"permissive"`` becomes ``"transform"``). The test only needs to confirm
+        the toggle takes effect — i.e. the reported mode is no longer ``"disabled"``.
+        """
         _set_plugin_mode("enforce")
         time.sleep(PROPAGATION_WAIT)
 
         state = _get_plugin_state()
         plugins = {p["name"]: p for p in state.get("plugins", [])}
         assert PLUGIN_NAME in plugins, "RateLimiterPlugin not in plugin list"
-        assert plugins[PLUGIN_NAME]["mode"] == "enforce", f"Expected mode=enforce, got {plugins[PLUGIN_NAME]['mode']}"
+        reported_mode = plugins[PLUGIN_NAME]["mode"]
+        # TEMP (issue #4709): /admin/plugins reports the framework's internal
+        # mode label ("sequential"), not the operator label ("enforce") that
+        # we PUT. Once the asymmetry between /admin/plugins and
+        # /v1/tools/plugin_bindings/ is resolved (issue #4709), revert this
+        # back to:  assert reported_mode == "enforce"
+        expected_framework_mode = "sequential"
+        assert reported_mode == expected_framework_mode, (
+            f"After PUT mode=enforce, /admin/plugins should report "
+            f"{expected_framework_mode!r} (framework label, see issue #4709); "
+            f"got {reported_mode!r}"
+        )
 
     def test_mode_reverts_in_admin_api_after_disable(self, server_and_tool):
         """After disabling, GET /admin/plugins reflects disabled mode."""
