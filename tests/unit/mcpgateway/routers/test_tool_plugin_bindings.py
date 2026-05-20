@@ -330,6 +330,49 @@ class TestToolPluginBindingsRouter:
         )
         assert result.total == 2
 
+    @pytest.mark.asyncio
+    async def test_upsert_admin_with_empty_token_teams_can_target_any_team(self, db_session):
+        """
+        ``mcpgateway.auth.normalize_token_teams`` returns ``[]`` (not ``None``)
+        when the JWT lacks a ``teams`` claim — which is the case for every
+        normal admin token mint. The bypass must also fire when
+        ``token_teams`` is falsy (empty list).
+        """
+        admin_no_teams_claim_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": [],  # JWT had no "teams" claim → secure default []
+            "db": db_session,
+            "permissions": ["tools.manage_plugins", "tools.read"],
+        }
+        result = await upsert_tool_plugin_bindings(
+            request=_two_team_request(),
+            current_user_ctx=admin_no_teams_claim_ctx,
+            db=db_session,
+        )
+        assert result.total == 2
+
+    @pytest.mark.asyncio
+    async def test_upsert_narrowed_admin_still_restricted(self, db_session):
+        """Admin with an *explicitly* team-scoped token is still restricted to those teams."""
+        narrowed_admin_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": ["team-b"],  # explicitly scoped — does NOT include team-a
+            "db": db_session,
+            "permissions": ["tools.manage_plugins", "tools.read"],
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            await upsert_tool_plugin_bindings(
+                request=_simple_request(),  # targets team-a
+                current_user_ctx=narrowed_admin_ctx,
+                db=db_session,
+            )
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail == "Not authorized to configure bindings for team(s): team-a"
+
     # ------------------------------------------------------------------
     # GET / — list_tool_plugin_bindings
     # ------------------------------------------------------------------
