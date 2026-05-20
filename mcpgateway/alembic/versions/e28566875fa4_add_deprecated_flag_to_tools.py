@@ -1,7 +1,7 @@
 """add_deprecated_flag_to_tools
 
 Revision ID: e28566875fa4
-Revises: 351b43e1d273
+Revises: b29af8761e97
 Create Date: 2026-05-20 12:39:20.637697
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "e28566875fa4"
-down_revision: Union[str, Sequence[str], None] = "351b43e1d273"
+down_revision: Union[str, Sequence[str], None] = "b29af8761e97"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
