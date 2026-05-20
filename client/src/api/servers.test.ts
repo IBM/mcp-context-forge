@@ -34,11 +34,13 @@ describe("serversApi", () => {
 
       // Mock setInterval to track interval IDs
       const originalSetInterval = global.setInterval;
-      vi.spyOn(global, "setInterval").mockImplementation((...args: Parameters<typeof setInterval>) => {
-        const id = originalSetInterval(...args);
-        intervalIds.push(id as unknown as number);
-        return id;
-      });
+      vi.spyOn(global, "setInterval").mockImplementation(
+        (...args: Parameters<typeof setInterval>) => {
+          const id = originalSetInterval(...args);
+          intervalIds.push(id as unknown as number);
+          return id;
+        },
+      );
 
       // Mock clearInterval
       const originalClearInterval = global.clearInterval;
@@ -255,7 +257,9 @@ describe("serversApi", () => {
 
     it("should validate gateway ID before opening popup", () => {
       expect(() => serversApi.triggerOAuthAuthorization("")).toThrow("Invalid server ID");
-      expect(() => serversApi.triggerOAuthAuthorization("invalid/id")).toThrow("Invalid server ID format");
+      expect(() => serversApi.triggerOAuthAuthorization("invalid/id")).toThrow(
+        "Invalid server ID format",
+      );
     });
 
     it("should handle multiple rapid messages (only first should settle)", async () => {
