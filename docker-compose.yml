@@ -746,6 +746,25 @@ services:
         soft: 5000
         hard: 5000
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Security Context - Container Hardening (Issue: Security pen test findings)
+    # ──────────────────────────────────────────────────────────────────────
+    security_opt:
+      - no-new-privileges:true              # Prevent privilege escalation via setuid/sudo
+      - apparmor=docker-default             # AppArmor MAC (Mandatory Access Control) profile
+      # For SELinux systems (RHEL/CentOS), uncomment the line below and comment out apparmor:
+      # - label=type:container_runtime_t    # SELinux type enforcement
+    cap_drop:
+      - ALL                                 # Drop all Linux capabilities
+    privileged: false                       # Explicitly disable privileged mode
+    read_only: true                         # Read-only root filesystem prevents tampering
+
+    # Temporary filesystem mounts required for read-only root filesystem
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/tmp:size=50M,mode=1777
+      - /run:size=10M,mode=0755
+
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
         condition: service_healthy   # ▶ wait for connection pooler
@@ -754,8 +773,8 @@ services:
       # Direct PostgreSQL (uncomment if bypassing PgBouncer):
       # postgres:
       #   condition: service_healthy
-      # migration:
-      #   condition: service_completed_successfully
+      migration:
+        condition: service_completed_successfully
 
     healthcheck:
       ## Uncomment for HTTP healthcheck
@@ -1063,19 +1082,30 @@ services:
           cpus: '0.5'
           memory: 128M
 
-  # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
-  #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
-  #   build:
-  #     context: .
-  #     dockerfile: Containerfile.lite
-  #   environment:
-  #     - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-  #   command: alembic -c mcpgateway/alembic.ini upgrade head
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks: [mcpnet]
+  migration:
+    # One-shot init container: runs full schema migration + bootstrap before any gateway replica starts.
+    # Uses Postgres directly (port 5432) — advisory locks are session-scoped and must bypass PgBouncer
+    # which operates in transaction-pooling mode.
+    #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Uncomment to test upgrade from a specific release
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Run `make docker-prod` to build local image
+    build:
+      context: .
+      dockerfile: Containerfile.lite
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-jwt-key-here}
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "mcpgateway.bootstrap_db"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [mcpnet]
+    restart: "no"
 
 ###############################################################################
 #  CACHE

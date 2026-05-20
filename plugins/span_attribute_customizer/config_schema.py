@@ -106,6 +106,19 @@ class SpanAttributeCustomizerConfig(BaseModel):
         description="Map attribute names to new names (e.g., 'tool.name' -> 'controls.artifact.name')"
     )
 
+    # Baggage span attribute emission policy
+    allowed_baggage_span_attributes: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Allowlist of OpenTelemetry baggage keys that may be promoted to span attributes. "
+            "Configure this list to restrict baggage span attribute emission."
+        ),
+    )
+    emit_baggage_prefixed_attributes: bool = Field(
+        default=True,
+        description="When true, baggage keys are emitted as baggage.<key>; when false, they are emitted as raw baggage key names.",
+    )
+
     @field_validator("tool_overrides")
     @classmethod
     def validate_tool_overrides_count(cls, v: Dict[str, ToolOverride]) -> Dict[str, ToolOverride]:
@@ -178,6 +191,38 @@ class SpanAttributeCustomizerConfig(BaseModel):
             raise ValueError("attribute_mapping cannot exceed 100 entries (Finding 4: CWE-400)")
         return v
 
+    @field_validator("allowed_baggage_span_attributes")
+    @classmethod
+    def validate_allowed_baggage_span_attributes(cls, v: List[str]) -> List[str]:
+        """Validate baggage keys that may be promoted to span attributes.
+
+        Args:
+            v: List of baggage keys.
+
+        Returns:
+            Normalized baggage keys.
+
+        Raises:
+            ValueError: If entries are malformed or exceed limits.
+        """
+        if len(v) > 100:
+            raise ValueError("allowed_baggage_span_attributes cannot exceed 100 entries")
+
+        normalized: List[str] = []
+        seen: set[str] = set()
+        for key in v:
+            if not isinstance(key, str):
+                raise ValueError("allowed_baggage_span_attributes entries must be strings")
+            stripped = key.strip()
+            if not stripped:
+                raise ValueError("allowed_baggage_span_attributes entries cannot be empty")
+            if len(stripped) > 255:
+                raise ValueError(f"Baggage key exceeds 255 characters (got {len(stripped)})")
+            if stripped not in seen:
+                normalized.append(stripped)
+                seen.add(stripped)
+        return normalized
+
     @field_validator("global_attributes")
     @classmethod
     def validate_global_attributes(cls, v: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
@@ -197,13 +242,13 @@ class SpanAttributeCustomizerConfig(BaseModel):
 
         for key, value in v.items():
             if len(key) > 255:
-                raise ValueError(f"Attribute key '{key}' exceeds 255 characters")
+                raise ValueError(f"Attribute key exceeds 255 characters (got {len(key)})")
             if not isinstance(value, (str, int, float, bool)):
                 raise ValueError(
                     f"Attribute '{key}' has invalid type {type(value).__name__}. "
                     "Only str, int, float, and bool are supported by OTEL SDKs."
                 )
             if isinstance(value, str) and len(value) > 4096:
-                raise ValueError(f"Attribute '{key}' string value exceeds 4096 characters")
+                raise ValueError(f"Attribute string value exceeds 4096 characters (got {len(value)})")
 
         return v

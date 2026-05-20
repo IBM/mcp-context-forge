@@ -99,7 +99,7 @@ COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpg
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \
