@@ -7523,7 +7523,8 @@ class TestToolServiceHelpers:
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
-        assert "auth_value" not in payload["gateway"]
+        # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
+        assert payload["gateway"]["auth_value"] == "secret"
         assert "oauth_config" not in payload["gateway"]
         assert "auth_query_params" not in payload["gateway"]
 

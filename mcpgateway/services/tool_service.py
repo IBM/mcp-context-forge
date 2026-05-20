@@ -1090,6 +1090,7 @@ class ToolService(BaseService):
                 "gateway_mode": getattr(gateway, "gateway_mode", "cache"),  # Gateway mode for direct proxy support
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
+                "auth_value": getattr(gateway, "auth_value", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
