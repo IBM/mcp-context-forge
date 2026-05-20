@@ -185,7 +185,7 @@ async def test_cookie_auth_allowed_for_same_origin_react_app_fetch():
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-react", token_teams=["team-1"])
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
-    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
     assert result["email"] == "user@example.com"
 
@@ -206,7 +206,7 @@ async def test_cookie_auth_allowed_with_x_requested_with_header():
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-xhr", token_teams=["team-1"])
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
-    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
     assert result["email"] == "user@example.com"
 
