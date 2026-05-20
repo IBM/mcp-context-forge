@@ -8481,8 +8481,8 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     Used in GlobalContext.metadata[A2A_AGENT_METADATA] to provide
     agent configuration to pre/post-invoke plugins. This schema exposes
     the relevant A2A agent configuration fields that plugins may need
-    for policy decisions, such as authorization, credential injection,
-    and header manipulation.
+    for policy decisions, such as authorization type visibility, and
+    header pass-through configuration.
 
     Attributes:
         id: A2A agent UUID identifier.
@@ -8494,7 +8494,6 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
         oauth_config: OAuth configuration for the agent (if any).
         passthrough_headers: List of HTTP header names that should be passed through to upstream agent.
         auth_type: Authentication type (basic, bearer, api_key, etc.).
-        auth_value: Encrypted authentication value.
     """
 
     id: str = Field(..., description="A2A agent UUID identifier")
@@ -8506,7 +8505,6 @@ class PydanticA2AAgent(BaseModelWithConfigDict):
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth configuration")
     passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
     auth_type: Optional[str] = Field(None, description="Authentication type")
-    auth_value: Optional[str] = Field(None, description="Encrypted authentication value")
     content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
 
     class Config:

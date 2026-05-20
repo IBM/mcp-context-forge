@@ -211,7 +211,8 @@ class TestA2APluginBindingsAdmin:
 
         # Verify it was persisted
         svc = A2AAgentPluginBindingService()
-        bindings = svc.list_bindings(db_session)
+        bindings, total = svc.list_bindings(db_session)
+        assert total == 1
         assert len(bindings) == 1
         assert bindings[0].agent_name == "agent_x"
 
@@ -255,14 +256,12 @@ class TestA2APluginBindingsAdmin:
             db=db_session,
             user=user_ctx,
         )
-        assert response.status_code == 200
-        assert response.template_name == "a2a_agent_plugin_bindings_partial.html"
+        assert response.status_code == 400
 
-        # Bad JSON defaults to empty dict, binding is still created
+        # Bad JSON should not create a binding
         svc = A2AAgentPluginBindingService()
-        bindings = svc.list_bindings(db_session)
-        assert len(bindings) == 1
-        assert bindings[0].config == {}
+        bindings, total = svc.list_bindings(db_session)
+        assert total == 0
 
     # ------------------------------------------------------------------
     # POST /a2a/plugin-bindings/{binding_id}/delete
@@ -282,7 +281,8 @@ class TestA2APluginBindingsAdmin:
             on_error=None,
             caller_email="admin@example.com",
         )
-        binding = svc.list_bindings(db_session)[0]
+        bindings, _ = svc.list_bindings(db_session)
+        binding = bindings[0]
 
         response = await admin_delete_a2a_plugin_binding(
             request=mock_request,
@@ -294,14 +294,14 @@ class TestA2APluginBindingsAdmin:
         assert response.template_name == "a2a_agent_plugin_bindings_partial.html"
 
         # Verify deletion
-        remaining = svc.list_bindings(db_session)
-        assert len(remaining) == 0
+        _, remaining_total = svc.list_bindings(db_session)
+        assert remaining_total == 0
 
     @pytest.mark.asyncio
     async def test_delete_not_found(self, mock_request, user_ctx, db_session):
         response = await admin_delete_a2a_plugin_binding(
             request=mock_request,
-            binding_id="nonexistent-id",
+            binding_id="00000000-0000-0000-0000-000000000000",
             db=db_session,
             user=user_ctx,
         )
@@ -322,7 +322,7 @@ class TestA2APluginBindingsAdmin:
         ):
             response = await admin_delete_a2a_plugin_binding(
                 request=mock_request,
-                binding_id="binding-001",
+                binding_id="00000000-0000-0000-0000-000000000001",
                 db=db_session,
                 user=user_ctx,
             )
@@ -340,7 +340,7 @@ class TestA2APluginBindingsAdmin:
         ):
             response = await admin_delete_a2a_plugin_binding(
                 request=mock_request,
-                binding_id="binding-001",
+                binding_id="00000000-0000-0000-0000-000000000002",
                 db=db_session,
                 user=user_ctx,
             )

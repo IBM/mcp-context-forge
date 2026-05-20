@@ -65,7 +65,7 @@ def mock_agent(sample_agent_id, sample_agent_name):
     agent.team_id = "team-a"
     agent.owner_email = None
     agent.visibility = "public"
-    agent.passthrough_headers = None
+    agent.passthrough_headers = ["x-forwarded-for", "x-request-id", "x-forwarded-proto", "accept-language", "x-custom-header"]
     agent.oauth_config = None
     agent.tags = []
     agent.uaid = None

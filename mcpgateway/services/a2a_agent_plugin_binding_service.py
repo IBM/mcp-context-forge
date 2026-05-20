@@ -218,7 +218,9 @@ class A2AAgentPluginBindingService:
         db: Session,
         team_id: Optional[str] = None,
         binding_reference_id: Optional[str] = None,
-    ) -> List[A2AAgentPluginBindingResponse]:
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> tuple[List[A2AAgentPluginBindingResponse], int]:
         """Return all bindings, optionally filtered by team or binding_reference_id.
 
         When ``binding_reference_id`` is provided it takes precedence and
@@ -231,17 +233,25 @@ class A2AAgentPluginBindingService:
                 only bindings for this team.
             binding_reference_id: If provided, return only bindings with this
                 reference ID (``team_id`` is ignored).
+            limit: Maximum number of results to return (None = no limit).
+            offset: Number of results to skip.
 
         Returns:
-            List[A2AAgentPluginBindingResponse]: Matching bindings.
+            Tuple of (List[A2AAgentPluginBindingResponse], total_count).
         """
         query = db.query(A2AAgentPluginBinding)
         if binding_reference_id:
             query = query.filter(A2AAgentPluginBinding.binding_reference_id == binding_reference_id)
         elif team_id:
             query = query.filter(A2AAgentPluginBinding.team_id == team_id)
-        bindings = query.order_by(A2AAgentPluginBinding.team_id, A2AAgentPluginBinding.priority).all()
-        return [self._to_response(b) for b in bindings]
+        total = query.count()
+        query = query.order_by(A2AAgentPluginBinding.team_id, A2AAgentPluginBinding.priority)
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        bindings = query.all()
+        return [self._to_response(b) for b in bindings], total
 
     # ------------------------------------------------------------------
     # Delete

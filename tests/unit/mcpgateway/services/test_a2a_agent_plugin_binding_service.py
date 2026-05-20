@@ -298,8 +298,9 @@ class TestUpsertBinding:
 
 class TestListBindings:
     def test_list_all_when_empty(self, service, db_session):
-        result = service.list_bindings(db_session)
+        result, total = service.list_bindings(db_session)
         assert result == []
+        assert total == 0
 
     def test_list_all(self, service, db_session):
         for i in range(3):
@@ -314,8 +315,9 @@ class TestListBindings:
                 on_error=None,
             caller_email="admin@example.com",
             )
-        result = service.list_bindings(db_session)
+        result, total = service.list_bindings(db_session)
         assert len(result) == 3
+        assert total == 3
 
     def test_filter_by_team(self, service, db_session):
         service.upsert_binding(
@@ -340,16 +342,19 @@ class TestListBindings:
             on_error=None,
             caller_email="admin@example.com",
         )
-        result_a = service.list_bindings(db_session, team_id="team-a")
+        result_a, total_a = service.list_bindings(db_session, team_id="team-a")
         assert len(result_a) == 1
+        assert total_a == 1
         assert result_a[0].team_id == "team-a"
 
-        result_b = service.list_bindings(db_session, team_id="team-b")
+        result_b, total_b = service.list_bindings(db_session, team_id="team-b")
         assert len(result_b) == 1
+        assert total_b == 1
         assert result_b[0].team_id == "team-b"
 
-        result_c = service.list_bindings(db_session, team_id="team-c")
+        result_c, total_c = service.list_bindings(db_session, team_id="team-c")
         assert len(result_c) == 0
+        assert total_c == 0
 
     def test_filter_by_reference_id(self, service, db_session):
         service.upsert_binding(
@@ -376,12 +381,14 @@ class TestListBindings:
             caller_email="admin@example.com",
             binding_reference_id="ref-002",
         )
-        result = service.list_bindings(db_session, binding_reference_id="ref-001")
+        result, total = service.list_bindings(db_session, binding_reference_id="ref-001")
         assert len(result) == 1
+        assert total == 1
         assert result[0].team_id == "team-a"
 
-        result_empty = service.list_bindings(db_session, binding_reference_id="ref-nope")
+        result_empty, total_empty = service.list_bindings(db_session, binding_reference_id="ref-nope")
         assert len(result_empty) == 0
+        assert total_empty == 0
 
     def test_binding_reference_takes_precedence_over_team(self, service, db_session):
         service.upsert_binding(
@@ -396,8 +403,9 @@ class TestListBindings:
             caller_email="admin@example.com",
             binding_reference_id="ref-global",
         )
-        result = service.list_bindings(db_session, team_id="team-nope", binding_reference_id="ref-global")
+        result, total = service.list_bindings(db_session, team_id="team-nope", binding_reference_id="ref-global")
         assert len(result) == 1
+        assert total == 1
         assert result[0].team_id == "team-a"
 
 
@@ -492,7 +500,9 @@ class TestDeleteBinding:
         )
         result = service.delete_binding(db_session, b.id)
         assert result.id == b.id
-        assert service.list_bindings(db_session, team_id="team-a") == []
+        remaining, total = service.list_bindings(db_session, team_id="team-a")
+        assert remaining == []
+        assert total == 0
 
     def test_delete_not_found(self, service, db_session):
         with pytest.raises(A2AAgentPluginBindingNotFoundError, match="not found"):
@@ -557,7 +567,9 @@ class TestDeleteBindingsByReference:
         )
         deleted = service.delete_bindings_by_reference(db_session, "ref-001")
         assert len(deleted) == 2
-        assert service.list_bindings(db_session) == []
+        remaining, total = service.list_bindings(db_session)
+        assert remaining == []
+        assert total == 0
 
     def test_delete_by_reference_scoped(self, service, db_session):
         service.upsert_binding(
@@ -588,8 +600,9 @@ class TestDeleteBindingsByReference:
         assert len(deleted) == 1
         assert deleted[0].team_id == "team-a"
 
-        remaining = service.list_bindings(db_session)
+        remaining, total = service.list_bindings(db_session)
         assert len(remaining) == 1
+        assert total == 1
         assert remaining[0].team_id == "team-b"
 
     def test_delete_by_reference_nonexistent(self, service, db_session):

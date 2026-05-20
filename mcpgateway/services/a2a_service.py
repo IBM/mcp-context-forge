@@ -2075,6 +2075,14 @@ class A2AAgentService(BaseService):
         agent_oauth_config = getattr(agent, "oauth_config", None)
         agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
 
+        # Filter request_headers to only whitelisted passthrough headers
+        # before they reach plugin hooks (prevents credential leak to plugins).
+        if request_headers and agent_passthrough_headers:
+            whitelist_lower = {h.lower() for h in agent_passthrough_headers}
+            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+        elif request_headers:
+            request_headers = {}  # No whitelist = no headers reach plugins
+
         # ═══════════════════════════════════════════════════════════════════════════
         # SECURITY: Validate UAID endpoint domain before invocation
         # ═══════════════════════════════════════════════════════════════════════════
@@ -2176,7 +2184,6 @@ class A2AAgentService(BaseService):
                     oauth_config=agent_oauth_config,
                     passthrough_headers=agent_passthrough_headers,
                     auth_type=agent_auth_type,
-                    auth_value=agent_auth_value,
                 )
                 if content_type:
                     agent_metadata.content_type = content_type

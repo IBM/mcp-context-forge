@@ -148,6 +148,8 @@ async def upsert_a2a_agent_plugin_binding(
 @require_permission("tools.read")
 async def list_a2a_agent_plugin_bindings(
     binding_reference_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of results"),
+    offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> A2AAgentPluginBindingListResponse:
@@ -155,19 +157,23 @@ async def list_a2a_agent_plugin_bindings(
 
     Args:
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        limit: Maximum number of results to return.
+        offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
     Returns:
-        A2AAgentPluginBindingListResponse: All bindings.
+        A2AAgentPluginBindingListResponse: Paginated bindings.
 
     Examples:
         >>> import asyncio
         >>> asyncio.iscoroutinefunction(list_a2a_agent_plugin_bindings)
         True
     """
-    bindings = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id)
-    return A2AAgentPluginBindingListResponse(bindings=bindings, total=len(bindings))
+    limit_val = limit if isinstance(limit, int) else 100
+    offset_val = offset if isinstance(offset, int) else 0
+    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +186,8 @@ async def list_a2a_agent_plugin_bindings(
 async def list_a2a_agent_plugin_bindings_for_team(
     team_id: str,
     binding_reference_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of results"),
+    offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> A2AAgentPluginBindingListResponse:
@@ -188,6 +196,8 @@ async def list_a2a_agent_plugin_bindings_for_team(
     Args:
         team_id: Team identifier to filter by.
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        limit: Maximum number of results to return.
+        offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
@@ -199,8 +209,10 @@ async def list_a2a_agent_plugin_bindings_for_team(
         >>> asyncio.iscoroutinefunction(list_a2a_agent_plugin_bindings_for_team)
         True
     """
-    bindings = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id)
-    return A2AAgentPluginBindingListResponse(bindings=bindings, total=len(bindings))
+    limit_val = limit if isinstance(limit, int) else 100
+    offset_val = offset if isinstance(offset, int) else 0
+    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
 # ---------------------------------------------------------------------------
