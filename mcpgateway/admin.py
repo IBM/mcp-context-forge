@@ -147,6 +147,7 @@ from mcpgateway.schemas import (
     ToolRead,
     ToolUpdate,
 )
+from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -16887,6 +16888,195 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         </div>
         """
         return HTMLResponse(content=error_html, status_code=500)
+
+
+@admin_router.get("/a2a/plugin-bindings/partial")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def get_a2a_plugin_bindings_partial(
+    request: Request,
+    team_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Render the A2A agent plugin bindings partial HTML template.
+
+    This endpoint returns a rendered HTML partial containing A2A agent plugin
+    bindings, designed to be loaded via HTMX into the admin interface.
+
+    Args:
+        request: FastAPI request object.
+        team_id: Optional team ID to filter bindings.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        HTMLResponse with rendered partial template.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested A2A plugin bindings partial")
+
+    try:
+        return await _render_a2a_plugin_bindings_partial(request, db, team_id=team_id)
+
+    except Exception as e:
+        LOGGER.error(f"Error rendering A2A plugin bindings partial: {e}")
+        error_html = f"""
+        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <strong class="font-bold">Error loading A2A plugin bindings:</strong>
+            <span class="block sm:inline">{html.escape(str(e))}</span>
+        </div>
+        """
+        return HTMLResponse(content=error_html, status_code=500)
+
+
+async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, team_id: Optional[str] = None) -> HTMLResponse:
+    """Build and return the A2A agent plugin bindings partial template."""
+    plugin_service = get_plugin_service()
+    await _sync_plugin_service_from_runtime(request, plugin_service)
+    binding_service = A2AAgentPluginBindingService()
+    bindings, _ = binding_service.list_bindings(db, team_id=team_id)
+    agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
+    agent_names = [a[0] for a in agents]
+    plugin_ids = [p.plugin_id for p in plugin_service.get_all_plugins()]
+    teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.is_active.is_(True))).all()
+    context = {
+        "request": request,
+        "bindings": bindings,
+        "agent_names": agent_names,
+        "plugin_ids": plugin_ids,
+        "teams": teams,
+        "selected_team_id": team_id,
+        "root_path": _resolve_root_path(request),
+    }
+    return request.app.state.templates.TemplateResponse(request, "a2a_agent_plugin_bindings_partial.html", context)
+
+
+@admin_router.post("/a2a/plugin-bindings")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def admin_create_a2a_plugin_binding(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Create an A2A agent plugin binding from the admin UI.
+
+    Returns the refreshed partial on success or an error HTML fragment.
+    """
+    try:
+        form = await request.form()
+        team_id = form.get("team_id", "")
+        agent_name = form.get("agent_name", "")
+        plugin_id = form.get("plugin_id", "")
+        mode = form.get("mode", "enforce")
+        try:
+            priority = int(form.get("priority", 50))
+        except (ValueError, TypeError):
+            return HTMLResponse(
+                content='<div class="bg-red-50 p-4 rounded text-red-700">Invalid priority value; must be an integer</div>',
+                status_code=400,
+            )
+        on_error = form.get("on_error") or None
+        config_raw = form.get("config", "{}")
+
+        try:
+            config = json.loads(config_raw)
+        except (json.JSONDecodeError, TypeError):
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid JSON in config: {html.escape(config_raw)}</div>',
+                status_code=400,
+            )
+
+        if not team_id or not agent_name or not plugin_id:
+            return HTMLResponse(
+                content='<div class="bg-red-50 p-4 rounded text-red-700">team_id, agent_name, and plugin_id are required</div>',
+                status_code=400,
+            )
+
+        if mode not in {"enforce", "report", "disabled"}:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid mode: {html.escape(mode)}</div>',
+                status_code=400,
+            )
+        if on_error not in {"fail", "ignore", "disable", None}:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid on_error: {html.escape(on_error)}</div>',
+                status_code=400,
+            )
+
+        caller_email = get_user_email(user)
+        service = A2AAgentPluginBindingService()
+        service.upsert_binding(
+            db=db,
+            team_id=team_id,
+            agent_name=agent_name,
+            plugin_id=plugin_id,
+            mode=mode,
+            priority=priority,
+            config=config,
+            on_error=on_error,
+            caller_email=caller_email,
+        )
+        db.commit()
+
+    except Exception as e:
+        LOGGER.error(f"Error creating A2A plugin binding: {e}")
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            status_code=500,
+        )
+
+    return await _render_a2a_plugin_bindings_partial(request, db)
+
+
+@admin_router.post("/a2a/plugin-bindings/{binding_id}/delete")
+@require_permission("admin.plugins", allow_admin_bypass=False)
+async def admin_delete_a2a_plugin_binding(
+    request: Request,
+    binding_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Delete an A2A agent plugin binding from the admin UI.
+
+    POST endpoint (HTMX-compatible) that deletes a binding and returns
+    the refreshed partial.
+    """
+    try:
+        # Validate that binding_id is a valid UUID
+        try:
+            uuid.UUID(binding_id)
+        except ValueError:
+            return HTMLResponse(
+                content=f'<div class="bg-red-50 p-4 rounded text-red-700">Invalid binding ID format: {html.escape(binding_id)}</div>',
+                status_code=400,
+            )
+
+        # Derive team-scoped access from the authenticated user
+        is_admin = user.get("is_admin", False)
+        token_teams = user.get("token_teams")
+        allowed_teams = None if (is_admin and token_teams is None) else set(token_teams or [])
+
+        service = A2AAgentPluginBindingService()
+        service.delete_binding(db, binding_id, allowed_teams=allowed_teams)
+        db.commit()
+
+    except A2AAgentPluginBindingNotFoundError as e:
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Not found: {html.escape(str(e))}</div>',
+            status_code=404,
+        )
+    except A2AAgentPluginBindingForbiddenError as e:
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Forbidden: {html.escape(str(e))}</div>',
+            status_code=403,
+        )
+    except Exception as e:
+        LOGGER.error(f"Error deleting A2A plugin binding {binding_id}: {e}")
+        return HTMLResponse(
+            content=f'<div class="bg-red-50 p-4 rounded text-red-700">Error: {html.escape(str(e))}</div>',
+            status_code=500,
+        )
+
+    return await _render_a2a_plugin_bindings_partial(request, db)
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)

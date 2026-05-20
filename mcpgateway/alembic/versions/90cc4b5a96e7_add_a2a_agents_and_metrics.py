@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/add_a2a_agents_and_metrics.py
+"""Location: ./mcpgateway/alembic/versions/90cc4b5a96e7_add_a2a_agents_and_metrics.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-add_a2a_agents_and_metrics
+90cc4b5a96e7_add_a2a_agents_and_metrics
 
-Revision ID: add_a2a_agents_and_metrics
-Revises: add_oauth_tokens_table
+Revision ID: 90cc4b5a96e7
+Revises: 94f64b8e282f
 Create Date: 2025-08-19 10:00:00.000000
 """
 
@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "add_a2a_agents_and_metrics"
-down_revision: Union[str, Sequence[str], None] = "add_oauth_tokens_table"
+revision: str = "90cc4b5a96e7"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "94f64b8e282f"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
