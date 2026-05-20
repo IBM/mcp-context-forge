@@ -102,12 +102,23 @@ export const loadSearchablePanel = function (entityType) {
   }
 
   const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
-  if (window.htmx && window.htmx.ajax) {
-    window.htmx.ajax("GET", url, {
-      target: panelConfig.targetSelector,
-      swap: "outerHTML",
-      indicator: panelConfig.indicatorSelector,
-    });
+  // Use element-based HTMX trigger instead of htmx.ajax() to ensure OOB swaps
+  // (e.g. pagination controls) are reliably processed.  htmx.ajax() can silently
+  // skip hx-swap-oob elements in the response, causing a null-querySelector crash
+  // on every search after the first one.  The tokens panel already uses this same
+  // pattern (tokens.js:63-68).
+  if (window.htmx) {
+    const targetEl = document.querySelector(panelConfig.targetSelector);
+    if (targetEl) {
+      targetEl.setAttribute("hx-get", url);
+      targetEl.setAttribute("hx-swap", "outerHTML");
+      targetEl.setAttribute("hx-trigger", "searchReload");
+      if (panelConfig.indicatorSelector) {
+        targetEl.setAttribute("hx-indicator", panelConfig.indicatorSelector);
+      }
+      window.htmx.process(targetEl);
+      window.htmx.trigger(targetEl, "searchReload");
+    }
   }
 };
 
