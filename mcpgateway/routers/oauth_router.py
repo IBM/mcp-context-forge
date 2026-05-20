@@ -14,6 +14,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 from html import escape
+import json
 import logging
 import secrets
 from typing import Annotated, Any, Dict
@@ -175,6 +176,42 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     gateway.oauth_config = updated_config
     db.flush()
     logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
+
+
+def _popup_notification_script(nonce: str, payload: dict) -> str:
+    """Build an inline script that posts the OAuth result to window.opener and closes the popup.
+
+    When the callback page is opened inside a React UI popup, this script communicates
+    the OAuth result to the parent window via postMessage and then closes the popup.
+    When opened via direct navigation (no opener), the script is a no-op and the
+    surrounding HTML page is shown as a fallback.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data.  Values are JSON-encoded
+            with ``<``, ``>``, and ``&`` Unicode-escaped to prevent script injection.
+
+    Returns:
+        HTML ``<script>`` tag string safe for embedding in an HTML body.
+    """
+    safe_payload = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    safe_nonce = escape(nonce, quote=True)
+    # targetOrigin is "*" rather than window.location.origin because in production
+    # the API server and the React app may run on different origins (e.g.
+    # api.company.com vs app.company.com).  Using window.location.origin would
+    # cause the browser to silently drop the message.  The receiver mitigates the
+    # reduced targetOrigin restriction by validating event.source === authWindow
+    # (the exact popup reference), so only the window that initiated the flow can
+    # act on the result.
+    return (
+        f'<script nonce="{safe_nonce}">'
+        "(function(){"
+        "if(window.opener&&!window.opener.closed){"
+        f"window.opener.postMessage({safe_payload},'*');"
+        "window.close();"
+        "}})()"
+        "</script>"
+    )
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -354,7 +391,11 @@ async def _enforce_gateway_access(
 
 @oauth_router.get("/authorize/{gateway_id}")
 async def initiate_oauth_flow(
-    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+    gateway_id: str,
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+    popup: bool = Query(default=False, description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page"),
 ) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
@@ -487,7 +528,7 @@ async def initiate_oauth_flow(
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
         requester_email = _extract_user_email(current_user)
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
@@ -545,6 +586,12 @@ async def oauth_callback(
         True
     """
 
+    # Determine early whether this callback was initiated from the React UI popup.
+    # The authorize endpoint prefixes the state token with "popup." when popup=True,
+    # so we can detect it here without any additional storage lookups.
+    is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
+    csp_nonce = get_csp_nonce_from_request(request)
+
     try:
         # Get root path for URL construction
         root_path = resolve_root_path(request) if request else ""
@@ -556,6 +603,15 @@ async def oauth_callback(
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
             # Sanitize untrusted query parameters before logging to prevent log injection
             logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
+            if is_popup:
+                return HTMLResponse(
+                    content=(
+                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
+                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."})
+                        + "</body></html>"
+                    ),
+                    status_code=400,
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -574,6 +630,15 @@ async def oauth_callback(
 
         if not code:
             logger.warning("OAuth callback missing authorization code")
+            if is_popup:
+                return HTMLResponse(
+                    content=(
+                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
+                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."})
+                        + "</body></html>"
+                    ),
+                    status_code=400,
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -595,6 +660,15 @@ async def oauth_callback(
             Returns:
                 HTMLResponse: A 400 error page describing the invalid state.
             """
+            if is_popup:
+                return HTMLResponse(
+                    content=(
+                        "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
+                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."})
+                        + "</body></html>"
+                    ),
+                    status_code=400,
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -653,10 +727,18 @@ async def oauth_callback(
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
-        # Return success page with option to return to admin
-        # Get CSP nonce for inline script
-        csp_nonce = get_csp_nonce_from_request(request)
+        # React UI popup: post result to parent window and close.
+        if is_popup:
+            return HTMLResponse(
+                content=(
+                    "<!DOCTYPE html><html><head><title>OAuth Authorization Successful</title></head><body>"
+                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)})
+                    + "<p>Authorization successful. This window will close automatically.</p>"
+                    + "</body></html>"
+                )
+            )
 
+        # Legacy admin UI: return full page with fetch-tools button.
         return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
@@ -760,6 +842,15 @@ async def oauth_callback(
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
+        if is_popup:
+            return HTMLResponse(
+                content=(
+                    "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
+                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)})
+                    + "</body></html>"
+                ),
+                status_code=400,
+            )
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -794,6 +885,15 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
+        if is_popup:
+            return HTMLResponse(
+                content=(
+                    "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
+                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."})
+                    + "</body></html>"
+                ),
+                status_code=500,
+            )
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>

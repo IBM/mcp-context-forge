@@ -750,13 +750,15 @@ class OAuthManager:
 
         raise OAuthError("Token exchange failed after all retry attempts")
 
-    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
+    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
         Args:
             gateway_id: ID of the gateway being configured
             credentials: OAuth configuration with client_id, authorization_url, etc.
             app_user_email: ContextForge user email to associate with tokens
+            popup: When True, the state token is prefixed with ``popup.`` so the
+                callback endpoint knows to respond with postMessage instead of HTML.
 
         Returns:
             Dict containing authorization_url and state
@@ -766,7 +768,7 @@ class OAuthManager:
         pkce_params = self._generate_pkce_params()
 
         # Generate state parameter with user context for CSRF protection
-        state = self._generate_state(gateway_id, app_user_email)
+        state = self._generate_state(gateway_id, app_user_email, popup=popup)
 
         # Store state with code_verifier in session/cache for validation
         if self.token_storage:
@@ -878,7 +880,7 @@ class OAuthManager:
             return await self.token_storage.get_user_token(gateway_id, app_user_email)
         return None
 
-    def _generate_state(self, _gateway_id: str, _app_user_email: str = None) -> str:
+    def _generate_state(self, _gateway_id: str, _app_user_email: str = None, popup: bool = False) -> str:
         """Generate an opaque state token for CSRF protection.
 
         Args:
@@ -886,11 +888,15 @@ class OAuthManager:
                 prior embedded-state call sites).
             _app_user_email: ContextForge user email (reserved for
                 compatibility with prior embedded-state call sites).
+            popup: When True, prefixes the token with ``popup.`` so the
+                callback can detect that it was opened from the React UI
+                popup and should respond with postMessage instead of HTML.
 
         Returns:
-            Opaque random state token
+            Opaque random state token, optionally prefixed with ``popup.``
         """
-        return secrets.token_urlsafe(48)
+        state = secrets.token_urlsafe(48)
+        return f"popup.{state}" if popup else state
 
     @staticmethod
     def _extract_legacy_state_payload(state: str) -> Optional[Dict[str, Any]]:
