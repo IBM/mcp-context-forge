@@ -52,6 +52,7 @@ Plugins for telemetry, tracing, and monitoring tool invocations.
 | Plugin | Type | Description |
 |--------|------|-------------|
 | [Tools Telemetry Exporter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/tools_telemetry_exporter) | Native | Export comprehensive tool invocation telemetry to OpenTelemetry for observability and monitoring with configurable payload export |
+| [IBM API Connect Federated API Management](https://github.com/IBM/mcp-context-forge/tree/main/plugins/apiconnect_fam) | Native | Synchronizes ContextForge runtime, servers, and tools with IBM API Connect Federated API Management for centralized governance and discovery |
 
 ## Content Transformation & Formatting
 

@@ -1,0 +1,74 @@
+name: apiconnect_fam
+version: 1.0.0
+description: Integrates ContextForge with IBM API Connect Federated API Management
+enabled: true
+kind: background_service
+hooks: []  # Background service plugin - no hook-based execution
+
+# Plugin configuration schema
+config:
+  # Core settings
+  interval_seconds: 60
+  log_details: false
+  
+  # FAM integration
+  fam_enabled: true
+  fam_base_url: "https://fam.example.com"
+  fam_runtime_id: ""  # REQUIRED when fam_enabled is true
+  fam_username: "admin"
+  fam_password: "changeme"
+  fam_timeout: 30
+  fam_verify_ssl: true
+  
+  # Asset synchronization
+  fam_asset_sync_enabled: true
+  fam_asset_sync_interval: 60
+  
+  # Metrics synchronization
+  metrics_sync_enabled: true
+  metrics_sync_interval: 300
+  
+  # Runtime metadata (for reference only)
+  fam_runtime_name: "ContextForge Gateway"
+  fam_runtime_description: "ContextForge MCP Gateway Runtime"
+  fam_runtime_type: "MCP_CONTEXT_FORGE"
+  fam_runtime_deployment_type: "ON_PREMISE"
+  fam_runtime_region: null
+  fam_runtime_location: null
+  fam_runtime_host: null
+  fam_runtime_tags: []
+  fam_runtime_capacity_value: "100"
+  fam_runtime_capacity_unit: "per minute"
+  fam_runtime_heartbeat_interval: 6000
+  
+  # Circuit breaker settings
+  circuit_breaker_enabled: true
+  circuit_breaker_failure_threshold: 5
+  circuit_breaker_recovery_timeout: 60.0
+
+# Plugin metadata
+metadata:
+  author: Shankar N
+  license: Apache-2.0
+  repository: https://github.com/IBM/mcp-context-forge
+  documentation: plugins/apiconnect_fam/docs/README.md
+  
+# Plugin dependencies
+dependencies:
+  python: ">=3.11"
+  packages:
+    - httpx
+    - pydantic
+
+# Plugin capabilities
+capabilities:
+  - runtime_registration
+  - heartbeat_monitoring
+  - server_synchronization
+  - tool_synchronization
+  - metrics_collection
+  - circuit_breaker
+  - retry_logic
+  - state_tracking
+
+
