@@ -965,7 +965,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
 | `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
 | `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
-| `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `false`   | bool                     |
+| `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 !!! tip "Cache Backend Selection"
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
