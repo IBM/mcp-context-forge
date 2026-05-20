@@ -36,6 +36,16 @@ const MOCK_VIRTUAL_SERVER: VirtualServer = {
   oauthConfig: null,
 };
 
+const MOCK_VIRTUAL_SERVER_DETAILS: VirtualServer = {
+  ...MOCK_VIRTUAL_SERVER,
+  description: "Virtual server endpoint: developer tooling server exposing repository workflows.",
+  associatedTools: ["Get Repo Issues", "Create New Issue"],
+  associatedToolIds: ["GITHUB_GET_REPO_ISSUES", "GITHUB_CREATE_ISSUE"],
+  associatedResources: ["github://repo/{owner}/{repo}"],
+  associatedPrompts: ["summarize_pull_request"],
+  tags: [{ id: "tag-development", label: "development" }],
+};
+
 test.describe("Gateways page", () => {
   test.beforeEach(async ({ page, apiMock }) => {
     // Mock authentication
@@ -137,6 +147,7 @@ test.describe("Gateways page", () => {
 
     // Check for virtual servers heading
     await expect(page.getByRole("heading", { name: "Virtual servers" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Create Server" })).toBeVisible();
 
     // Check for connect source card
     await expect(page.getByText("Connect a source")).toBeVisible();
@@ -188,11 +199,95 @@ test.describe("Gateways page", () => {
 
     await page.getByRole("button", { name: "Actions for testVS" }).click();
 
-    for (const label of ["View details", "Test connection", "Edit server", "Delete"]) {
+    const viewDetails = page.getByRole("menuitem", { name: "View details" });
+    await expect(viewDetails).toBeVisible();
+    await expect(viewDetails).not.toHaveAttribute("data-disabled", "");
+
+    for (const label of ["Test connection", "Edit server", "Delete"]) {
       const item = page.getByRole("menuitem", { name: label });
       await expect(item).toBeVisible();
       await expect(item).toHaveAttribute("data-disabled", "");
     }
+  });
+
+  test("opens virtual server details drawer from row actions", async ({ page }) => {
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(MOCK_VIRTUAL_SERVER_DETAILS),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "View details" }).click();
+
+    const drawer = page.getByRole("dialog", { name: "testVS details" });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole("heading", { name: "Virtual server details" })).toBeVisible();
+    await expect(
+      drawer.getByText(
+        "Virtual server endpoint: developer tooling server exposing repository workflows.",
+      ),
+    ).toBeVisible();
+    await expect(drawer.getByText("Status")).toBeVisible();
+    await expect(drawer.getByText("Active")).toBeVisible();
+    await expect(drawer.getByText("Visibility")).toBeVisible();
+    await expect(drawer.getByText("Public")).toBeVisible();
+    await expect(drawer.getByText("development")).toBeVisible();
+    await expect(drawer.getByText("Get Repo Issues")).toBeVisible();
+    await expect(drawer.getByText("GITHUB_GET_REPO_ISSUES")).toBeVisible();
+    await expect(drawer.getByText("github://repo/{owner}/{repo}").first()).toBeVisible();
+    await expect(drawer.getByText("summarize_pull_request").first()).toBeVisible();
+
+    const addSourcesButton = drawer.getByRole("button", { name: "Add sources" });
+    await expect(addSourcesButton).toBeVisible();
+
+    await drawer.getByRole("button", { name: "Tools" }).click();
+    await expect(drawer.getByText("Create New Issue")).toBeVisible();
+    await expect(drawer.getByText("github://repo/{owner}/{repo}")).toHaveCount(0);
+    await expect(drawer.getByText("summarize_pull_request")).toHaveCount(0);
+  });
+
+  test("drawer add sources button navigates to the server form", async ({ page }) => {
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+    await page.route(`**/servers/${MOCK_VIRTUAL_SERVER.id}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(MOCK_VIRTUAL_SERVER_DETAILS),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "Actions for testVS" }).click();
+    await page.getByRole("menuitem", { name: "View details" }).click();
+    await page
+      .getByRole("dialog", { name: "testVS details" })
+      .getByRole("button", {
+        name: "Add sources",
+      })
+      .click();
+
+    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
   });
 
   test("disables the Upload action button on virtual server cards", async ({ page }) => {
@@ -210,7 +305,7 @@ test.describe("Gateways page", () => {
     await expect(page.getByRole("button", { name: /Open testVS \(coming soon\)/ })).toBeDisabled();
   });
 
-  test("opens virtual server actions dropdown in header", async ({ page }) => {
+  test("navigates to server form from the header create server button", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -222,32 +317,10 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Click the header actions button
-    await page.getByRole("button", { name: "Virtual server actions" }).click();
+    await expect(page.getByRole("button", { name: "Virtual server actions" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Create Server" }).click();
 
-    // Check dropdown menu items (use role="menuitem" to target dropdown items specifically)
-    await expect(page.getByRole("menuitem", { name: "Connect a source" })).toBeVisible();
-    await expect(page.getByRole("menuitem", { name: "Browse server catalog" })).toBeVisible();
-  });
-
-  test("navigates to server catalog from dropdown", async ({ page }) => {
-    await page.route("**/servers?*", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ servers: [MOCK_VIRTUAL_SERVER] }),
-      });
-    });
-
-    await page.goto(APP.GATEWAYS);
-    await page.waitForLoadState("networkidle");
-
-    // Open dropdown and click catalog option
-    await page.getByRole("button", { name: "Virtual server actions" }).click();
-    await page.getByText("Browse server catalog").click();
-
-    // Should navigate to server catalog
-    await expect(page).toHaveURL(/\/app\/server-catalog/);
+    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
   });
 
   test("shows error state when API fails", async ({ page }) => {
