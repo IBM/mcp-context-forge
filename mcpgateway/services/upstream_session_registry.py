@@ -43,6 +43,7 @@ import mcp.types as mcp_types
 
 # First-Party
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.mcp_protocol import uses_sessionless_mcp_semantics
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)
@@ -847,6 +848,19 @@ async def shutdown_upstream_session_registry() -> None:
         _registry = None
 
 
+def current_mcp_protocol_version_from_request_context() -> Optional[str]:
+    """Return the current request's MCP protocol version, if present."""
+    headers = request_headers_var.get() or {}
+    lowered = {k.lower(): v for k, v in headers.items()}
+    raw_protocol_version = lowered.get("mcp-protocol-version")
+    return raw_protocol_version if isinstance(raw_protocol_version, str) else None
+
+
+def request_uses_sessionless_mcp_semantics() -> bool:
+    """Return whether the current request opts into sessionless MCP semantics."""
+    return uses_sessionless_mcp_semantics(current_mcp_protocol_version_from_request_context())
+
+
 def downstream_session_id_from_request_context() -> Optional[str]:
     """Return the downstream Mcp-Session-Id for the current request, or None.
 
@@ -854,8 +868,13 @@ def downstream_session_id_from_request_context() -> Optional[str]:
     per-request ContextVar. Service-layer callers (tool_service,
     prompt_service, resource_service) use this to key the registry so that
     an upstream session is bound 1:1 to the downstream MCP session that
-    initiated the call.
+    initiated the call. Sessionless protocol versions intentionally ignore
+    downstream session ids so phase-1 callers can keep legacy pooling gated
+    behind the negotiated protocol semantics.
     """
+    if request_uses_sessionless_mcp_semantics():
+        return None
+
     headers = request_headers_var.get() or {}
     lowered = {k.lower(): v for k, v in headers.items()}
     return lowered.get("x-mcp-session-id") or lowered.get("mcp-session-id") or None

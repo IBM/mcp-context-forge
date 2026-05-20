@@ -93,6 +93,7 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_protocol import uses_sessionless_mcp_semantics
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
@@ -133,15 +134,25 @@ def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], s
     if not isinstance(params, dict):
         params = {}
 
-    session_id = params.get("sessionId") or params.get("session_id")
-    if not session_id and mcp_session_id and mcp_session_id != "not-provided":
-        session_id = mcp_session_id
+    protocol_version = params.get("protocolVersion") or params.get("protocol_version")
+    sessionless = uses_sessionless_mcp_semantics(protocol_version)
+
+    # For sessionless protocol versions, omit mcp.session_id from telemetry.
+    # Session IDs are not meaningful correlation keys in sessionless mode.
+    session_id = None
+    if not sessionless:
+        session_id = params.get("sessionId") or params.get("session_id")
+        if not session_id and mcp_session_id and mcp_session_id != "not-provided":
+            session_id = mcp_session_id
 
     span_attributes: Dict[str, Any] = {
-        "mcp.protocol_version": params.get("protocolVersion") or params.get("protocol_version"),
-        "mcp.session_id": session_id,
+        "mcp.protocol_version": protocol_version,
         "server.id": server_id,
     }
+    # Only include session_id for legacy sessionful protocols
+    if not sessionless and session_id:
+        span_attributes["mcp.session_id"] = session_id
+
     return create_span("mcp.initialize", span_attributes)
 
 
@@ -1735,7 +1746,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         url = gateway_info.get("url")
                         gateway_id = gateway_info.get("id", "")
                         transport_type = gateway_info.get("transport", "streamablehttp")
-                        if url:
+                        # Skip session affinity registration for sessionless protocols
+                        if url and mcp_session_id:
                             await pool.register_session_mapping(mcp_session_id, url, gateway_id, transport_type, user_email)
             except Exception as e:
                 logger.error("Failed to pre-register session mapping for Streamable HTTP: %s", e)
@@ -3965,24 +3977,14 @@ class SessionManagerWrapper:
         if validated is _REJECT:
             return
 
+        request_protocol_version = headers.get("mcp-protocol-version")
+        sessionless_semantics = uses_sessionless_mcp_semantics(request_protocol_version)
+
         # GET /mcp: server→client stream per MCP Streamable HTTP spec
-        # ("Listening for messages from the server"). Three short-circuit
-        # rejections live here, then the spec-conformant SSE handler takes
-        # over (ADR-052).
-        #
-        # Rejections preserved from the #4205 era:
-        #   * stateful sessions disabled globally → 405
-        #     (no event-store infrastructure to anchor a stream against)
-        #   * no Mcp-Session-Id → 405
-        #     (the spec requires a session for the GET stream)
-        # Plus one operator kill switch:
-        #   * mcp_get_stream_enabled=False → 405 (deliberate disable)
-        #
-        # All emit `Allow: POST, DELETE` so the client knows the resource is
-        # real. Placed after server-id validation and RBAC so bogus server
-        # IDs still 404 and unauthorized callers still 403 before we
-        # advertise the endpoint.
-        if method == "GET" and (not settings.use_stateful_sessions or not settings.mcp_get_stream_enabled or mcp_session_id == "not-provided"):
+        # ("Listening for messages from the server"). Under legacy sessionful
+        # semantics this still requires a prior Mcp-Session-Id; phase 1 only
+        # gates that legacy requirement off for sessionless protocol versions.
+        if method == "GET" and not sessionless_semantics and (not settings.use_stateful_sessions or not settings.mcp_get_stream_enabled or mcp_session_id == "not-provided"):
             if not settings.use_stateful_sessions:
                 detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
                 reject_outcome = "stateful_disabled"
@@ -3993,10 +3995,6 @@ class SessionManagerWrapper:
                 detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
                 reject_outcome = "no_session_id"
             transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
-            # Log level split by reason: stateful-disabled and feature-disabled
-            # are operator-facing config conditions (warn); missing session id
-            # is routine probing from strict MCP clients before `initialize`
-            # and would flood info-level logs (debug).
             if reject_outcome == "stateful_disabled":
                 logger.warning("Rejecting GET %s with 405 — stateful sessions disabled", path)
             elif reject_outcome == "feature_disabled":
