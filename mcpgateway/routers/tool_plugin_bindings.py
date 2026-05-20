@@ -44,10 +44,23 @@ def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
 
     Returns ``None`` for unrestricted admins (full bypass).
     Returns an empty set for public-only callers (nothing allowed).
+
+    Admin tokens that do not carry an explicit ``teams`` claim are treated as
+    unrestricted (full bypass). Only when an admin's token is *explicitly*
+    scoped to a non-empty list of teams is the admin restricted to that list.
+    This preserves the historical admin bypass behaviour while still allowing
+    intentionally team-scoped admin tokens.
     """
     is_admin: bool = ctx.get("is_admin", False)
     token_teams = ctx.get("token_teams")
-    return None if (is_admin and token_teams is None) else set(token_teams or [])
+    # Admin bypass: full bypass unless the token is explicitly scoped to teams.
+    # ``token_teams`` is None when the JWT's ``teams`` claim is absent/null for
+    # an admin (admin bypass), and [] when the claim is missing for a regular
+    # token mint where ``normalize_token_teams`` returns the secure default.
+    # In both of those cases an admin should retain the historical bypass.
+    if is_admin and not token_teams:
+        return None
+    return set(token_teams or [])
 
 
 async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -> None:
