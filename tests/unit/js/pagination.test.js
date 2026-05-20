@@ -52,7 +52,7 @@ describe("paginationData", () => {
       }
       // Return a generic scrollable element for any other selector so that
       // loadPage() doesn't bail out early for non-#tools-table targets.
-      return { closest: vi.fn(() => null), scrollIntoView: vi.fn() };
+      return { closest: vi.fn(() => null), scrollIntoView: vi.fn(), addEventListener: vi.fn() };
     });
 
     global.document.getElementById = vi.fn((id) => {
@@ -323,6 +323,7 @@ describe("paginationData", () => {
     const mockElement = {
       closest: vi.fn(() => ({ scrollIntoView: mockScrollIntoView })),
       scrollIntoView: vi.fn(),
+      addEventListener: vi.fn(),
     };
     global.document.querySelector = vi.fn(() => mockElement);
     component.init();
@@ -340,6 +341,7 @@ describe("paginationData", () => {
     const mockElement = {
       closest: vi.fn(() => null),
       scrollIntoView: mockScrollIntoView,
+      addEventListener: vi.fn(),
     };
     global.document.querySelector = vi.fn(() => mockElement);
     component.init();
@@ -457,6 +459,7 @@ describe("paginationData data-extra-params handling", () => {
     global.document.querySelector = vi.fn(() => ({
       closest: vi.fn(() => null),
       scrollIntoView: vi.fn(),
+      addEventListener: vi.fn(),
     }));
     global.document.getElementById = vi.fn(() => null);
     delete window.location;
@@ -636,16 +639,17 @@ describe("paginationData _loading unlock listeners", () => {
     registered = {};
     window.htmx = { ajax: vi.fn() };
 
-    // Capture every listener registered on `document` so we can verify the
-    // exact event names and replay any of them to inspect the unlock path.
-    global.document.addEventListener = vi.fn((event, fn) => {
-      registered[event] = fn;
-    });
-    global.document.removeEventListener = vi.fn();
-    global.document.querySelector = vi.fn(() => ({
+    // The unlock listeners are now scoped to the swap target element (not
+    // document). We capture them via addEventListener on the mock element
+    // returned by document.querySelector for the target selector.
+    const mockTarget = {
       closest: vi.fn(() => null),
       scrollIntoView: vi.fn(),
-    }));
+      addEventListener: vi.fn((event, fn) => {
+        registered[event] = fn;
+      }),
+    };
+    global.document.querySelector = vi.fn(() => mockTarget);
     global.document.getElementById = vi.fn(() => null);
 
     delete window.location;
@@ -706,6 +710,16 @@ describe("paginationData _loading unlock listeners", () => {
     );
   });
 
+  test("loadPage() registers listeners on the target element, not document", () => {
+    component.init();
+    component.loadPage(2);
+
+    // Listeners must be scoped to the target element so unrelated htmx
+    // swaps on the page don't prematurely unlock this component.
+    const targetEl = global.document.querySelector("#tools-table");
+    expect(targetEl.addEventListener).toHaveBeenCalledTimes(4);
+  });
+
   test("htmx:swapError unlocks _loading", () => {
     component.init();
     component.loadPage(2);
@@ -735,14 +749,34 @@ describe("paginationData _loading unlock listeners", () => {
     registered["htmx:swapError"]();
     // Reset registered so the second call's listeners can be inspected.
     registered = {};
-    global.document.addEventListener = vi.fn((event, fn) => {
-      registered[event] = fn;
-    });
 
     component.loadPage(3);
 
     // The second call must have actually fired (proves no deadlock).
     expect(window.htmx.ajax).toHaveBeenCalledTimes(2);
     expect(registered).toHaveProperty("htmx:swapError");
+  });
+
+  test("loadPage() falls back to document if target element not found", () => {
+    component.init();
+    // First call returns null (target not found for listener registration),
+    // but we need the bail-out check to pass — so return null only on
+    // subsequent calls after the first querySelector for bail-out.
+    let callCount = 0;
+    global.document.addEventListener = vi.fn((event, fn) => {
+      registered[event] = fn;
+    });
+    global.document.querySelector = vi.fn(() => {
+      callCount++;
+      // First call is the bail-out check (line: if (!document.querySelector(this.targetSelector)) return;)
+      // which must return truthy. Second call is for the listener target.
+      if (callCount <= 1) return { closest: vi.fn(() => null), scrollIntoView: vi.fn() };
+      return null;
+    });
+
+    component.loadPage(2);
+
+    // Should have fallen back to document.addEventListener
+    expect(global.document.addEventListener).toHaveBeenCalled();
   });
 });

@@ -138,6 +138,11 @@ export function paginationData() {
       // up the sibling listeners keeps the document free of leaked
       // {once:true} handlers when only one of them ever fires.
       //
+      // Listeners are scoped to the swap target element (not document) so
+      // that unrelated htmx swaps on the page don't prematurely unlock this
+      // component's _loading guard. htmx events bubble, so target-scoped
+      // listeners catch events from swaps directed at that element.
+      //
       // `htmx:swapError` MUST be in this list — without it, a swap failure
       // (e.g. session expiry returning a full HTML login page that htmx
       // can't merge into the fragment target) would leave `_loading=true`
@@ -151,10 +156,11 @@ export function paginationData() {
       const listenerOpts = unlockController
         ? { once: true, signal: unlockController.signal }
         : { once: true };
-      document.addEventListener("htmx:afterSettle",   unlock, listenerOpts);
-      document.addEventListener("htmx:responseError", unlock, listenerOpts);
-      document.addEventListener("htmx:sendError",     unlock, listenerOpts);
-      document.addEventListener("htmx:swapError",     unlock, listenerOpts);
+      const listenTarget = document.querySelector(this.targetSelector) || document;
+      listenTarget.addEventListener("htmx:afterSettle",   unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:responseError", unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:sendError",     unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:swapError",     unlock, listenerOpts);
 
       const url = new URL(this.baseUrl, window.location.origin);
       url.searchParams.set("page", page);
