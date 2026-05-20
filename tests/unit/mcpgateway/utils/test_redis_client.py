@@ -541,6 +541,57 @@ def test_build_ssl_kwargs_returns_empty_dict_when_ssl_disabled():
     assert result == {}
 
 
+def test_build_ssl_kwargs_sets_ca_certs_when_provided():
+    """_build_ssl_kwargs sets ssl_ca_certs when redis_ssl_ca_certs is provided (line 109)."""
+    mock_settings = MagicMock()
+    mock_settings.redis_ssl = True
+    mock_settings.redis_ssl_ca_certs = "/some/ca.crt"
+    mock_settings.redis_ssl_certfile = None
+    mock_settings.redis_ssl_keyfile = None
+    mock_settings.redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ssl_settings"):
+        result = _build_ssl_kwargs(mock_settings)
+
+    assert result["ssl_ca_certs"] == "/some/ca.crt"
+    assert "ssl_certfile" not in result
+    assert "ssl_keyfile" not in result
+
+
+def test_build_ssl_kwargs_sets_certfile_when_provided():
+    """_build_ssl_kwargs sets ssl_certfile when redis_ssl_certfile is provided (line 111)."""
+    mock_settings = MagicMock()
+    mock_settings.redis_ssl = True
+    mock_settings.redis_ssl_ca_certs = None
+    mock_settings.redis_ssl_certfile = "/some/client.crt"
+    mock_settings.redis_ssl_keyfile = None
+    mock_settings.redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ssl_settings"):
+        result = _build_ssl_kwargs(mock_settings)
+
+    assert result["ssl_certfile"] == "/some/client.crt"
+    assert "ssl_ca_certs" not in result
+    assert "ssl_keyfile" not in result
+
+
+def test_build_ssl_kwargs_sets_keyfile_when_provided():
+    """_build_ssl_kwargs sets ssl_keyfile when redis_ssl_keyfile is provided (line 113)."""
+    mock_settings = MagicMock()
+    mock_settings.redis_ssl = True
+    mock_settings.redis_ssl_ca_certs = None
+    mock_settings.redis_ssl_certfile = None
+    mock_settings.redis_ssl_keyfile = "/some/client.key"
+    mock_settings.redis_ssl_check_hostname = True
+
+    with patch("mcpgateway.utils.redis_client._validate_ssl_settings"):
+        result = _build_ssl_kwargs(mock_settings)
+
+    assert result["ssl_keyfile"] == "/some/client.key"
+    assert "ssl_ca_certs" not in result
+    assert "ssl_certfile" not in result
+
+
 def test_build_ssl_kwargs_sets_no_hostname_check_when_check_hostname_false():
     """_build_ssl_kwargs sets ssl_cert_reqs and ssl_check_hostname when check_hostname is False (lines 68-69)."""
     mock_settings = MagicMock()
@@ -673,3 +724,32 @@ async def test_get_redis_client_returns_none_on_ssl_misconfiguration():
 
                 assert client is None
                 mock_from_url.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_warns_when_rediss_url_but_ssl_disabled(caplog):
+    """get_redis_client emits WARNING when rediss:// URL is used but REDIS_SSL=false."""
+    # Standard
+    import logging
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.config.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "rediss://localhost:6380"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_max_connections = 10
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+        mock_settings.redis_health_check_interval = 30
+        mock_settings.redis_parser = "auto"
+        mock_settings.redis_ssl = False
+
+        with patch("redis.asyncio.from_url", return_value=mock_redis):
+            with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.redis_client"):
+                client = await get_redis_client()
+
+    assert client is mock_redis
+    assert any("rediss://" in r.message and "REDIS_SSL=false" in r.message for r in caplog.records)

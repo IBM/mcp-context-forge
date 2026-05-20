@@ -12054,6 +12054,7 @@ class TestRemainingCoverageGaps:
             "db_query_log_enabled": True,
             "cache_type": "redis",
             "redis_url": "redis://localhost:6379",
+            "redis_ssl": False,
             "structured_logging_enabled": False,
             "mcpgateway_a2a_enabled": False,
             "mcpgateway_tool_cancellation_enabled": False,

@@ -91,6 +91,7 @@ import asyncio
 import logging
 import os
 import random
+import ssl
 import sys
 import time
 from typing import Any, Optional
@@ -220,6 +221,12 @@ def wait_for_redis_ready(
                 redis_client.ping()
                 log.info(f"Redis ready (attempt {attempt})")
                 return
+            except ssl.SSLError as exc:
+                log.error(
+                    f"TLS handshake failed connecting to Redis: {exc} — "
+                    "check REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE"
+                )
+                raise RuntimeError(f"Redis TLS handshake failed: {exc}") from exc
             except Exception as exc:
                 if attempt < max_retries:  # Don't sleep on the last attempt
                     # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff

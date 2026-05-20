@@ -282,7 +282,7 @@ services:
       # - REDIS_SSL_CA_CERTS=/app/certs/ca.crt
       # - REDIS_SSL_CERTFILE=/app/certs/client.crt   # only for mTLS
       # - REDIS_SSL_KEYFILE=/app/certs/client.key     # only for mTLS
-      # - REDIS_SSL_CHECK_HOSTNAME=false
+      # - REDIS_SSL_CHECK_HOSTNAME=true
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
       # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)

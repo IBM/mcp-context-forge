@@ -235,6 +235,14 @@ async def get_redis_client() -> Optional[Any]:
         if parser_class is not None:
             connection_kwargs["parser_class"] = parser_class
 
+        # Warn when URL scheme implies TLS but REDIS_SSL flag is off — our ssl
+        # settings (CA cert, hostname check) would be silently skipped.
+        if settings.redis_url and settings.redis_url.startswith("rediss://") and not settings.redis_ssl:
+            logger.warning(
+                "REDIS_URL uses rediss:// scheme but REDIS_SSL=false — "
+                "TLS certificate settings (REDIS_SSL_CA_CERTS, REDIS_SSL_CHECK_HOSTNAME) will not be applied"
+            )
+
         # Inject TLS kwargs when REDIS_SSL=true (production).
         # Local dev: returns {} → no ssl kwarg → plain TCP connection.
         connection_kwargs.update(_build_ssl_kwargs(settings))
