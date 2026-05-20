@@ -159,6 +159,7 @@ async def test_cookie_auth_allowed_for_same_origin_react_app_fetch():
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
     with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
         result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
     assert result["email"] == "user@example.com"
 
