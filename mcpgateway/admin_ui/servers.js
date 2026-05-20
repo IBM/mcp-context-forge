@@ -855,6 +855,17 @@ export const editServer = async function (serverId) {
       if (oauthTokenEndpointField) {
         oauthTokenEndpointField.value = server.oauthConfig.token_endpoint || "";
       }
+
+      // Extract client_id for DCR bypass (pre-registered client)
+      const oauthClientIdField = safeGetElement("edit-server-oauth-client-id");
+      if (oauthClientIdField) {
+        oauthClientIdField.value = server.oauthConfig.client_id || "";
+      }
+      // Clear client_secret field (password field — never pre-filled with actual secret)
+      const oauthClientSecretField = safeGetElement("edit-server-oauth-client-secret");
+      if (oauthClientSecretField) {
+        oauthClientSecretField.value = "";
+      }
     } else {
       // Clear OAuth config fields when no config exists
       if (oauthAuthServerField) oauthAuthServerField.value = "";

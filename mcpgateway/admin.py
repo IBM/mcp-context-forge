@@ -2881,6 +2881,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
 
+            client_id = str(form.get("oauth_client_id", "")).strip()
+            client_secret = str(form.get("oauth_client_secret", "")).strip()
+
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
                 if scopes_str:
@@ -2888,6 +2891,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if client_id:
+                    oauth_config["client_id"] = client_id
+                if client_secret:
+                    oauth_config["client_secret"] = client_secret
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -3038,6 +3045,9 @@ async def admin_edit_server(
             scopes_str = str(form.get("oauth_scopes", "")).strip()
             token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
 
+            client_id = str(form.get("oauth_client_id", "")).strip()
+            client_secret = str(form.get("oauth_client_secret", "")).strip()
+
             if authorization_server:
                 oauth_config = {"authorization_servers": [authorization_server]}
                 if scopes_str:
@@ -3045,6 +3055,18 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+                if client_id:
+                    oauth_config["client_id"] = client_id
+                if client_secret:
+                    oauth_config["client_secret"] = client_secret
+                elif client_id:
+                    # client_id present but secret left blank in edit form — preserve existing secret
+                    try:
+                        existing_server = await server_service.get_server(db, server_id)
+                        if existing_server.oauth_config and existing_server.oauth_config.get("client_secret"):
+                            oauth_config["client_secret"] = existing_server.oauth_config["client_secret"]
+                    except Exception:
+                        pass
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
