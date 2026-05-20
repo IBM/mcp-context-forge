@@ -23,7 +23,7 @@ def test_set_auth_cookie_uses_short_expiry_and_insecure_in_dev(monkeypatch) -> N
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path=""),
+        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path="", token_expiry=60),
     )
 
     resp = Response()
@@ -41,7 +41,7 @@ def test_set_auth_cookie_remember_me_sets_long_expiry_and_secure_in_production(m
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="production", secure_cookies=False, cookie_samesite="strict", app_root_path="/mcp"),
+        SimpleNamespace(environment="production", secure_cookies=False, cookie_samesite="strict", app_root_path="/mcp", token_expiry=60),
     )
 
     resp = Response()
@@ -58,7 +58,7 @@ def test_clear_auth_cookie_uses_same_security_attributes(monkeypatch) -> None:
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="production", secure_cookies=False, cookie_samesite="lax", app_root_path=""),
+        SimpleNamespace(environment="production", secure_cookies=False, cookie_samesite="lax", app_root_path="", token_expiry=60),
     )
 
     resp = Response()
@@ -75,7 +75,7 @@ def test_session_cookie_set_and_clear(monkeypatch) -> None:
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="development", secure_cookies=True, cookie_samesite="lax", app_root_path="/"),
+        SimpleNamespace(environment="development", secure_cookies=True, cookie_samesite="lax", app_root_path="/", token_expiry=60),
     )
 
     resp = Response()
@@ -94,7 +94,7 @@ def test_set_auth_cookie_best_effort_sub_extraction_swallows_decode_errors(monke
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path=""),
+        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path="", token_expiry=60),
     )
 
     resp = Response()
@@ -109,7 +109,7 @@ def test_set_auth_cookie_warns_when_cookie_approaches_limit(monkeypatch, caplog)
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path=""),
+        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path="", token_expiry=60),
     )
     monkeypatch.setattr(security_cookies, "_COOKIE_WARN_THRESHOLD", 1)
 
@@ -124,7 +124,7 @@ def test_set_auth_cookie_raises_when_cookie_exceeds_hard_limit(monkeypatch) -> N
     monkeypatch.setattr(
         security_cookies,
         "settings",
-        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path=""),
+        SimpleNamespace(environment="development", secure_cookies=False, cookie_samesite="lax", app_root_path="", token_expiry=60),
     )
 
     with pytest.raises(security_cookies.CookieTooLargeError):
