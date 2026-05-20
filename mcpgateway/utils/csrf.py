@@ -21,7 +21,7 @@ Token Expiry Coupling:
 
 import math
 import secrets
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Request, Response
 
@@ -109,11 +109,15 @@ def require_csrf(request: Request) -> None:
     validate_csrf_token(request)
 
 
-def clear_csrf_cookie(response: Response) -> None:
+def clear_csrf_cookie(response: Response, cfg: Any = None) -> None:
     """Clear CSRF token cookie."""
-    response.delete_cookie(
+    _cfg = cfg if cfg is not None else settings
+    response.set_cookie(
         key="csrf_token",
+        value="",
+        httponly=False,
+        secure=_cfg.csrf_cookie_secure,
+        samesite=_cfg.csrf_cookie_samesite,
+        max_age=0,
         path="/",
-        samesite="strict",
-        secure=(settings.environment == "production") or settings.secure_cookies,
     )
