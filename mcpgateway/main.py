@@ -177,6 +177,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -1592,6 +1593,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
         refresh_slugs_on_startup()
+        logger.info(f"Running dataplane publisher? {settings.dataplane_publisher}")
+        # Initialize experimental dataplane publisher to send config data to redis
+        if settings.dataplane_publisher:
+            dataplane_publisher_service = DataplanePublisherService()
+            await dataplane_publisher_service.start()
 
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
