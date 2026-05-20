@@ -81,8 +81,8 @@ interface RequestOptions {
   body?: unknown;
   /** Extra headers merged on top of the defaults. */
   headers?: Record<string, string>;
-  /** Pass `true` to skip adding the Authorization header (e.g. login). */
-  unauthenticated?: boolean;
+  /** Pass `false` for public endpoints that do not require auth or CSRF (e.g. login). */
+  authenticated?: boolean;
   /** AbortSignal for request cancellation/timeout. */
   signal?: AbortSignal;
 }
@@ -92,7 +92,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method = "GET",
     body,
     headers: extraHeaders = {},
-    unauthenticated = false,
+    authenticated = true,
     signal,
   } = options;
 
@@ -102,8 +102,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     ...extraHeaders,
   };
 
-  if (method !== "GET") {
-    const csrfToken = getCookie("mcpgateway_csrf_token");
+  if (method !== "GET" && authenticated) {
+    const csrfToken = getCookie("csrf_token");
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken;
     }
@@ -124,7 +124,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const response = await fetch(requestUrl, requestOptions);
 
   if (response.status === 401) {
-    if (!unauthenticated && path !== "/app/auth/me") {
+    if (authenticated && path !== "/app/auth/me") {
       // replace() rather than href= so the failed page is not added to history
       // (the user can't hit Back into an unauthenticated state).
       window.location.replace(LOGIN_PATH);
