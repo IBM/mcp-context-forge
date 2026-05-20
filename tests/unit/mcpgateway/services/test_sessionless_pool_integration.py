@@ -99,10 +99,8 @@ async def test_tool_service_sessionless_pool_acquire_path():
             # Line 5372-5373: with anyio.fail_after(effective_timeout):
             #                     tool_call_result = await pooled_conn.session.call_tool(...)
             import anyio
-            with anyio.fail_after(30):
+            with anyio.fail_after(30):  # pylint: disable=not-async-context-manager
                 result = await pooled_conn.session.call_tool("test_tool", {})
 
             assert result.content[0].text == "Tool result"
             assert mock_session.call_tool.called
-
-# Made with Bob
