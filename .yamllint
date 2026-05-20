@@ -7,6 +7,7 @@ rules:
 # Ignore every YAML (and *.tpl) file under the Helm chart directory.
 ignore: |
   .cache/**
+  .venv/**
   node_modules/**
   charts/mcp-stack/**/*.yaml
   charts/mcp-stack/**/*.tpl      # templates using .tpl files

@@ -182,7 +182,7 @@ def format_traceparent(trace_id: str, span_id: str, sampled: bool = True) -> str
         W3C traceparent header value
 
     Examples:
-        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")  # doctest: +SKIP  # pragma: allowlist secret
+        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")   # pragma: allowlist secret  # doctest: +SKIP
         '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
     """
     flags = "01" if sampled else "00"
