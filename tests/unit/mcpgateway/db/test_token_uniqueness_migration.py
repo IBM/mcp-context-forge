@@ -22,8 +22,8 @@ from alembic.operations import Operations
 import sqlalchemy as sa
 
 MODULE_NAME = "mcpgateway.alembic.versions.d9e0f1a2b3c4_change_token_uniqueness_to_per_team"
-REVISION = "d9e0f1a2b3c4"
-DOWN_REVISION = "b2d9c6e4f1a7"
+REVISION = "d9e0f1a2b3c4"  # pragma: allowlist secret
+DOWN_REVISION = "b2d9c6e4f1a7"  # pragma: allowlist secret
 
 
 class TestTokenUniquenessModuleStructure:

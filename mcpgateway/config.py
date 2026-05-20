@@ -249,7 +249,7 @@ class Settings(BaseSettings):
         description=(
             "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
-            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "  # pragma: allowlist secret
             "(See Issue #1535 for details)"
         ),
     )
@@ -2973,7 +2973,7 @@ Disallow: /
             >>> settings = Settings(basic_auth_user="admin", basic_auth_password="secret")
             >>> settings.api_key
             'admin:secret'
-            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")
+            >>> settings = Settings(basic_auth_user="user123", basic_auth_password="pass456")  # pragma: allowlist secret
             >>> settings.api_key
             'user123:pass456'
         """

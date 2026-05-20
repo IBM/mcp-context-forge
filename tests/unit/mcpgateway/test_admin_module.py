@@ -287,9 +287,9 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
 @pytest.mark.parametrize(
     ("password", "expected_fragment"),
     [
-        ("ABCDEFGH", "at least 12"),       # Too short, no lowercase/numbers/special
-        ("Abcdefgh", "at least 12"),       # Too short, no numbers/special
-        ("Abcdefg1", "at least 12"),       # Too short, no special
+        ("ABCDEFGH", "at least 12"),  # Too short, no lowercase/numbers/special
+        ("Abcdefgh", "at least 12"),  # Too short, no numbers/special
+        ("Abcdefg1", "at least 12"),  # Too short, no special
     ],
 )
 def test_validate_password_strength_requirement_failures(monkeypatch, password, expected_fragment):
@@ -414,7 +414,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     assert isinstance(response, RedirectResponse)
     assert "missing_fields" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})
+    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})  # pragma: allowlist secret
     auth_service = MagicMock()
     auth_service.authenticate_user = AsyncMock(return_value=None)
     monkeypatch.setattr(admin, "EmailAuthService", lambda db: auth_service)
@@ -448,7 +448,7 @@ async def test_admin_login_handler_default_password(monkeypatch):
     monkeypatch.setattr(admin.settings, "detect_default_password_on_login", True)
     monkeypatch.setattr(admin.settings, "require_password_change_for_default_password", True)
 
-    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})
+    request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})  # pragma: allowlist secret
 
     user = SimpleNamespace(email="admin@example.com", password_change_required=False, password_changed_at=None, password_hash="hash")
     auth_service = MagicMock()
@@ -1095,15 +1095,15 @@ async def test_change_password_required_handler(monkeypatch):
     mock_db = MagicMock()
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
-    request.form = AsyncMock(return_value={"current_password": "old"})
+    request.form = AsyncMock(return_value={"current_password": "old"})  # pragma: allowlist secret
     response = await admin.change_password_required_handler(request, mock_db)
     assert "missing_fields" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "new1", "confirm_password": "new2"})
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "new1", "confirm_password": "new2"})  # pragma: allowlist secret
     response = await admin.change_password_required_handler(request, mock_db)
     assert "mismatch" in response.headers["location"]
 
-    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "Newpass1!", "confirm_password": "Newpass1!"})
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "Newpass1!", "confirm_password": "Newpass1!"})  # pragma: allowlist secret
     request.cookies = {"jwt_token": "token"}
     request.headers = {"User-Agent": "TestAgent"}
 

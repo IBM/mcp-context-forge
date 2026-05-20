@@ -955,7 +955,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_prompt = PromptRead(
-        id="ca627760127d409080fdefc309147e08",
+        id="ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
         name="test_prompt",
         original_name="test_prompt",
         custom_name="test_prompt",
@@ -972,7 +972,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_resource = ResourceRead(
-        id="ca627760127d409080fdefc309147e08",
+        id="ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
@@ -1130,7 +1130,7 @@ async def test_export_selected_prompts(export_service, mock_db):
     # First-Party
 
     sample_prompt = PromptRead(
-        id="ca627760127d409080fdefc309147e08",
+        id="ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
         name="test_prompt",
         original_name="test_prompt",
         custom_name="test_prompt",
@@ -1172,7 +1172,7 @@ async def test_export_selected_resources(export_service, mock_db):
     # First-Party
 
     sample_resource = ResourceRead(
-        id="ca627760127d409080fdefc309147e08",
+        id="ca627760127d409080fdefc309147e08",  # pragma: allowlist secret
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
@@ -1718,7 +1718,7 @@ async def test_export_gateways_masked_auth_encodes_dict_auth_value(export_servic
     from mcpgateway.config import settings
     from mcpgateway.utils.services_auth import decode_auth
 
-    auth_dict = {"X-Custom-Auth": "my-token", "X-Org-ID": "org-42"}
+    auth_dict = {"X-Custom-Auth": "my-token", "X-Org-ID": "org-42"}  # pragma: allowlist secret
 
     gateway = GatewayRead(
         id="gw1",
@@ -1764,7 +1764,7 @@ async def test_export_selected_gateways_encodes_dict_auth_value(export_service, 
     # First-Party
     from mcpgateway.utils.services_auth import decode_auth
 
-    auth_dict = {"X-Custom-Auth": "my-token"}
+    auth_dict = {"X-Custom-Auth": "my-token"}  # pragma: allowlist secret
 
     db_gateway = MagicMock()
     db_gateway.id = "gw1"

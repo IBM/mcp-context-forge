@@ -84,7 +84,7 @@ def set_defaults(parser):
 FAST_TIME_HOST = os.environ.get("BASELINE_FAST_TIME_HOST", "http://localhost:8888")
 MCP_URL = os.environ.get("BASELINE_MCP_URL", "http://localhost:8888/http")
 GATEWAY_URL = os.environ.get("BASELINE_GATEWAY_URL", "http://localhost:8080")
-GATEWAY_SERVER_ID = os.environ.get("BASELINE_GATEWAY_SERVER_ID", "9779b6698cbd4b4995ee04a4fab38737")
+GATEWAY_SERVER_ID = os.environ.get("BASELINE_GATEWAY_SERVER_ID", "9779b6698cbd4b4995ee04a4fab38737")  # pragma: allowlist secret
 JWT_SECRET = os.environ.get("BASELINE_JWT_SECRET", "my-test-key-but-now-longer-than-32-bytes")
 POSTGRES_HOST = os.environ.get("BASELINE_POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.environ.get("BASELINE_POSTGRES_PORT", "5433"))

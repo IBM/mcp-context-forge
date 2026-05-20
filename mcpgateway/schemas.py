@@ -3719,7 +3719,7 @@ class GatewayRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = GatewayRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_header_key
@@ -4146,7 +4146,7 @@ class ServerCreate(BaseModel):
         Examples:
             >>> from mcpgateway.schemas import ServerCreate
             >>> ServerCreate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
+            '550e8400e29b41d4a716446655440000'  # pragma: allowlist secret
             >>> ServerCreate.validate_id('invalid-uuid')
             Traceback (most recent call last):
                 ...
@@ -4314,7 +4314,7 @@ class ServerUpdate(BaseModelWithConfigDict):
         Examples:
             >>> from mcpgateway.schemas import ServerUpdate
             >>> ServerUpdate.validate_id('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400e29b41d4a716446655440000'
+            '550e8400e29b41d4a716446655440000'  # pragma: allowlist secret
             >>> ServerUpdate.validate_id('invalid-uuid')
             Traceback (most recent call last):
                 ...
@@ -5446,7 +5446,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = A2AAgentRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = A2AAgentRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5795,7 +5795,7 @@ class EmailLoginRequest(BaseModel):
         password: User's password
 
     Examples:
-        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")
+        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")  # pragma: allowlist secret
         >>> request.email
         'user@example.com'
         >>> request.password
@@ -5822,7 +5822,7 @@ class PublicRegistrationRequest(BaseModel):
     Examples:
         >>> request = PublicRegistrationRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5852,7 +5852,7 @@ class AdminCreateUserRequest(BaseModel):
     Examples:
         >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5890,8 +5890,8 @@ class ChangePasswordRequest(BaseModel):
 
     Examples:
         >>> request = ChangePasswordRequest(
-        ...     old_password="old_secret",
-        ...     new_password="new_secure_password"
+        ...     old_password="old_secret",  # pragma: allowlist secret
+        ...     new_password="new_secure_password"  # pragma: allowlist secret
         ... )
         >>> request.old_password
         'old_secret'

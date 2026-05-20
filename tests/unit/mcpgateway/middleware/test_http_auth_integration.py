@@ -123,7 +123,7 @@ class TestHttpAuthMiddlewareIntegration:
             "/protocol/initialize",
             json={},
             headers={
-                "X-API-Key": "test-api-key-123",
+                "X-API-Key": "test-api-key-123",  # pragma: allowlist secret
                 "Content-Type": "application/json",
             },
         )
@@ -156,7 +156,7 @@ class TestHttpAuthMiddlewareIntegration:
             "/protocol/initialize",
             json={},
             headers={
-                "X-API-Key": "blocked-key-456",
+                "X-API-Key": "blocked-key-456",  # pragma: allowlist secret
                 "Content-Type": "application/json",
             },
         )
@@ -177,7 +177,7 @@ class TestHttpAuthMiddlewareIntegration:
 
         response = client.get(
             "/health",
-            headers={"X-API-Key": "test-api-key-123"},
+            headers={"X-API-Key": "test-api-key-123"},  # pragma: allowlist secret
         )
 
         # Check auth status header
@@ -247,7 +247,7 @@ class TestPluginHookBehavior:
     async def test_header_transformation_preserves_original(self):
         """Test that header transformation preserves the original header."""
         # This would test the plugin logic directly without the full app
-        headers = {"x-api-key": "test-key"}
+        headers = {"x-api-key": "test-key"}  # pragma: allowlist secret
 
         # After transformation
         headers["authorization"] = f"Bearer {headers['x-api-key']}"
@@ -259,7 +259,7 @@ class TestPluginHookBehavior:
     async def test_multiple_header_modifications_merge(self):
         """Test that multiple plugins can modify headers and they merge correctly."""
         # Original headers
-        original = {"x-api-key": "key123", "user-agent": "test-client"}
+        original = {"x-api-key": "key123", "user-agent": "test-client"}  # pragma: allowlist secret
 
         # Plugin 1 adds authorization
         modified1 = {**original, "authorization": "Bearer key123"}
@@ -358,7 +358,7 @@ class TestCustomAuthExamplePlugin:
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -380,7 +380,7 @@ class TestCustomAuthExamplePlugin:
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -417,7 +417,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},
+            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -440,7 +440,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "admin-key-67890"},
+            credentials={"scheme": "Bearer", "credentials": "admin-key-67890"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -461,7 +461,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "blocked-key-99999"},
+            credentials={"scheme": "Bearer", "credentials": "blocked-key-99999"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -480,7 +480,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},
+            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -499,7 +499,7 @@ class TestCustomAuthExamplePlugin:
         from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},
+            credentials={"scheme": "Bearer", "credentials": "invalid-key-unknown"},  # pragma: allowlist secret
             headers=HttpHeaderPayload({}),
             client_host="192.168.1.100",
             client_port=54321,
@@ -641,7 +641,7 @@ class TestCustomAuthExamplePlugin:
         pre_payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "content-type": "application/json"}),  # pragma: allowlist secret
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -655,7 +655,7 @@ class TestCustomAuthExamplePlugin:
 
         # Step 2: HTTP_AUTH_RESOLVE_USER - Authenticate user
         auth_payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},
+            credentials={"scheme": "Bearer", "credentials": "valid-key-12345"},  # pragma: allowlist secret
             headers=HttpHeaderPayload(transformed_headers),
             client_host="192.168.1.100",
             client_port=54321,

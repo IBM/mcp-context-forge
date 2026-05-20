@@ -80,7 +80,7 @@ class TestRequestScopeHeaderModification:
         # Send request with only X-API-Key (no Authorization header)
         response = client.get(
             "/test-headers",
-            headers={"X-API-Key": "test-secret-key-123"},
+            headers={"X-API-Key": "test-secret-key-123"},  # pragma: allowlist secret
         )
 
         # Should succeed
@@ -102,7 +102,7 @@ class TestRequestScopeHeaderModification:
             "/test-headers",
             headers={
                 "Authorization": "Bearer original-token-456",
-                "X-API-Key": "should-not-be-used",
+                "X-API-Key": "should-not-be-used",  # pragma: allowlist secret
             },
         )
 
@@ -944,7 +944,7 @@ class TestRunPreRequestHooks:
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             return (
                 PluginResult(
-                    modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
+                    modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),  # pragma: allowlist secret
                     continue_processing=True,
                 ),
                 {},
@@ -952,7 +952,7 @@ class TestRunPreRequestHooks:
 
         pm.invoke_hook = mock_invoke_hook
 
-        original = {"authorization": "Bearer original-token", "x-api-key": "original-key"}
+        original = {"authorization": "Bearer original-token", "x-api-key": "original-key"}  # pragma: allowlist secret
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("mcpgateway.middleware.http_auth_middleware.settings.plugins_can_override_auth_headers", False)
             merged, _, _ = await run_pre_request_hooks(pm, original, "/test", "GET")

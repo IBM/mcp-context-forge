@@ -182,7 +182,7 @@ class TestPasswordPolicyService:
 
     def test_has_sequential_chars_numbers(self, policy_service):
         """Test sequential number detection."""
-        assert policy_service._has_sequential_chars("abc123def")
+        assert policy_service._has_sequential_chars("abc123def")  # pragma: allowlist secret
         assert policy_service._has_sequential_chars("test456word")
         assert not policy_service._has_sequential_chars("test135word")
 

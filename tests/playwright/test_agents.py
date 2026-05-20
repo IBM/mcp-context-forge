@@ -261,7 +261,7 @@ class TestAgentsUI:
             grant_type="client_credentials",
             issuer="https://oauth.example.com",
             client_id="test-client-id",
-            client_secret="test-client-secret",
+            client_secret="test-client-secret",  # pragma: allowlist secret
             token_url="https://oauth.example.com/token",
             scopes="read write",
         )

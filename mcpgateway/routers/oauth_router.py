@@ -717,7 +717,7 @@ async def oauth_callback(
                         const csrfToken = document.cookie.split('; ').find(row => row.startsWith('mcpgateway_csrf_token='))?.split('=')[1] || '';
                         const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                             method: 'POST',
-                            credentials: 'include',
+                            credentials: 'include',  # pragma: allowlist secret
                             headers: {{
                                 'Accept': 'application/json',
                                 'Content-Type': 'application/json',

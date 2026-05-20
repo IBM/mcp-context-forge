@@ -59,13 +59,13 @@ def apply_query_param_auth(
     Example:
         >>> apply_query_param_auth(
         ...     "https://api.tavily.com/mcp",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'https://api.tavily.com/mcp?tavilyApiKey=secret123'
 
         >>> apply_query_param_auth(
         ...     "https://api.example.com/search?q=test",
-        ...     {"api_key": "abc123"}
+        ...     {"api_key": "abc123"}  # pragma: allowlist secret
         ... )
         'https://api.example.com/search?q=test&api_key=abc123'
     """
@@ -115,7 +115,7 @@ def sanitize_url_for_logging(
     Example:
         >>> sanitize_url_for_logging(
         ...     "https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
 
@@ -127,15 +127,15 @@ def sanitize_url_for_logging(
 
         >>> # Also redacts userinfo (user:pass@host)
         >>> sanitize_url_for_logging(
-        ...     "https://admin:secret123@api.example.com/endpoint"
+        ...     "https://admin:secret123@api.example.com/endpoint"  # pragma: allowlist secret
         ... )
-        'https://REDACTED:REDACTED@api.example.com/endpoint'
+        'https://REDACTED:REDACTED@api.example.com/endpoint'  # pragma: allowlist secret
 
         >>> # Preserves IPv6 bracket formatting
         >>> sanitize_url_for_logging(
-        ...     "https://user:pass@[::1]:8080/path"
+        ...     "https://user:pass@[::1]:8080/path"  # pragma: allowlist secret
         ... )
-        'https://REDACTED:REDACTED@[::1]:8080/path'
+        'https://REDACTED:REDACTED@[::1]:8080/path'  # pragma: allowlist secret
     """
     parsed = urlparse(url)
 
@@ -200,7 +200,7 @@ def sanitize_exception_message(
     Example:
         >>> sanitize_exception_message(
         ...     "Connection failed: https://api.tavily.com/mcp?tavilyApiKey=secret123",
-        ...     {"tavilyApiKey": "secret123"}
+        ...     {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         ... )
         'Connection failed: https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
 

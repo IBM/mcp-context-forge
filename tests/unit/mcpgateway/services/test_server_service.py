@@ -1403,7 +1403,11 @@ class TestServerService:
         # Test various UUID formats that should all normalize correctly
         test_cases = [
             {"input": "550e8400e29b41d4a716446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard lowercase UUID"},  # pragma: allowlist secret
-            {"input": "550E8400-E29B-41D4-A716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Uppercase UUID (should normalize to lowercase)"},  # pragma: allowlist secret
+            {
+                "input": "550E8400-E29B-41D4-A716-446655440000",
+                "expected": "550e8400e29b41d4a716446655440000",  # pragma: allowlist secret
+                "description": "Uppercase UUID (should normalize to lowercase)",
+            },  # pragma: allowlist secret
             {"input": "00000000000000000000000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},  # pragma: allowlist secret
             {"input": "ffffffffffffffffffffffffffffffff", "expected": "ffffffffffffffffffffffffffffffff", "description": "Max UUID"},  # pragma: allowlist secret
         ]
@@ -1491,8 +1495,8 @@ class TestServerService:
             "token_endpoint": "https://idp.example.com/oauth/token",
             "authorization_endpoint": "https://idp.example.com/oauth/authorize",
             "scopes_supported": ["openid", "profile", "email"],
-            "client_secret": "super-secret",
-            "password": "p@ssw0rd",
+            "client_secret": "super-secret",  # pragma: allowlist secret
+            "password": "p@ssw0rd",  # pragma: allowlist secret
         }
 
         # Mock service methods
@@ -1632,8 +1636,8 @@ class TestServerService:
         new_oauth_config = {
             "authorization_server": "https://auth.example.com",
             "scopes_supported": ["read", "write"],
-            "client_secret": "top-secret",
-            "password": "s3cr3t",
+            "client_secret": "top-secret",  # pragma: allowlist secret
+            "password": "s3cr3t",  # pragma: allowlist secret
         }
 
         server_service._notify_server_updated = AsyncMock()
@@ -1845,7 +1849,7 @@ class TestServerService:
             associated_prompts = None
             tags = None
             oauth_enabled = None
-            oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}
+            oauth_config = {"authorization_server": "https://auth.example.com", "client_secret": "legacy-secret"}  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.services.server_service.get_for_update", return_value=mock_server),
@@ -1863,7 +1867,7 @@ class TestServerService:
         mock_server.oauth_enabled = True
         mock_server.oauth_config = {
             "authorization_server": "https://idp.example.com",
-            "client_secret": "do-not-leak",
+            "client_secret": "do-not-leak",  # pragma: allowlist secret
             "scopes_supported": ["openid"],
         }
 

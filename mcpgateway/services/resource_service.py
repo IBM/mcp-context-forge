@@ -363,7 +363,7 @@ class ResourceService(BaseService):
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
             >>> r = SimpleNamespace(
-            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
+            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,  # pragma: allowlist secret
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2],
             ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
             ...                      "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
@@ -3523,7 +3523,7 @@ class ResourceService(BaseService):
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
+            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))  # pragma: allowlist secret
             'resource_read'
         """
         with create_span("resource.get", {"resource.id": resource_id, "include_inactive": include_inactive}):

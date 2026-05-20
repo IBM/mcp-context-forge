@@ -201,13 +201,13 @@ async def main():
 
     # Provider-specific recommendations
     if not env_vars.get("OPENAI_API_KEY"):
-        logger.info("   💡 For OpenAI models: export OPENAI_API_KEY='sk-...'")
+        logger.info("   💡 For OpenAI models: export OPENAI_API_KEY='sk-...'")  # pragma: allowlist secret
 
     if not env_vars.get("ANTHROPIC_API_KEY"):
-        logger.info("   💡 For Anthropic models: export ANTHROPIC_API_KEY='sk-ant-...'")
+        logger.info("   💡 For Anthropic models: export ANTHROPIC_API_KEY='sk-ant-...'")  # pragma: allowlist secret
 
     if not env_vars.get("AZURE_OPENAI_API_KEY"):
-        logger.info("   💡 For Azure OpenAI: export AZURE_OPENAI_API_KEY='...' and AZURE_OPENAI_ENDPOINT='...'")
+        logger.info("   💡 For Azure OpenAI: export AZURE_OPENAI_API_KEY='...' and AZURE_OPENAI_ENDPOINT='...'")  # pragma: allowlist secret
 
     # Rule-based judge always works
     if "rule-based" in available_judges:
