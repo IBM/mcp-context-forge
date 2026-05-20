@@ -489,8 +489,16 @@ class Settings(BaseSettings):
     sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
-    sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+    sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL (base URL, e.g. https://company.okta.com)")
     sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    sso_okta_apiam_enabled: bool = Field(
+        default=True,
+        description=(
+            "Use Okta API Access Management (Custom Authorization Server, /oauth2/default/*). "
+            "Set to false to use the Okta Org Authorization Server (/oauth2/v1/*), which does not "
+            "require the API Access Management add-on."
+        ),
+    )
     okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")

@@ -65,11 +65,12 @@ def get_predefined_sso_providers() -> List[Dict]:
         >>> isinstance(result, list)
         True
 
-        Patch configuration to include Okta provider:
+        Patch configuration to include Okta provider (API Access Management / Custom Authorization Server):
         >>> cfg = SimpleNamespace(
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',
+        ...     sso_okta_apiam_enabled=True,
         ...     sso_ibm_verify_enabled=False, sso_entra_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -187,6 +188,20 @@ def get_predefined_sso_providers() -> List[Dict]:
                     logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
+        # SSO_OKTA_APIAM_ENABLED=true (default): Custom Authorization Server — requires the
+        # Okta API Access Management add-on (/oauth2/default/*).
+        # SSO_OKTA_APIAM_ENABLED=false: Org Authorization Server — no add-on required (/oauth2/v1/*).
+        apiam_enabled = getattr(settings, "sso_okta_apiam_enabled", True)
+        if apiam_enabled:
+            authorization_url = f"{base_url}/oauth2/default/v1/authorize"
+            token_url = f"{base_url}/oauth2/default/v1/token"
+            userinfo_url = f"{base_url}/oauth2/default/v1/userinfo"
+            issuer = f"{base_url}/oauth2/default"
+        else:
+            authorization_url = f"{base_url}/oauth2/v1/authorize"
+            token_url = f"{base_url}/oauth2/v1/token"
+            userinfo_url = f"{base_url}/oauth2/v1/userinfo"
+            issuer = base_url
         providers.append(
             {
                 "id": "okta",
@@ -195,10 +210,10 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "provider_type": "oidc",
                 "client_id": settings.sso_okta_client_id,
                 "client_secret": settings.sso_okta_client_secret.get_secret_value() if settings.sso_okta_client_secret else "",
-                "authorization_url": f"{base_url}/oauth2/default/v1/authorize",
-                "token_url": f"{base_url}/oauth2/default/v1/token",
-                "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
-                "issuer": f"{base_url}/oauth2/default",
+                "authorization_url": authorization_url,
+                "token_url": token_url,
+                "userinfo_url": userinfo_url,
+                "issuer": issuer,
                 "scope": settings.sso_okta_scope,
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,

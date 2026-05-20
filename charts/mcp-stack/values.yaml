@@ -931,6 +931,10 @@ mcpContextForge:
     SSO_GOOGLE_ENABLED: "false"
     SSO_IBM_VERIFY_ENABLED: "false"
     SSO_OKTA_ENABLED: "false"
+    # Set to "false" when Okta API Access Management add-on is not available.
+    # Uses the Org Authorization Server (/oauth2/v1/*) instead of the Custom
+    # Authorization Server (/oauth2/default/*). Default: "true".
+    SSO_OKTA_APIAM_ENABLED: "true"
     SSO_KEYCLOAK_ENABLED: "false"
     SSO_ENTRA_ENABLED: "false"
     SSO_GENERIC_ENABLED: "false"
