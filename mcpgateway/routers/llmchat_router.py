@@ -63,12 +63,32 @@ async def init_redis() -> None:
     """Initialize Redis client using the shared factory.
 
     Should be called during application startup from main.py lifespan.
+
+    Note:
+        Redis is optional for single-worker deployments. LLM Chat will use
+        in-memory session storage when Redis is unavailable. For multi-worker
+        production deployments, Redis is strongly recommended for session
+        consistency across workers.
     """
     global redis_client
     if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
         redis_client = await get_redis_client()
         if redis_client:
-            logger.info("LLMChat router connected to shared Redis client")
+            logger.info("LLM Chat: Redis connected for distributed session management")
+        else:
+            logger.warning(
+                "LLM Chat: Redis connection failed. Using in-memory session storage. "
+                "This is acceptable for single-worker deployments but NOT recommended for "
+                "multi-worker production environments. Set CACHE_TYPE=redis and REDIS_URL "
+                "in your .env file for distributed session management."
+            )
+    else:
+        logger.info(
+            "LLM Chat: Redis not configured. Using in-memory session storage. "
+            "This is acceptable for single-worker deployments but NOT recommended for "
+            "multi-worker production environments. To enable Redis, set CACHE_TYPE=redis "
+            "and REDIS_URL in your .env file."
+        )
 
 
 # Fallback in-memory stores (used when Redis unavailable)
@@ -855,11 +875,33 @@ async def connect(input_data: ConnectInput, request: Request, user=Depends(get_c
             logger.warning("Invalid LLM configuration for user %s", SecurityValidator.sanitize_log_message(user_id))
             await delete_user_config(user_id)
             raise HTTPException(status_code=400, detail="Invalid LLM configuration")
-        except Exception:
+        except ImportError as import_error:
             # Clean up partial state
-            logger.error("Service initialization failed for user %s", SecurityValidator.sanitize_log_message(user_id), exc_info=True)
+            logger.error("LLM Chat dependencies missing for user %s: %s", SecurityValidator.sanitize_log_message(user_id), import_error, exc_info=True)
             await delete_user_config(user_id)
-            raise HTTPException(status_code=500, detail="Service initialization failed")
+            error_msg = str(import_error)
+            if "LLM chat dependencies" in error_msg:
+                raise HTTPException(status_code=503, detail=f"LLM Chat dependencies missing. Install with: pip install '.[llmchat]'. Error: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Service initialization failed: {error_msg}")
+        except Exception as init_error:
+            # Clean up partial state
+            logger.error("Service initialization failed for user %s: %s", SecurityValidator.sanitize_log_message(user_id), init_error, exc_info=True)
+            await delete_user_config(user_id)
+            error_msg = str(init_error)
+
+            # Provide helpful error messages for common issues
+            if "redis" in error_msg.lower() or "connection" in error_msg.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Service initialization failed: {error_msg}. "
+                        "Note: Redis is optional for single-worker deployments. "
+                        "If you're running multiple workers, ensure Redis is configured "
+                        "by setting CACHE_TYPE=redis and REDIS_URL in your .env file."
+                    ),
+                )
+
+            raise HTTPException(status_code=500, detail=f"Service initialization failed: {error_msg}")
 
         await set_active_session(user_id, chat_service)
 
