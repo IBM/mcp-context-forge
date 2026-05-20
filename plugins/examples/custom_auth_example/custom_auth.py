@@ -257,7 +257,7 @@ class CustomAuthPlugin(Plugin):
         # No custom authentication matched - fall back to standard JWT/API token validation
         return PluginResult(
             continue_processing=True,
-            metadata={"custom_auth": "not_applicable"},
+            metadata={"custom_auth": "not_applicable"},  # pragma: allowlist secret
         )
 
     async def http_post_request(
@@ -303,11 +303,7 @@ class CustomAuthPlugin(Plugin):
 
         # Log authentication attempt for audit
         # Note: context.global_context.request_id is the same across all hooks for this request
-        logger.info(
-            f"[{context.global_context.request_id}] Auth request completed: "
-            f"path={payload.path} method={payload.method} status={payload.status_code} "
-            f"client={payload.client_host}"
-        )
+        logger.info(f"[{context.global_context.request_id}] Auth request completed: " f"path={payload.path} method={payload.method} status={payload.status_code} " f"client={payload.client_host}")
 
         return PluginResult(
             modified_payload=HttpHeaderPayload(root=response_headers),

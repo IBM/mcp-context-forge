@@ -49,7 +49,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         assert resp.status in (200, 201), f"Create provider failed: {resp.status} {resp.text()}"
@@ -73,7 +73,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -94,7 +94,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -115,7 +115,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()
@@ -134,7 +134,7 @@ class TestLLMProviderLifecycle:
                 "name": name,
                 "provider_type": "openai",
                 "api_base": "https://api.openai.com/v1",
-                "api_key": "sk-test-key-not-real",
+                "api_key": "sk-test-key-not-real",  # pragma: allowlist secret
             },
         )
         provider = create_resp.json()

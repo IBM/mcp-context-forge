@@ -150,7 +150,7 @@ class SessionBackend:
             redis_url: Redis connection URL. Required when backend='redis'.
                 Format: 'redis://[:password]@host:port/db'
             database_url: Database connection URL. Required when backend='database'.
-                Format depends on database type (e.g., 'postgresql://user:pass@host/db')
+                Format depends on database type (e.g., 'postgresql://user:pass@host/db')  # pragma: allowlist secret
             session_ttl: Session time-to-live in seconds. Sessions are automatically
                 cleaned up after this duration of inactivity. Default: 3600 (1 hour).
             message_ttl: Message time-to-live in seconds. Undelivered messages are

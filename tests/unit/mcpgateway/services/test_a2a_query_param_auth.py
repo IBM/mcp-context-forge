@@ -276,7 +276,7 @@ class TestA2AQueryParamAuthUpdate:
         mock_agent.endpoint_url = "https://api.tavily.com/a2a"
         mock_agent.auth_type = "query_param"
         mock_agent.auth_value = None
-        mock_agent.auth_query_params = {"tavilyApiKey": "encrypted_value"}
+        mock_agent.auth_query_params = {"tavilyApiKey": "encrypted_value"}  # pragma: allowlist secret
         mock_agent.enabled = True
         mock_agent.version = 1
         mock_agent.visibility = "public"
@@ -318,7 +318,7 @@ class TestA2AQueryParamAuthUpdate:
         mock_agent.endpoint_url = "https://api.example.com/a2a"
         mock_agent.auth_type = "query_param"
         mock_agent.auth_value = None
-        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}  # pragma: allowlist secret
         mock_agent.enabled = True
         mock_agent.version = 1
         mock_agent.visibility = "public"
@@ -341,8 +341,8 @@ class TestA2AQueryParamAuthUpdate:
                     update = A2AAgentUpdate.model_construct(auth_query_param_value="rotated-secret")
                     await a2a_service.update_agent(test_db, "agent-123", update)
 
-        enc.assert_called_once_with({"api_key": "rotated-secret"})
-        assert mock_agent.auth_query_params == {"api_key": "encrypted_new"}
+        enc.assert_called_once_with({"api_key": "rotated-secret"})  # pragma: allowlist secret
+        assert mock_agent.auth_query_params == {"api_key": "encrypted_new"}  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_update_agent_key_only_no_value_does_not_update(self, a2a_service, test_db, monkeypatch):
@@ -354,7 +354,7 @@ class TestA2AQueryParamAuthUpdate:
         mock_agent.endpoint_url = "https://api.example.com/a2a"
         mock_agent.auth_type = "query_param"
         mock_agent.auth_value = None
-        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}  # pragma: allowlist secret
         mock_agent.enabled = True
         mock_agent.version = 1
         mock_agent.visibility = "public"
@@ -378,7 +378,7 @@ class TestA2AQueryParamAuthUpdate:
                     await a2a_service.update_agent(test_db, "agent-123", update)
 
         enc.assert_not_called()
-        assert mock_agent.auth_query_params == {"api_key": "encrypted_old"}
+        assert mock_agent.auth_query_params == {"api_key": "encrypted_old"}  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_update_agent_masked_placeholder_reencrypts_on_key_change(self, a2a_service, test_db, monkeypatch):
@@ -429,7 +429,7 @@ class TestA2AQueryParamAuthUpdate:
         mock_agent.endpoint_url = "https://api.example.com/a2a"
         mock_agent.auth_type = "query_param"
         mock_agent.auth_value = None
-        mock_agent.auth_query_params = {"api_key": "encrypted_old"}
+        mock_agent.auth_query_params = {"api_key": "encrypted_old"}  # pragma: allowlist secret
         mock_agent.enabled = True
         mock_agent.version = 1
         mock_agent.visibility = "public"
@@ -560,7 +560,7 @@ class TestA2AAgentReadQueryParamMasking:
                 "updated_at": "2025-01-01T00:00:00Z",
                 "last_interaction": None,
                 "auth_type": "query_param",
-                "auth_query_params": {"tavilyApiKey": "encrypted_secret"},
+                "auth_query_params": {"tavilyApiKey": "encrypted_secret"},  # pragma: allowlist secret
             }
 
             agent_read = A2AAgentRead.model_validate(data)

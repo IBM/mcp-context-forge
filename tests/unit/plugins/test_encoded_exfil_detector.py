@@ -137,7 +137,7 @@ class TestEncodedDetectionScan:
         cfg = EncodedExfilDetectorConfig()
 
         # Long alphanumeric string that's not valid base64/hex
-        payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}
+        payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}  # pragma: allowlist secret
 
         count, _, findings = _scan_container(payload, cfg)
         # Should not detect since it won't decode properly or meet suspicion criteria
@@ -450,7 +450,7 @@ class TestConfigurableKeywords:
         """A custom sensitive keyword (not in defaults) should boost the suspicion score."""
         # Use a keyword NOT in the built-in _SENSITIVE_KEYWORDS list
         # "watsonx_cred" is custom; the payload contains no built-in keywords
-        encoded = base64.b64encode(b"watsonx_cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
+        encoded = base64.b64encode(b"watsonx_cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_sensitive_keywords=["watsonx_cred"],
             min_suspicion_score=1,
@@ -467,7 +467,7 @@ class TestConfigurableKeywords:
         # Use "mq_publish" which is NOT in the built-in _EGRESS_HINTS list
         # Avoid ALL built-in hints: curl, wget, http://, https://, upload, webhook,
         # beacon, dns, exfil, pastebin, socket, send
-        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
+        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_egress_hints=["mq_publish"],
             min_suspicion_score=1,
@@ -494,7 +494,7 @@ class TestConfigurableKeywords:
 
     def test_mixed_case_extra_keyword_matches(self):
         """Extra sensitive keywords with mixed case must still match (case-insensitive)."""
-        encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
+        encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_sensitive_keywords=["WatsonX_Cred"],
             min_suspicion_score=1,
@@ -507,7 +507,7 @@ class TestConfigurableKeywords:
 
     def test_mixed_case_extra_egress_hint_matches(self):
         """Extra egress hints with mixed case must still match (case-insensitive)."""
-        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
+        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(
             extra_egress_hints=["MQ_Publish"],
             min_suspicion_score=1,
@@ -876,7 +876,7 @@ class TestErrorHandling:
     def test_detection_logging_no_sensitive_content(self, caplog):
         """When detection occurs, log output must not contain decoded payload content."""
         cfg = EncodedExfilDetectorConfig()
-        secret = "super-secret-password-value-1234"
+        secret = "super-secret-password-value-1234"  # pragma: allowlist secret
         encoded = base64.b64encode(f"password={secret}".encode()).decode()
         payload = {"data": f"curl {encoded} webhook"}
 
@@ -1125,7 +1125,7 @@ class TestDocumentedLimitations:
         """
         # \u0063 is JSON-escaped 'c' — raw scan sees literal '\u0063GFzc...' (broken base64),
         # JSON parse resolves it to 'cGFzc...' (valid base64 with 'password' keyword)
-        json_str = '{"secret": "\\u0063GFzc3dvcmQ9c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU="}'
+        json_str = '{"secret": "\\u0063GFzc3dvcmQ9c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU="}'  # pragma: allowlist secret
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": json_str}
 

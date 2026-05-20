@@ -103,7 +103,7 @@ class TestBuildConfig:
             "CONC_GATEWAY_URL": "https://backend.example.com/sse",
             "CONC_DB_CHECK": "0",
             "CONC_DB_PATH": "/tmp/test.db",
-            "DATABASE_URL": "postgresql+psycopg://user:pass@host/db",
+            "DATABASE_URL": "postgresql+psycopg://user:pass@host/db",  # pragma: allowlist secret
             "CONC_CASES": "api_smoke_20",
             "CONC_TIMEOUT_OVERRIDE": "30",
         }
@@ -114,7 +114,7 @@ class TestBuildConfig:
             assert cfg["gateway_url"] == "https://backend.example.com/sse"
             assert cfg["db_check_default"] is False
             assert cfg["db_path"] == "/tmp/test.db"
-            assert cfg["database_url"] == "postgresql+psycopg://user:pass@host/db"
+            assert cfg["database_url"] == "postgresql+psycopg://user:pass@host/db"  # pragma: allowlist secret
             assert cfg["cases_filter"] == "api_smoke_20"
             assert cfg["timeout_override"] == "30"
 
@@ -138,10 +138,10 @@ class TestDbMode:
     """Tests for _db_mode helper."""
 
     def test_postgresql_standard(self):
-        assert _db_mode("postgresql://user:pass@host/db") == "postgres"
+        assert _db_mode("postgresql://user:pass@host/db") == "postgres"  # pragma: allowlist secret
 
     def test_postgresql_psycopg(self):
-        assert _db_mode("postgresql+psycopg://user:pass@host/db") == "postgres"
+        assert _db_mode("postgresql+psycopg://user:pass@host/db") == "postgres"  # pragma: allowlist secret
 
     def test_sqlite_empty(self):
         assert _db_mode("") == "sqlite"
@@ -150,7 +150,7 @@ class TestDbMode:
         assert _db_mode("sqlite:///./mcp.db") == "sqlite"
 
     def test_sqlite_other(self):
-        assert _db_mode("mysql://user:pass@host/db") == "sqlite"
+        assert _db_mode("mysql://user:pass@host/db") == "sqlite"  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------
@@ -160,11 +160,11 @@ class TestNormalizePgDsn:
     """Tests for _normalize_pg_dsn helper."""
 
     def test_strips_psycopg_driver(self):
-        result = _normalize_pg_dsn("postgresql+psycopg://user:pass@host:5432/db")
-        assert result == "postgresql://user:pass@host:5432/db"
+        result = _normalize_pg_dsn("postgresql+psycopg://user:pass@host:5432/db")  # pragma: allowlist secret
+        assert result == "postgresql://user:pass@host:5432/db"  # pragma: allowlist secret
 
     def test_preserves_standard_dsn(self):
-        dsn = "postgresql://user:pass@host:5432/db"
+        dsn = "postgresql://user:pass@host:5432/db"  # pragma: allowlist secret
         assert _normalize_pg_dsn(dsn) == dsn
 
     def test_preserves_non_postgresql_dsn(self):

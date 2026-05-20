@@ -634,7 +634,7 @@ def test_gateway_with_oauth_data():
         "oauth_issuer": "http://localhost:3003",
         "oauth_token_url": "http://localhost:3003/token",
         "oauth_client_id": "test-client-id",
-        "oauth_client_secret": "test-client-secret",
+        "oauth_client_secret": "test-client-secret",  # pragma: allowlist secret
         "oauth_scopes": "openid profile email",
     }
 

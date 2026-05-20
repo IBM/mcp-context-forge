@@ -376,7 +376,7 @@ class TestSSOBootstrapAsync:
             "display_name": "Test Provider",
             "provider_type": "oauth2",
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "userinfo_url": "https://auth.example.com/userinfo",
@@ -418,7 +418,7 @@ class TestSSOBootstrapAsync:
             "display_name": "Updated Provider",
             "provider_type": "oauth2",
             "client_id": "updated-client",
-            "client_secret": "updated-secret",
+            "client_secret": "updated-secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "userinfo_url": "https://auth.example.com/userinfo",
@@ -460,7 +460,7 @@ class TestSSOBootstrapAsync:
             "display_name": "Updated Provider",
             "provider_type": "oidc",
             "client_id": "updated-client",
-            "client_secret": "updated-secret",
+            "client_secret": "updated-secret",  # pragma: allowlist secret
             "authorization_url": "https://auth.example.com/authorize",
             "token_url": "https://auth.example.com/token",
             "userinfo_url": "https://auth.example.com/userinfo",

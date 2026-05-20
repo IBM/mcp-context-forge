@@ -4180,7 +4180,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> # Mock request with form data
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
-        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}
+        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}  # pragma: allowlist secret
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>>
         >>> mock_db = MagicMock()
@@ -4822,9 +4822,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
         >>> mock_form = {
-        ...     "current_password": "oldpass",
-        ...     "new_password": "newpass123",
-        ...     "confirm_password": "newpass123"
+        ...     "current_password": "oldpass",  # pragma: allowlist secret
+        ...     "new_password": "newpass123",  # pragma: allowlist secret
+        ...     "confirm_password": "newpass123"  # pragma: allowlist secret
         ... }
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>> mock_request.cookies = {"jwt_token": "test_token"}
@@ -15379,7 +15379,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         "import_data": { ... },
         "conflict_strategy": "update",
         "dry_run": false,
-        "rekey_secret": "optional-new-secret",
+        "rekey_secret": "optional-new-secret",  # pragma: allowlist secret
         "selected_entities": { ... }
     }
     """

@@ -269,7 +269,7 @@ class TestMultiAuthHeaders:
     def test_gateway_read_includes_masked_auth_headers(self, monkeypatch):
         """Ensure GatewayRead surfaces auth_headers and masks values."""
         monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
-        auth_map = {"X-API-Key": "secret123", "X-Trace": "trace-value"}
+        auth_map = {"X-API-Key": "secret123", "X-Trace": "trace-value"}  # pragma: allowlist secret
         gateway_read = GatewayRead(
             name="Masked Gateway",
             url="http://example.com",
@@ -295,7 +295,7 @@ class TestMultiAuthHeaders:
         monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
 
         service = GatewayService()
-        existing_headers = {"X-API-Key": "secret123", "X-Trace": "trace-1"}
+        existing_headers = {"X-API-Key": "secret123", "X-Trace": "trace-1"}  # pragma: allowlist secret
 
         gateway_db_obj = MagicMock()
         gateway_db_obj.id = "gateway-1"

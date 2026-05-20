@@ -200,7 +200,7 @@ class TestQueryParamAuthRegistration:
         gateway_service._initialize_gateway.assert_called_once()
         call_kwargs = gateway_service._initialize_gateway.call_args[1]
         assert "auth_query_params" in call_kwargs
-        assert call_kwargs["auth_query_params"] == {"tavilyApiKey": "secret-api-key-123"}
+        assert call_kwargs["auth_query_params"] == {"tavilyApiKey": "secret-api-key-123"}  # pragma: allowlist secret
 
 
 class TestQueryParamAuthUrlHelpers:
@@ -209,7 +209,7 @@ class TestQueryParamAuthUrlHelpers:
     def test_apply_query_param_auth_adds_param(self):
         """Test that apply_query_param_auth correctly adds the param to URL."""
         url = "https://api.tavily.com/mcp"
-        params = {"tavilyApiKey": "secret123"}
+        params = {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         assert result == "https://api.tavily.com/mcp?tavilyApiKey=secret123"
 
@@ -224,7 +224,7 @@ class TestQueryParamAuthUrlHelpers:
     def test_sanitize_url_redacts_auth_param(self):
         """Test that sanitize_url_for_logging redacts the auth param."""
         url = "https://api.tavily.com/mcp?tavilyApiKey=secret123"
-        params = {"tavilyApiKey": "secret123"}
+        params = {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         result = sanitize_url_for_logging(url, params)
         assert "tavilyApiKey=REDACTED" in result
         assert "secret123" not in result

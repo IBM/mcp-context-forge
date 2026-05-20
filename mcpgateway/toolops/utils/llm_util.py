@@ -64,7 +64,7 @@ def get_llm_instance(model_type="completion"):
         >>> # We patch os.environ to simulate specific provider settings
         >>> env_vars = {
         ...     "LLM_PROVIDER": "openai",
-        ...     "OPENAI_API_KEY": "sk-mock-key",
+        ...     "OPENAI_API_KEY": "sk-mock-key",  # pragma: allowlist secret
         ...     "OPENAI_BASE_URL": "https://api.openai.com",
         ...     "OPENAI_MODEL": "gpt-4"
         ... }
@@ -78,7 +78,7 @@ def get_llm_instance(model_type="completion"):
         >>> # Case 2: Azure OpenAI Provider Configuration
         >>> env_vars = {
         ...     "LLM_PROVIDER": "azure_openai",
-        ...     "AZURE_OPENAI_API_KEY": "az-mock-key",
+        ...     "AZURE_OPENAI_API_KEY": "az-mock-key",  # pragma: allowlist secret
         ...     "AZURE_OPENAI_ENDPOINT": "https://mock.azure.com",
         ...     "AZURE_OPENAI_MODEL": "gpt-35-turbo"
         ... }
@@ -93,7 +93,7 @@ def get_llm_instance(model_type="completion"):
         ...     "AWS_BEDROCK_MODEL_ID": "anthropic.claude-v2",
         ...     "AWS_BEDROCK_REGION": "us-east-1",
         ...     "AWS_ACCESS_KEY_ID": "mock-access",
-        ...     "AWS_SECRET_ACCESS_KEY": "mock-secret"
+        ...     "AWS_SECRET_ACCESS_KEY": "mock-secret"  # pragma: allowlist secret
         ... }
         >>> with patch.dict(os.environ, env_vars):
         ...     llm_instance, llm_config = get_llm_instance("chat")
@@ -103,7 +103,7 @@ def get_llm_instance(model_type="completion"):
         >>> # Case 4: WatsonX Provider Configuration
         >>> env_vars = {
         ...     "LLM_PROVIDER": "watsonx",
-        ...     "WATSONX_APIKEY": "wx-mock-key",
+        ...     "WATSONX_APIKEY": "wx-mock-key",  # pragma: allowlist secret
         ...     "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
         ...     "WATSONX_PROJECT_ID": "mock-project-id",
         ...     "WATSONX_MODEL_ID": "ibm/granite-13b"

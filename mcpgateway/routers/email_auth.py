@@ -230,7 +230,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         Request JSON:
             {
               "email": "user@example.com",
-              "password": "secure_password"
+              "password": "secure_password"  # pragma: allowlist secret
             }
     """
     auth_service = EmailAuthService(db)
@@ -357,7 +357,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
         Request JSON:
             {
               "email": "new@example.com",
-              "password": "secure_password",
+              "password": "secure_password",  # pragma: allowlist secret
               "full_name": "New User"
             }
     """
@@ -425,8 +425,8 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
     Examples:
         Request JSON (with Bearer token in Authorization header):
             {
-              "old_password": "current_password",
-              "new_password": "new_secure_password"
+              "old_password": "current_password",  # pragma: allowlist secret
+              "new_password": "new_secure_password"  # pragma: allowlist secret
             }
     """
     auth_service = EmailAuthService(db)
@@ -708,7 +708,7 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
         Request JSON:
             {
               "email": "newuser@example.com",
-              "password": "secure_password",
+              "password": "secure_password",  # pragma: allowlist secret
               "full_name": "New User",
               "is_admin": false
             }

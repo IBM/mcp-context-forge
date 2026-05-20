@@ -119,7 +119,7 @@ class TestSecretsDetectionHookDispatch:
     async def test_prompt_pre_fetch_blocks_without_redaction(self, tmp_path: Path):
         manager = await self._manager(tmp_path, {"block_on_detection": True, "redact": False})
         try:
-            payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})
+            payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})  # pragma: allowlist secret
             result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context=self._global_context())
             assert result.continue_processing is False
             assert result.violation.code == "SECRETS_DETECTED"
@@ -140,13 +140,13 @@ class TestSecretsDetectionRustAPI:
         assert any(f.get("type") == "slack_token" for f in findings)
 
     def test_redaction_works(self):
-        count, redacted, findings = py_scan_container("AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE", {"redact": True, "redaction_text": "[REDACTED]"})
+        count, redacted, findings = py_scan_container("AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE", {"redact": True, "redaction_text": "[REDACTED]"})  # pragma: allowlist secret
         assert count >= 1
         assert "[REDACTED]" in redacted
         assert findings
 
     def test_handles_nested_structures(self):
-        data = {"users": [{"name": "Alice", "key": "AKIAFAKE12345EXAMPLE"}, {"name": "Bob", "token": "xoxr-fake-000000000-fake000000000-fakefakefakefake"}]}
+        data = {"users": [{"name": "Alice", "key": "AKIAFAKE12345EXAMPLE"}, {"name": "Bob", "token": "xoxr-fake-000000000-fake000000000-fakefakefakefake"}]}  # pragma: allowlist secret
         count, _redacted, findings = py_scan_container(data, {})
         assert count >= 2
         assert len(findings) >= 2

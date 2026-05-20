@@ -38,7 +38,7 @@ def _make_provider_data(provider_id: str | None = None) -> dict:
         "display_name": "Test SSO Provider",
         "provider_type": "oidc",
         "client_id": "test-client-id",
-        "client_secret": "test-client-secret",
+        "client_secret": "test-client-secret",  # pragma: allowlist secret
         "authorization_url": "https://auth.example.com/authorize",
         "token_url": "https://auth.example.com/token",
         "userinfo_url": "https://auth.example.com/userinfo",
