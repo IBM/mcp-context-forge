@@ -11,7 +11,7 @@ Tests the main plugin class, configuration, initialization, and lifecycle.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from mcpgateway.plugins.framework import PluginConfig
+from cpex.framework import PluginConfig
 from plugins.apiconnect_fam.apiconnect_fam import APIConnectFAMPlugin, APIConnectFAMConfig
 
 

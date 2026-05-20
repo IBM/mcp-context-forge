@@ -23,7 +23,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 # First-Party
-from mcpgateway.plugins.framework import Plugin, PluginConfig
+from cpex.framework import Plugin, PluginConfig
 
 # Local
 from .activity_orchestrator import ActivityOrchestrator
