@@ -2003,7 +2003,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     if s_id != "default_server_id":
         headers = request_headers_var.get()
         session_id = headers.get("x-mcp-session-id") if headers else None
-        
+
         # If we have a server_id but no session ID in headers, the ContextVars were captured
         # before enrichment. Fall through to ASGI scope which has the enriched headers.
         if not session_id:

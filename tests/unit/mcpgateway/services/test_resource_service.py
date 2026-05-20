@@ -2790,13 +2790,20 @@ class TestResourceUrlDetectedMimeTypePriority:
             ("https://example.com/file.json", "application/json"),
             ("https://example.com/file.pdf", "application/pdf"),
             ("https://example.com/no-extension", None),
-            ("test://unknown.xyz", "chemical/x-xyz"),  # Known chemical data format in Python's mimetypes
             ("https://example.com/file.tar.gz", "application/x-tar"),  # Python's mimetypes returns x-tar for .tar.gz
         ]
 
         for uri, expected_mime in test_cases:
             result = resource_service._detect_mime_type_from_uri(uri)
             assert result == expected_mime, f"Failed for {uri}: expected {expected_mime}, got {result}"
+
+        # Test .xyz extension conditionally - this mapping is environment-dependent
+        # and not guaranteed to be present in all Python installations
+        xyz_result = resource_service._detect_mime_type_from_uri("test://unknown.xyz")
+        if xyz_result is not None:
+            # If the system has a mapping for .xyz, verify it's the expected chemical data format
+            assert xyz_result == "chemical/x-xyz", f"System has .xyz mapping but it's {xyz_result}, not chemical/x-xyz"
+        # If xyz_result is None, that's acceptable - the system doesn't have this mapping
 
 
 class TestResourceServiceMetricsExtended:
