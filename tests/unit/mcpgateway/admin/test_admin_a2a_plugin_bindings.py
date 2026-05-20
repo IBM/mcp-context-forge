@@ -263,6 +263,75 @@ class TestA2APluginBindingsAdmin:
         bindings, total = svc.list_bindings(db_session)
         assert total == 0
 
+    @pytest.mark.asyncio
+    async def test_create_invalid_priority(self, mock_request, user_ctx, db_session):
+        """Non-integer priority returns 400."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "enforce",
+                "priority": "not-a-number",
+                "on_error": "",
+                "config": "{}",
+            }
+        )
+        response = await admin_create_a2a_plugin_binding(
+            request=mock_request,
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid priority" in body
+
+    @pytest.mark.asyncio
+    async def test_create_invalid_mode(self, mock_request, user_ctx, db_session):
+        """Mode not in {enforce, report, disabled} returns 400."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "invalid-mode",
+                "priority": "50",
+                "on_error": "",
+                "config": "{}",
+            }
+        )
+        response = await admin_create_a2a_plugin_binding(
+            request=mock_request,
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid mode" in body
+
+    @pytest.mark.asyncio
+    async def test_create_invalid_on_error(self, mock_request, user_ctx, db_session):
+        """on_error not in {fail, ignore, disable, None} returns 400."""
+        mock_request.form = AsyncMock(
+            return_value={
+                "team_id": "team-a",
+                "agent_name": "agent_x",
+                "plugin_id": "OutputLengthGuardPlugin",
+                "mode": "enforce",
+                "priority": "50",
+                "on_error": "bad-value",
+                "config": "{}",
+            }
+        )
+        response = await admin_create_a2a_plugin_binding(
+            request=mock_request,
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid on_error" in body
+
     # ------------------------------------------------------------------
     # POST /a2a/plugin-bindings/{binding_id}/delete
     # ------------------------------------------------------------------
@@ -347,6 +416,77 @@ class TestA2APluginBindingsAdmin:
         assert response.status_code == 500
         body = response.body.decode()
         assert "Error" in body
+
+    @pytest.mark.asyncio
+    async def test_delete_invalid_uuid(self, mock_request, user_ctx, db_session):
+        """Malformed binding_id returns 400."""
+        response = await admin_delete_a2a_plugin_binding(
+            request=mock_request,
+            binding_id="not-a-uuid",
+            db=db_session,
+            user=user_ctx,
+        )
+        assert response.status_code == 400
+        body = response.body.decode()
+        assert "Invalid binding ID format" in body
+
+    @pytest.mark.asyncio
+    async def test_delete_team_scope_enforcement(self, mock_request, db_session):
+        """Non-admin user can only delete bindings for their own teams."""
+        svc = A2AAgentPluginBindingService()
+
+        # Create bindings for team-a and team-b
+        binding_a_id = svc.upsert_binding(
+            db=db_session,
+            team_id="team-a",
+            agent_name="agent_x",
+            plugin_id="OutputLengthGuardPlugin",
+            mode="enforce",
+            priority=50,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        ).id
+        binding_b_id = svc.upsert_binding(
+            db=db_session,
+            team_id="team-b",
+            agent_name="agent_y",
+            plugin_id="RateLimiterPlugin",
+            mode="permissive",
+            priority=30,
+            config={},
+            on_error=None,
+            caller_email="admin@example.com",
+        ).id
+
+        non_admin_ctx = {
+            "email": "dev@team-a.com",
+            "full_name": "Dev User",
+            "is_admin": False,
+            "token_teams": ["team-a"],
+            "db": db_session,
+            "permissions": ["admin.plugins"],
+        }
+
+        # Should succeed for team-a
+        response = await admin_delete_a2a_plugin_binding(
+            request=mock_request,
+            binding_id=binding_a_id,
+            db=db_session,
+            user=non_admin_ctx,
+        )
+        assert response.status_code == 200
+
+        # Should fail with 403 for team-b
+        response = await admin_delete_a2a_plugin_binding(
+            request=mock_request,
+            binding_id=binding_b_id,
+            db=db_session,
+            user=non_admin_ctx,
+        )
+        assert response.status_code == 403
+        body = response.body.decode()
+        assert "Forbidden" in body
 
     # ------------------------------------------------------------------
     # Error paths — partial render, create

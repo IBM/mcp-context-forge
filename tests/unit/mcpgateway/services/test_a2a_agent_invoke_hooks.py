@@ -98,6 +98,106 @@ class TestA2AInvokePreHook:
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_request_headers_filtered_by_passthrough_whitelist(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """Only headers in agent.passthrough_headers reach plugins."""
+        # Narrow whitelist to a subset of headers
+        mock_agent.passthrough_headers = ["x-request-id", "x-tenant-id"]
+
+        inbound_headers = {
+            "x-tenant-id": "tenant-123",
+            "x-request-id": "req-456",
+            "user-agent": "Mozilla/5.0",
+            "referer": "https://example.com",
+            "authorization": "Bearer secret",
+        }
+        pm = _make_plugin_manager()
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+            await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+                request_headers=inbound_headers,
+            )
+
+        payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
+        filtered = payload.headers.root
+        assert "x-tenant-id" in filtered
+        assert "x-request-id" in filtered
+        assert "user-agent" not in filtered
+        assert "referer" not in filtered
+        assert "authorization" not in filtered
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_no_passthrough_headers_strips_all(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """When agent.passthrough_headers is None, no headers reach plugins."""
+        mock_agent.passthrough_headers = None
+
+        inbound_headers = {"x-tenant-id": "tenant-123", "x-request-id": "req-456"}
+        pm = _make_plugin_manager()
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+            await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+                request_headers=inbound_headers,
+            )
+
+        payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
+        assert payload.headers.root == {}
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_pre_invoke_hook_receives_request_headers(
         self,
         mock_get_for_update,

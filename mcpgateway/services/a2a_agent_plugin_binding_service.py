@@ -245,6 +245,10 @@ class A2AAgentPluginBindingService:
         elif team_id:
             query = query.filter(A2AAgentPluginBinding.team_id == team_id)
         total = query.count()
+        # TODO: For tables with >10K bindings, consider:  # pylint: disable=fixme
+        # 1. Caching total count with Redis + TTL
+        # 2. Approximate count from pg_stats
+        # 3. Cursor-based pagination (no total count needed)
         query = query.order_by(A2AAgentPluginBinding.team_id, A2AAgentPluginBinding.priority)
         if offset:
             query = query.offset(offset)
