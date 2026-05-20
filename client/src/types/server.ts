@@ -49,6 +49,14 @@ export interface ServersResponse {
 
 export type ServerStatus = "draft" | "active" | "offline" | "warning";
 
+export interface VirtualServerTag {
+  id?: string;
+  label?: string;
+  name?: string;
+  value?: string;
+  [key: string]: unknown;
+}
+
 /**
  * Virtual Server types
  *
@@ -65,7 +73,7 @@ export interface VirtualServer extends Omit<BaseServer, "team_id" | "owner_email
   associatedPrompts?: string[];
   associatedA2aAgents?: string[];
   metrics: Record<string, unknown> | null;
-  tags?: string[];
+  tags?: Array<string | VirtualServerTag>;
   createdBy: string;
   createdFromIp: string;
   createdVia: string;
