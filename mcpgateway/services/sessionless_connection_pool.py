@@ -219,7 +219,7 @@ class SessionlessConnectionPool:
                 if method is None:
                     continue
 
-                async with anyio.fail_after(self._health_check_timeout_seconds):
+                with anyio.fail_after(self._health_check_timeout_seconds):  # pylint: disable=not-async-context-manager
                     await method()
                 logger.debug("Health check succeeded via %s", method_name)
                 return True
@@ -282,7 +282,7 @@ class SessionlessConnectionPool:
         # Fallback for connections without owner task (e.g., in tests or legacy code)
         # This path has the cross-task __aexit__ issue but is kept for backward compatibility
         try:
-            async with anyio.fail_after(self._shutdown_timeout_seconds):
+            with anyio.fail_after(self._shutdown_timeout_seconds):  # pylint: disable=not-async-context-manager
                 # Close the session first
                 await connection.session.__aexit__(None, None, None)
                 # Then close the transport context
@@ -320,7 +320,7 @@ class SessionlessConnectionPool:
             transport_ctx = None
             session = None
             try:
-                async with anyio.fail_after(self._session_create_timeout_seconds):
+                with anyio.fail_after(self._session_create_timeout_seconds):  # pylint: disable=not-async-context-manager
                     if transport_type == TransportType.SSE:
                         transport_ctx = sse_client(
                             url=url,
@@ -384,7 +384,7 @@ class SessionlessConnectionPool:
 
         # Wait for connection to be created (with timeout)
         try:
-            async with anyio.fail_after(self._session_create_timeout_seconds):
+            with anyio.fail_after(self._session_create_timeout_seconds):  # pylint: disable=not-async-context-manager
                 while connection_ref[0] is None:
                     if owner_task.done():
                         # Task failed during creation
@@ -394,7 +394,7 @@ class SessionlessConnectionPool:
             # Creation failed - clean up the owner task
             shutdown_event.set()
             owner_task.cancel()
-            async with anyio.fail_after(self._shutdown_timeout_seconds):
+            with anyio.fail_after(self._shutdown_timeout_seconds):  # pylint: disable=not-async-context-manager
                 try:
                     await owner_task
                 except asyncio.CancelledError:
