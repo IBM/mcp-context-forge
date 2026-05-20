@@ -2181,13 +2181,21 @@ class SSOService:
             if any(group.lower() in entra_admin_groups for group in user_groups):
                 return True
 
-        # Check Generic OIDC admin groups
-        provider_metadata = provider.provider_metadata or {}
-        generic_admin_groups = provider_metadata.get("admin_groups", [])
-        if generic_admin_groups:
-            generic_admin_groups_lower = {str(group).lower() for group in generic_admin_groups}
+        # Check Generic OIDC admin groups (sso_generic_admin_groups setting)
+        # This applies when the provider ID matches sso_generic_provider_id
+        if provider.id == settings.sso_generic_provider_id and settings.sso_generic_admin_groups:
+            generic_admin_groups_lower = {str(group).lower() for group in settings.sso_generic_admin_groups}
             user_groups = user_info.get("groups", [])
             if any(group.lower() in generic_admin_groups_lower for group in user_groups):
+                return True
+
+        # Check Generic OIDC admin groups from provider_metadata (for other generic providers)
+        provider_metadata = provider.provider_metadata or {}
+        metadata_admin_groups = provider_metadata.get("admin_groups", [])
+        if metadata_admin_groups:
+            metadata_admin_groups_lower = {str(group).lower() for group in metadata_admin_groups}
+            user_groups = user_info.get("groups", [])
+            if any(group.lower() in metadata_admin_groups_lower for group in user_groups):
                 return True
 
         # Check role_mappings in provider_metadata: any group that maps to platform_admin grants is_admin.
