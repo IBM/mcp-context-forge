@@ -19,6 +19,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_app_routes_mounted() -> None:
+    """Mount app_router and app_spa_router on main.app if not already present.
+
+    With -n auto (xdist), a worker may import mcpgateway.main before
+    main_app_with_admin_api (conftest) sets MCPGATEWAY_UI_ENABLED=true. The
+    resulting app singleton lacks /app routes even though the skip condition
+    is False (env var is now true). This fixture guarantees the routes are
+    present before any test in this module runs, matching the dynamic-mount
+    pattern used by main_app_with_admin_api in conftest.py.
+    """
+    import mcpgateway.main as main_mod
+    from mcpgateway.routers.app import app_router, app_spa_router
+
+    existing = {getattr(r, "path", "") for r in main_mod.app.routes}
+    if "/app/auth/login" not in existing:
+        main_mod.app.include_router(app_router)
+    if "/app/{path:path}" not in existing:
+        main_mod.app.include_router(app_spa_router)
+
+
 def _make_mock_user(email: str = "test@example.com") -> MagicMock:
     """Build a MagicMock that quacks like an EmailUser ORM object."""
     user = MagicMock()

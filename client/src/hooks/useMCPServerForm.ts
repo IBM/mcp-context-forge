@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, type FormEvent } from "react";
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
+import { serversApi } from "@/api/servers";
 import {
   sanitizeString,
   sanitizeUrl,
@@ -195,6 +196,9 @@ export interface UseMCPServerFormReturn {
   errors: FormErrors;
   isValid: boolean;
   isSubmitting: boolean;
+  oauthPending: boolean;
+  oauthNotification: { type: "success" | "error"; message: string } | null;
+  clearOAuthNotification: () => void;
 
   // Setters
   setName: (value: string) => void;
@@ -303,6 +307,9 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const [queryParamName, setQueryParamName] = useState(initialState.queryParamName);
   const [queryParamApiKey, setQueryParamApiKey] = useState(initialState.queryParamApiKey);
   const [errors, setErrors] = useState<FormErrors>({});
+
+  const [oauthPending, setOAuthPending] = useState(false);
+  const [oauthNotification, setOAuthNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const isEditMode = Boolean(gatewayId);
 
@@ -427,6 +434,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       enabled: false, // Don't execute immediately
     },
   );
+
+  const clearOAuthNotification = useCallback(() => setOAuthNotification(null), []);
 
   const isSubmitting = isCreating || isUpdating;
 
@@ -625,23 +634,51 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           const formData = getFormData();
 
           // Call the appropriate API based on mode (create or update)
+          let responseGatewayId: string | undefined;
           if (isEditMode) {
             if (!gatewayId) {
               setErrors({ submit: "Cannot update: gateway ID is missing." });
               return;
             }
             await updateGateway(formData);
+            responseGatewayId = gatewayId;
           } else {
-            await createGateway(formData);
+            const response = await createGateway(formData);
+            // Extract gateway ID from response
+            responseGatewayId = (response as { id?: string })?.id;
           }
 
-          // Call success callback if provided
-          if (onSuccess) {
-            onSuccess();
-          }
+          if (authType === "oauth" && responseGatewayId) {
+            // Gateway saved — now open the OAuth popup and wait for the result.
+            // The form stays open (oauthPending=true) so the inline notification
+            // is visible when the popup posts its result back via postMessage.
+            setOAuthPending(true);
+            try {
+              const oauthResult = await serversApi.triggerOAuthAuthorization(responseGatewayId);
+              setOAuthNotification({
+                type: "success",
+                message: `OAuth authorization successful${oauthResult.gatewayName ? ` for ${oauthResult.gatewayName}` : ""}.`,
+              });
+              if (onSuccess) onSuccess();
+              resetForm();
+            } catch (oauthError) {
+              setOAuthNotification({
+                type: "error",
+                message: oauthError instanceof Error ? oauthError.message : "OAuth authorization failed.",
+              });
+              // Do not call onSuccess — leave the form open so the user can see the error.
+            } finally {
+              setOAuthPending(false);
+            }
+          } else {
+            // Call success callback if provided
+            if (onSuccess) {
+              onSuccess();
+            }
 
-          // Reset form after successful submission
-          resetForm();
+            // Reset form after successful submission
+            resetForm();
+          }
         } catch (error) {
           // Handle API errors from useQuery
           const action = isEditMode ? "update" : "create";
@@ -683,7 +720,17 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
         }
       }
     },
-    [validateForm, getFormData, createGateway, updateGateway, resetForm, isEditMode, gatewayId],
+    [
+      validateForm,
+      getFormData,
+      createGateway,
+      updateGateway,
+      resetForm,
+      isEditMode,
+      gatewayId,
+      authType,
+      onSuccess,
+    ],
   );
 
   const isValid = useMemo(() => {
@@ -736,6 +783,9 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     errors,
     isValid,
     isSubmitting,
+    oauthPending,
+    oauthNotification,
+    clearOAuthNotification,
 
     // Setters
     setName,
