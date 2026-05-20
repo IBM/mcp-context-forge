@@ -86,4 +86,84 @@ export const serversApi = {
     const validId = validateServerId(id);
     return api.post(`/gateways/${validId}/test`, {});
   },
+
+  /**
+   * Trigger OAuth authorization flow for a gateway via a popup window.
+   *
+   * Opens /oauth/authorize/{id}?popup=true in a centered popup. The backend
+   * encodes a "popup." prefix in the OAuth state so the callback page responds
+   * with window.opener.postMessage instead of rendering a full HTML page.
+   *
+   * Returns a Promise that resolves on success or rejects on error / cancellation.
+   */
+  triggerOAuthAuthorization: (id: string): Promise<OAuthCallbackResult> => {
+    const validId = validateServerId(id);
+    const authUrl = `/oauth/authorize/${validId}?popup=true`;
+
+    return new Promise((resolve, reject) => {
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+
+      const authWindow = window.open(
+        authUrl,
+        "oauth_authorization",
+        `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`,
+      );
+
+      if (!authWindow) {
+        reject(new Error("Failed to open OAuth authorization window. Please check your popup blocker settings."));
+        return;
+      }
+
+      let settled = false;
+
+      const cleanup = () => {
+        window.removeEventListener("message", messageHandler);
+        clearInterval(pollInterval);
+      };
+
+      const messageHandler = (event: MessageEvent) => {
+        // Verify the message came from our specific popup rather than checking
+        // origin, which breaks when the React dev server (e.g. :3000) and the
+        // API server (e.g. :8000) run on different ports — the popup ends up on
+        // the API origin so event.origin !== window.location.origin.
+        if (event.source !== authWindow) return;
+        const data = event.data as OAuthCallbackResult;
+        if (!data || data.type !== "oauth_callback") return;
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (data.status === "success") {
+          resolve(data);
+        } else {
+          reject(new Error(data.errorDescription ?? data.error ?? "OAuth authorization failed"));
+        }
+      };
+
+      window.addEventListener("message", messageHandler);
+
+      // Detect when the user closes the popup without completing OAuth.
+      // 1 s is fast enough to feel responsive while not burning cycles.
+      const pollInterval = setInterval(() => {
+        if (authWindow.closed) {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(new Error("OAuth authorization was cancelled"));
+          }
+        }
+      }, 1000);
+    });
+  },
 };
+
+export interface OAuthCallbackResult {
+  type: "oauth_callback";
+  status: "success" | "error";
+  gatewayId?: string;
+  gatewayName?: string;
+  error?: string;
+  errorDescription?: string;
+}
