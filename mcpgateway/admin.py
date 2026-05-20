@@ -14123,7 +14123,7 @@ async def admin_test_gateway(
                     else:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
                         return GatewayTestResponse(
-                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit {settings.app_domain}oauth/authorize/{gateway.id} to complete OAuth flow."}
                         )
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")

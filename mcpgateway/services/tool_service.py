@@ -4036,7 +4036,7 @@ class ToolService(BaseService):
         # while still allowing legitimate plugin-injected auth (e.g. Vault) to satisfy
         # the requirement.
         if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in runtime_headers):
-            raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+            raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit {settings.app_domain}oauth/authorize/{gateway_id_str} to complete OAuth flow.")
 
         runtime_headers = inject_trace_context_headers(runtime_headers)
 
@@ -5690,7 +5690,7 @@ class ToolService(BaseService):
                     # while still allowing legitimate plugin-injected auth (e.g. Vault) to satisfy
                     # the requirement.
                     if oauth_authcode_no_db_token and not any(hk.lower() == "authorization" for hk in headers):
-                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit {settings.app_domain}oauth/authorize/{gateway_id_str} to complete OAuth flow.")
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
