@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 tag records changes list[str] to list[Dict[str,str]]
 
 Revision ID: 9e028ecf59c4
-Revises: add_toolops_test_cases_table
+Revises: 59028d2263b1
 Create Date: 2025-11-26 18:15:07.113528
 """
 
@@ -20,8 +20,8 @@ import orjson
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "9e028ecf59c4"
-down_revision: Union[str, Sequence[str], None] = "add_toolops_test_cases_table"
+revision: str = "9e028ecf59c4"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "59028d2263b1"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

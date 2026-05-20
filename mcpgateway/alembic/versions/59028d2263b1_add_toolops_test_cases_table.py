@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/add_toolops_test_cases_table.py
+"""Location: ./mcpgateway/alembic/versions/59028d2263b1_add_toolops_test_cases_table.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-add_toolops_test_cases_table
+59028d2263b1_add_toolops_test_cases_table
 
-Revision ID: add_toolops_test_cases_table
+Revision ID: 59028d2263b1
 Revises: add_oauth_tokens_table
 Create Date: 2025-11-27 10:00:00.000000
 """
@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "add_toolops_test_cases_table"
-down_revision: Union[str, Sequence[str], None] = "z1a2b3c4d5e6"
+revision: str = "59028d2263b1"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "z1a2b3c4d5e6"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

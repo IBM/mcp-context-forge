@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/add_oauth_tokens_table.py
+"""Location: ./mcpgateway/alembic/versions/94f64b8e282f_add_oauth_tokens_table.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 add oauth tokens table
 
-Revision ID: add_oauth_tokens_table
+Revision ID: 94f64b8e282f
 Revises: f8c9d3e2a1b4
 Create Date: 2024-12-20 11:00:00.000000
 """
@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "add_oauth_tokens_table"
-down_revision: Union[str, Sequence[str], None] = "f8c9d3e2a1b4"
+revision: str = "94f64b8e282f"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "f8c9d3e2a1b4"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
