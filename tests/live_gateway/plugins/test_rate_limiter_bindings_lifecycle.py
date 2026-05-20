@@ -658,27 +658,34 @@ def _isolate_rate_limiter_redis_state_between_binding_tests():
     leftover ``rl:*`` counters so per-call counter snapshots in the
     inspectable tests start from zero rather than from a stale window.
 
-    Skips gracefully if Docker / Redis container isn't reachable — the
-    suite is already pytest-skipped on a missing gateway via
-    ``_is_gateway_running()``.
+    Raises ``pytest.skip`` if the Redis container is unreachable at
+    fixture setup — silently no-oping the cleanup would let stale
+    ``rl:*`` keys from earlier runs leak into the test and surface as
+    false-positive enforcement signals. Matches the same fail-loud
+    pattern used in ``_redis_rl_keys()``.
     """
     container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
 
-    def _docker_redis_cli(*args: str) -> subprocess.CompletedProcess | None:
+    def _docker_redis_cli(*args: str) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(
                 ["docker", "exec", container, "redis-cli", *args],
                 capture_output=True, text=True, timeout=5, check=False,
             )
-        except (FileNotFoundError, OSError, subprocess.SubprocessError):
-            return None
+        except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+            pytest.skip(
+                f"Redis container {container!r} unreachable via docker exec — "
+                f"cannot isolate rl:* state for this test ({type(exc).__name__}: {exc}). "
+                f"Set REDIS_CONTAINER_NAME if your compose project uses a "
+                f"different container name."
+            )
 
     # Drop the gateway-wide mode override (the most common cross-test pollutant).
     _docker_redis_cli("DEL", "plugin:RateLimiterPlugin:mode")
 
-    # Drop any leftover rl:* counters from prior runs (best-effort).
+    # Drop any leftover rl:* counters from prior runs.
     scan = _docker_redis_cli("--scan", "--pattern", "rl:*")
-    if scan is not None and scan.returncode == 0:
+    if scan.returncode == 0:
         for key in (k.strip() for k in scan.stdout.splitlines() if k.strip()):
             _docker_redis_cli("DEL", key)
 
