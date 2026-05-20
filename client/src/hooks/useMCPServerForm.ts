@@ -309,7 +309,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   const [errors, setErrors] = useState<FormErrors>({});
 
   const [oauthPending, setOAuthPending] = useState(false);
-  const [oauthNotification, setOAuthNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [oauthNotification, setOAuthNotification] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
   const isEditMode = Boolean(gatewayId);
 
@@ -664,7 +667,8 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
             } catch (oauthError) {
               setOAuthNotification({
                 type: "error",
-                message: oauthError instanceof Error ? oauthError.message : "OAuth authorization failed.",
+                message:
+                  oauthError instanceof Error ? oauthError.message : "OAuth authorization failed.",
               });
               // Do not call onSuccess — leave the form open so the user can see the error.
             } finally {
