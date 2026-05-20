@@ -75,7 +75,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
