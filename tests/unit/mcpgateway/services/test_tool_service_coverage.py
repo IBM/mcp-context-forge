@@ -168,6 +168,7 @@ def mock_tool(mock_gateway):
     tool.gateway = mock_gateway
     tool.gateway_slug = "test-gateway"
     tool.enabled = True
+    tool.deprecated = False
     tool.reachable = True
     tool.team_id = None
     tool.owner_email = "admin@example.com"
@@ -5362,6 +5363,7 @@ class TestInvokeToolCachePaths:
         tool = MagicMock(spec=DbTool)
         tool.name = "unreachable"
         tool.enabled = True
+        tool.deprecated = False
         tool.reachable = False
         tool.gateway = None
 
@@ -7561,6 +7563,7 @@ class TestInvokeToolPluginMetadataFromOrm:
         db_tool = MagicMock(spec=DbTool)
         db_tool.id = "tool-db-1"
         db_tool.enabled = True
+        db_tool.deprecated = False
         db_tool.reachable = True
         db_tool.gateway = None
 
@@ -9686,6 +9689,7 @@ class TestInvokeToolLookupLogic:
             t = MagicMock(spec=DbTool)
             t.name = name
             t.enabled = True
+            t.deprecated = False
             t.reachable = True
             t.gateway = None
             t.owner_email = None

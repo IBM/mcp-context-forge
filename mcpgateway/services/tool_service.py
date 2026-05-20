@@ -1058,6 +1058,7 @@ class ToolService(BaseService):
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
             "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
+            "deprecated": bool(tool.deprecated),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
             "team_id": tool.team_id,
@@ -4477,6 +4478,9 @@ class ToolService(BaseService):
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
+            if tool.deprecated:
+                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
@@ -4492,6 +4496,8 @@ class ToolService(BaseService):
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+        if tool_payload.get("deprecated") is True:
+            raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
         if tool_payload.get("reachable") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 

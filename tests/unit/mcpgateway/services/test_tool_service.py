@@ -438,6 +438,7 @@ def mock_tool(mock_gateway):
     tool.visibility = "public"  # Use public for tests that don't test authorization
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
+    tool.deprecated = False
     tool.reachable = True
     tool.auth_type = None
     tool.auth_username = None
@@ -7482,6 +7483,7 @@ class TestToolServiceHelpers:
             gateway_id=None,
             grpc_service_id=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             tags=None,
             team_id="team-1",
@@ -8817,6 +8819,7 @@ class TestRustMcpExecutionPlan:
             "name": "tool-one",
             "original_name": "tool-one",
             "enabled": True,
+            "deprecated": False,
             "reachable": True,
             "integration_type": "MCP",
             "request_type": "streamablehttp",
@@ -9442,6 +9445,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9517,6 +9521,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -10542,6 +10547,7 @@ class TestGrpcToolInvocation:
         tool.custom_name_slug = "test-svc-dostuff"
         tool.display_name = "Test Svc Dostuff"
         tool.enabled = True
+        tool.deprecated = False
         tool.reachable = True
         tool.tags = []
         tool.team_id = None
