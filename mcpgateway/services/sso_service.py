@@ -2050,6 +2050,14 @@ class SSOService:
             if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 await self._sync_user_roles(email, role_assignments, provider_ctx)
+                # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
+                # (e.g. user existed before the generic OIDC fix was deployed), promote now.
+                if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
+                    logger.info(f"Promoting is_admin for {SecurityValidator.sanitize_log_message(email)} — platform_admin role assigned via role_mappings")
+                    user.is_admin = True
+                    user.admin_origin = "sso"
+                    current_is_admin = True
+                    self.db.commit()
             await self._apply_team_mapping(email, user_info, provider)
 
             user_email = getattr(user, "email", None)
@@ -2173,13 +2181,34 @@ class SSOService:
             if any(group.lower() in entra_admin_groups for group in user_groups):
                 return True
 
-        # Check Generic OIDC admin groups
-        provider_metadata = provider.provider_metadata or {}
-        generic_admin_groups = provider_metadata.get("admin_groups", [])
-        if generic_admin_groups:
-            generic_admin_groups_lower = {str(group).lower() for group in generic_admin_groups}
+        # Check Generic OIDC admin groups (sso_generic_admin_groups setting)
+        # This applies when the provider ID matches sso_generic_provider_id
+        if provider.id == settings.sso_generic_provider_id and settings.sso_generic_admin_groups:
+            generic_admin_groups_lower = {str(group).lower() for group in settings.sso_generic_admin_groups}
             user_groups = user_info.get("groups", [])
             if any(group.lower() in generic_admin_groups_lower for group in user_groups):
+                return True
+
+        # Check Generic OIDC admin groups from provider_metadata (for other generic providers)
+        provider_metadata = provider.provider_metadata or {}
+        metadata_admin_groups = provider_metadata.get("admin_groups", [])
+        if metadata_admin_groups:
+            metadata_admin_groups_lower = {str(group).lower() for group in metadata_admin_groups}
+            user_groups = user_info.get("groups", [])
+            if any(group.lower() in metadata_admin_groups_lower for group in user_groups):
+                return True
+
+        # Check role_mappings in provider_metadata: any group that maps to platform_admin grants is_admin.
+        # Intentionally provider-agnostic — applies to generic OIDC, Keycloak, ADFS, and any provider
+        # whose bootstrap populates role_mappings in provider_metadata. Keys are matched case-insensitively
+        # so that IdP casing differences (e.g. "CF-Platform-Admin" vs "cf-platform-admin") do not
+        # silently block admin promotion.
+        metadata = provider.provider_metadata or {}
+        role_mappings = metadata.get("role_mappings", {})
+        if role_mappings:
+            lower_role_mappings = {k.lower(): v for k, v in role_mappings.items()}
+            user_groups = user_info.get("groups", [])
+            if any(lower_role_mappings.get(group.lower()) == "platform_admin" for group in user_groups):
                 return True
 
         return False
