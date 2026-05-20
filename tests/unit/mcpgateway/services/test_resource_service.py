@@ -2479,8 +2479,8 @@ class TestResourceUpdateMimeTypeDetection:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        # Mock _detect_mime_type to return text/plain
-        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain") as mock_detect:
+        # Mock _detect_mime_type_from_uri to return text/plain (URL detection is tried first)
+        with patch.object(resource_service, "_detect_mime_type_from_uri", return_value="text/plain") as mock_detect_uri:
             with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
                 with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
                     # Update with empty MIME type
@@ -2488,8 +2488,8 @@ class TestResourceUpdateMimeTypeDetection:
 
                     await resource_service.update_resource(mock_db, 1, update)
 
-                    # Verify _detect_mime_type was called
-                    mock_detect.assert_called_once()
+                    # Verify _detect_mime_type_from_uri was called (URL detection is first priority)
+                    mock_detect_uri.assert_called_once()
                     # Verify MIME type was set to detected value
                     assert mock_resource.mime_type == "text/plain"
 
@@ -2790,7 +2790,7 @@ class TestResourceUrlDetectedMimeTypePriority:
             ("https://example.com/file.json", "application/json"),
             ("https://example.com/file.pdf", "application/pdf"),
             ("https://example.com/no-extension", None),
-            ("test://unknown.xyz", None),  # Unknown extension
+            ("test://unknown.xyz", "chemical/x-xyz"),  # Known chemical data format in Python's mimetypes
             ("https://example.com/file.tar.gz", "application/x-tar"),  # Python's mimetypes returns x-tar for .tar.gz
         ]
 
