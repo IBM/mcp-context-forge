@@ -733,7 +733,6 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       isEditMode,
       gatewayId,
       authType,
-      onSuccess,
     ],
   );
 
