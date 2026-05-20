@@ -32,6 +32,9 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
     errors,
     isValid,
     isSubmitting,
+    oauthPending,
+    oauthNotification,
+    clearOAuthNotification,
     setName,
     setUrl,
     setDescription,
@@ -311,6 +314,41 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                 </div>
               )}
 
+              {oauthPending && (
+                <div role="status" className="rounded-md border border-blue-200 bg-blue-50 p-3 dark:border-blue-900/50 dark:bg-blue-950/50">
+                  <p className="text-sm text-blue-700 dark:text-blue-300">Waiting for OAuth authorization in the popup window…</p>
+                </div>
+              )}
+
+              {oauthNotification && (
+                <div
+                  role={oauthNotification.type === "error" ? "alert" : "status"}
+                  className={`flex items-start justify-between rounded-md border p-3 ${
+                    oauthNotification.type === "success"
+                      ? "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-950/50"
+                      : "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-950/50"
+                  }`}
+                >
+                  <p
+                    className={`text-sm ${
+                      oauthNotification.type === "success"
+                        ? "text-green-700 dark:text-green-300"
+                        : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {oauthNotification.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={clearOAuthNotification}
+                    aria-label="Dismiss notification"
+                    className="ml-2 shrink-0 p-1 opacity-60 hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-3 pt-6">
                 <Button
                   type="button"
@@ -322,10 +360,10 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!isValid || isSubmitting}
+                  disabled={!isValid || isSubmitting || oauthPending}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
-                  {isSubmitting ? "Connecting..." : "Connect server"}
+                  {isSubmitting ? "Connecting..." : oauthPending ? "Waiting for OAuth…" : "Connect server"}
                 </Button>
               </div>
             </div>
