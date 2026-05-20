@@ -315,6 +315,7 @@ async def test_token_rotation_on_login():
         mock_user.auth_provider = "email"
         mock_user.created_at = datetime(2024, 1, 1)
         mock_user.last_login = datetime(2024, 1, 1)
+        mock_user.updated_at = datetime(2024, 1, 1)
         mock_user.email_verified = True
         mock_user.password_change_required = False
         mock_user.is_email_verified = Mock(return_value=True)

@@ -30,7 +30,8 @@ class TestSecureCookies:
 
         with patch.object(settings, "environment", "development"):
             with patch.object(settings, "secure_cookies", False):
-                set_auth_cookie(response, "test_token", remember_me=False)
+                with patch.object(settings, "token_expiry", 60):
+                    set_auth_cookie(response, "test_token", remember_me=False)
 
         # Check that cookie was set
         set_cookie_header = response.headers.get("set-cookie", "")
