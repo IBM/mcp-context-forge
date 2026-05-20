@@ -668,6 +668,15 @@
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
             {% endif %}
+            {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
+            <a href="#a2a-plugin-bindings" id="tab-a2a-plugin-bindings" data-testid="a2a-plugin-bindings-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               data-action-click="showTab" data-arg0="a2a-plugin-bindings">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
+              <span x-show="!sidebarCollapsed">A2A Plugin Bindings</span>
+            </a>
+            {% endif %}
           </div>
           {% endif %}
 
@@ -7666,6 +7675,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         {% endif %}
 
 
+      </div>
+      {% endif %}
+
+      <!-- A2A Agent Plugin Bindings Panel -->
+      {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
+      <div id="a2a-plugin-bindings-panel" class="tab-panel hidden"
+           hx-get="{{ root_path }}/admin/a2a/plugin-bindings/partial"
+           hx-trigger="revealed once"
+           hx-swap="innerHTML">
+        <div class="flex justify-center items-center py-8">
+          <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span class="ml-3 text-gray-600 dark:text-gray-400">Loading A2A plugin bindings...</span>
+        </div>
       </div>
       {% endif %}
 
