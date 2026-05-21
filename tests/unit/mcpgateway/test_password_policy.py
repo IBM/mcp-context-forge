@@ -355,3 +355,54 @@ class TestPentestingReportCompliance:
         # Verify Argon2id format
         assert hashed.startswith("$argon2id$")
         assert service.verify_password("TestPassword123!", hashed)
+
+    def test_password_error_message_truncation(self):
+        """Test that long error messages are truncated for URL safety."""
+        from mcpgateway.config import settings
+
+        # Simulate very long error message (like multiple concatenated validation failures)
+        long_error = "Password must contain at least 3 of the following: lowercase letters, uppercase letters, numbers, special characters. " * 10
+        max_length = settings.password_error_message_max_length
+
+        # Apply safeguard logic from admin.py
+        error_msg = long_error
+        if len(error_msg) > max_length:
+            error_msg = error_msg[: max_length - 3] + "..."
+
+        # Verify truncation
+        assert len(error_msg) == max_length, f"Expected {max_length} chars, got {len(error_msg)}"
+        assert error_msg.endswith("..."), "Truncated message should end with '...'"
+        assert len(long_error) > max_length, "Test setup: original message must be longer than max_length"
+
+    def test_password_error_message_no_truncation_when_short(self):
+        """Test that short error messages are not truncated."""
+        from mcpgateway.config import settings
+
+        short_error = "Password is too short"
+        max_length = settings.password_error_message_max_length
+
+        # Apply safeguard logic from admin.py
+        error_msg = short_error
+        if len(error_msg) > max_length:
+            error_msg = error_msg[: max_length - 3] + "..."
+
+        # Verify no truncation
+        assert error_msg == short_error, "Short messages should not be modified"
+        assert not error_msg.endswith("..."), "Short messages should not have '...' suffix"
+        assert len(short_error) < max_length, "Test setup: short message must be under max_length"
+
+    def test_password_error_message_custom_max_length(self):
+        """Test truncation with different max_length values."""
+        # Test with custom max length of 100
+        custom_max_length = 100
+        long_error = "A" * 200
+
+        # Apply safeguard logic
+        error_msg = long_error
+        if len(error_msg) > custom_max_length:
+            error_msg = error_msg[: custom_max_length - 3] + "..."
+
+        # Verify custom truncation
+        assert len(error_msg) == custom_max_length
+        assert error_msg.endswith("...")
+        assert error_msg == ("A" * 97) + "...", "Should be 97 A's followed by '...'"

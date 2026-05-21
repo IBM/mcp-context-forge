@@ -15,7 +15,7 @@ window.PasswordValidator = {
       uppercase: /[A-Z]/.test(password),
       lowercase: /[a-z]/.test(password),
       numbers: /[0-9]/.test(password),
-      special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>\/?]/.test(password)
+      special: /[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;'`~]/.test(password)
     };
 
     const typesPresent = Object.values(has).filter(Boolean).length;
@@ -87,6 +87,15 @@ window.PasswordValidator = {
 
   /**
    * Calculate password strength score
+   *
+   * Note: This is a simplified client-side approximation for real-time UX feedback.
+   * The authoritative strength calculation is performed server-side by
+   * PasswordPolicyService.get_password_strength_score() which includes additional
+   * checks for common passwords, sequential characters, and entropy analysis.
+   *
+   * This client-side version provides immediate visual feedback during password entry
+   * but final validation and scoring always happens on the backend.
+   *
    * @param {string} password - The password to evaluate
    * @param {object} requirements - Password requirements from backend
    * @returns {object} Object with label (string) and color (string)
@@ -94,24 +103,33 @@ window.PasswordValidator = {
   getPasswordStrength: function(password, requirements) {
     let score = 0;
 
-    // Length score (0-2 points)
+    // Length scoring (0-25 points, simplified from backend scale)
     if (password.length >= requirements.min_length) {
-      score += 2;
+      score += 25;
     } else if (password.length >= 8) {
-      score += 1;
+      score += 15;
     }
 
-    // Character type scores (1 point each)
-    if (/[A-Z]/.test(password)) score++;
-    if (/[a-z]/.test(password)) score++;
-    if (/[0-9]/.test(password)) score++;
-    if (/[!@#$%^&*()_+\-=[\]{};':"\\|,.<>\/?]/.test(password)) score++;
+    // Character type scores (15 points each, max 60)
+    const hasLower = /[a-z]/.test(password);
+    const hasUpper = /[A-Z]/.test(password);
+    const hasDigit = /[0-9]/.test(password);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;'`~]/.test(password);
 
-    // Extra length bonus
-    if (password.length >= requirements.min_length + 8) score++;
+    const complexityCount = [hasLower, hasUpper, hasDigit, hasSpecial].filter(Boolean).length;
+    score += complexityCount * 15;
 
-    if (score <= 3) return { label: 'Weak', color: 'text-red-500' };
-    if (score <= 5) return { label: 'Medium', color: 'text-yellow-500' };
+    // Extra length bonus (10 points)
+    if (password.length >= requirements.min_length + 8) {
+      score += 10;
+    }
+
+    // Note: Backend also checks for common passwords (-score cap), sequential chars,
+    // and entropy, but these are too expensive for real-time client-side validation
+
+    // Map to strength labels (scale: 0-100, simplified from backend thresholds)
+    if (score < 50) return { label: 'Weak', color: 'text-red-500' };
+    if (score < 70) return { label: 'Medium', color: 'text-yellow-500' };
     return { label: 'Strong', color: 'text-green-500' };
   }
 };
