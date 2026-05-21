@@ -273,7 +273,16 @@ services:
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
+      # - REDIS_URL=rediss://redis:6380/0  # Redis with TLS (uncomment and configure certs for production)
       - REDIS_URL=redis://redis:6379/0
+      # Redis TLS (disabled by default for local dev).
+      # For production with TLS: change REDIS_URL to rediss://redis:6380/0, set REDIS_SSL=true,
+      # mount certs via a volume (see the redis service below), and set the paths below.
+      # - REDIS_SSL=true
+      # - REDIS_SSL_CA_CERTS=/app/certs/ca.crt
+      # - REDIS_SSL_CERTFILE=/app/certs/client.crt   # only for mTLS
+      # - REDIS_SSL_KEYFILE=/app/certs/client.key     # only for mTLS
+      # - REDIS_SSL_CHECK_HOSTNAME=true
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
       # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
@@ -769,6 +778,7 @@ services:
       pgbouncer:
         condition: service_healthy   # ▶ wait for connection pooler
       redis:
+        # condition: service_healthy   # ▶ wait for Redis TLS port to be ready
         condition: service_started
       # Direct PostgreSQL (uncomment if bypassing PgBouncer):
       # postgres:
@@ -1119,7 +1129,10 @@ services:
       nproc:
         soft: 5000
         hard: 5000
-    # Performance tuning for 1000+ RPS high-concurrency load testing
+      #volumes:
+        #- ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
+    # ── Plain TCP (default) ────────────────────────────────────────────────────
+    # To enable TLS: add volumes, swap in the TLS command block, change ports to 6380:6380
     command:
       - "redis-server"
       - "--maxmemory"
@@ -1134,8 +1147,48 @@ services:
       - "300"
       - "--maxclients"
       - "10000"
+    # ── TLS (disabled) — uncomment to enable ──────────────────────────────────
+    # volumes:
+    #   - ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
+    # command:
+    #   - "redis-server"
+    #   - "--tls-port"
+    #   - "6380"
+    #   - "--port"
+    #   - "0"                         # disable plain-text port
+    #   - "--tls-cert-file"
+    #   - "/certs/server.crt"
+    #   - "--tls-key-file"
+    #   - "/certs/server.key"
+    #   - "--tls-ca-cert-file"
+    #   - "/certs/ca.crt"
+    #   - "--tls-auth-clients"
+    #   - "no"                           # one-way TLS only; no client cert required
+    #   - "--maxmemory"
+    #   - "1gb"
+    #   - "--maxmemory-policy"
+    #   - "allkeys-lru"
+    #   - "--tcp-backlog"
+    #   - "2048"
+    #   - "--timeout"
+    #   - "0"
+    #   - "--tcp-keepalive"
+    #   - "300"
+    #   - "--maxclients"
+    #   - "10000"
+    # ──────────────────────────────────────────────────────────────────────────
+    healthcheck:
+      # Try TLS port 6380 first (TLS mode); fall back to plain TCP 6379 (non-TLS mode).
+      # Works for both configurations without any manual changes.
+      test: ["CMD-SHELL", "redis-cli -p 6380 --tls --cacert /certs/ca.crt --insecure ping 2>/dev/null || redis-cli -p 6379 ping"]
+      # test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     ports:
-      - "6379:6379"      # expose only if you want host access
+      #- "6380:6380"      # TLS port exposed to host
+      - "6379:6379"      # plain TCP port exposed to host
     networks: [mcpnet]
     deploy:
       resources:

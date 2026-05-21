@@ -379,3 +379,34 @@ def test_invalid_cli_params(monkeypatch):
         except RuntimeError:
             # If main doesn't catch, test will still pass
             pass
+
+
+def test_ssl_error_raises_immediately_without_retry(monkeypatch):
+    """ssl.SSLError during ping must raise RuntimeError immediately — no backoff retries."""
+    # Standard
+    import ssl
+
+    attempts = []
+
+    class MockRedisSSLFail:
+        @classmethod
+        def from_url(cls, url, **kwargs):
+            return cls()
+
+        def ping(self):
+            attempts.append(1)
+            raise ssl.SSLError("CERTIFICATE_VERIFY_FAILED")
+
+    monkeypatch.setattr("redis.Redis", MockRedisSSLFail)
+    monkeypatch.setattr(redis_isready.time, "sleep", lambda *_: None)
+
+    with pytest.raises(RuntimeError, match="TLS handshake failed"):
+        redis_isready.wait_for_redis_ready(
+            redis_url="rediss://localhost:6380/0",
+            max_retries=5,
+            retry_interval_ms=10,
+            sync=True,
+        )
+
+    # Must not retry — SSLError is fatal, abort after first attempt
+    assert len(attempts) == 1

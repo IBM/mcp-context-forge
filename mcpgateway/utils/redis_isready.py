@@ -91,6 +91,7 @@ import asyncio
 import logging
 import os
 import random
+import ssl
 import sys
 import time
 from typing import Any, Optional
@@ -116,6 +117,7 @@ def wait_for_redis_ready(
     retry_interval_ms: int = REDIS_RETRY_INTERVAL_MS,
     max_backoff: float = REDIS_MAX_BACKOFF_SECONDS,
     logger: Optional[logging.Logger] = None,
+    ssl_kwargs: Optional[dict[str, Any]] = None,
     sync: bool = False,
 ) -> None:
     """
@@ -147,6 +149,9 @@ def wait_for_redis_ready(
             so actual sleep can be ±25% of this value.
         logger : logging.Logger, optional
             Logger instance to use. If not provided, a default logger is configured.
+        ssl_kwargs : dict, optional
+            Extra keyword arguments passed to the Redis client for TLS/SSL configuration
+            (e.g. ``ssl_ca_certs``, ``ssl_certfile``, ``ssl_keyfile``). Pass ``None`` for plain TCP.
         sync : bool
             If True, runs the probe synchronously. If False (default), runs it asynchronously.
 
@@ -206,13 +211,22 @@ def wait_for_redis_ready(
             sys.stderr.write("redis library not installed - aborting (pip install redis)\n")
             sys.exit(2)
 
-        redis_client = Redis.from_url(redis_url)
+        # Spread individual TLS kwargs when provided (redis-py 7.x).
+        # In local dev ssl_kwargs is empty so redis-py uses a plain TCP connection.
+        from_url_kwargs: dict[str, Any] = dict(ssl_kwargs) if ssl_kwargs else {}
+        redis_client = Redis.from_url(redis_url, **from_url_kwargs)
         interval_s = retry_interval_ms / 1000.0  # Convert to seconds
         for attempt in range(1, max_retries + 1):
             try:
                 redis_client.ping()
                 log.info(f"Redis ready (attempt {attempt})")
                 return
+            except ssl.SSLError as exc:
+                log.error(
+                    f"TLS handshake failed connecting to Redis: {exc} — "
+                    "check REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE"
+                )
+                raise RuntimeError(f"Redis TLS handshake failed: {exc}") from exc
             except Exception as exc:
                 if attempt < max_retries:  # Don't sleep on the last attempt
                     # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff

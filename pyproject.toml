@@ -96,6 +96,7 @@ dependencies = [
     "PyYAML>=6.0.3",
     "requests>=2.33.1", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
+    "redis>=7.4.0",
     "sqlalchemy>=2.0.49",
     "sse-starlette>=3.4.1",
     "starlette>=0.30.0,<1.0.0", # prometheus-fastapi-instrumentator 7.1.0 caps at <1.0.0

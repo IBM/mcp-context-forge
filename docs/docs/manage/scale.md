@@ -1061,6 +1061,67 @@ REDIS_PARSER=auto
 | `hiredis` (default) | Production, high throughput |
 | `python` | Debugging Redis protocol issues, restricted environments |
 
+### TLS / Encrypted Connections
+
+Redis TLS is disabled by default. In production, use the `rediss://` URL scheme (double `s`) and set `REDIS_SSL=true`.
+
+**Server-side TLS (verify server certificate):**
+
+```bash
+CACHE_TYPE=redis
+REDIS_URL=rediss://redis-service:6380/0
+REDIS_SSL=true
+REDIS_SSL_CA_CERTS=/certs/ca.crt          # CA bundle to verify the server cert
+REDIS_SSL_CHECK_HOSTNAME=true             # Enable when Redis has a CA-signed cert with matching hostname
+```
+
+**Mutual TLS (mTLS — client authenticates to Redis):**
+
+```bash
+CACHE_TYPE=redis
+REDIS_URL=rediss://redis-service:6380/0
+REDIS_SSL=true
+REDIS_SSL_CA_CERTS=/certs/ca.crt
+REDIS_SSL_CERTFILE=/certs/client.crt      # Client certificate
+REDIS_SSL_KEYFILE=/certs/client.key       # Client private key
+REDIS_SSL_CHECK_HOSTNAME=true
+```
+
+**Kubernetes secret mount example:**
+
+```yaml
+env:
+  - name: REDIS_SSL
+    value: "true"
+  - name: REDIS_URL
+    value: "rediss://redis-service:6380/0"
+  - name: REDIS_SSL_CA_CERTS
+    value: /certs/ca.crt
+  - name: REDIS_SSL_CERTFILE
+    value: /certs/client.crt
+  - name: REDIS_SSL_KEYFILE
+    value: /certs/client.key
+volumeMounts:
+  - name: redis-certs
+    mountPath: /certs
+    readOnly: true
+volumes:
+  - name: redis-certs
+    secret:
+      secretName: redis-tls
+```
+
+| Variable | Description | Default |
+|---|---|---|
+| `REDIS_SSL` | Enable TLS | `false` |
+| `REDIS_SSL_CA_CERTS` | CA bundle path (server verification) | (none) |
+| `REDIS_SSL_CERTFILE` | Client certificate path (mTLS) | (none) |
+| `REDIS_SSL_KEYFILE` | Client private key path (mTLS) | (none) |
+| `REDIS_SSL_CHECK_HOSTNAME` | Verify hostname in server cert | `false` |
+
+!!! warning
+    `REDIS_SSL_CHECK_HOSTNAME=false` skips hostname verification. Enable it in production when Redis presents a valid CA-signed certificate to prevent MITM attacks.
+
 ### High Availability
 
 **Redis Sentinel** (3+ nodes):

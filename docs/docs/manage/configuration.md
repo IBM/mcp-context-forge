@@ -961,9 +961,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`       | int > 0                  |
 | `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |
+| `REDIS_SSL`               | Enable TLS for Redis       | `false`    | bool                     |
+| `REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
+| `REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
+| `REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
+| `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 !!! tip "Cache Backend Selection"
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
+
+!!! note "Redis TLS"
+    For TLS, set `REDIS_URL` to use the `rediss://` scheme (note the double `s`) and set `REDIS_SSL=true`. Supply `REDIS_SSL_CA_CERTS` to verify the server certificate. For mutual TLS (mTLS), also set `REDIS_SSL_CERTFILE` and `REDIS_SSL_KEYFILE`. Enable `REDIS_SSL_CHECK_HOSTNAME=true` only when Redis presents a valid CA-signed certificate with a matching hostname.
 
 ### Tool Lookup Cache
 

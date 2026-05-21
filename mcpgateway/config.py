@@ -2526,6 +2526,16 @@ class Settings(BaseSettings):
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
 
+    # Redis TLS Configuration
+    # Local dev:  leave redis_ssl=False and use a plain redis:// URL (default behaviour, no certs needed).
+    # Production: set REDIS_SSL=true and change REDIS_URL to rediss://<host>:6380/0, then supply
+    #             cert paths via REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE.
+    redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)")
+
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
     )

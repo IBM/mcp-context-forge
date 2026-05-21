@@ -749,11 +749,22 @@ def _get_sync_redis_client():
             # Third-Party
             import redis  # pylint: disable=import-outside-toplevel
 
-            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            # First-Party
+            from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+            if config_settings.redis_url and config_settings.redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+                log.getLogger(__name__).warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
+
+            ssl_kwargs = _build_ssl_kwargs(config_settings)
+            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2, **ssl_kwargs)
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
             log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+        except ValueError as e:
+            log.getLogger(__name__).error(f"Sync Redis SSL misconfiguration — client not started: {e}")
+            _SYNC_REDIS_CLIENT = None
+            return None
         except Exception as e:
             log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
             _SYNC_REDIS_CLIENT = None
