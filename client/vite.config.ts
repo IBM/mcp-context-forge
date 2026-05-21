@@ -28,5 +28,28 @@ export default defineConfig({
     emptyOutDir: true,
     manifest: true,
     sourcemap: false,
+    rollupOptions: {
+      external: (id) => /\.(test|spec)\.(ts|tsx|js|jsx)$/.test(id),
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (
+            id.includes("/react/") ||
+            id.includes("/react-dom/") ||
+            id.includes("/scheduler/") ||
+            id.includes("/react-is/") ||
+            id.includes("/react-remove-scroll") ||
+            id.includes("/react-style-singleton") ||
+            id.includes("/use-callback-ref") ||
+            id.includes("/use-sidecar") ||
+            id.includes("react-intl") ||
+            id.includes("@formatjs")
+          ) return "vendor-react";
+          if (id.includes("@radix-ui") || id.includes("radix-ui")) return "vendor-radix";
+          if (id.includes("lucide-react")) return "vendor-lucide";
+          return "vendor";
+        },
+      },
+    },
   },
 });

@@ -2,7 +2,6 @@ import { AuthProvider } from "./auth/AuthContext";
 import { ThemeProvider } from "./hooks/useTheme";
 import { RouterProvider, Route, Redirect, AuthGuard, useRouter } from "./router";
 import { AppShell } from "./components/layout/AppShell";
-
 import { Login } from "./pages/Login";
 import { ForgotPassword } from "./pages/ForgotPassword";
 import { ResetPassword } from "./pages/ResetPassword";
