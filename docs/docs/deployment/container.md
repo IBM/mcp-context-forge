@@ -125,11 +125,11 @@ This downloads and bundles:
 
 - Tailwind CSS (~404KB)
 - HTMX (bundled in main JS via npm/Vite)
+- Alpine.js CSP build (bundled in main JS via npm/Vite)
 - CodeMirror (~216KB)
-- Alpine.js CSP build (~48KB)
 - Chart.js (~208KB)
 
-**Total: ~932KB of UI assets**
+**Total: ~884KB of UI assets**
 
 ### Run in Airgapped Mode
 

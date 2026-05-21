@@ -94,7 +94,7 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-By default, the UI loads vendor libraries from CDNs (Tailwind, Alpine.js, etc.). HTMX is bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
+By default, the UI loads vendor libraries from CDNs (Tailwind, Chart.js, etc.). HTMX and Alpine.js are bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
 
 - All libraries load from `mcpgateway/static/vendor/`
 - No external network requests for UI assets
@@ -125,13 +125,13 @@ MCPGATEWAY_UI_AIRGAPPED=true make dev
 
 The script downloads to `mcpgateway/static/vendor/`:
 
-| Library      | Version       | Size                                         |
-| ------------ | ------------- | -------------------------------------------- |
-| Tailwind CSS | CDN           | ~404KB                                       |
-| HTMX         | 2.0.3         | Bundled in main JS (included in bundle size) |
-| CodeMirror   | 5.65.18       | ~216KB                                       |
-| Alpine.js    | 3.15.11 (CSP) | ~48KB                                        |
-| Chart.js     | 4.4.1         | ~208KB                                       |
-| Font Awesome | 6.4.0         | ~1.2MB                                       |
+| Library      | Version | Size                                         |
+| ------------ | ------- | -------------------------------------------- |
+| Tailwind CSS | CDN     | ~404KB                                       |
+| HTMX         | 2.0.3   | Bundled in main JS (included in bundle size) |
+| Alpine.js    | 3.x CSP | Bundled in main JS (included in bundle size) |
+| CodeMirror   | 5.65.18 | ~216KB                                       |
+| Chart.js     | 4.4.1   | ~208KB                                       |
+| Font Awesome | 6.4.0   | ~1.2MB                                       |
 
 ---

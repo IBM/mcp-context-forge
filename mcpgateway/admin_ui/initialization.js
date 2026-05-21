@@ -924,8 +924,8 @@ export const initializeTabState = function () {
     }
   });
 
-  // Note: URL state persistence for show-inactive toggles is now handled by
-  // Admin.updateInactiveUrlState() in admin.html via @change handlers on checkboxes.
+  // Note: URL state persistence for show-inactive toggles is handled by
+  // window.updateInactiveUrlState() (utils.js) via Alpine @change handlers on checkboxes.
   // The handlers write namespaced params (e.g., servers_inactive, tools_inactive).
 
   // Disable toggle until its target exists (prevents race with initial HTMX load)

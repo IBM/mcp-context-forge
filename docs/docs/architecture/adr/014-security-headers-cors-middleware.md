@@ -207,8 +207,8 @@ app.add_middleware(DocsAuthMiddleware)       # 3. Auth protection
 
 ### CSP Design Decisions
 
-- **'unsafe-inline'**: Required for Tailwind CSS inline styles and Alpine.js
-- **'unsafe-eval'**: No longer required - Alpine.js CSP build (@alpinejs/csp) pre-compiles expressions
+- **'unsafe-inline'**: Required for Tailwind CSS inline styles
+- **'unsafe-eval'**: Still required — HTMX evaluates `hx-vals="js:{...}"` and `hx-on:*` attributes via `htmx.config.allowEval`. Tracked in issue #4655.
 - **Specific CDN domains**: Whitelisted known-good CDN sources instead of wildcard
 - **'frame-ancestors none'**: Prevents all framing to prevent clickjacking
 
@@ -249,10 +249,10 @@ As part of the security enhancements, Subresource Integrity (SRI) has been imple
 
 ### Protected Resources
 
-All 14 external CDN resources are protected with SRI hashes:
+All external CDN resources are protected with SRI hashes:
 
 - **HTMX** (2.0.3) - Dynamic interactions (bundled via npm/Vite)
-- **Alpine.js** (3.15.11 CSP) - Reactive framework
+- **Alpine.js** (3.x CSP) - Reactive framework (bundled via npm/Vite)
 - **Chart.js** (4.4.1) - Data visualization
 - **Marked** (11.1.1) - Markdown parser
 - **DOMPurify** (3.0.6) - XSS sanitizer

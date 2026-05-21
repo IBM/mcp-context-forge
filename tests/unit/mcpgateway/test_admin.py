@@ -22056,15 +22056,13 @@ class TestLoadSriHashes:
             assert result == test_hashes
 
     def test_load_sri_hashes_excludes_tailwind_play_cdn(self):
-        """Tailwind Play CDN is intentionally excluded from SRI hash map."""
-        # First-Party
+        """Tailwind Play CDN is intentionally excluded; Alpine.js is now bundled (no CDN)."""
         from mcpgateway import admin as admin_mod
 
         admin_mod.load_sri_hashes.cache_clear()
         hashes = admin_mod.load_sri_hashes()
         assert "tailwindcss" not in hashes
-        assert "alpinejs" in hashes
-        assert hashes["alpinejs"].startswith("sha384-")
+        assert "alpinejs" not in hashes
 
 
 class TestAdminCsrfProtection:

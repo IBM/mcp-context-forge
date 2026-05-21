@@ -683,21 +683,21 @@ import {
     // (unchecked checkboxes are normally omitted from form submissions).
     params["include_inactive"] = String(elt.checked);
 
-    let perPageSelector = elt.getAttribute("data-hx-vals-per-page");
+    const perPageSelector = elt.getAttribute("data-hx-vals-per-page");
     if (perPageSelector) {
-      let perPageEl = document.querySelector(perPageSelector);
+      const perPageEl = document.querySelector(perPageSelector);
       params["per_page"] = perPageEl ? perPageEl.value || "50" : "50";
     }
 
-    let searchId = elt.getAttribute("data-hx-vals-search");
+    const searchId = elt.getAttribute("data-hx-vals-search");
     if (searchId) {
-      let searchEl = document.getElementById(searchId);
+      const searchEl = document.getElementById(searchId);
       params["q"] = searchEl ? searchEl.value || "" : "";
     }
 
-    let tagsId = elt.getAttribute("data-hx-vals-tags");
+    const tagsId = elt.getAttribute("data-hx-vals-tags");
     if (tagsId) {
-      let tagsEl = document.getElementById(tagsId);
+      const tagsEl = document.getElementById(tagsId);
       params["tags"] = tagsEl ? tagsEl.value || "" : "";
     }
   });
