@@ -3799,8 +3799,9 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     body = await _read_request_json(request)
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a completion request")
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []
     try:
@@ -4428,9 +4429,9 @@ async def server_get_tools(
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     tools = await tool_service.list_server_tools(
@@ -4479,9 +4480,9 @@ async def server_get_resources(
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     resources = await resource_service.list_server_resources(
@@ -4522,9 +4523,9 @@ async def server_get_prompts(
     user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
@@ -4583,9 +4584,9 @@ async def list_a2a_agents(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -5195,9 +5196,9 @@ async def list_tools(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -5761,9 +5762,9 @@ async def list_resources(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
@@ -6281,9 +6282,9 @@ async def list_prompts(
 
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even for admins), respect it for least-privilege
+    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
     if is_admin and token_teams is None:
-        user_email = None
-        token_teams = None  # Admin unrestricted
+        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
