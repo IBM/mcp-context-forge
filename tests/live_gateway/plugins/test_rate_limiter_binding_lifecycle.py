@@ -246,16 +246,22 @@ def _stamp_tool_team_id(tool_id: str, team_id: str) -> str:
     than letting the actual assertions fail with a confusing "no
     requests were rate-limited" message that hides the real cause.
     """
-    # Read the current value so we can restore it on teardown.
-    select_sql = f"SELECT COALESCE(team_id, '') FROM tools WHERE id = '{tool_id}';"
+    # Read the current value so we can restore it on teardown. Uses psql's `-v`
+    # variable substitution with the `:'name'` form so the values are quoted as
+    # SQL string literals by psql itself, not interpolated into the SQL text.
+    # NOTE: psql only processes `-v` substitution when reading SQL from stdin
+    # or a file (`-f`), NOT from `-c`. We pipe the SQL via `input=` and use
+    # `docker exec -i` to keep stdin open.
+    select_sql = "SELECT COALESCE(team_id, '') FROM tools WHERE id = :'tool_id';"
     cmd_select = [
-        "docker", "exec", PG_CONTAINER,
+        "docker", "exec", "-i", PG_CONTAINER,
         "psql", "-U", PG_USER, "-d", PG_DATABASE,
-        "-tAc", select_sql,
+        "-v", f"tool_id={tool_id}",
+        "-tA",
     ]
     try:
         prev = subprocess.run(
-            cmd_select, capture_output=True, text=True, timeout=10, check=True
+            cmd_select, input=select_sql, capture_output=True, text=True, timeout=10, check=True
         ).stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
         pytest.skip(
@@ -264,29 +270,37 @@ def _stamp_tool_team_id(tool_id: str, team_id: str) -> str:
             f"the container has a different name in your environment."
         )
 
-    update_sql = f"UPDATE tools SET team_id = '{team_id}' WHERE id = '{tool_id}';"
+    update_sql = "UPDATE tools SET team_id = :'team_id' WHERE id = :'tool_id';"
     cmd_update = [
-        "docker", "exec", PG_CONTAINER,
+        "docker", "exec", "-i", PG_CONTAINER,
         "psql", "-U", PG_USER, "-d", PG_DATABASE,
-        "-c", update_sql,
+        "-v", f"team_id={team_id}",
+        "-v", f"tool_id={tool_id}",
     ]
-    subprocess.run(cmd_update, capture_output=True, text=True, timeout=10, check=True)
+    subprocess.run(cmd_update, input=update_sql, capture_output=True, text=True, timeout=10, check=True)
     return prev
 
 
 def _restore_tool_team_id(tool_id: str, prev_team_id: str) -> None:
-    """Restore ``tools.team_id`` after the module finishes. Best-effort."""
-    if prev_team_id:
-        sql = f"UPDATE tools SET team_id = '{prev_team_id}' WHERE id = '{tool_id}';"
-    else:
-        sql = f"UPDATE tools SET team_id = NULL WHERE id = '{tool_id}';"
+    """Restore ``tools.team_id`` after the module finishes. Best-effort.
+
+    Uses psql's ``-v`` variable substitution piped via stdin (see note in
+    ``_stamp_tool_team_id`` for why stdin instead of ``-c``). The NULL
+    branch keeps the SQL keyword literal since ``-v`` can only substitute
+    quoted string values (``:'name'``), not unquoted keywords like NULL.
+    """
     cmd = [
-        "docker", "exec", PG_CONTAINER,
+        "docker", "exec", "-i", PG_CONTAINER,
         "psql", "-U", PG_USER, "-d", PG_DATABASE,
-        "-c", sql,
+        "-v", f"tool_id={tool_id}",
     ]
+    if prev_team_id:
+        cmd += ["-v", f"team_id={prev_team_id}"]
+        sql = "UPDATE tools SET team_id = :'team_id' WHERE id = :'tool_id';"
+    else:
+        sql = "UPDATE tools SET team_id = NULL WHERE id = :'tool_id';"
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=False)
+        subprocess.run(cmd, input=sql, capture_output=True, text=True, timeout=10, check=False)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass  # cleanup is best-effort
 
