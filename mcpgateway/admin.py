@@ -155,7 +155,6 @@ from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
@@ -164,6 +163,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
+from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -4927,7 +4927,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
             # Encode error message in URL for display to user
-            error_msg = str(e).replace(" ", "_").replace("#", "_").replace("&", "_")
+            error_msg = urllib.parse.quote(str(e))
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg}", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
