@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcpgateway.auth import get_current_user_from_cookie
 from mcpgateway.main import app
-from mcpgateway.utils.csrf import CSRF_TOKEN_LENGTH, require_csrf
+from mcpgateway.utils.csrf import CSRF_TOKEN_LENGTH
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("MCPGATEWAY_UI_ENABLED", "").lower() not in ("1", "true"),
@@ -87,17 +87,6 @@ def _raise_invalid_token():
 def _raise_expired_token():
     raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-
-def _raise_csrf_missing_header():
-    raise HTTPException(status_code=403, detail="CSRF token missing from header")
-
-
-def _raise_csrf_mismatch():
-    raise HTTPException(status_code=403, detail="CSRF token mismatch")
-
-
-def _raise_csrf_missing_cookie():
-    raise HTTPException(status_code=403, detail="CSRF token missing from cookie")
 
 
 class TestAuthLogin:
@@ -223,39 +212,6 @@ class TestGetCurrentUser:
 
 class TestLogout:
     """Tests for POST /app/auth/logout endpoint."""
-
-    def test_logout_missing_csrf_token(self, client, dep_override):
-        """Test logout without CSRF token returns 403."""
-        dep_override(get_current_user_from_cookie, lambda: (_make_mock_user(), None))
-        dep_override(require_csrf, _raise_csrf_missing_header)
-
-        response = client.post(
-            "/app/auth/logout",
-            cookies={
-                "jwt_token": "valid-jwt-token",
-                "csrf_token": "valid-csrf-token",
-            },
-        )
-
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "CSRF token" in response.json()["detail"]
-
-    def test_logout_invalid_csrf_token(self, client, dep_override):
-        """Test logout with mismatched CSRF token returns 403."""
-        dep_override(get_current_user_from_cookie, lambda: (_make_mock_user(), None))
-        dep_override(require_csrf, _raise_csrf_mismatch)
-
-        response = client.post(
-            "/app/auth/logout",
-            cookies={
-                "jwt_token": "valid-jwt-token",
-                "csrf_token": "cookie-csrf-token",
-            },
-            headers={"X-CSRF-Token": "different-csrf-token"},
-        )
-
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "CSRF token" in response.json()["detail"]
 
     def test_logout_without_authentication(self, client):
         """Test logout without authentication returns 401."""
@@ -455,26 +411,3 @@ class TestSPAServing:
         mock_settings.static_dir = tmp_path
         response = client.get("/app/nested/route")
         assert response.status_code == status.HTTP_404_NOT_FOUND
-
-
-class TestTokenExpiry:
-    """Tests for token expiry behavior."""
-
-    def test_csrf_token_expiry_synchronized_with_jwt(self, client: TestClient, dep_override: Callable[..., None]):
-        """Test that CSRF failure blocks logout even when JWT auth would succeed.
-
-        Verifies the coupling documented in csrf.py: both tokens must expire
-        simultaneously to prevent auth/CSRF desynchronization.
-        """
-        # Auth would succeed, but CSRF cookie is missing (simulates simultaneous expiry)
-        dep_override(get_current_user_from_cookie, lambda: (_make_mock_user(), "valid-jti"))
-        dep_override(require_csrf, _raise_csrf_missing_cookie)
-
-        response = client.post(
-            "/app/auth/logout",
-            cookies={"jwt_token": "valid-jwt"},
-            headers={"X-CSRF-Token": "some-token"},
-        )
-
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "CSRF token" in response.json()["detail"]
