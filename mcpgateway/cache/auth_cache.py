@@ -316,7 +316,6 @@ class AuthCache:
                 data = await redis.get(redis_key)
                 if data:
                     # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
 
                     cached = orjson.loads(data)
                     result = CachedAuthContext(
@@ -388,7 +387,6 @@ class AuthCache:
         if redis:
             try:
                 # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
 
                 redis_key = self._get_redis_key("ctx", cache_key)
                 await redis.setex(redis_key, ttl, orjson.dumps(data))
@@ -743,7 +741,6 @@ class AuthCache:
                     self._hit_count += 1
                     self._redis_hit_count += 1
                     # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
 
                     teams = orjson.loads(data)
 
@@ -782,7 +779,6 @@ class AuthCache:
         if redis:
             try:
                 # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
 
                 redis_key = self._get_redis_key("teams", cache_key)
                 await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(teams))
