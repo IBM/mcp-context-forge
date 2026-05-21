@@ -217,6 +217,46 @@ class TestPasswordPolicyService:
         requirements = policy_service.get_password_requirements(is_privileged=True)
         assert requirements["min_length"] == 22
 
+    def test_get_password_requirements_type_validation(self, policy_service):
+        """Test that get_password_requirements validates input types."""
+        # Should raise TypeError for non-boolean input
+        with pytest.raises(TypeError, match="is_privileged must be bool"):
+            policy_service.get_password_requirements(is_privileged="true")
+
+        with pytest.raises(TypeError, match="is_privileged must be bool"):
+            policy_service.get_password_requirements(is_privileged=1)
+
+    def test_password_requirements_match_validation_logic(self, policy_service):
+        """Ensure requirements descriptions match actual validation logic."""
+        requirements = policy_service.get_password_requirements()
+
+        # Test that a password meeting requirements actually validates
+        # Meets 3-of-4 complexity (uppercase, lowercase, numbers), 12+ chars
+        # Note: Avoid sequential chars (123, abc) and username matches
+        password_valid = "SecureP4ss2w0rd"
+        assert policy_service.validate_user_password(password_valid, email="user@example.com")
+
+        # Test that a password missing complexity fails
+        # Only 2 types (lowercase, numbers) - should fail 3-of-4 requirement
+        password_weak = "weakp4ssw0rd"
+        with pytest.raises(PasswordPolicyError, match="at least 3 of the following"):
+            policy_service.validate_user_password(password_weak, email="user@example.com")
+
+        # Test that password below minimum length fails
+        short_password = "Abc!1x"  # Only 6 chars
+        with pytest.raises(PasswordPolicyError, match="12 characters"):
+            policy_service.validate_user_password(short_password, email="user@example.com")
+
+        # Test each complexity type is correctly validated
+        # Lowercase + uppercase + special (no numbers)
+        assert policy_service.validate_user_password("SecurePassword!", email="user@example.com")
+
+        # Lowercase + numbers + special (no uppercase)
+        assert policy_service.validate_user_password("securep4ss!w0rd", email="person@example.com")
+
+        # Uppercase + numbers + special (no lowercase)
+        assert policy_service.validate_user_password("SECUREP4SS!W0RD", email="admin@example.com")
+
 
 class TestPasswordPolicyIntegration:
     """Integration tests for password policy with EmailAuthService."""

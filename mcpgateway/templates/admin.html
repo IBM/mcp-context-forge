@@ -237,6 +237,9 @@
       }
     </script>
 
+    <!-- Password Validator (shared utility) -->
+    <script src="{{ root_path }}/static/js/password-validator.js" nonce="{{ csp_nonce(request) }}"></script>
+
     <!-- CodeMirror -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
@@ -6315,62 +6318,30 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   {% endif %}
                 </div>
                 <script nonce="{{ csp_nonce(request) }}">
-                  // Validate the Create User password box and update requirement icons (3-of-4 complexity)
+                  // Validate the Create User password box using shared PasswordValidator
                   (function(){
                     const passwordPolicy = {
                       enabled: {{ password_policy_enabled | tojson }},
                       requirements: {{ password_requirements | tojson }}
                     };
 
-                    // Helper to update icons if element exists
-                    function updateRequirement(id, met) {
-                      const element = document.getElementById(id);
-                      if (!element) return;
-                      const icon = element.querySelector('i');
-                      if (!icon) return;
-                      if (met) {
-                        icon.className = 'fas fa-check-circle text-green-500 mr-2';
-                        element.classList.remove('text-blue-600');
-                        element.classList.add('text-green-600');
-                      } else {
-                        icon.className = 'fas fa-circle text-gray-400 mr-2';
-                        element.classList.remove('text-green-600');
-                        element.classList.add('text-blue-600');
-                      }
-                    }
-
                     window.validateNewUserPassword = function() {
-                      if (!passwordPolicy.enabled) return;
+                      if (!passwordPolicy.enabled || !window.PasswordValidator) return;
 
                       const password = document.getElementById('new_user_password')?.value || '';
-                      const req = passwordPolicy.requirements;
+                      const validation = window.PasswordValidator.validate(password, passwordPolicy.requirements);
 
-                      // Check length requirement
-                      const lengthMet = password.length >= req.min_length;
-                      updateRequirement('req-length', lengthMet);
+                      // Update requirement indicators
+                      window.PasswordValidator.updateRequirementUI('req-length', validation.details.length);
+                      window.PasswordValidator.updateRequirementUI('req-uppercase', validation.details.complexityDetails.uppercase);
+                      window.PasswordValidator.updateRequirementUI('req-lowercase', validation.details.complexityDetails.lowercase);
+                      window.PasswordValidator.updateRequirementUI('req-numbers', validation.details.complexityDetails.numbers);
+                      window.PasswordValidator.updateRequirementUI('req-special', validation.details.complexityDetails.special);
 
-                      // Check complexity requirements (3 of 4)
-                      const has = {
-                        uppercase: /[A-Z]/.test(password),
-                        lowercase: /[a-z]/.test(password),
-                        numbers: /[0-9]/.test(password),
-                        special: /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>\/?]/.test(password)
-                      };
-
-                      const typesPresent = Object.values(has).filter(Boolean).length;
-                      const complexityMet = typesPresent >= req.complexity_required;
-
-                      // Update individual character type indicators
-                      updateRequirement('req-uppercase', has.uppercase);
-                      updateRequirement('req-lowercase', has.lowercase);
-                      updateRequirement('req-numbers', has.numbers);
-                      updateRequirement('req-special', has.special);
-
-                      // Determine whether submission is allowed
-                      const allRequirementsMet = lengthMet && complexityMet;
+                      // Enable/disable submit button based on validation
                       const submitBtn = document.getElementById('create_user_submit');
                       if (submitBtn) {
-                        submitBtn.disabled = !allRequirementsMet;
+                        submitBtn.disabled = !validation.isValid;
                         if (submitBtn.disabled) {
                           submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
                         } else {
