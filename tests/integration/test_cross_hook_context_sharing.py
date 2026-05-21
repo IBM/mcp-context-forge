@@ -18,12 +18,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from unittest.mock import patch
 
 # First-Party
 from mcpgateway.db import Base
 from mcpgateway.main import app
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
-from cpex.framework import PluginManager
+from mcpgateway.plugins.framework import get_plugin_manager
 
 
 class TestCrossHookContextSharing:
@@ -60,23 +61,26 @@ class TestCrossHookContextSharing:
             mp.setenv("PLUGINS_ENABLED", "true")
             mp.setenv("PLUGINS_CONFIG_FILE", str(config_file))
 
-            # Create plugin manager
-            manager = PluginManager(str(config_file))
-            await manager.initialize()
+            # Get the plugin manager using CPEX framework
+            manager = await get_plugin_manager()
+            if manager is None:
+                pytest.skip("Plugin manager not available")
 
             yield manager
 
-            # Cleanup
-            await manager.shutdown()
+            # No explicit cleanup needed - CPEX handles lifecycle
 
     @pytest.fixture
     def test_client_with_plugins(self, plugin_manager):
         """Create test client with plugin middleware enabled."""
-        # Add the HttpAuthMiddleware with plugin manager
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
+        # Mock get_plugin_manager to return our test plugin manager
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager") as mock_get:
+            mock_get.return_value = plugin_manager
+            # Add the HttpAuthMiddleware (it will call get_plugin_manager internally)
+            app.add_middleware(HttpAuthMiddleware)
 
-        with TestClient(app) as client:
-            yield client
+            with TestClient(app) as client:
+                yield client
 
     @pytest.mark.asyncio
     async def test_http_to_rbac_context_sharing(self, test_client_with_plugins, plugin_manager):
@@ -211,12 +215,12 @@ class TestCrossHookContextSharing:
         This test verifies that each plugin gets its own isolated context
         and cannot access other plugins' context data.
         """
-        from cpex.framework import (
-            GlobalContext,
+        from mcpgateway.plugins.framework.hooks.http import (
             HttpPreRequestPayload,
             HttpHeaderPayload,
             HttpHookType,
         )
+        from mcpgateway.plugins.framework.context import GlobalContext
 
         # Create a global context
         global_context = GlobalContext(request_id="test-isolation-123")

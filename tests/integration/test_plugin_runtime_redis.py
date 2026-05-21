@@ -27,6 +27,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
+import pytest_asyncio
+
 
 # ---------------------------------------------------------------------------
 # Redis fixture (same pattern as test_rate_limiter.py)
@@ -97,23 +99,26 @@ def sync_redis(redis_url):
     r.close()
 
 
-@pytest.fixture
-def async_redis(redis_url):
-    """Set up the gateway's async Redis client to use the test Redis instance."""
+@pytest_asyncio.fixture
+async def async_redis(redis_url):
+    """Set up the plugin framework's Redis provider to use the test Redis instance."""
     import redis.asyncio as aioredis
-    import mcpgateway.utils.redis_client as rc
+    from mcpgateway.plugins._redis import set_shared_redis_provider
 
-    original_client = rc._client
-    original_initialized = rc._initialized
+    # Create a provider function that returns the test Redis client
+    async def redis_provider():
+        return aioredis.from_url(redis_url, decode_responses=True)
 
-    rc._client = aioredis.from_url(redis_url, decode_responses=True)
-    rc._initialized = True
+    # Register the provider
+    set_shared_redis_provider(redis_provider)
 
-    yield rc._client
+    # Yield the client for direct test access if needed
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    yield client
 
-    # Restore
-    rc._client = original_client
-    rc._initialized = original_initialized
+    # Cleanup: unregister the provider
+    set_shared_redis_provider(None)
+    await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +244,6 @@ class TestPubSubRedis:
     @pytest.mark.asyncio
     async def test_toggle_publishes_invalidation_message(self, async_redis, sync_redis):
         """enable_plugins_shared publishes a message on the invalidation channel."""
-        import redis as sync_redis_lib
 
         # Subscribe with sync client
         pubsub = sync_redis.pubsub()
@@ -321,19 +325,17 @@ class TestGetPluginManagerRedis:
     @pytest.mark.asyncio
     async def test_enabled_toggle_returns_manager_or_none_no_factory(self, async_redis, sync_redis):
         """When Redis has global toggle = true but no factory, returns None (no crash)."""
-        from mcpgateway.plugins import get_plugin_manager, enable_plugins_shared
-        import mcpgateway.plugins as framework
+        from mcpgateway.plugins import get_plugin_manager, enable_plugins_shared, reset_plugin_manager_factory
 
         await enable_plugins_shared(True)
 
         # With no factory initialized, should return None (not crash)
-        original = framework._plugin_manager_factory
-        framework._plugin_manager_factory = None
+        reset_plugin_manager_factory()
         try:
             result = await get_plugin_manager()
             assert result is None
         finally:
-            framework._plugin_manager_factory = original
+            pass  # Factory remains None for next test
 
     @pytest.mark.asyncio
     async def test_toggle_cycle_via_redis(self, async_redis, sync_redis):
@@ -361,7 +363,7 @@ class TestTTLCacheExpiryRedis:
     @pytest.mark.asyncio
     async def test_cache_expires_after_ttl(self, async_redis, sync_redis):
         """Manager cache entry expires after TTL and triggers rebuild."""
-        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
+        from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory as TenantPluginManagerFactory
 
         # Create a factory with very short TTL (1 second)
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
