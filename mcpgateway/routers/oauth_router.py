@@ -19,9 +19,6 @@ import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
-# First-Party - CSP nonce support
-from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
-
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -30,6 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -41,6 +39,9 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+
+# First-Party - CSP nonce support
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
@@ -249,7 +250,7 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
         if isinstance(email, str) and email.strip():
             return email.strip().lower()
     if isinstance(current_user, dict):
-        email = current_user.get("email") or current_user.get("user", {}).get("email")
+        email = get_user_email(current_user)
         if isinstance(email, str) and email.strip():
             return email.strip().lower()
     return None
@@ -291,7 +292,7 @@ async def _enforce_gateway_access(
         HTTPException: If authentication is missing or access is not permitted.
     """
     requester_email = _extract_user_email(current_user)
-    if not requester_email:
+    if not requester_email or requester_email == "unknown":
         raise HTTPException(status_code=401, detail="User authentication required")
 
     requester_is_admin = _extract_is_admin(current_user)
@@ -923,7 +924,7 @@ async def fetch_tools_after_oauth(
         if not gateway:
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
-        requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        requester_email = get_user_email(current_user)
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
