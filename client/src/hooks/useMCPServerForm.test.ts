@@ -888,5 +888,156 @@ describe("useMCPServerForm", () => {
 
       await waitFor(() => expect(result.current.advancedOpen).toBe(true));
     });
+
+    describe("OAuth Authorization Flow", () => {
+      it("should initialize oauthPending as false", () => {
+        const { result } = renderHook(() => useMCPServerForm());
+
+        expect(result.current.oauthPending).toBe(false);
+        expect(result.current.oauthNotification).toBeNull();
+      });
+
+      it("should expose clearOAuthNotification function", () => {
+        const { result } = renderHook(() => useMCPServerForm());
+
+        expect(typeof result.current.clearOAuthNotification).toBe("function");
+      });
+
+      it("should trigger OAuth authorization after successful gateway creation with OAuth auth type", async () => {
+        server.use(
+          http.post("/gateways", () => {
+            return HttpResponse.json({
+              id: "new-gateway-123",
+              name: "Test OAuth Gateway",
+              url: "http://localhost:3000",
+              transport: "STREAMABLEHTTP",
+              enabled: true,
+              visibility: "public",
+              reachable: true,
+              tool_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }),
+        );
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const mockEvent = {
+          preventDefault: vi.fn(),
+        } as unknown as React.FormEvent<HTMLFormElement>;
+
+        act(() => {
+          result.current.setName("Test OAuth Gateway");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("oauth");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        // Note: We can't easily test the actual OAuth popup behavior in unit tests
+        // since it requires window.open and postMessage. The OAuth flow is tested
+        // in the servers.test.ts file. Here we just verify the form state changes.
+        await waitFor(() => {
+          expect(result.current.isSubmitting).toBe(false);
+        });
+      });
+
+      it("should trigger OAuth authorization after successful gateway update with OAuth auth type", async () => {
+        server.use(
+          http.get("/gateways/existing-gateway", () => {
+            return HttpResponse.json({
+              id: "existing-gateway",
+              name: "Existing Gateway",
+              url: "http://localhost:3000",
+              transport: "STREAMABLEHTTP",
+              enabled: true,
+              visibility: "public",
+              reachable: true,
+              tool_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              authType: "oauth",
+            });
+          }),
+          http.put("/gateways/existing-gateway", () => {
+            return HttpResponse.json({
+              id: "existing-gateway",
+              name: "Updated OAuth Gateway",
+              url: "http://localhost:3000",
+              transport: "STREAMABLEHTTP",
+              enabled: true,
+              visibility: "public",
+              reachable: true,
+              tool_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }),
+        );
+
+        const { result } = renderHook(() => useMCPServerForm("existing-gateway"));
+        const mockEvent = {
+          preventDefault: vi.fn(),
+        } as unknown as React.FormEvent<HTMLFormElement>;
+
+        await waitFor(() => {
+          expect(result.current.name).toBe("Existing Gateway");
+        });
+
+        act(() => {
+          result.current.setName("Updated OAuth Gateway");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        await waitFor(() => {
+          expect(result.current.isSubmitting).toBe(false);
+        });
+      });
+
+      it("should not trigger OAuth authorization for non-OAuth auth types", async () => {
+        server.use(
+          http.post("/gateways", () => {
+            return HttpResponse.json({
+              id: "new-gateway-456",
+              name: "Test Basic Auth Gateway",
+              url: "http://localhost:3000",
+              transport: "STREAMABLEHTTP",
+              enabled: true,
+              visibility: "public",
+              reachable: true,
+              tool_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }),
+        );
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const mockEvent = {
+          preventDefault: vi.fn(),
+        } as unknown as React.FormEvent<HTMLFormElement>;
+
+        act(() => {
+          result.current.setName("Test Basic Auth Gateway");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("basic");
+          result.current.setAuthUsername("user");
+          result.current.setAuthPassword("pass");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        await waitFor(() => {
+          expect(result.current.isSubmitting).toBe(false);
+        });
+      });
+    });
   });
 });

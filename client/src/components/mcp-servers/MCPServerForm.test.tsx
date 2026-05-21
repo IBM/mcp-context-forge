@@ -925,5 +925,24 @@ describe("MCPServerForm", () => {
 
       consoleSpy.mockRestore();
     });
+
+    describe("OAuth Notifications", () => {
+      it("should not display OAuth pending message by default", () => {
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        expect(screen.queryByText(/Waiting for OAuth authorization/i)).not.toBeInTheDocument();
+      });
+
+      it("should not display OAuth notification by default", () => {
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        expect(screen.queryByText(/OAuth authorization successful/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/OAuth authorization failed/i)).not.toBeInTheDocument();
+      });
+
+      it("should have submit button with default text when not in OAuth flow", () => {
+        renderWithRouter(<MCPServerForm {...defaultProps} />);
+        const submitButton = screen.getByRole("button", { name: /Connect server/i });
+        expect(submitButton).toBeInTheDocument();
+      });
+    });
   });
 });
