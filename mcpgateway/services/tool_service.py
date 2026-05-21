@@ -104,11 +104,9 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
-from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -5044,6 +5042,49 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
+
+                        # Determine if we need a custom SSL context for this tool
+                        # Use per-tool SSL context when gateway has ca_certificate configured
+                        # Use gateway_ca_cert from payload (works for both cache hits and misses)
+                        use_custom_ssl = gateway_ca_cert is not None
+                        http_client = self._http_client  # Default to shared client
+
+                        if use_custom_ssl:
+                            # Create isolated HTTP client with custom SSL context for this tool
+                            # First-Party
+                            from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+                            from mcpgateway.utils.validate_signature import validate_signature  # pylint: disable=import-outside-toplevel
+
+                            # Validate CA certificate signature if signing is enabled
+                            ca_cert_valid = False
+                            if settings.enable_ed25519_signing and gateway_ca_cert_sig:
+                                public_key_pem = settings.ed25519_public_key
+                                ca_cert_valid = validate_signature(gateway_ca_cert.encode(), gateway_ca_cert_sig, public_key_pem)
+                            elif not settings.enable_ed25519_signing:
+                                # If signing is disabled, trust the certificate
+                                ca_cert_valid = True
+
+                            if ca_cert_valid:
+                                # Create SSL context with gateway's CA certificate
+                                ssl_context = get_cached_ssl_context(
+                                    gateway_ca_cert,
+                                    client_cert=gateway_client_cert,
+                                    client_key=gateway_client_key,
+                                )
+
+                                # Create isolated HTTP client with custom SSL context
+                                # Use ResilientHttpClient for consistency with shared client behavior
+                                http_client = ResilientHttpClient(
+                                    client_args={
+                                        "timeout": settings.federation_timeout,
+                                        "verify": ssl_context,
+                                        "follow_redirects": False,
+                                    }
+                                )
+                                logger.debug(f"Using custom SSL context for REST tool '{name}' (gateway: {gateway_name})")
+                            else:
+                                logger.warning(f"CA certificate signature validation failed for gateway '{gateway_name}', using default SSL verification")
+
                         try:
                             if method == "GET":
                                 # For GET: Extract and merge URL query params with input arguments
@@ -5062,7 +5103,7 @@ class ToolService(BaseService):
                                         )
 
                                 payload.update(query_params)
-                                response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                                response = await asyncio.wait_for(http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
                             elif _ct_base == "application/x-www-form-urlencoded":
                                 # NOTE: Intentional asymmetry with the JSON/default path below.
                                 # Form-encoded bodies use params= to keep URL query params on the
@@ -5070,15 +5111,13 @@ class ToolService(BaseService):
                                 # the JSON path merges them into the body via payload.update() for
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
+                                response = await asyncio.wait_for(http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=headers), timeout=effective_timeout)
                             elif _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
                                 # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
                                 headers_mp = {k: v for k, v in headers.items() if k.lower() != "content-type"}
                                 files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
-                                response = await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
-                                )
+                                response = await asyncio.wait_for(http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout)
                             else:
                                 # For POST/PUT/PATCH/DELETE: Different behavior based on mapping presence
                                 if has_query_mapping or has_header_mapping:
@@ -5087,7 +5126,7 @@ class ToolService(BaseService):
                                     payload.update(query_params)
                                 # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                                 # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
-                                response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                                response = await asyncio.wait_for(http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5181,6 +5220,13 @@ class ToolService(BaseService):
                             # ``is_error=True`` back to ``success=True`` because the
                             # validator skips (returns True) for error responses.
                             success = not getattr(tool_result, "is_error", False)
+
+                    # Clean up isolated HTTP client if we created one for REST tools
+                    if tool_integration_type == "REST" and use_custom_ssl and http_client != self._http_client:
+                        try:
+                            await http_client.aclose()
+                        except Exception as cleanup_error:
+                            logger.debug(f"Error closing isolated HTTP client for tool '{name}': {cleanup_error}")
                 elif tool_integration_type == "MCP":
                     transport = tool_request_type.lower() if tool_request_type else "sse"
 
@@ -5291,6 +5337,11 @@ class ToolService(BaseService):
                             gateway_client_key = _enc.decrypt_secret_or_plaintext(gateway_client_key)
                         except Exception as _dec_exc:
                             logger.debug("client_key decryption skipped, using as-is: %s", _dec_exc)
+
+                    # Import SSL utilities needed by nested functions
+                    # First-Party
+                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.utils.validate_signature import validate_signature  # pylint: disable=import-outside-toplevel
 
                     def create_ssl_context(
                         ca_certificate: str,
