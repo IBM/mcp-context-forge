@@ -215,6 +215,27 @@ class TestEnforceFetchToolsCsrf:
 
         assert await enforce_fetch_tools_csrf(csrf_request) is None
 
+    @patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com")
+    @patch("mcpgateway.routers.oauth_router.settings.csrf_trusted_origins", set())
+    @pytest.mark.asyncio
+    async def test_x_forwarded_host_injection_denied_when_app_domain_configured(self, csrf_request):
+        """Finding 4 deny-path: when app_domain is a real domain, an attacker-controlled
+        request_origin (via X-Forwarded-Host) must NOT widen the allowed set."""
+        url_mock = Mock()
+        url_mock.scheme = "https"
+        url_mock.netloc = "evil.example.com"
+        csrf_request.url = url_mock
+        csrf_request.headers = {
+            "origin": "https://evil.example.com",
+            "x-csrf-token": "valid-token",
+        }
+        csrf_request.cookies = {"mcpgateway_csrf_token": "valid-token"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await enforce_fetch_tools_csrf(csrf_request)
+
+        assert exc_info.value.status_code == 403
+
 
 class TestPersistLearnedAudience:
     """Tests for _persist_learned_audience helper."""

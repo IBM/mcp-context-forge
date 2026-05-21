@@ -14,7 +14,9 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 
 # Standard
 from html import escape
+import json
 import logging
+import re
 import secrets
 from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
@@ -80,11 +82,15 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
 
     # Derive the request origin from the already-normalized request.url
     # (ProxyHeadersMiddleware + ForwardedHostMiddleware run before this handler).
-    request_origin = f"{request.url.scheme}://{request.url.netloc}"
+    # Only trust request.url-derived origin when app_domain is a loopback
+    # address (localhost dev), to prevent X-Forwarded-Host amplification.
     app_domain = str(settings.app_domain)
     parsed_app = urlparse(app_domain)
     app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
-    allowed = {app_origin, request_origin}
+    allowed = {app_origin}
+    if parsed_app.hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        request_origin = f"{request.url.scheme}://{request.url.netloc}"
+        allowed.add(request_origin)
     allowed.update(settings.csrf_trusted_origins)
     if candidate not in allowed:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
@@ -662,7 +668,7 @@ async def oauth_callback(
 
         # Generate CSRF token early so it can be embedded in the JS literal
         csrf_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
-        if not isinstance(csrf_token, str) or len(csrf_token) < 32:
+        if not isinstance(csrf_token, str) or not re.match(r"^[A-Za-z0-9_=-]{32,}$", csrf_token):
             csrf_token = secrets.token_urlsafe(32)
 
         html_content = f"""
@@ -732,7 +738,7 @@ async def oauth_callback(
                                 credentials: 'include',
                                 headers: {{
                                     'Accept': 'application/json',
-                                    'X-CSRF-Token': '{csrf_token}'
+                                    'X-CSRF-Token': {json.dumps(csrf_token)}
                                 }}
                             }});
 
@@ -773,7 +779,7 @@ async def oauth_callback(
         """
         response = HTMLResponse(content=html_content)
         use_secure = (settings.environment == "production") or settings.secure_cookies
-        max_age = max(300, int(getattr(settings, "token_expiry", 60)) * 60)
+        max_age = max(300, settings.csrf_token_expiry)
         response.set_cookie(
             key=ADMIN_CSRF_COOKIE_NAME,
             value=csrf_token,
