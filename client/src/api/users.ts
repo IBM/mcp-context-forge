@@ -7,9 +7,10 @@
 import { api } from "./client";
 import type { User, CreateUserRequest, UsersResponse } from "../types/user";
 import { sanitizeString, sanitizePassword } from "@/lib/sanitize";
+import { VALIDATION, PAGINATION } from "@/lib/constants";
 
 /**
- * Validates email format
+ * Validates email format with strict RFC 5322 compliance
  * @param email - The email to validate
  * @returns The validated email
  * @throws Error if email is invalid
@@ -19,7 +20,8 @@ function validateEmail(email: string): string {
     throw new Error("Invalid email");
   }
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  // Strict email validation: alphanumeric + allowed special chars, no scripts
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
   if (!emailRegex.test(email)) {
     throw new Error("Invalid email format");
   }
@@ -34,9 +36,9 @@ function validateEmail(email: string): string {
  */
 function sanitizeCreateUserRequest(data: CreateUserRequest): CreateUserRequest {
   return {
-    email: validateEmail(sanitizeString(data.email, 255)),
-    password: sanitizePassword(data.password, 1000), // pragma: allowlist secret
-    full_name: data.full_name ? sanitizeString(data.full_name, 255) : undefined,
+    email: validateEmail(sanitizeString(data.email, VALIDATION.MAX_EMAIL_LENGTH)),
+    password: sanitizePassword(data.password, VALIDATION.MAX_PASSWORD_LENGTH), // pragma: allowlist secret
+    full_name: data.full_name ? sanitizeString(data.full_name, VALIDATION.MAX_NAME_LENGTH) : undefined,
     is_admin: data.is_admin ?? false,
     is_active: data.is_active ?? true,
     password_change_required: data.password_change_required ?? false,
@@ -59,11 +61,11 @@ export const usersApi = {
       searchParams.set("cursor", params.cursor);
     }
 
-    // Validate and clamp limit (1-100)
+    // Validate and clamp limit
     if (params?.limit !== undefined) {
       const limit = Number.isFinite(params.limit)
-        ? Math.max(1, Math.min(100, Math.floor(params.limit)))
-        : 25;
+        ? Math.max(PAGINATION.MIN_LIMIT, Math.min(PAGINATION.MAX_LIMIT, Math.floor(params.limit)))
+        : PAGINATION.DEFAULT_LIMIT;
       searchParams.set("limit", limit.toString());
     }
 

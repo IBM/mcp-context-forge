@@ -3,6 +3,8 @@ import { z } from "zod";
 import { useIntl } from "react-intl";
 import { useQuery } from "@/hooks/useQuery";
 import { sanitizeString, sanitizePassword } from "@/lib/sanitize";
+import { VALIDATION } from "@/lib/constants";
+import { parseApiError } from "@/lib/errorUtils";
 import type { User, CreateUserRequest } from "@/types/user";
 
 // Zod schema factory that accepts intl for localized messages
@@ -10,7 +12,7 @@ const createUserFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
   z.object({
     email: z
       .string()
-      .transform((val) => sanitizeString(val, 255))
+      .transform((val) => sanitizeString(val, VALIDATION.MAX_EMAIL_LENGTH))
       .pipe(
         z
           .string()
@@ -18,16 +20,16 @@ const createUserFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
       ),
     password: z
       .string()
-      .transform((val) => sanitizePassword(val, 1000))
+      .transform((val) => sanitizePassword(val, VALIDATION.MAX_PASSWORD_LENGTH))
       .pipe(
         z
           .string()
-          .min(8, intl.formatMessage({ id: "users.form.error.passwordMinLength" })),
+          .min(VALIDATION.MIN_PASSWORD_LENGTH, intl.formatMessage({ id: "users.form.error.passwordMinLength" })),
       ),
     confirmPassword: z.string(),
     fullName: z
       .string()
-      .transform((val) => sanitizeString(val, 255))
+      .transform((val) => sanitizeString(val, VALIDATION.MAX_NAME_LENGTH))
       .optional(),
     isAdmin: z.boolean().default(false),
     isActive: z.boolean().default(true),
@@ -235,42 +237,8 @@ export function useUserForm(): UseUserFormReturn {
           resetForm();
         } catch (error) {
           // Handle API errors from useQuery
-          let errorMessage = intl.formatMessage({ id: "users.form.error.createFailed" });
-
-          if (error && typeof error === "object" && "body" in error) {
-            const errorWithBody = error as {
-              body?: {
-                detail?: Array<{ msg?: string; loc?: string[] }> | string;
-                message?: string;
-              };
-            };
-
-            // Check for simple message format first
-            if (errorWithBody.body?.message) {
-              errorMessage = errorWithBody.body.message;
-            }
-            // Check for string detail
-            else if (typeof errorWithBody.body?.detail === "string") {
-              errorMessage = errorWithBody.body.detail;
-            }
-            // Then check for validation errors format
-            else {
-              const details = errorWithBody.body?.detail;
-
-              if (Array.isArray(details) && details.length > 0) {
-                // Extract error messages from validation errors
-                const messages = details
-                  .map((err) => {
-                    const field = err.loc && err.loc.length > 1 ? err.loc[err.loc.length - 1] : "";
-                    const msg = err.msg || "Invalid value";
-                    return field ? `${field}: ${msg}` : msg;
-                  })
-                  .join("; ");
-                errorMessage = messages;
-              }
-            }
-          }
-
+          const fallbackMessage = intl.formatMessage({ id: "users.form.error.createFailed" });
+          const errorMessage = parseApiError(error, fallbackMessage);
           setErrors({ submit: errorMessage });
         }
       }
@@ -285,7 +253,7 @@ export function useUserForm(): UseUserFormReturn {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) return false;
     // Password length check
-    if (password.length < 8) return false;
+    if (password.length < VALIDATION.MIN_PASSWORD_LENGTH) return false;
     return true;
   }, [email, password, confirmPassword]);
 

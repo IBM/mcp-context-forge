@@ -92,7 +92,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 aria-describedby={errors.email ? "email-error" : undefined}
               />
               {errors.email && (
-                <p id="email-error" className="text-sm text-red-500">
+                <p id="email-error" className="text-sm text-red-600 dark:text-red-400" role="alert" aria-live="polite">
                   {errors.email}
                 </p>
               )}
@@ -117,7 +117,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 aria-describedby={errors.password ? "password-error" : undefined}
               />
               {errors.password && (
-                <p id="password-error" className="text-sm text-red-500">
+                <p id="password-error" className="text-sm text-red-600 dark:text-red-400" role="alert" aria-live="polite">
                   {errors.password}
                 </p>
               )}
@@ -142,7 +142,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 aria-describedby={errors.confirmPassword ? "confirm-password-error" : undefined}
               />
               {errors.confirmPassword && (
-                <p id="confirm-password-error" className="text-sm text-red-500">
+                <p id="confirm-password-error" className="text-sm text-red-600 dark:text-red-400" role="alert" aria-live="polite">
                   {errors.confirmPassword}
                 </p>
               )}
@@ -166,7 +166,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 aria-describedby={errors.fullName ? "full-name-error" : undefined}
               />
               {errors.fullName && (
-                <p id="full-name-error" className="text-sm text-red-500">
+                <p id="full-name-error" className="text-sm text-red-600 dark:text-red-400" role="alert" aria-live="polite">
                   {errors.fullName}
                 </p>
               )}
@@ -230,8 +230,8 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               )}
 
               {errors.submit && (
-                <div className="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/50 dark:bg-red-950/50">
-                  <p className="text-sm text-red-600 dark:text-red-400">{errors.submit}</p>
+                <div className="rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/50 dark:bg-red-950/50" role="alert" aria-live="assertive">
+                  <p className="text-sm text-red-700 dark:text-red-300">{errors.submit}</p>
                 </div>
               )}
 

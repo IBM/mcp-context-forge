@@ -28,7 +28,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>; // pragma: allowlist secret
   logout: () => Promise<void>;
 }
 
