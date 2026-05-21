@@ -109,29 +109,36 @@ class BaseService(ABC):
         if user_email is None and token_teams is None:
             return query.where(model_cls.visibility != "private")
 
-        # Check if user is an admin (for both API tokens with token_teams=None
-        # and session tokens with token_teams as a list)
-        user_is_admin = user_email and is_user_admin(db, user_email)
-
-        if token_teams is None and user_is_admin:
-            return query.where(
-                or_(
-                    model_cls.visibility != "private",
-                    and_(model_cls.visibility == "private", model_cls.owner_email == user_email),
+        # Admin bypass path: only check DB for users with token_teams=None
+        # (API admin tokens). Session-token admins arrive with narrowed team list,
+        # not None, so we check admin status for them in the next branch.
+        if token_teams is None:
+            user_is_admin = user_email and is_user_admin(db, user_email)
+            if user_is_admin:
+                return query.where(
+                    or_(
+                        model_cls.visibility != "private",
+                        and_(model_cls.visibility == "private", model_cls.owner_email == user_email),
+                    )
                 )
-            )
 
+        # Team-scoped path: resolve effective teams and check admin status for
+        # session tokens (which arrive with token_teams as a list)
         effective_teams: List[str] = []
+        user_is_admin = False
         if token_teams is not None:
             effective_teams = token_teams
+            # Check admin status for session tokens (which can be narrowed)
+            user_is_admin = user_email and is_user_admin(db, user_email)
         elif user_email:
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             effective_teams = [team.id for team in user_teams]
 
-        # Public-only tokens (explicit token_teams=[]) must not get owner access
-        # For admin users with session tokens (token_teams is a list), preserve owner access
-        filter_email = None if (token_teams is not None and not token_teams and not user_is_admin) else user_email
+        # Public-only tokens (explicit token_teams=[]) must not get owner access,
+        # even for admin users - this is Layer 1 token scoping, not RBAC.
+        # Session-token admins with team scopes preserve owner access.
+        filter_email = None if (token_teams is not None and not token_teams) else user_email
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
 

@@ -13193,7 +13193,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_get_user_edit("missing%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
         assert response.status_code == 404
 
-    async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db):
+    async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db, mock_request):
         """List A2A agents when service is available."""
         agent = MagicMock()
         agent.model_dump.return_value = {"id": "agent-1", "name": "Agent One"}
@@ -13205,8 +13205,10 @@ class TestAdminAdditionalCoverage:
         service = MagicMock()
         service.list_agents = AsyncMock(return_value={"data": [agent], "pagination": pagination, "links": links})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, request=mock_request, db=mock_db, user={"email": "user@example.com"})
         assert result["data"][0]["id"] == "agent-1"
         assert result["pagination"]["page"] == 1
 
@@ -15889,36 +15891,42 @@ async def test_admin_get_all_agent_ids_all_teams_view(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_success(monkeypatch, mock_db):
+async def test_admin_get_agent_success(monkeypatch, mock_db, mock_request):
     agent = MagicMock()
     agent.model_dump.return_value = {"id": "agent-1"}
     service = MagicMock()
     service.get_agent = AsyncMock(return_value=agent)
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
 
-    result = await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+    result = await admin_get_agent("agent-1", mock_request, mock_db, user={"email": "u@example.com"})
     assert result["id"] == "agent-1"
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_not_found(monkeypatch, mock_db):
+async def test_admin_get_agent_not_found(monkeypatch, mock_db, mock_request):
     service = MagicMock()
     service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
     with pytest.raises(HTTPException) as exc:
-        await admin_get_agent("missing", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent("missing", mock_request, mock_db, user={"email": "u@example.com"})
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_generic_exception_is_reraised(monkeypatch, mock_db):
+async def test_admin_get_agent_generic_exception_is_reraised(monkeypatch, mock_db, mock_request):
     """Cover generic exception handler in admin_get_agent."""
     service = MagicMock()
     service.get_agent = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
 
     with pytest.raises(RuntimeError):
-        await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent("agent-1", mock_request, mock_db, user={"email": "u@example.com"})
 
 
 @pytest.mark.asyncio
