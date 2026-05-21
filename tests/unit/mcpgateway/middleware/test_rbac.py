@@ -2406,7 +2406,7 @@ def test_rbac_get_db_emits_deprecation_warning():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         gen = rbac.get_db()
-        _ = next(gen)  # Trigger generator to test deprecation warning
+        _ = next(gen)
 
         # Verify deprecation warning was issued
         assert len(w) == 1
@@ -2517,7 +2517,7 @@ def test_rbac_get_db_only_commits_owned_sessions():
             mock_session_local.return_value = mock_new_session
 
             gen = rbac.get_db(request=None)
-            _ = next(gen)  # Trigger generator
+            _ = next(gen)
 
             try:
                 next(gen)
@@ -2538,7 +2538,7 @@ def test_rbac_get_db_handles_rollback_on_exception():
             mock_session_local.return_value = mock_new_session
 
             gen = rbac.get_db(request=None)
-            _ = next(gen)  # Trigger generator
+            _ = next(gen)
 
             # Simulate exception
             try:
