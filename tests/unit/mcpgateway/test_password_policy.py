@@ -192,6 +192,109 @@ class TestPasswordPolicyService:
         assert policy_service._has_sequential_chars("xyztest")
         assert not policy_service._has_sequential_chars("acetest")
 
+    def test_has_sequential_chars_ascending_numbers(self, policy_service):
+        """Test ascending sequential number patterns."""
+        # Exactly 3 sequential digits (should trigger)
+        assert policy_service._has_sequential_chars("Pass123word")
+        assert policy_service._has_sequential_chars("Test456!pwd")
+        assert policy_service._has_sequential_chars("789SecurePass")
+
+        # More than 3 sequential digits (should trigger)
+        assert policy_service._has_sequential_chars("Pass1234word")
+        assert policy_service._has_sequential_chars("Test56789!pwd")
+
+        # Edge case: sequences at boundaries
+        assert policy_service._has_sequential_chars("123password")  # Start
+        assert policy_service._has_sequential_chars("password789")  # End
+
+    def test_has_sequential_chars_descending_numbers(self, policy_service):
+        """Test descending sequential number patterns."""
+        # Descending sequences (should trigger)
+        assert policy_service._has_sequential_chars("Pass321word")
+        assert policy_service._has_sequential_chars("Test654!pwd")
+        assert policy_service._has_sequential_chars("987SecurePass")
+
+        # Longer descending sequences
+        assert policy_service._has_sequential_chars("Pass4321word")
+        assert policy_service._has_sequential_chars("98765Test")
+
+    def test_has_sequential_chars_ascending_letters(self, policy_service):
+        """Test ascending sequential letter patterns (case-insensitive)."""
+        # Lowercase sequences
+        assert policy_service._has_sequential_chars("Passabc123")
+        assert policy_service._has_sequential_chars("Test!defgh")
+        assert policy_service._has_sequential_chars("xyzPassword1")
+
+        # Uppercase sequences (should be detected - method uses .lower())
+        assert policy_service._has_sequential_chars("PassABC123")
+        assert policy_service._has_sequential_chars("Test!DEFGH")
+        assert policy_service._has_sequential_chars("XYZPassword1")
+
+        # Mixed case sequences (should be detected)
+        assert policy_service._has_sequential_chars("PassAbC123")
+        assert policy_service._has_sequential_chars("Test!DeFg")
+
+    def test_has_sequential_chars_descending_letters(self, policy_service):
+        """Test descending sequential letter patterns."""
+        # Lowercase descending
+        assert policy_service._has_sequential_chars("Passcba123")
+        assert policy_service._has_sequential_chars("Test!fed")
+        assert policy_service._has_sequential_chars("zyxPassword1")
+
+        # Uppercase descending
+        assert policy_service._has_sequential_chars("PassCBA123")
+        assert policy_service._has_sequential_chars("Test!FED")
+        assert policy_service._has_sequential_chars("ZYXPassword1")
+
+    def test_has_sequential_chars_non_sequential_patterns(self, policy_service):
+        """Test that non-sequential patterns are NOT flagged."""
+        # Non-sequential numbers (safe)
+        assert not policy_service._has_sequential_chars("Pass135word")
+        assert not policy_service._has_sequential_chars("Test246!pwd")
+        assert not policy_service._has_sequential_chars("1357Password")
+        assert not policy_service._has_sequential_chars("Pass102word")
+
+        # Non-sequential letters (safe)
+        assert not policy_service._has_sequential_chars("Passacf159")  # Fixed: removed 123
+        assert not policy_service._has_sequential_chars("Test!adf")
+        assert not policy_service._has_sequential_chars("xazPassword1")
+
+        # Alternating patterns (safe)
+        assert not policy_service._has_sequential_chars("Pass1a2b3c")
+        assert not policy_service._has_sequential_chars("A1B2C3Pass")
+
+    def test_has_sequential_chars_edge_cases(self, policy_service):
+        """Test edge cases for sequential character detection."""
+        # Short passwords (less than 3 chars total)
+        assert not policy_service._has_sequential_chars("12")
+        assert not policy_service._has_sequential_chars("ab")
+        assert not policy_service._has_sequential_chars("A1")
+
+        # Exactly 3 characters
+        assert policy_service._has_sequential_chars("123")
+        assert policy_service._has_sequential_chars("abc")
+        assert policy_service._has_sequential_chars("ABC")
+        assert policy_service._has_sequential_chars("321")
+        assert policy_service._has_sequential_chars("zyx")
+
+        # Special characters mixed in (should not interfere with detection)
+        assert policy_service._has_sequential_chars("Pass!123#word")
+        assert policy_service._has_sequential_chars("Test@abc$pwd")
+
+        # Multiple non-overlapping sequences (should trigger on any one)
+        assert policy_service._has_sequential_chars("123test789")
+        assert policy_service._has_sequential_chars("abcTESTxyz")
+
+    def test_has_sequential_chars_boundary_sequences(self, policy_service):
+        """Test sequences at alphabet/digit boundaries."""
+        # Wrapping sequences (should NOT trigger - no wraparound)
+        assert not policy_service._has_sequential_chars("Pass890word")  # 8,9,0 not sequential
+        assert not policy_service._has_sequential_chars("Testxacword")  # x,a,c not sequential (no wraparound)
+
+        # Near-boundary valid sequences
+        assert policy_service._has_sequential_chars("Pass789word")  # 7,8,9 sequential
+        assert policy_service._has_sequential_chars("Testwxyzword")  # w,x,y,z sequential (contains xyz)
+
     def test_has_sufficient_entropy(self, policy_service):
         """Test entropy checking."""
         # High entropy
