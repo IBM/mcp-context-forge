@@ -2626,6 +2626,28 @@ class TestOAuthRouterPopupMode:
         assert "<div>" not in result
 
     @pytest.mark.asyncio
+    async def test_popup_notification_script_escapes_line_terminators(self):
+        """Test that U+2028 and U+2029 in payload are escaped.
+
+        json.dumps emits these characters literally, but JavaScript treats
+        them as line terminators inside string literals, which causes a
+        SyntaxError and hangs the popup.
+        """
+        from mcpgateway.routers.oauth_router import _popup_notification_script
+
+        payload = {
+            "errorDescription": "line1\u2028line2\u2029end",
+        }
+        nonce = "safe-nonce"
+
+        result = _popup_notification_script(nonce, payload)
+
+        assert "\\u2028" in result
+        assert "\\u2029" in result
+        assert "\u2028" not in result
+        assert "\u2029" not in result
+
+    @pytest.mark.asyncio
     async def test_popup_notification_script_escapes_nonce(self):
         """Test that nonce is HTML-escaped to prevent attribute injection."""
         from mcpgateway.routers.oauth_router import _popup_notification_script
