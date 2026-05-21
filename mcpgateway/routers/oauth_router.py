@@ -178,12 +178,33 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     if oauth_config.get("resource"):
         return
 
-    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
+    # Normalize multi-audience tokens to single value for Keycloak compatibility.
+    # RFC 7519 allows aud as string or array, but many IdPs (Keycloak, Entra ID)
+    # reject authorization requests with multiple resource= parameters as
+    # "duplicated parameter". When multiple audiences are present, persist only
+    # the first value to ensure subsequent authorization requests succeed.
+    normalized_aud = token_aud
+    if isinstance(token_aud, list) and len(token_aud) > 0:
+        normalized_aud = token_aud[0]
+        logger.warning(
+            "Gateway %s: IdP token contains multiple audiences %s. "
+            "Persisting only first value '%s' as resource to avoid 'duplicated parameter' "
+            "errors in subsequent authorization requests. If a different audience is required, "
+            "manually set oauthConfig.resource via the gateway update API.",
+            gateway.name,
+            token_aud,
+            normalized_aud,
+        )
+    elif isinstance(token_aud, list) and len(token_aud) == 0:
+        # Empty list - skip persistence
+        logger.debug("Gateway %s: IdP token aud claim is empty list; skipping resource persistence", gateway.name)
+        return
+
     updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
-    updated_config["resource"] = token_aud
+    updated_config["resource"] = normalized_aud
     gateway.oauth_config = updated_config
     db.flush()
-    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
+    logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource: %s", gateway.name, normalized_aud)
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
