@@ -1,4 +1,10 @@
-"""Tests for RBAC UI permission checking in admin.py.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_admin_rbac_ui.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for RBAC UI permission checking in admin.py.
 
 Tests the get_user_action_permissions() function and UI_ACTION_PERMISSIONS constant.
 
@@ -244,6 +250,7 @@ class TestGetUserActionPermissions:
             mock_service_class.return_value = mock_service
 
             checked_permissions = []
+
             async def track_permission(user_email, permission, token_teams, allow_admin_bypass, check_any_team):
                 checked_permissions.append(permission)
                 return True
@@ -278,6 +285,7 @@ class TestGetUserActionPermissions:
         db = Mock()
 
         call_count = 0
+
         async def mixed_results(user_email, permission, token_teams, allow_admin_bypass, check_any_team):
             nonlocal call_count
             call_count += 1

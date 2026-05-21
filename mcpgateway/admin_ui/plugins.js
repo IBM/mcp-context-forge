@@ -1,5 +1,29 @@
 import { safeGetElement } from "./utils.js";
 
+const MODE_LABEL = {
+  enforce: "Sequential (Enforce)",
+  sequential: "Sequential (Enforce)",
+  enforce_ignore_error: "Sequential (Ignore Error)",
+  permissive: "Transform (Permissive)",
+  transform: "Transform (Permissive)",
+  concurrent: "Concurrent",
+  audit: "Audit",
+  fire_and_forget: "Fire And Forget",
+  disabled: "Disabled",
+};
+
+const MODE_CSS = {
+  enforce: "bg-red-100 text-red-800",
+  sequential: "bg-red-100 text-red-800",
+  enforce_ignore_error: "bg-orange-100 text-orange-800",
+  permissive: "bg-blue-100 text-blue-800",
+  transform: "bg-blue-100 text-blue-800",
+  concurrent: "bg-purple-100 text-purple-800",
+  audit: "bg-yellow-100 text-yellow-800",
+  fire_and_forget: "bg-teal-100 text-teal-800",
+  disabled: "bg-gray-100 text-gray-800",
+};
+
 // Populate hook, tag, and author filters on page load
 export const populatePluginFilters = function () {
   const cards = document.querySelectorAll(".plugin-card");
@@ -328,14 +352,9 @@ export const showPluginDetails = async function (pluginName) {
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                               <p class="mt-1">
                                   <span class="px-2 py-1 text-xs rounded-full ${
-  plugin.mode === "enforce" ||
-  plugin.mode === "enforce_ignore_error"
-    ? "bg-red-100 text-red-800"
-    : plugin.mode === "permissive"
-      ? "bg-yellow-100 text-yellow-800"
-      : "bg-gray-100 text-gray-800"
+  MODE_CSS[plugin.mode] || "bg-gray-100 text-gray-800"
 }">
-                                      ${plugin.mode}
+                                      ${MODE_LABEL[plugin.mode] || (plugin.mode || "unknown").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                                   </span>
                               </p>
                           </div>

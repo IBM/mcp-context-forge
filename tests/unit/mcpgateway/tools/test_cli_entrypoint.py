@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.tools.cli entrypoint."""
+"""Location: ./tests/unit/mcpgateway/tools/test_cli_entrypoint.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.tools.cli entrypoint.
+"""
 
 # First-Party
 import mcpgateway.tools.cli as cforge_cli

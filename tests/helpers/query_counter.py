@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Database query counter for detecting N+1 patterns.
-
-Copyright 2025
+"""Location: ./tests/helpers/query_counter.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Database query counter for detecting N+1 patterns.
 This module provides utilities for counting and analyzing SQL queries,
 useful for detecting N+1 query patterns and optimizing database access.
 

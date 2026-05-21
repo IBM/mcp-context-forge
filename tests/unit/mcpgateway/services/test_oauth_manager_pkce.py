@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test OAuth Manager PKCE Support (RFC 7636).
+"""Location: ./tests/unit/mcpgateway/services/test_oauth_manager_pkce.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test OAuth Manager PKCE Support (RFC 7636).
 
 This test suite validates PKCE (Proof Key for Code Exchange) implementation
 in the OAuth Manager following TDD Red Phase.
@@ -649,7 +654,7 @@ class TestOAuthManagerClientCredentialsFlow:
         client.post = AsyncMock(return_value=response)
         monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
 
-        with pytest.raises(OAuthError, match="No access_token"):
+        with pytest.raises(OAuthError, match="OAuth token endpoint response did not contain access_token"):
             await manager._client_credentials_flow(credentials)
 
     @pytest.mark.asyncio

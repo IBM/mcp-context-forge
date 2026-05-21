@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Entry point for load testing module.
+"""Location: ./tests/load/__main__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Entry point for load testing module.
 
 Allows running as: python -m tests.load.generate
 """

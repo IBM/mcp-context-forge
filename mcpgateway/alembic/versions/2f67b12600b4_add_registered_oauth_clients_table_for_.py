@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add registered_oauth_clients table for DCR
+"""Location: ./mcpgateway/alembic/versions/2f67b12600b4_add_registered_oauth_clients_table_for_.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add registered_oauth_clients table for DCR
 
 Revision ID: 2f67b12600b4
 Revises: 61ee11c482d6
 Create Date: 2025-09-30 15:51:10.600647
-
 """
 
 # Standard

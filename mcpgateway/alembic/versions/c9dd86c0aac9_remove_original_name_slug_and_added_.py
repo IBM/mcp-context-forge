@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/alembic/versions/c9dd86c0aac9_remove_original_name_slug_and_added_.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 remove original_name_slug and added custom_name
 
 Revision ID: c9dd86c0aac9
-Revises: add_oauth_tokens_table
+Revises: 90cc4b5a96e7
 Create Date: 2025-08-19 15:15:26.509036
 """
 
@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "c9dd86c0aac9"
-down_revision: Union[str, Sequence[str], None] = "add_oauth_tokens_table"
+revision: str = "c9dd86c0aac9"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "90cc4b5a96e7"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

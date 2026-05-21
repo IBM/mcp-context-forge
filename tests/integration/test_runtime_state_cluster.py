@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration test: two ``RuntimeStateCoordinator`` instances converge via pub/sub.
+"""Location: ./tests/integration/test_runtime_state_cluster.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration test: two ``RuntimeStateCoordinator`` instances converge via pub/sub.
 
 The unit-test suite for ``runtime_state`` covers each Redis call site with a
 single mocked client. This test stands up two coordinator instances pointed at

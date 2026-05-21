@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/__init__.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -8,6 +8,7 @@ Middleware package for ContextForge.
 Contains various middleware components for request processing.
 """
 
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.token_scoping import TokenScopingMiddleware, token_scoping_middleware
 
-__all__ = ["TokenScopingMiddleware", "token_scoping_middleware"]
+__all__ = ["ForwardedHostMiddleware", "TokenScopingMiddleware", "token_scoping_middleware"]

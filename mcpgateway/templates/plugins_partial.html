@@ -1,4 +1,38 @@
 <!-- htmlhint doctype-first:false -->
+{#- Unified mode display mapping: raw mode → {label, css, dark_css} -#}
+{%- set mode_label_map = {
+  'enforce':              'Sequential (Enforce)',
+  'sequential':           'Sequential (Enforce)',
+  'enforce_ignore_error': 'Sequential (Ignore Error)',
+  'permissive':           'Transform (Permissive)',
+  'transform':            'Transform (Permissive)',
+  'concurrent':           'Concurrent',
+  'audit':                'Audit',
+  'fire_and_forget':      'Fire And Forget',
+  'disabled':             'Disabled',
+} -%}
+{%- set mode_css_map = {
+  'enforce':              'bg-red-100 text-red-800',
+  'sequential':           'bg-red-100 text-red-800',
+  'enforce_ignore_error': 'bg-orange-100 text-orange-800',
+  'permissive':           'bg-blue-100 text-blue-800',
+  'transform':            'bg-blue-100 text-blue-800',
+  'concurrent':           'bg-purple-100 text-purple-800',
+  'audit':                'bg-yellow-100 text-yellow-800',
+  'fire_and_forget':      'bg-teal-100 text-teal-800',
+  'disabled':             'bg-gray-100 text-gray-800',
+} -%}
+{%- set mode_dark_css_map = {
+  'enforce':              'dark:bg-red-900 dark:text-red-200',
+  'sequential':           'dark:bg-red-900 dark:text-red-200',
+  'enforce_ignore_error': 'dark:bg-orange-900 dark:text-orange-200',
+  'permissive':           'dark:bg-blue-900 dark:text-blue-200',
+  'transform':            'dark:bg-blue-900 dark:text-blue-200',
+  'concurrent':           'dark:bg-purple-900 dark:text-purple-200',
+  'audit':                'dark:bg-yellow-900 dark:text-yellow-200',
+  'fire_and_forget':      'dark:bg-teal-900 dark:text-teal-200',
+  'disabled':             'dark:bg-gray-700 dark:text-gray-300',
+} -%}
 <div class="space-y-6">
   <!-- Plugin Overview Card -->
   <div
@@ -48,9 +82,9 @@
       </div>
       <div class="text-center">
         <div class="text-3xl font-bold">
-          {{ stats.plugins_by_mode.enforce | default(0) }}
+          {{ (stats.plugins_by_mode.enforce | default(0)) + (stats.plugins_by_mode.sequential | default(0)) + (stats.plugins_by_mode.enforce_ignore_error | default(0)) + (stats.plugins_by_mode.concurrent | default(0)) }}
         </div>
-        <div class="text-purple-100 text-sm">Enforce Mode</div>
+        <div class="text-purple-100 text-sm">Enforcing</div>
       </div>
     </div>
     {% endif %}
@@ -212,10 +246,15 @@
           class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           <option value="">All Modes</option>
-          <option value="enforce">Enforce</option>
-          <option value="enforce_ignore_error">Enforce Ignore Error</option>
-          <option value="permissive">Permissive</option>
-          <option value="disabled">Disabled</option>
+          {#- Deduplicate: collect unique display labels from active modes -#}
+          {%- set seen_labels = [] -%}
+          {%- for mode_key in stats.plugins_by_mode.keys() | sort -%}
+            {%- set label = mode_label_map.get(mode_key, mode_key | replace('_', ' ') | title) -%}
+            {%- if label not in seen_labels -%}
+              {%- if seen_labels.append(label) -%}{%- endif -%}
+          <option value="{{ label }}">{{ label }}</option>
+            {%- endif -%}
+          {%- endfor -%}
         </select>
         <select
           id="plugin-status-filter"
@@ -258,7 +297,7 @@
       data-name="{{ plugin.name | lower }}"
       data-description="{{ plugin.description | decode_html | lower }}"
       data-author="{{ plugin.author | lower }}"
-      data-mode="{{ plugin.mode | lower }}"
+      data-mode="{{ mode_label_map.get(plugin.mode, plugin.mode | replace('_', ' ') | title) }}"
       data-status="{{ plugin.status }}"
       data-hooks="{{ plugin.hooks | join(',') if plugin.hooks else '' }}"
       data-tags="{{ plugin.tags | join(',') if plugin.tags else '' }}"
@@ -301,25 +340,12 @@
         </div>
 
         <!-- Mode Badge -->
-        {% if plugin.mode == 'enforce' %}
+        {%- set m = plugin.mode -%}
         <span
-          class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
+          class="px-2 py-1 {{ mode_css_map.get(m, 'bg-gray-100 text-gray-800') }} text-xs font-medium rounded {{ mode_dark_css_map.get(m, 'dark:bg-gray-700 dark:text-gray-300') }}"
         >
-          Enforce
+          {{ mode_label_map.get(m, m | replace('_', ' ') | title) }}
         </span>
-        {% elif plugin.mode == 'enforce_ignore_error' %}
-        <span
-          class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
-        >
-          Enforce Ignore Error
-        </span>
-        {% elif plugin.mode == 'permissive' %}
-        <span
-          class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
-        >
-          Permissive
-        </span>
-        {% endif %}
 
         <!-- Implementation Badge -->
         {% if plugin.implementation == 'Rust' %}

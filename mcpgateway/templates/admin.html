@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { Admin?.logRestrictedContext(e); return false } })() }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { window.Admin?.logRestrictedContext?.(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { Admin?.logRestrictedContext(e); } })"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { window.Admin?.logRestrictedContext?.(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -25,7 +25,7 @@
     <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     {% endif %}
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       if (window.tailwind && typeof window.tailwind === "object") {
         window.tailwind.config = {
           darkMode: "class",
@@ -33,7 +33,7 @@
       }
     </script>
     <!-- HTMX is now bundled in the main JS bundle -->
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       // Configure HTMX to swap content on 4xx responses (for inline error display)
       document.addEventListener("htmx:beforeSwap", function (evt) {
         const xhr = evt.detail.xhr;
@@ -63,7 +63,7 @@
         // Add JWT token from cookie if available
         const jwtToken = getCookie("jwt_token");
         if (jwtToken) {
-          evt.detail.headers["Authorization"] = "Bearer " + jwtToken;
+          evt.detail.headers["{{ auth_header_name|default('Authorization') }}"] = "Bearer " + jwtToken;
         }
 
         const csrfToken = getCookie("mcpgateway_csrf_token");
@@ -108,9 +108,16 @@
           const method = (requestInit.method || methodFromRequest || "GET").toUpperCase();
           if (isUnsafeHttpMethod(method) && isSameOriginRequest(resource)) {
             const csrfToken = getCookie("mcpgateway_csrf_token");
-            if (csrfToken) {
+            const jwtToken = getCookie("jwt_token");
+            if (csrfToken || jwtToken) {
               const nextHeaders = new Headers(requestInit.headers || (resource instanceof Request ? resource.headers : undefined));
-              nextHeaders.set("X-CSRF-Token", csrfToken);
+              const authHeaderName = "{{ auth_header_name|default('Authorization') }}";
+              if (jwtToken && !nextHeaders.has(authHeaderName)) {
+                nextHeaders.set(authHeaderName, "Bearer " + jwtToken);
+              }
+              if (csrfToken) {
+                nextHeaders.set("X-CSRF-Token", csrfToken);
+              }
               requestInit.headers = nextHeaders;
             }
           }
@@ -226,7 +233,7 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        Admin?.safeReplaceState?.({}, '', newUrl);
+        window.Admin?.safeReplaceState?.({}, '', newUrl);
       }
     </script>
 
@@ -276,7 +283,7 @@
       crossorigin="anonymous">
     </script>
     {% endif %}
-    <!-- Alpine.js -->
+    <!-- Alpine.js (requires unsafe-eval for reactive system) -->
     {% if ui_airgapped %}
     <script
       src="{{ root_path }}/static/vendor/alpinejs/alpine.min.js"
@@ -284,7 +291,7 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js"
       integrity="{{ sri_hashes.alpinejs }}"
       crossorigin="anonymous"
       defer
@@ -308,16 +315,27 @@
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/marked@11.2.0/marked.min.js"
+      src="https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js"
       integrity="{{ sri_hashes.marked }}"
       crossorigin="anonymous">
     </script>
     <script
-      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.0/dist/purify.min.js"
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js"
       integrity="{{ sri_hashes.dompurify }}"
       crossorigin="anonymous">
     </script>
     {% endif %}
+    <!-- Configure HTMX to use CSP nonce for inline event handlers BEFORE bundle loads -->
+    <!-- CRITICAL LOAD-ORDER DEPENDENCY: This script MUST execute before admin.js bundle loads.
+         admin.js reads window.htmxConfig.inlineScriptNonce to configure HTMX.
+         If script tags are reordered, HTMX will silently lose the nonce and all
+         HTMX-generated inline scripts will be blocked by CSP. -->
+    <script nonce="{{ csp_nonce(request) }}">
+      // HTMX needs the nonce configured before it processes any elements
+      // This allows hx-on:* attributes to work with strict CSP
+      window.htmxConfig = window.htmxConfig || {};
+      window.htmxConfig.inlineScriptNonce = "{{ csp_nonce(request) }}";
+    </script>
     <script src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
@@ -353,7 +371,7 @@
     {% else %}
     <link
       rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
       integrity="{{ sri_hashes.fontawesome }}"
       crossorigin="anonymous"
     />
@@ -459,7 +477,7 @@
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('overview')">
+               data-action-click="showTab" data-arg0="overview">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
@@ -475,7 +493,7 @@
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('gateways')">
+               data-action-click="showTab" data-arg0="gateways">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
@@ -484,7 +502,7 @@
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('catalog')">
+               data-action-click="showTab" data-arg0="catalog">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
@@ -493,7 +511,7 @@
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tools')">
+               data-action-click="showTab" data-arg0="tools">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛠️</span>
               <span x-show="!sidebarCollapsed">Tools</span>
             </a>
@@ -501,7 +519,7 @@
             <a href="#tool-ops" id="tab-tool-ops" data-testid="tool-ops-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tool-ops')">
+               data-action-click="showTab" data-arg0="tool-ops">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
@@ -511,7 +529,7 @@
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('prompts')">
+               data-action-click="showTab" data-arg0="prompts">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
@@ -520,7 +538,7 @@
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('resources')">
+               data-action-click="showTab" data-arg0="resources">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
@@ -529,7 +547,7 @@
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('roots')">
+               data-action-click="showTab" data-arg0="roots">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
@@ -538,7 +556,7 @@
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('mcp-registry')">
+               data-action-click="showTab" data-arg0="mcp-registry">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
@@ -555,7 +573,7 @@
             <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('a2a-agents')">
+               data-action-click="showTab" data-arg0="a2a-agents">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🤖</span>
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
@@ -564,7 +582,7 @@
             <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('grpc-services')">
+               data-action-click="showTab" data-arg0="grpc-services">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
               <span x-show="!sidebarCollapsed">gRPC Services</span>
             </a>
@@ -582,7 +600,7 @@
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('llm-chat')">
+               data-action-click="showTab" data-arg0="llm-chat">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
@@ -591,7 +609,7 @@
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('llm-settings')">
+               data-action-click="showTab" data-arg0="llm-settings">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
@@ -609,7 +627,7 @@
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('metrics')">
+               data-action-click="showTab" data-arg0="metrics">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
@@ -618,7 +636,7 @@
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('performance')">
+               data-action-click="showTab" data-arg0="performance">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚡</span>
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
@@ -627,7 +645,7 @@
             <a href="#observability" id="tab-observability" data-testid="observability-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('observability')">
+               data-action-click="showTab" data-arg0="observability">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔍</span>
               <span x-show="!sidebarCollapsed">Observability</span>
             </a>
@@ -645,9 +663,18 @@
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('plugins')">
+               data-action-click="showTab" data-arg0="plugins">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
+            </a>
+            {% endif %}
+            {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
+            <a href="#a2a-plugin-bindings" id="tab-a2a-plugin-bindings" data-testid="a2a-plugin-bindings-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               data-action-click="showTab" data-arg0="a2a-plugin-bindings">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
+              <span x-show="!sidebarCollapsed">A2A Plugin Bindings</span>
             </a>
             {% endif %}
           </div>
@@ -663,7 +690,7 @@
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('teams')">
+               data-action-click="showTab" data-arg0="teams">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
@@ -672,7 +699,7 @@
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('users')">
+               data-action-click="showTab" data-arg0="users">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
@@ -681,7 +708,7 @@
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('tokens')">
+               data-action-click="showTab" data-arg0="tokens">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
@@ -699,7 +726,7 @@
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('export-import')">
+               data-action-click="showTab" data-arg0="export-import">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
@@ -708,7 +735,7 @@
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('logs')">
+               data-action-click="showTab" data-arg0="logs">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
@@ -717,7 +744,7 @@
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('version-info')">
+               data-action-click="showTab" data-arg0="version-info">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
@@ -726,7 +753,7 @@
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="Admin.showTab('maintenance')">
+               data-action-click="showTab" data-arg0="maintenance">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
@@ -793,7 +820,7 @@
               <button
                 type="button"
                 id="global-search-trigger"
-                onclick="Admin.openGlobalSearchModal()"
+                data-action-click="openGlobalSearchModal"
                 class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 title="Search across tools, prompts, resources, servers, gateways, agents, and roots (Ctrl/Cmd+K)"
               >
@@ -829,12 +856,12 @@
                         // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
                         const cleanUrl = new URL(window.location.href);
                         cleanUrl.searchParams.delete('team_id');
-                        Admin.safeReplaceState({}, '', cleanUrl);
+                        window.Admin?.safeReplaceState?.({}, '', cleanUrl);
                       }
                     }
                   },
                   loadTeams() {
-                    if (this.open) { Admin.loadTeamSelectorDropdown(); }
+                    if (this.open) { window.Admin?.loadTeamSelectorDropdown?.(); }
                   }
                 }"
                 @click.away="open = false"
@@ -874,7 +901,7 @@
                       id="team-selector-search"
                       placeholder="Search teams..."
                       class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      oninput="Admin.searchTeamSelector(this.value)"
+                      data-action-input="searchTeamSelector"
                       @click.stop
                     />
                   </div>
@@ -917,11 +944,10 @@
 
               <!-- Logout -->
               {% if 'logout' not in hidden_header_items %}
-              <form method="post" action="{{ root_path }}/admin/logout" class="inline">
+              <form method="post" action="{{ root_path }}/admin/logout" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to logout?" data-prevent-default="false">
                 <button
                   type="submit"
                   class="px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-                  onclick="return confirm('Are you sure you want to logout?')"
                 >
                   Logout
                 </button>
@@ -954,7 +980,7 @@
 
         <!-- Global Search Modal -->
         <div id="global-search-modal" class="fixed inset-0 z-40 hidden" aria-hidden="true">
-          <div class="absolute inset-0 bg-black/40" onclick="Admin.closeGlobalSearchModal()"></div>
+          <div class="absolute inset-0 bg-black/40" data-action-click="closeGlobalSearchModal"></div>
           <div class="relative max-w-3xl mx-auto mt-24 px-4">
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
               <div class="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -992,31 +1018,31 @@
               <!-- Quick Actions -->
               <div class="mb-4 flex gap-2 flex-wrap">
                 <button
-                  onclick="Admin.searchStructuredLogs()"
+                  data-action-click="searchStructuredLogs"
                   class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                   🔍 Search Logs
                 </button>
                 <button
-                  onclick="Admin.showCorrelationTrace()"
+                  data-action-click="showCorrelationTrace"
                   class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
                 >
                   🔗 Trace Correlation ID
                 </button>
                 <button
-                  onclick="Admin.showSecurityEvents()"
+                  data-action-click="showSecurityEvents"
                   class="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                 >
                   🛡️ Security Events
                 </button>
                 <button
-                  onclick="Admin.showAuditTrail()"
+                  data-action-click="showAuditTrail"
                   class="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
                 >
                   📝 Audit Trail
                 </button>
                 <button
-                  onclick="Admin.showPerformanceMetrics()"
+                  data-action-click="showPerformanceMetrics"
                   class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
                 >
                   ⚡ Performance
@@ -1035,7 +1061,7 @@
                   <select
                     id="performance-aggregation-select"
                     class="px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="Admin.handlePerformanceAggregationChange(event)"
+                    data-action-change="handlePerformanceAggregationChange"
                   >
                     <option value="5m">5 minutes</option>
                     <option value="24h">24 hours</option>
@@ -1053,7 +1079,7 @@
                   <select
                     id="log-level-filter"
                     class="mt-1 px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="Admin.searchStructuredLogs()"
+                    data-action-change="searchStructuredLogs"
                   >
                     <option value="">All Levels</option>
                     <option value="DEBUG">Debug</option>
@@ -1072,7 +1098,7 @@
                   <select
                     id="log-component-filter"
                     class="mt-1 px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="Admin.searchStructuredLogs()"
+                    data-action-change="searchStructuredLogs"
                   >
                     <option value="">All Components</option>
                     <option value="http_gateway">HTTP Gateway</option>
@@ -1178,7 +1204,7 @@
                 </div>
                 <div class="flex gap-2">
                   <button
-                    onclick="Admin.previousLogPage()"
+                    data-action-click="previousLogPage"
                     id="prev-page"
                     class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
                     disabled
@@ -1186,7 +1212,7 @@
                     Previous
                   </button>
                   <button
-                    onclick="Admin.nextLogPage()"
+                    data-action-click="nextLogPage"
                     id="next-page"
                     class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
                   >
@@ -1506,7 +1532,7 @@
                       id="import-preview-btn"
                       class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
                       disabled
-                      onclick="Admin.previewImport()"
+                      data-action-click="previewImport"
                     >
                       📋 Selective Import
                     </button>
@@ -1722,10 +1748,7 @@
                           <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
                             Virtual Servers
                           </h3>
-                          <button onclick="
-                                Admin.loadVirtualServersForChat();
-                                event.stopPropagation();
-                              "
+                          <button data-action-click="loadVirtualServersForChat" data-stop-propagation="true"
                             class="text-xs px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors">
                             <svg class="w-3 h-3 inline-block mr-1" fill="none" stroke="currentColor"
                               viewBox="0 0 24 24">
@@ -1785,7 +1808,7 @@
                             Model</label>
                           <select id="llm-model-select"
                             class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 transition-colors"
-                            onchange="Admin.handleLLMModelChange()">
+                            data-action-change="handleLLMModelChange">
                             <option value="">
                               Select Model (configure in Settings → LLM
                               Settings)
@@ -1888,7 +1911,7 @@
 
                 <!-- Right Section: Connection Buttons -->
                 <div class="flex items-center gap-2">
-                  <button type="button" id="llm-connect-btn" onclick="Admin.connectLLMChat()"
+                  <button type="button" id="llm-connect-btn" data-action-click="connectLLMChat"
                     class="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     disabled>
                     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1898,7 +1921,7 @@
                     Connect
                   </button>
 
-                  <button type="button" id="llm-disconnect-btn" onclick="Admin.disconnectLLMChat()"
+                  <button type="button" id="llm-disconnect-btn" data-action-click="disconnectLLMChat"
                     class="hidden inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow-sm">
                     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -1945,17 +1968,13 @@
               <!-- Chat Input Area -->
               <div id="chat-input-container"
                 class="hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-                <form id="chat-input-form" onsubmit="Admin.sendChatMessage(event)" class="p-4">
+                <form id="chat-input-form" data-action-submit="sendChatMessage" class="p-4">
                   <div class="flex items-end space-x-3">
                     <div class="flex-1 relative">
                       <textarea id="chat-input" rows="1"
                         placeholder="Type your message here... (Shift+Enter for new line)"
                         class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-3 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 resize-none transition-all"
-                        onkeydown="Admin.handleChatInputKeydown(event)" oninput="
-                            this.style.height = 'auto';
-                            this.style.height =
-                              Math.min(this.scrollHeight, 120) + 'px';
-                          " disabled></textarea>
+                        data-action-keydown="handleChatInputKeydown" data-action-input="autoResizeTextarea" disabled></textarea>
                       <div
                         class="absolute bottom-2 right-2 text-xs text-gray-400 dark:text-gray-500 pointer-events-none">
                         Press Enter to send
@@ -1985,7 +2004,7 @@
           <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
             <nav class="-mb-px flex space-x-8" aria-label="LLM Settings Tabs">
               <button
-                onclick="Admin.switchLLMSettingsTab('providers')"
+                data-action-click="switchLLMSettingsTab" data-arg0="providers"
                 id="llm-settings-tab-providers"
                 class="llm-settings-tab border-b-2 border-indigo-500 py-4 px-1 text-sm font-medium text-indigo-600 dark:text-indigo-400"
               >
@@ -1995,7 +2014,7 @@
                 Providers
               </button>
               <button
-                onclick="Admin.switchLLMSettingsTab('models')"
+                data-action-click="switchLLMSettingsTab" data-arg0="models"
                 id="llm-settings-tab-models"
                 class="llm-settings-tab border-b-2 border-transparent py-4 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -2005,7 +2024,7 @@
                 Models
               </button>
               <button
-                onclick="Admin.switchLLMSettingsTab('test')"
+                data-action-click="switchLLMSettingsTab" data-arg0="test"
                 id="llm-settings-tab-test"
                 class="llm-settings-tab border-b-2 border-transparent py-4 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -2075,10 +2094,10 @@
         <!-- Add/Edit Provider Modal -->
         <div id="llm-provider-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="Admin.closeLLMProviderModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" data-action-click="closeLLMProviderModal"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
-              <form id="llm-provider-form" onsubmit="saveLLMProvider(event)">
+              <form id="llm-provider-form" data-action-submit="saveLLMProvider">
                 <input type="hidden" id="llm-provider-id" name="provider_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                   <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white mb-4" id="llm-provider-modal-title">
@@ -2092,7 +2111,7 @@
                       </div>
                       <div>
                         <label for="llm-provider-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider Type *</label>
-                        <select id="llm-provider-type" name="provider_type" required onchange="Admin.onLLMProviderTypeChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-provider-type" name="provider_type" required data-action-change="onLLMProviderTypeChange" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider type</option>
                           <option value="openai">OpenAI</option>
                           <option value="azure_openai">Azure OpenAI</option>
@@ -2161,7 +2180,7 @@
                   <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm">
                     Save Provider
                   </button>
-                  <button type="button" onclick="Admin.closeLLMProviderModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
+                  <button type="button" data-action-click="closeLLMProviderModal" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
                     Cancel
                   </button>
                 </div>
@@ -2173,10 +2192,10 @@
         <!-- Add/Edit Model Modal -->
         <div id="llm-model-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="Admin.closeLLMModelModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" data-action-click="closeLLMModelModal"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-visible shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
-              <form id="llm-model-form" onsubmit="saveLLMModel(event)">
+              <form id="llm-model-form" data-action-submit="saveLLMModel">
                 <input type="hidden" id="llm-model-id" name="model_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
                   <h3 class="text-lg leading-6 font-medium text-gray-900 dark:text-white mb-4" id="llm-model-modal-title">
@@ -2186,7 +2205,7 @@
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-model-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider *</label>
-                        <select id="llm-model-provider" name="provider_id" required onchange="Admin.onModelProviderChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-model-provider" name="provider_id" required data-action-change="onModelProviderChange" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider</option>
                         </select>
                       </div>
@@ -2194,8 +2213,8 @@
                         <label for="llm-model-model-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Model ID *</label>
                         <div class="relative" id="llm-model-combobox-container">
                           <div class="flex mt-1">
-                            <input type="text" id="llm-model-model-id" name="model_id" required autocomplete="off" role="combobox" aria-expanded="false" aria-controls="llm-model-dropdown" aria-autocomplete="list" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first..." oninput="Admin.llmModelComboboxFilter(this.value)" onfocus="Admin.llmModelComboboxOpen()" onclick="Admin.llmModelComboboxOpen()" onblur="setTimeout(Admin.llmModelComboboxClose, 150)" onkeydown="Admin.llmModelComboboxKeydown(event)">
-                            <button type="button" onclick="Admin.fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
+                            <input type="text" id="llm-model-model-id" name="model_id" required autocomplete="off" role="combobox" aria-expanded="false" aria-controls="llm-model-dropdown" aria-autocomplete="list" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first..." data-action-input="llmModelComboboxFilter" data-action-focus="llmModelComboboxOpen" data-action-click="llmModelComboboxOpen" data-action-blur="delayAction" data-arg0="llmModelComboboxClose" data-arg1="150" data-action-keydown="llmModelComboboxKeydown">
+                            <button type="button" data-action-click="fetchModelsForModelModal" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
                               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                               </svg>
@@ -2272,7 +2291,7 @@
                   <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm">
                     Save Model
                   </button>
-                  <button type="button" onclick="Admin.closeLLMModelModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
+                  <button type="button" data-action-click="closeLLMModelModal" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
                     Cancel
                   </button>
                 </div>
@@ -2315,7 +2334,7 @@
                 <span id="modal-server-name"></span> requires an API key to
                 connect.
               </p>
-              <form id="api-key-form" onsubmit="Admin.submitApiKeyForm(event)">
+              <form id="api-key-form" data-action-submit="submitApiKeyForm">
                 <input type="hidden" id="modal-server-id" />
                 <div class="mb-4">
                   <label class="block text-sm font-medium text-gray-700 mb-2">
@@ -2344,7 +2363,7 @@
                 <div class="flex justify-end gap-2">
                   <button
                     type="button"
-                    onclick="Admin.closeApiKeyModal()"
+                    data-action-click="closeApiKeyModal"
                     class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
                   >
                     Cancel
@@ -2418,14 +2437,14 @@
                   data-testid="search-input"
                   placeholder="Search servers..."
                   class="w-64 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  oninput="Admin.filterServerTable(this.value)"
+                  data-action-input="filterServerTable"
                 />
               </div>
 
               <!-- Clear Button -->
               <button
                 id="catalog-clear-search"
-                onclick="Admin.clearSearch('catalog')"
+                data-action-click="clearSearch" data-arg0="catalog"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -2740,14 +2759,14 @@
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="Admin.viewServer({{ server.id|tojson_attr }})"
+                        data-action-click="viewServer" data-arg0="{{ server.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View server details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="Admin.editServer({{ server.id|tojson_attr }})"
+                        data-action-click="editServer" data-arg0="{{ server.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit server settings and configuration'"
                       >
@@ -2756,7 +2775,7 @@
 
                       <!-- Row 2: Export Config -->
                       <button
-                        onclick="Admin.showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
+                        data-action-click="showConfigSelectionModal" data-arg0="{{ server.id|tojson_attr }}" data-arg1="{{ server.name|tojson_attr }}"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Generate client configuration files for this server'"
                       >
@@ -2770,7 +2789,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
+                          data-action-submit="handleToggleSubmit" data-arg0="servers"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -2786,7 +2805,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
+                          data-action-submit="handleToggleSubmit" data-arg0="servers"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -2802,7 +2821,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server.name|tojson_attr }}, 'servers')"
+                          data-action-submit="handleDeleteSubmit" data-arg0="server" data-arg1="{{ server.name|tojson_attr }}" data-arg2="servers"
                         >
                           <button
                             type="submit"
@@ -2829,7 +2848,7 @@
           <form
             method="POST"
             id="add-server-form"
-            onreset="Admin.safeGetElement('associatedTools').selectedIndex = -1;"
+            data-action-reset="clearAssociatedTools"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -2969,7 +2988,7 @@
                     </label>
                     <button
                       type="button"
-                      onclick="Admin.refreshToolsForSelectedGateways(this)"
+                      data-action-click="refreshToolsForSelectedGateways" data-arg0="this"
                       class="px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400 border border-green-600 dark:border-green-500 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                       x-tooltip="'Re-fetch tools from selected MCP gateways and reload this list'"
                     >Refresh from MCPs</button>
@@ -2986,7 +3005,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on:htmx:after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3058,7 +3077,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3125,7 +3144,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on:htmx:after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3290,7 +3309,7 @@
                   name="oauth_enabled"
                   id="server-oauth-enabled"
                   class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                  onchange="Admin.safeGetElement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                  data-action-change="toggleElementClass" data-arg0="server-oauth-config-section" data-arg1="hidden"
                 />
                 <label
                   for="server-oauth-enabled"
@@ -3444,7 +3463,7 @@
               </div>
               <button
                 id="tools-clear-search"
-                onclick="Admin.clearSearch('tools')"
+                data-action-click="clearSearch" data-arg0="tools"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -3537,7 +3556,7 @@
             <div class="relative">
               <button
                 id="bulk-import-dropdown-btn"
-                onclick="toggleBulkImportDropdown()"
+                data-action-click="toggleBulkImportDropdown"
                 class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 <svg
@@ -3597,7 +3616,7 @@
                         <div class="flex justify-between items-center mb-2">
                           <strong class="text-xs">Sample JSON Template:</strong>
                           <button
-                            onclick="downloadSampleJSON()"
+                            data-action-click="downloadSampleJSON"
                             class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline"
                           >
                             📥 Download Sample
@@ -3664,7 +3683,7 @@
                           name="dropdown-import-method"
                           value="file"
                           checked
-                          onchange="toggleDropdownImportMethod('file')"
+                          data-action-change="toggleDropdownImportMethod" data-arg0="file"
                           class="mr-2"
                         />
                         <span class="text-xs text-gray-600 dark:text-gray-400"
@@ -3676,7 +3695,7 @@
                           type="radio"
                           name="dropdown-import-method"
                           value="paste"
-                          onchange="toggleDropdownImportMethod('paste')"
+                          data-action-change="toggleDropdownImportMethod" data-arg0="paste"
                           class="mr-2"
                         />
                         <span class="text-xs text-gray-600 dark:text-gray-400"
@@ -3700,12 +3719,12 @@
                         type="file"
                         id="dropdown-file-input"
                         accept=".json"
-                        onchange="handleDropdownFileSelect(this)"
+                        data-action-change="handleDropdownFileSelect" data-arg0="this"
                         class="hidden"
                       />
                       <div
                         id="dropdown-file-drop-zone"
-                        onclick="Admin.safeGetElement('dropdown-file-input').click()"
+                        data-action-click="clickElement" data-arg0="dropdown-file-input"
                         class="cursor-pointer"
                       >
                         <svg
@@ -3745,7 +3764,7 @@
                       id="dropdown-json-textarea"
                       rows="6"
                       placeholder="[{&quot;name&quot;: &quot;example_tool&quot;, &quot;url&quot;: &quot;https://api.example.com&quot;, &quot;description&quot;: &quot;Example tool&quot;}]"
-                      oninput="validateDropdownJson()"
+                      data-action-input="validateDropdownJson"
                       class="w-full text-xs border border-gray-300 dark:border-gray-600 rounded-md p-2 dark:bg-gray-700 dark:text-gray-300"
                     ></textarea>
                     <div id="dropdown-json-status" class="mt-1 text-xs"></div>
@@ -3795,21 +3814,21 @@
                   <!-- Action Buttons -->
                   <div class="flex justify-between items-center">
                     <button
-                      onclick="resetDropdownImport()"
+                      data-action-click="resetDropdownImport"
                       class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                     >
                       Clear
                     </button>
                     <div class="space-x-2">
                       <button
-                        onclick="toggleBulkImportDropdown()"
+                        data-action-click="toggleBulkImportDropdown"
                         class="px-3 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                       >
                         Cancel
                       </button>
                       <button
                         id="dropdown-import-btn"
-                        onclick="submitDropdownImport()"
+                        data-action-click="submitDropdownImport"
                         disabled
                         class="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                       >
@@ -3887,7 +3906,7 @@
                   id="integrationType"
                   name="integrationType"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  onchange="Admin.updateRequestTypeOptions()"
+                  data-action-change="updateRequestTypeOptions"
                 >
                   <option value="REST">REST</option>
                 </select>
@@ -4056,7 +4075,7 @@
                     </label>
                     <button
                       type="button"
-                      onclick="Admin.addAuthHeader('auth-headers-container')"
+                      data-action-click="addAuthHeader" data-arg0="auth-headers-container"
                       class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -4464,7 +4483,7 @@
               </div>
               <button
                 id="resources-clear-search"
-                onclick="Admin.clearSearch('resources')"
+                data-action-click="clearSearch" data-arg0="resources"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -4716,7 +4735,7 @@
               </div>
               <button
                 id="prompts-clear-search"
-                onclick="Admin.clearSearch('prompts')"
+                data-action-click="clearSearch" data-arg0="prompts"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -5007,7 +5026,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="gateways-clear-search"
-                onclick="Admin.clearSearch('gateways')"
+                data-action-click="clearSearch" data-arg0="gateways"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -5286,7 +5305,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: Test -->
                       <button
-                        onclick="Admin.testGateway({{ gateway.url|tojson_attr }})"
+                        data-action-click="testGateway" data-arg0="{{ gateway.url|tojson_attr }}"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Test connection to this MCP Server'"
                       >
@@ -5303,7 +5322,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         🔐 Authorize
                       </a>
                       <button
-                        onclick="Admin.fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
+                        data-action-click="fetchToolsForGateway" data-arg0="{{ gateway.id|tojson_attr }}" data-arg1="{{ gateway.name|tojson_attr }}"
                         class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'🔧 Fetch Tools from MCP Server'"
                         id="fetch-tools-{{ gateway.id }}"
@@ -5313,14 +5332,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 3: View | Edit -->
                       <button
-                        onclick="Admin.viewGateway({{ gateway.id|tojson_attr }})"
+                        data-action-click="viewGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="Admin.editGateway({{ gateway.id|tojson_attr }})"
+                        data-action-click="editGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5329,14 +5348,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {% else %}
                       <!-- Row 2: View | Edit (for non-OAuth) -->
                       <button
-                        onclick="Admin.viewGateway({{ gateway.id|tojson_attr }})"
+                        data-action-click="viewGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="Admin.editGateway({{ gateway.id|tojson_attr }})"
+                        data-action-click="editGateway" data-arg0="{{ gateway.id|tojson_attr }}"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5351,7 +5370,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
+                          data-action-submit="handleToggleSubmit" data-arg0="gateways"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -5367,7 +5386,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
+                          data-action-submit="handleToggleSubmit" data-arg0="gateways"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -5383,7 +5402,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
                           class="contents"
-                          onsubmit="return Admin.handleSubmitWithConfirmation(event, 'gateways')"
+                          data-action-submit="handleSubmitWithConfirmation" data-arg0="gateways"
                         >
                           <button
                             type="submit"
@@ -5647,7 +5666,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </label>
                     <button
                       type="button"
-                      onclick="Admin.addAuthHeader('auth-headers-container-gw')"
+                      data-action-click="addAuthHeader" data-arg0="auth-headers-container-gw"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -5709,15 +5728,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       Issuer URL
                     </label>
-                    <input
-                      type="url"
-                      name="oauth_issuer"
-                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="http://localhost:3003 or https://oauth.example.com"
-                    />
+                    <div class="mt-1 flex gap-2">
+                      <input
+                        type="url"
+                        name="oauth_issuer"
+                        class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="http://localhost:3003 or https://oauth.example.com"
+                      />
+                      <button
+                        type="button"
+                        data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                        class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                        title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                      >🔍 Discover</button>
+                    </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
+                  <div class="oauth-discover-status mt-1 hidden"></div>
                   </div>
 
                   <div>
@@ -5967,7 +5995,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     id="single-use-auth-gw"
                     class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
                     x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
-                    onchange="document.getElementById('single-use-auth-hint-gw').style.display = this.checked ? 'block' : 'none'"
+                    data-action-change="toggleOneTimeAuthHint" data-arg0="single-use-auth-hint-gw"
                   />
                   <span
                     class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -6017,7 +6045,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 id="upload-ca-certificate"
                 name="ca_certificates[]"
                 class="hidden"
-                onchange="Admin.validateCACertFiles(event)"
+                data-action-change="validateCACertFiles"
                 accept=".pem,.crt,.cer,.cert,application/x-x509-ca-certificate"
                 multiple
               />
@@ -6084,7 +6112,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {% if user_permissions.can_create_team %}
             <button
               id="create-team-btn"
-              onclick="openCreateTeamModal()"
+              data-action-click="openCreateTeamModal"
               class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
               <svg
@@ -6114,33 +6142,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="team-search"
                   placeholder="Find teams..."
                   class="block w-full px-3 py-2 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  oninput="Admin.serverSideTeamSearch(this.value)"
+                  data-action-input="serverSideTeamSearch"
                 />
               </div>
               <div class="flex gap-2">
                 <button
-                  onclick="Admin.filterByRelationship('all')"
+                  data-action-click="filterByRelationship" data-arg0="all"
                   class="filter-btn active px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="all"
                 >
                   All Teams
                 </button>
                 <button
-                  onclick="Admin.filterByRelationship('owner')"
+                  data-action-click="filterByRelationship" data-arg0="owner"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="owner"
                 >
                   I Own
                 </button>
                 <button
-                  onclick="Admin.filterByRelationship('member')"
+                  data-action-click="filterByRelationship" data-arg0="member"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="member"
                 >
                   I'm a Member
                 </button>
                 <button
-                  onclick="Admin.filterByRelationship('public')"
+                  data-action-click="filterByRelationship" data-arg0="public"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="public"
                 >
@@ -6250,7 +6278,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     required
                     minlength="8"
                     autocomplete="new-password"
-                    oninput="validateNewUserPassword()"
+                    data-action-input="validateNewUserPassword"
                     class="mt-1 px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="Strong password"
                   />
@@ -6296,7 +6324,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                   </div>
                 </div>
-                <script>
+                <script nonce="{{ csp_nonce(request) }}">
                   // Validate the Create User password box and update requirement icons
                   (function(){
                     const minLen = {{ password_min_length | tojson }} || 8;
@@ -6497,8 +6525,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   value="30"
                   {% if require_token_expiration %}required{% endif %}
                   {% if require_token_expiration %}
-                  oninvalid="this.setCustomValidity('Expiration is required by server policy. Please enter the number of days (e.g., 30, 90, 365).')"
-                  oninput="this.setCustomValidity('')"
+                  data-action-input="clearCustomValidity"
                   {% endif %}
                   class="mt-1 px-3 py-2 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="30"
@@ -6677,7 +6704,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="tokens-clear-search"
-                onclick="Admin.clearSearch('tokens')"
+                data-action-click="clearSearch" data-arg0="tokens"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -6810,7 +6837,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="a2a-agents-clear-search"
-                onclick="Admin.clearSearch('a2a-agents')"
+                data-action-click="clearSearch" data-arg0="a2a-agents"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -7037,7 +7064,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </label>
                     <button
                       type="button"
-                      onclick="Admin.addAuthHeader('auth-headers-container-a2a')"
+                      data-action-click="addAuthHeader" data-arg0="auth-headers-container-a2a"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -7139,15 +7166,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       Issuer URL
                     </label>
-                    <input
-                      type="url"
-                      name="oauth_issuer"
-                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="http://localhost:3003 or https://oauth.example.com"
-                    />
+                    <div class="mt-1 flex gap-2">
+                      <input
+                        type="url"
+                        name="oauth_issuer"
+                        class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="http://localhost:3003 or https://oauth.example.com"
+                      />
+                      <button
+                        type="button"
+                        data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                        class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                        title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                      >🔍 Discover</button>
+                    </div>
                     <p class="mt-1 text-sm text-gray-500">
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
+                  <div class="oauth-discover-status mt-1 hidden"></div>
                   </div>
 
                   <div>
@@ -7453,7 +7489,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     name="generate_uaid"
                     value="true"
                     class="h-4 w-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-800 dark:border-gray-600"
-                    onchange="Admin.toggleUAIDFields('a2a', this.checked)"
+                    data-action-change="toggleUAIDFieldsFromEvent" data-arg0="a2a"
                   />
                   <label for="a2a-generate-uaid" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
                     Generate UAID for cross-gateway routing
@@ -7501,6 +7537,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </select>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       Agent communication protocol
+                    </p>
+                  </div>
+
+                  <!-- UAID Native ID Override -->
+                  <div>
+                    <label for="a2a-uaid-native-id-override" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                      Native ID Override (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      id="a2a-uaid-native-id-override"
+                      name="uaid_native_id_override"
+                      placeholder="http://gateway.example.com:4445"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Override the routing address in UAID. Leave empty to use endpoint URL. Use when gateway address differs from agent endpoint (e.g., gateway proxies to agent).
                     </p>
                   </div>
 
@@ -7625,6 +7678,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
+      <!-- A2A Agent Plugin Bindings Panel -->
+      {% if a2a_enabled and 'a2a_agent_plugin_bindings' not in hidden_sections %}
+      <div id="a2a-plugin-bindings-panel" class="tab-panel hidden"
+           hx-get="{{ root_path }}/admin/a2a/plugin-bindings/partial"
+           hx-trigger="revealed once"
+           hx-swap="innerHTML">
+        <div class="flex justify-center items-center py-8">
+          <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span class="ml-3 text-gray-600 dark:text-gray-400">Loading A2A plugin bindings...</span>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- gRPC Services Panel -->
       {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
@@ -7702,7 +7771,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="grpc-tls-enabled"
                   name="tls_enabled"
                   class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                  onchange="Admin.toggleGrpcTlsFields()"
+                  data-action-change="toggleGrpcTlsFields"
                 />
                 <label
                   for="grpc-tls-enabled"
@@ -7883,12 +7952,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
                     </form>
                     <button
-                      onclick="Admin.viewGrpcMethods({{ service.id|tojson_attr }})"
+                      data-action-click="viewGrpcMethods" data-arg0="{{ service.id|tojson_attr }}"
                       class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
                     >
                       View Methods
                     </button>
-                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this gRPC service?')">
+                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200"
@@ -7960,7 +8029,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="relative"
-                         x-data="Admin.overflowMenu('roots-table-wrapper')"
+                         x-data="window.Admin?.overflowMenu?.('roots-table-wrapper')"
                          @click.away="menuOpen = false"
                          @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                       <button
@@ -7999,7 +8068,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.viewRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.viewRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡View root directory details and configuration'"
                         >View</button>
@@ -8007,7 +8076,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.editRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.editRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡Edit root directory settings and configuration'"
                         >Edit</button>
@@ -8015,7 +8084,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           type="button"
                           role="menuitem"
                           tabindex="0"
-                          @click="menuOpen = false; Admin.exportRoot({{ root.uri|tojson_attr }})"
+                          @click="menuOpen = false; window.Admin?.exportRoot?.({{ root.uri|tojson_attr }})"
                           class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                           x-tooltip="'💡Export root directory configuration'"
                         >Export</button>
@@ -8025,7 +8094,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           action="{{ root_path }}/admin/roots/{{ root.uri }}/delete"
                           class="contents"
                           @submit="menuOpen = false"
-                          onsubmit="return Admin.handleSubmitWithConfirmation(event, 'roots')"
+                          data-action-submit="handleSubmitWithConfirmation" data-arg0="roots"
                         >
                           <button
                             type="submit"
@@ -8069,7 +8138,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             method="POST"
             action="{{ root_path }}/admin/roots"
             id="add-root-form"
-            onsubmit="return Admin.handleToggleSubmit(event, 'roots')"
+            data-action-submit="handleToggleSubmit" data-arg0="roots"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -8157,28 +8226,28 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="border-b border-gray-200 dark:border-gray-700 mb-4">
             <nav class="-mb-px flex space-x-8" aria-label="Top Performers Tabs">
               <button
-                onclick="Admin.switchTopPerformersTab('tools')"
+                data-action-click="switchTopPerformersTab" data-arg0="tools"
                 id="top-performers-tab-tools"
                 class="top-performers-tab border-b-2 border-indigo-500 py-2 px-1 text-sm font-medium text-indigo-600 dark:text-indigo-400"
               >
                 Tools
               </button>
               <button
-                onclick="Admin.switchTopPerformersTab('resources')"
+                data-action-click="switchTopPerformersTab" data-arg0="resources"
                 id="top-performers-tab-resources"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
                 Resources
               </button>
               <button
-                onclick="Admin.switchTopPerformersTab('prompts')"
+                data-action-click="switchTopPerformersTab" data-arg0="prompts"
                 id="top-performers-tab-prompts"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
                 Prompts
               </button>
               <button
-                onclick="Admin.switchTopPerformersTab('servers')"
+                data-action-click="switchTopPerformersTab" data-arg0="servers"
                 id="top-performers-tab-servers"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -8292,7 +8361,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('tool-modal')"
+                data-action-click="closeModal" data-arg0="tool-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8363,14 +8432,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     <div class="flex justify-between mt-6">
       <button
         type="button"
-        onclick="Admin.generateTestCases()"
+        data-action-click="generateTestCases"
         id="generate-btn"
         class="w-1/2 mr-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
       >
         Generate
       </button>
       <button
-          onclick="Admin.closeModal('testcase-gen-modal')"
+          data-action-click="closeModal" data-arg0="testcase-gen-modal"
           class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
         >
           Close
@@ -8441,7 +8510,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     <div class="flex justify-between mt-6">
       <button
         type="button"
-        onclick="Admin.generateBulkTestCases()"
+        data-action-click="generateBulkTestCases"
         id="bulk-generate-btn"
         class="w-1/2 mr-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
       >
@@ -8449,7 +8518,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </button>
       <button
         type="button"
-        onclick="Admin.closeModal('bulk-testcase-gen-modal');"
+        data-action-click="closeModal" data-arg0="bulk-testcase-gen-modal"
           class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
         >
           Close
@@ -8511,7 +8580,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Close Button -->
       <div class="flex justify-center mt-6">
         <button
-          onclick="Admin.closeModal('description-view-modal')"
+          data-action-click="closeModal" data-arg0="description-view-modal"
           type="button"
           id="close-description-view"
           class="w-1/2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
@@ -8535,7 +8604,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           Test Tool
         </h2>
         <button
-          onclick="Admin.closeModal('tool-validation-modal')"
+          data-action-click="closeModal" data-arg0="tool-validation-modal"
           class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
         >
           ✕
@@ -8553,7 +8622,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       ></div>
       <button
                 type="button"
-                onclick="Admin.closeModal('tool-validation-modal', 'tool-validation-result')"
+                data-action-click="closeModal" data-arg0="tool-validation-modal" data-arg1="tool-validation-result"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8622,7 +8691,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 <div class="mt-4">
                   <button
                     type="button"
-                    onclick="Admin.runToolTest()"
+                    data-action-click="runToolTest"
                     class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
                   >
                     Run Tool
@@ -8644,7 +8713,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('tool-test-modal', 'tool-test-result')"
+                data-action-click="closeModal" data-arg0="tool-test-modal" data-arg1="tool-test-result"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8744,7 +8813,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         name="integrationType"
                         id="edit-tool-type"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        onchange="handleEditIntegrationTypeChange()"
+                        data-action-change="handleEditIntegrationTypeChange"
                       >
                         <option value="REST">REST</option>
                         <option value="MCP">MCP</option>
@@ -8889,7 +8958,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </label>
                         <button
                           type="button"
-                          onclick="Admin.addAuthHeader('edit-auth-headers-container')"
+                          data-action-click="addAuthHeader" data-arg0="edit-auth-headers-container"
                           class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                         >
                           <svg
@@ -8995,7 +9064,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('tool-edit-modal')"
+                      data-action-click="closeModal" data-arg0="tool-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -9044,7 +9113,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('resource-modal')"
+                data-action-click="closeModal" data-arg0="resource-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9091,7 +9160,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 <!-- Test Button -->
                 <button
                   type="button"
-                  onclick="Admin.runResourceTest()"
+                  data-action-click="runResourceTest"
                   class="mt-4 inline-flex items-center px-3 py-2 border border-transparent
                         text-sm leading-4 font-medium rounded-md text-white
                         bg-indigo-600 hover:bg-indigo-700 focus:outline-none
@@ -9126,7 +9195,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('resource-test-modal')"
+                data-action-click="closeModal" data-arg0="resource-test-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border
                       border-gray-300 shadow-sm px-4 py-2 bg-white text-base
                       font-medium text-gray-700 hover:bg-gray-50
@@ -9316,7 +9385,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('resource-edit-modal')"
+                      data-action-click="closeModal" data-arg0="resource-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -9362,7 +9431,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('prompt-modal')"
+                data-action-click="closeModal" data-arg0="prompt-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9541,7 +9610,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('prompt-edit-modal')"
+                      data-action-click="closeModal" data-arg0="prompt-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -9607,7 +9676,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </h4>
                     <button
                       type="button"
-                      onclick="Admin.runPromptTest()"
+                      data-action-click="runPromptTest"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       Render Prompt
@@ -9656,7 +9725,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('prompt-test-modal')"
+                data-action-click="closeModal" data-arg0="prompt-test-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9693,7 +9762,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('gateway-modal')"
+                data-action-click="closeModal" data-arg0="gateway-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9794,7 +9863,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 id="gateway-test-content-type"
                 name="content_type"
                 class="mt-1 px-3 py-2 block w-full rounded-md shadow-sm p-1 bg-gray-200 dark:bg-gray-800"
-                onchange="Admin.updateBodyLabel()"
+                data-action-change="updateBodyLabel"
               >
                 <option value="application/json">application/json</option>
                 <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
@@ -10109,7 +10178,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </label>
                           <button
                             type="button"
-                            onclick="Admin.addAuthHeader('auth-headers-container-gw-edit')"
+                            data-action-click="addAuthHeader" data-arg0="auth-headers-container-gw-edit"
                             class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                           >
                             <svg
@@ -10174,16 +10243,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >
                             Issuer URL
                           </label>
-                          <input
-                            type="url"
-                            name="oauth_issuer"
-                            id="oauth-issuer-gw-edit"
-                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="http://localhost:3003 or https://oauth.example.com"
-                          />
+                          <div class="mt-1 flex gap-2">
+                            <input
+                              type="url"
+                              name="oauth_issuer"
+                              id="oauth-issuer-gw-edit"
+                              class="px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="http://localhost:3003 or https://oauth.example.com"
+                            />
+                            <button
+                              type="button"
+                              data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                            >🔍 Discover</button>
+                          </div>
                           <p class="mt-1 text-sm text-gray-500">
                             The OAuth Authorization Server issuer URL. Required for DCR.
                           </p>
+                        <div class="oauth-discover-status mt-1 hidden"></div>
                         </div>
 
                         <div>
@@ -10354,7 +10432,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           id="single-use-auth-gw-edit"
                           class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
                           x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
-                          onchange="document.getElementById('single-use-auth-hint-gw-edit').style.display = this.checked ? 'block' : 'none'"
+                          data-action-change="toggleOneTimeAuthHint" data-arg0="single-use-auth-hint-gw-edit"
                         />
                         <span
                           class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -10396,7 +10474,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('gateway-edit-modal')"
+                      data-action-click="closeModal" data-arg0="gateway-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -10548,7 +10626,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Headers</label>
                             <button
                               type="button"
-                              onclick="Admin.addAuthHeader('auth-headers-container-a2a-edit')"
+                              data-action-click="addAuthHeader" data-arg0="auth-headers-container-a2a-edit"
                               class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md
                                     text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
@@ -10637,18 +10715,27 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           >
                             Issuer URL
                           </label>
-                          <input
-                            type="url"
-                            name="oauth_issuer"
-                            id="oauth-issuer-a2a-edit"
-                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="http://localhost:3003 or https://oauth.example.com"
-                          />
+                          <div class="mt-1 flex gap-2">
+                            <input
+                              type="url"
+                              name="oauth_issuer"
+                              id="oauth-issuer-a2a-edit"
+                              class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="http://localhost:3003 or https://oauth.example.com"
+                            />
+                            <button
+                              type="button"
+                              data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                            >🔍 Discover</button>
+                          </div>
 
                           <!--
                           <p class="mt-1 text-sm text-gray-500">
                             The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                           </p>
+                          <div class="oauth-discover-status mt-1 hidden"></div>
                           -->
 
                           </div>
@@ -10869,7 +10956,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             name="generate_uaid"
                             value="true"
                             class="h-4 w-4 mt-0.5 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded dark:bg-gray-800 dark:border-gray-600"
-                            onchange="Admin.toggleUAIDFields('a2a-edit', this.checked)"
+                            data-action-change="toggleUAIDFields" data-arg0="a2a-edit"
                           />
                           <label for="a2a-generate-uaid-edit" class="ml-2 block text-sm text-gray-700 dark:text-gray-300">
                             Generate UAID for cross-gateway routing
@@ -10917,6 +11004,23 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             </select>
                             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                               Agent communication protocol
+                            </p>
+                          </div>
+
+                          <!-- UAID Native ID Override -->
+                          <div>
+                            <label for="a2a-uaid-native-id-override-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                              Native ID Override (Optional)
+                            </label>
+                            <input
+                              type="text"
+                              id="a2a-uaid-native-id-override-edit"
+                              name="uaid_native_id_override"
+                              placeholder="http://gateway.example.com:4445"
+                              class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            />
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                              Override the routing address in UAID. Leave empty to use endpoint URL. Use when gateway address differs from agent endpoint (e.g., gateway proxies to agent).
                             </p>
                           </div>
 
@@ -11002,7 +11106,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div class="mt-6 flex justify-end space-x-3">
                         <button
                           type="button"
-                          onclick="Admin.closeModal('a2a-edit-modal')"
+                          data-action-click="closeModal" data-arg0="a2a-edit-modal"
                           class="px-4 py-2 border rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300"
                         >
                           Cancel
@@ -11051,7 +11155,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('server-modal')"
+                data-action-click="closeModal" data-arg0="server-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11317,7 +11421,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </label>
                         <button
                           type="button"
-                          onclick="Admin.refreshToolsForSelectedGateways(this)"
+                          data-action-click="refreshToolsForSelectedGateways" data-arg0="this"
                           class="px-2 py-1 text-xs font-medium text-green-700 dark:text-green-400 border border-green-600 dark:border-green-500 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
                           x-tooltip="'Re-fetch tools from selected MCP gateways and reload this list'"
                         >Refresh from MCPs</button>
@@ -11334,7 +11438,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initToolSelect?.('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11409,7 +11513,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initResourceSelect?.('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11476,7 +11580,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on:htmx:after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on:htmx:after-swap="window.Admin?.initPromptSelect?.('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11533,7 +11637,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       name="oauth_enabled"
                       id="edit-server-oauth-enabled"
                       class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      onchange="Admin.safeGetElement('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                      data-action-change="toggleElementClass" data-arg0="edit-server-oauth-config-section" data-arg1="hidden"
                     />
                     <label
                       for="edit-server-oauth-enabled"
@@ -11606,7 +11710,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('server-edit-modal')"
+                      data-action-click="closeModal" data-arg0="server-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -11652,7 +11756,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('agent-modal')"
+                data-action-click="closeModal" data-arg0="agent-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11766,7 +11870,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="space-y-3">
                 <button
                   id="stdio-config-btn"
-                  onclick="Admin.generateAndShowConfig('stdio')"
+                  data-action-click="generateAndShowConfig" data-arg0="stdio"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">▶️</span>
@@ -11782,7 +11886,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
                 <button
                   id="sse-config-btn"
-                  onclick="Admin.generateAndShowConfig('sse')"
+                  data-action-click="generateAndShowConfig" data-arg0="sse"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">🌐</span>
@@ -11798,7 +11902,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
                 <button
                   id="http-config-btn"
-                  onclick="Admin.generateAndShowConfig('http')"
+                  data-action-click="generateAndShowConfig" data-arg0="http"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">🔗</span>
@@ -11818,7 +11922,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('config-selection-modal')"
+                data-action-click="closeModal" data-arg0="config-selection-modal"
                 class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Cancel
@@ -11852,7 +11956,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <span id="config-display-title">Client Configuration</span>
                 </h3>
                 <button
-                  onclick="Admin.copyConfigToClipboard()"
+                  data-action-click="copyConfigToClipboard"
                   class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   📋 Copy to Clipboard
@@ -11890,20 +11994,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
             >
               <button
-                onclick="Admin.downloadConfig()"
+                data-action-click="downloadConfig"
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm"
               >
                 💾 Download JSON
               </button>
               <button
-                onclick="Admin.goBackToSelection()"
+                data-action-click="goBackToSelection"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 ← Back
               </button>
               <button
                 type="button"
-                onclick="Admin.closeModal('config-display-modal')"
+                data-action-click="closeModal" data-arg0="config-display-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11943,7 +12047,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="Admin.closeModal('root-details-modal')"
+                data-action-click="closeModal" data-arg0="root-details-modal"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -12010,7 +12114,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="Admin.closeModal('root-edit-modal')"
+                      data-action-click="closeModal" data-arg0="root-edit-modal"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -12029,7 +12133,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     <!-- Scripts -->
-    <script defer>
+    <script defer nonce="{{ csp_nonce(request) }}">
       // User creation form event handler
       document.addEventListener('DOMContentLoaded', function() {
         const createUserForm = document.getElementById('create-user-form');
@@ -12050,19 +12154,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
-      Admin.toolMapping = {};
+      window.Admin = window.Admin || {};
+      window.Admin.toolMapping = {};
       {% for tool in tools %}
-      Admin.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
+      window.Admin.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
       {% endfor %}
 
-      Admin.resourceMapping = {};
+      window.Admin.resourceMapping = {};
       {% for resource in resources %}
-      Admin.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
+      window.Admin.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
       {% endfor %}
 
-      Admin.promptMapping = {};
+      window.Admin.promptMapping = {};
       {% for prompt in prompts %}
-      Admin.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
+      window.Admin.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
@@ -12104,7 +12209,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            Admin.safeReplaceState({}, '', cleanUrl);
+            window.Admin?.safeReplaceState?.({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -12299,7 +12404,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { Admin.logRestrictedContext(e); }
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { window.Admin?.logRestrictedContext?.(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12436,7 +12541,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       // Add search functionality for filtering tools
     </script>
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       function handleEditIntegrationTypeChange() {
         const typeSel = document.getElementById("edit-tool-type");
         const reqSel = document.getElementById("edit-tool-request-type");
@@ -12582,7 +12687,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         try {
           // Use the same auth approach as other admin endpoints
           const headers = {};
-          const token = Admin.getAuthToken();
+          const token = window.Admin?.getAuthToken?.();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -12633,7 +12738,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function showLogFiles() {
         try {
           const headers = {};
-          const token = Admin.getAuthToken();
+          const token = window.Admin?.getAuthToken?.();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -12673,7 +12778,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           ${(file.size / 1024).toFixed(1)} KB - ${new Date(file.modified).toLocaleString()}
                         </div>
                       </div>
-                      <button onclick="Admin.downloadLogFile('${file.name}')"
+                      <button data-action-click="downloadLogFile" data-arg0="${file.name}"
                               class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
                         Download
                       </button>
@@ -12682,7 +12787,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     )
                     .join("")}
                 </ul>
-                <button onclick="this.closest('.fixed').remove()"
+                <button data-action-click="removeClosestFixed"
                         class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
                   Close
                 </button>
@@ -12731,7 +12836,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           if (element) {
             element.addEventListener("change", () => {
               currentLogPage = 0;
-              Admin.refreshLogs();
+              window.Admin?.refreshLogs?.();
             });
 
             // For search input, debounce
@@ -12741,7 +12846,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 clearTimeout(timeout);
                 timeout = setTimeout(() => {
                   currentLogPage = 0;
-                  Admin.refreshLogs();
+                  window.Admin?.refreshLogs?.();
                 }, 500);
               });
             }
@@ -12752,7 +12857,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const logsTab = document.getElementById("tab-logs");
         if (logsTab) {
           logsTab.addEventListener("click", () => {
-            setTimeout(Admin.refreshLogs, 100);
+            setTimeout(() => window.Admin?.refreshLogs?.(), 100);
           });
         }
 
@@ -13536,10 +13641,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         window.showDropdownActionButtons = function() {
           const actionButtonsHtml = `<div class="mt-3 flex justify-center space-x-2">
-            <button onclick="toggleBulkImportDropdown()" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
+            <button data-action-click="toggleBulkImportDropdown" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
               Discard
             </button>
-            <button onclick="toggleBulkImportDropdown(); window.location.reload();" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+            <button data-action-click="executeBulkImportAndReload" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
               🔄 Execute Import
             </button>
           </div>`;
@@ -13679,7 +13784,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Bulk Import Tools
             </h3>
             <button
-              onclick="closeBulkImportModal()"
+              data-action-click="closeBulkImportModal"
               class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <svg
@@ -13727,7 +13832,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <div class="mt-2 text-sm text-blue-700 dark:text-blue-300">
                     <div class="mb-3">
                       <button
-                        onclick="toggleValidationGuide()"
+                        data-action-click="toggleValidationGuide"
                         class="inline-flex items-center text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
                       >
                         <svg
@@ -13843,7 +13948,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     name="import-method"
                     value="file"
                     checked
-                    onchange="toggleImportMethod(this.value)"
+                    data-action-change="toggleImportMethod"
                     class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300"
                   />
                   <span class="ml-2 text-sm text-gray-700 dark:text-gray-300"
@@ -13855,7 +13960,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     type="radio"
                     name="import-method"
                     value="paste"
-                    onchange="toggleImportMethod(this.value)"
+                    data-action-change="toggleImportMethod"
                     class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300"
                   />
                   <span class="ml-2 text-sm text-gray-700 dark:text-gray-300"
@@ -13900,7 +14005,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         name="bulk-import-file"
                         type="file"
                         accept=".json"
-                        onchange="handleFileSelect(this)"
+                        data-action-change="handleFileSelect" data-arg0="this"
                         class="sr-only"
                       />
                     </label>
@@ -13947,7 +14052,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="flex justify-between items-center">
                 <button
                   type="button"
-                  onclick="validateJsonInput()"
+                  data-action-click="validateJsonInput"
                   class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-indigo-800 dark:text-indigo-200"
                 >
                   <svg
@@ -13981,7 +14086,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   </span>
                   <button
                     type="button"
-                    onclick="togglePreviewDetails()"
+                    data-action-click="togglePreviewDetails"
                     class="text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                   >
                     <span id="preview-toggle-text">Show Details</span>
@@ -14025,7 +14130,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeBulkImportModal()"
+                data-action-click="closeBulkImportModal"
                 class="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
               >
                 Cancel
@@ -14033,7 +14138,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <button
                 type="button"
                 id="import-submit-btn"
-                onclick="submitBulkImport()"
+                data-action-click="submitBulkImport"
                 disabled
                 class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -14090,7 +14195,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="closeCreateTeamModal()"
+          data-action-click="closeCreateTeamModal"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14106,7 +14211,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 Create New Team
               </h3>
               <button
-                onclick="closeCreateTeamModal()"
+                data-action-click="closeCreateTeamModal"
                 class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <svg
@@ -14247,7 +14352,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="mt-6 flex justify-end space-x-3">
                 <button
                   type="button"
-                  onclick="closeCreateTeamModal()"
+                  data-action-click="closeCreateTeamModal"
                   class="px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   Cancel
@@ -14273,7 +14378,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="Admin.safeGetElement('team-edit-modal').classList.add('hidden')"
+          data-action-click="hideElement" data-arg0="team-edit-modal"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14299,7 +14404,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
+          data-action-click="hideElement" data-arg0="team-join-requests-modal"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14314,7 +14419,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Team Join Requests
             </h3>
             <button
-              onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
+              data-action-click="hideElement" data-arg0="team-join-requests-modal"
               class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <svg
@@ -14348,7 +14453,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="closeInviteUserModal()"
+          data-action-click="closeInviteUserModal"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14362,7 +14467,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
               Invite User to Team
             </h3>
-            <form id="invite-user-form" onsubmit="submitUserInvitation(event)">
+            <form id="invite-user-form" data-action-submit="submitUserInvitation">
               <div class="mb-4">
                 <label
                   for="invite-user-select"
@@ -14373,7 +14478,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   id="invite-user-select"
                   name="existing_user"
                   class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
-                  onchange="toggleEmailInput(this.value)"
+                  data-action-change="toggleEmailInput"
                 >
                   <option value="">Select existing user...</option>
                 </select>
@@ -14439,7 +14544,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="flex justify-end space-x-3">
                 <button
                   type="button"
-                  onclick="closeInviteUserModal()"
+                  data-action-click="closeInviteUserModal"
                   class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
                 >
                   Cancel
@@ -14465,7 +14570,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="closeRoleAssignmentModal()"
+          data-action-click="closeRoleAssignmentModal"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14481,7 +14586,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             </h3>
             <form
               id="role-assignment-form"
-              onsubmit="submitRoleAssignment(event)"
+              data-action-submit="submitRoleAssignment"
             >
               <div class="mb-4">
                 <label
@@ -14533,7 +14638,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="flex justify-end space-x-3">
                 <button
                   type="button"
-                  onclick="closeRoleAssignmentModal()"
+                  data-action-click="closeRoleAssignmentModal"
                   class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
                 >
                   Cancel
@@ -14552,7 +14657,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
     {% endif %}
 
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       // Safely inject teams data for Alpine.js
       window.USER_TEAMS_DATA = {{ user_teams | default([]) | tojson }};
 
@@ -14846,6 +14951,155 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
+
+      // ---------------------------------------------------------------------------
+      // OAuth endpoint discovery (RFC 8414 / OIDC Discovery)
+      // Called by the 🔍 Discover buttons next to each Issuer URL field.
+      // ---------------------------------------------------------------------------
+      async function discoverOAuthEndpoints(btn) {
+        // DOM layout:
+        //   <div>                                  ← grandparent (section wrapper)
+        //     <label>Issuer URL</label>
+        //     <div class="mt-1 flex gap-2">        ← btn.parentElement
+        //       <input name="oauth_issuer" />
+        //       <button data-action-click="discoverOAuthEndpoints" data-arg0="this">
+        //     </div>
+        //     <p>...</p>
+        //     <div class="oauth-discover-status">  ← status target
+        //   </div>
+        const section   = btn.parentElement.parentElement;
+        const statusEl  = section.querySelector('.oauth-discover-status');
+        const form      = btn.closest('form');
+
+        const issuerInput = form
+          ? form.querySelector('input[name="oauth_issuer"]')
+          : section.querySelector('input[name="oauth_issuer"]');
+        const issuer = issuerInput?.value?.trim();
+
+        if (!issuer) {
+          _oauthDiscoverStatus(statusEl, 'error', 'Please enter an Issuer URL first.');
+          return;
+        }
+
+        btn.disabled    = true;
+        btn.textContent = '⏳ Discovering…';
+        _oauthDiscoverStatus(statusEl, 'info', 'Contacting issuer metadata endpoint…');
+
+        try {
+          const resp = await fetch(
+            `${window.ROOT_PATH}/admin/gateways/discover-oauth`,
+            {
+              method:  'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': getCookie('mcpgateway_csrf_token') || '',
+              },
+              body:    JSON.stringify({ issuer }),
+            }
+          );
+          const data = await resp.json();
+
+          if (!data.success) {
+            _oauthDiscoverStatus(statusEl, 'error',
+              `Discovery failed: ${_escHtml(data.error || data.message || 'Unknown error')}. ` +
+              'Please configure Token URL and Authorization URL manually.');
+            return;
+          }
+
+          // Map discovered values → form field names
+          const discovered = {
+            oauth_token_url:         data.token_endpoint,
+            oauth_authorization_url: data.authorization_endpoint,
+          };
+
+          let populated = 0;
+          for (const [name, value] of Object.entries(discovered)) {
+            if (!value) continue;
+            const el = form
+              ? form.querySelector(`input[name="${name}"]`)
+              : document.querySelector(`input[name="${name}"]`);
+            if (!el) continue;
+            el.value              = value;
+            el.dataset.discovered = 'true';
+            el.readOnly           = true;
+            el.title              = 'Auto-discovered — clear the Issuer URL field to edit manually';
+            el.classList.add('bg-gray-50', 'text-gray-500', 'cursor-not-allowed');
+            populated++;
+          }
+
+          const dcrBadge = data.dcr_available
+            ? '<span class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded">DCR available</span>'
+            : '<span class="ml-2 inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-500 rounded">No DCR</span>';
+
+          _oauthDiscoverStatus(statusEl, 'success',
+            `✅ Discovered ${populated} endpoint${populated !== 1 ? 's' : ''} from ` +
+            `<code class="font-mono text-xs">${_escHtml(issuer)}</code>${dcrBadge}`);
+
+        } catch (err) {
+          _oauthDiscoverStatus(statusEl, 'error', `Network error: ${_escHtml(err.message)}`);
+        } finally {
+          btn.disabled    = false;
+          btn.textContent = '🔍 Discover';
+        }
+      }
+
+      function _oauthDiscoverStatus(el, type, html) {
+        if (!el) return;
+        const colours = { info: 'text-blue-600', success: 'text-green-600', error: 'text-red-600' };
+        el.className = `oauth-discover-status mt-1 text-sm ${colours[type] || ''}`;
+        el.innerHTML = html;
+        el.classList.remove('hidden');
+      }
+
+      function _escHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      window.Admin = window.Admin || {};
+      window.Admin.manageTeamMembersSafe = manageTeamMembersSafe;
+      window.Admin.deleteTeamSafe = deleteTeamSafe;
+      window.Admin.cancelJoinRequest = cancelJoinRequest;
+      window.Admin.discoverOAuthEndpoints = discoverOAuthEndpoints;
+      window.Admin.editTeamSafe = editTeamSafe;
+      window.Admin.leaveTeamSafe = leaveTeamSafe;
+      window.Admin.requestToJoinTeamSafe = requestToJoinTeamSafe;
+      window.Admin.viewJoinRequestsSafe = viewJoinRequestsSafe;
+      window.Admin.submitUserInvitation = submitUserInvitation;
+      window.Admin.submitRoleAssignment = submitRoleAssignment;
+      window.Admin.closeInviteUserModal = closeInviteUserModal;
+      window.Admin.closeRoleAssignmentModal = closeRoleAssignmentModal;
+      window.Admin.toggleEmailInput = toggleEmailInput;
+      window.Admin.validateNewUserPassword = validateNewUserPassword;
+      if (typeof openBulkImportModal !== 'undefined') window.Admin.openBulkImportModal = openBulkImportModal;
+      if (typeof closeBulkImportModal !== 'undefined') window.Admin.closeBulkImportModal = closeBulkImportModal;
+      if (typeof toggleImportMethod !== 'undefined') window.Admin.toggleImportMethod = toggleImportMethod;
+      if (typeof handleFileSelect !== 'undefined') window.Admin.handleFileSelect = handleFileSelect;
+      if (typeof validateJsonInput !== 'undefined') window.Admin.validateJsonInput = validateJsonInput;
+      if (typeof toggleValidationGuide !== 'undefined') window.Admin.toggleValidationGuide = toggleValidationGuide;
+      if (typeof togglePreviewDetails !== 'undefined') window.Admin.togglePreviewDetails = togglePreviewDetails;
+      if (typeof submitBulkImport !== 'undefined') window.Admin.submitBulkImport = submitBulkImport;
+      if (typeof toggleBulkImportDropdown !== 'undefined') window.Admin.toggleBulkImportDropdown = toggleBulkImportDropdown;
+      if (typeof toggleDropdownImportMethod !== 'undefined') window.Admin.toggleDropdownImportMethod = toggleDropdownImportMethod;
+      if (typeof handleDropdownFileSelect !== 'undefined') window.Admin.handleDropdownFileSelect = handleDropdownFileSelect;
+      if (typeof validateDropdownJson !== 'undefined') window.Admin.validateDropdownJson = validateDropdownJson;
+      if (typeof validateDropdownData !== 'undefined') window.Admin.validateDropdownData = validateDropdownData;
+      if (typeof showDropdownStatus !== 'undefined') window.Admin.showDropdownStatus = showDropdownStatus;
+      if (typeof showDropdownResults !== 'undefined') window.Admin.showDropdownResults = showDropdownResults;
+      if (typeof showDropdownFailedTools !== 'undefined') window.Admin.showDropdownFailedTools = showDropdownFailedTools;
+      if (typeof showDropdownActionButtons !== 'undefined') window.Admin.showDropdownActionButtons = showDropdownActionButtons;
+      if (typeof resetDropdownImport !== 'undefined') window.Admin.resetDropdownImport = resetDropdownImport;
+      if (typeof submitDropdownImport !== 'undefined') window.Admin.submitDropdownImport = submitDropdownImport;
+      if (typeof performDropdownImport !== 'undefined') window.Admin.performDropdownImport = performDropdownImport;
+      if (typeof downloadSampleJSON !== 'undefined') window.Admin.downloadSampleJSON = downloadSampleJSON;
+      if (typeof openCreateTeamModal !== 'undefined') window.Admin.openCreateTeamModal = openCreateTeamModal;
+      if (typeof closeCreateTeamModal !== 'undefined') window.Admin.closeCreateTeamModal = closeCreateTeamModal;
+      if (typeof loadTeamMembersView !== 'undefined') window.Admin.loadTeamMembersView = loadTeamMembersView;
+      if (typeof approveJoinRequest !== 'undefined') window.Admin.approveJoinRequest = approveJoinRequest;
+      if (typeof rejectJoinRequest !== 'undefined') window.Admin.rejectJoinRequest = rejectJoinRequest;
     </script>
         </main>
       </div>

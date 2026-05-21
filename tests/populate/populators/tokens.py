@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Token populator - creates API tokens via POST /tokens.
+"""Location: ./tests/populate/populators/tokens.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Token populator - creates API tokens via POST /tokens.
 
 Uses user login JWTs (interactive session tokens) to create API tokens,
 since API tokens cannot create new API tokens (security boundary).

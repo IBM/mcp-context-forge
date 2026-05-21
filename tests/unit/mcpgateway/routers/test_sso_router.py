@@ -1,10 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Tests for SSO router endpoints and helpers."""
+"""Location: ./tests/unit/mcpgateway/routers/test_sso_router.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for SSO router endpoints and helpers.
+"""
 
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -157,7 +163,7 @@ async def test_initiate_sso_login_invalid_scopes(monkeypatch: pytest.MonkeyPatch
         await sso_router.initiate_sso_login("provider", MagicMock(), MagicMock(), redirect_uri="/cb", scopes="admin", db=MagicMock())
 
     assert excinfo.value.status_code == 400
-    assert "Invalid scopes requested: admin" in str(excinfo.value.detail)
+    assert "Invalid OAuth authorization request" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -244,9 +250,7 @@ async def test_handle_sso_callback_missing_code_and_error(monkeypatch: pytest.Mo
     request.scope = {"root_path": ""}
     request.cookies = {"sso_session_id": "session-1"}
 
-    response = await sso_router.handle_sso_callback(
-        "github", code=None, state="state", error=None, request=request, response=MagicMock(), db=MagicMock()
-    )
+    response = await sso_router.handle_sso_callback("github", code=None, state="state", error=None, request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
@@ -518,7 +522,7 @@ async def test_create_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyP
         await sso_router.create_sso_provider(payload, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 400
-    assert "Issuer is not allowed" in str(excinfo.value.detail)
+    assert "Invalid SSO provider configuration" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -671,7 +675,7 @@ async def test_update_sso_provider_disallowed_issuer(monkeypatch: pytest.MonkeyP
         await sso_router.update_sso_provider("provider", payload, db=MagicMock(), user={"email": "admin@example.com"})
 
     assert excinfo.value.status_code == 400
-    assert "Issuer is not allowed" in str(excinfo.value.detail)
+    assert "Invalid SSO provider configuration" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
@@ -882,9 +886,7 @@ async def test_handle_sso_callback_oauth_error_access_denied(monkeypatch: pytest
     request = MagicMock()
     request.scope = {"root_path": ""}
 
-    response = await sso_router.handle_sso_callback(
-        "adfs", code=None, state=None, error="access_denied", error_description="User cancelled", request=request, response=MagicMock(), db=MagicMock()
-    )
+    response = await sso_router.handle_sso_callback("adfs", code=None, state=None, error="access_denied", error_description="User cancelled", request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
@@ -899,9 +901,7 @@ async def test_handle_sso_callback_oauth_error_server_error(monkeypatch: pytest.
     request = MagicMock()
     request.scope = {"root_path": ""}
 
-    response = await sso_router.handle_sso_callback(
-        "adfs", code=None, state=None, error="server_error", request=request, response=MagicMock(), db=MagicMock()
-    )
+    response = await sso_router.handle_sso_callback("adfs", code=None, state=None, error="server_error", request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
     assert "/admin/login?error=sso_server_error" in response.headers.get("location", "")
@@ -915,9 +915,7 @@ async def test_handle_sso_callback_oauth_error_unknown(monkeypatch: pytest.Monke
     request = MagicMock()
     request.scope = {"root_path": ""}
 
-    response = await sso_router.handle_sso_callback(
-        "adfs", code=None, state=None, error="custom_error", request=request, response=MagicMock(), db=MagicMock()
-    )
+    response = await sso_router.handle_sso_callback("adfs", code=None, state=None, error="custom_error", request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
     assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
@@ -932,9 +930,7 @@ async def test_handle_sso_callback_missing_state_no_error(monkeypatch: pytest.Mo
     request.scope = {"root_path": ""}
     request.cookies = {"sso_session_id": "session-1"}
 
-    response = await sso_router.handle_sso_callback(
-        "adfs", code="auth-code", state=None, error=None, request=request, response=MagicMock(), db=MagicMock()
-    )
+    response = await sso_router.handle_sso_callback("adfs", code="auth-code", state=None, error=None, request=request, response=MagicMock(), db=MagicMock())
 
     assert isinstance(response, RedirectResponse)
     assert "/admin/login?error=sso_failed" in response.headers.get("location", "")

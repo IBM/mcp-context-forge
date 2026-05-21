@@ -11,7 +11,7 @@ The MCP Streamable HTTP spec defines a server-to-client stream: the client opens
 
 **What we have today (post-#4205, #4299).** Both the Python gateway (`streamablehttp_transport.py:3004-3031`) and the Rust runtime (`crates/mcp_runtime/src/lib.rs:4654-4706`) return `405 Method Not Allowed` on `GET /mcp` whenever stateful sessions are disabled OR no `Mcp-Session-Id` header is present. The 405 was correct under #4205 because there was no infrastructure to deliver server-initiated messages to a downstream listener — the per-session message handler in `services/notification_service.py:369-431` consumes upstream notifications only to trigger internal list-refresh, and `routers/reverse_proxy.py:532` carries an explicit `# TODO: Implement message queue for SSE delivery`.
 
-**Why we need it back.** Restoring the GET stream is a prerequisite for several upcoming features that all depend on server-to-client delivery: structured logging visible to the client, progress notifications, sampling/elicitation passthrough (extending the work in [ADR-022](022-elicitation-passthrough.md) to streamable HTTP), and list-changed notifications that today are absorbed into refresh logic instead of forwarded.
+**Why we need it back.** Restoring the GET stream is a prerequisite for several upcoming features that all depend on server-to-client delivery: structured logging visible to the client, progress notifications, sampling/elicitation passthrough (extending the work in [ADR-022](022-elicitation-passthrough-implementation.md) to streamable HTTP), and list-changed notifications that today are absorbed into refresh logic instead of forwarded.
 
 **The multi-node problem.** The downstream client opens GET on whatever node the load balancer picks (call it node A). The upstream MCP session lives on the worker that owns it via the affinity machinery (ADR-038) — call it node B. Notifications from upstream arrive at node B, but the client is listening on node A. We need cross-node delivery without forcing the GET to land on the affinity owner.
 
@@ -224,4 +224,4 @@ compose, and `make testing-up` (3-replica multi-node with Redis).
   - `tests/unit/mcpgateway/transports/test_redis_event_store.py` (cross-stream, evicted-cursor, no-cursor replay)
   - `tests/unit/mcpgateway/services/test_notification_service.py` (request correlation, id-collision, publish-failure telemetry, shutdown timeout)
 - Spec: [Streamable HTTP — Listening for messages from the server](https://modelcontextprotocol.io/specification/draft/basic/transports#listening-for-messages-from-the-server)
-- Prior ADRs: [ADR-022](022-elicitation-passthrough.md), [ADR-038](038-multi-worker-session-affinity.md), [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)
+- Prior ADRs: [ADR-022](022-elicitation-passthrough-implementation.md), [ADR-038](038-multi-worker-session-affinity.md), [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md)

@@ -1,5 +1,11 @@
+# -*- coding: utf-8 -*-
 # pylint: disable=no-member
-"""Add tools.manage_plugins permission to team_admin role.
+"""Location: ./mcpgateway/alembic/versions/1a02944e2671_add_manage_plugins_to_team_admin.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add tools.manage_plugins permission to team_admin role.
 
 Revision ID: 1a02944e2671
 Revises: 592625561893

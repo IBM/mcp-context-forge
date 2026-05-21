@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test DCR Service (RFC 7591 Dynamic Client Registration).
+"""Location: ./tests/unit/mcpgateway/services/test_dcr_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test DCR Service (RFC 7591 Dynamic Client Registration).
 
 This test suite validates the DCR service implementation following TDD Red Phase.
 Tests will FAIL until implementation is complete.
@@ -387,6 +392,51 @@ class TestDiscoverASMetadata:
             assert calls[0][0][0] == "https://as.example.com/.well-known/oauth-authorization-server/tenant1"
             # OIDC: appended to issuer
             assert calls[1][0][0] == "https://as.example.com/tenant1/.well-known/openid-configuration"
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_does_not_follow_redirects_rfc8414(self):
+        """RFC 8414 discovery must not follow redirects (SSRF protection)."""
+        dcr_service = DcrService()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 302
+        mock_response.headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+            # Verify follow_redirects=False was passed
+            call_kwargs = mock_client.get.call_args[1]
+            assert call_kwargs.get("follow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_does_not_follow_redirects_oidc(self):
+        """OIDC fallback discovery must not follow redirects (SSRF protection)."""
+        dcr_service = DcrService()
+
+        # First request (RFC 8414) returns 404
+        not_found = MagicMock()
+        not_found.status_code = 404
+
+        # Second request (OIDC) returns redirect
+        redirect = MagicMock()
+        redirect.status_code = 307
+        redirect.headers = {"location": "http://localhost:8080/internal"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[not_found, redirect])
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError):
+                await dcr_service.discover_as_metadata("https://as.example.com")
+
+            calls = mock_client.get.call_args_list
+            assert len(calls) == 2
+            assert calls[1][1].get("follow_redirects") is False
 
 
 class TestRegisterClient:

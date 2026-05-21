@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for observability router SQL functions.
+"""Location: ./tests/unit/mcpgateway/routers/test_observability_sql.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for observability router SQL functions.
 
 Tests SQL-based and Python-based computation paths for query performance metrics.
 """
@@ -32,7 +37,7 @@ def allow_permission(monkeypatch):
             return True
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
 
 
 class TestQueryPerformancePostgresql:
@@ -476,8 +481,8 @@ class TestObservabilityRouterEndpoints:
         assert isinstance(kwargs["end_time"], datetime)
 
     @pytest.mark.asyncio
-    async def test_export_traces_wraps_failures_in_http_400(self, allow_permission):
-        """export_traces returns HTTP 400 when service query fails."""
+    async def test_export_traces_wraps_failures_in_http_500(self, allow_permission):
+        """export_traces returns HTTP 500 when service query fails with non-ValueError."""
         # First-Party
         from mcpgateway.routers.observability import export_traces
 
@@ -487,5 +492,5 @@ class TestObservabilityRouterEndpoints:
             with pytest.raises(HTTPException) as exc_info:
                 await export_traces({}, format="json", db=MagicMock(), _user={"email": "admin", "db": MagicMock()})
 
-        assert exc_info.value.status_code == 400
-        assert "Export failed:" in exc_info.value.detail
+        assert exc_info.value.status_code == 500
+        assert "Export failed" in exc_info.value.detail

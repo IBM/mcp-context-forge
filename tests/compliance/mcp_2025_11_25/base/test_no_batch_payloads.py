@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Batch payload rejection tests for streamable HTTP MCP endpoint."""
+"""Location: ./tests/compliance/mcp_2025_11_25/base/test_no_batch_payloads.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Batch payload rejection tests for streamable HTTP MCP endpoint.
+"""
 
 # Third-Party
 import pytest

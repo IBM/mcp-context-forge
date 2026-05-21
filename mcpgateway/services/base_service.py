@@ -1,7 +1,14 @@
+# -*- coding: utf-8 -*-
 # Copyright (c) 2025 IBM Corp. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Abstract base class for services with visibility-filtered listing."""
+"""Location: ./mcpgateway/services/base_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Abstract base class for services with visibility-filtered listing.
+"""
 
 # Standard
 from abc import ABC
@@ -15,7 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
 
 # First-Party
-from mcpgateway.plugins.framework import get_plugin_manager
+from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_user_admin
 
@@ -133,7 +140,7 @@ class BaseService(ABC):
         tokens. Use _apply_access_control() which handles this automatically.
 
         Access rules:
-        - public: visible to all (global listing only; excluded when team_id is set)
+        - public: visible to all — always included, even when team_id is set
         - team: visible to team members (token_teams contains team_id)
         - private: visible only to owner (requires user_email)
 
@@ -152,7 +159,10 @@ class BaseService(ABC):
             if team_id not in token_teams:
                 return query.where(False)
 
-            access_conditions = [and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"]))]
+            access_conditions = [
+                and_(model_cls.team_id == team_id, model_cls.visibility.in_(["team", "public"])),
+                model_cls.visibility == "public",  # globally public items from any team are always visible
+            ]
             if user_email:
                 access_conditions.append(and_(model_cls.team_id == team_id, model_cls.owner_email == user_email, model_cls.visibility == "private"))
             return query.where(or_(*access_conditions))

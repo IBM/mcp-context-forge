@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_postgresql_schema_config.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for PostgreSQL schema configuration support (Issue #1535).
 
@@ -122,12 +123,15 @@ class TestPostgreSQLSchemaConfiguration:
         assert "connect_timeout" in url.query
         assert url.query["options"] == "-c search_path=mcp_gateway"
 
-    @pytest.mark.parametrize("schema_name", [
-        "mcp_gateway",
-        "custom_schema",
-        "app_schema_v2",
-        "schema_123",
-    ])
+    @pytest.mark.parametrize(
+        "schema_name",
+        [
+            "mcp_gateway",
+            "custom_schema",
+            "app_schema_v2",
+            "schema_123",
+        ],
+    )
     def test_various_schema_names(self, schema_name):
         """Test that various valid schema names work correctly."""
         url_string = f"postgresql://user:pass@host/db?options=-c%20search_path={schema_name}"

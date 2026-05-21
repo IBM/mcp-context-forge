@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/tools/builder/test_schema.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -60,12 +60,7 @@ class TestGatewayConfig:
 
     def test_gateway_with_repo(self):
         """Test gateway config with repository build."""
-        config = GatewayConfig(
-            repo="https://github.com/org/repo.git",
-            ref="main",
-            context=".",
-            port=4444
-        )
+        config = GatewayConfig(repo="https://github.com/org/repo.git", ref="main", context=".", port=4444)
         assert config.repo == "https://github.com/org/repo.git"
         assert config.ref == "main"
         assert config.image is None
@@ -97,12 +92,7 @@ class TestPluginConfig:
 
     def test_plugin_with_repo(self):
         """Test plugin config with repository build."""
-        config = PluginConfig(
-            name="TestPlugin",
-            repo="https://github.com/org/plugin.git",
-            ref="v1.0.0",
-            context="plugins/test"
-        )
+        config = PluginConfig(name="TestPlugin", repo="https://github.com/org/plugin.git", ref="v1.0.0", context="plugins/test")
         assert config.name == "TestPlugin"
         assert config.repo == "https://github.com/org/plugin.git"
         assert config.ref == "v1.0.0"
@@ -138,15 +128,7 @@ class TestPluginConfig:
 
     def test_plugin_overrides(self):
         """Test plugin with overrides."""
-        config = PluginConfig(
-            name="TestPlugin",
-            image="test:latest",
-            plugin_overrides={
-                "priority": 10,
-                "mode": "enforce",
-                "tags": ["security", "filter"]
-            }
-        )
+        config = PluginConfig(name="TestPlugin", image="test:latest", plugin_overrides={"priority": 10, "mode": "enforce", "tags": ["security", "filter"]})
         assert config.plugin_overrides["priority"] == 10
         assert config.plugin_overrides["mode"] == "enforce"
         assert config.plugin_overrides["tags"] == ["security", "filter"]
@@ -166,13 +148,7 @@ class TestCertificatesConfig:
 
     def test_certificates_custom_values(self):
         """Test certificates with custom values."""
-        config = CertificatesConfig(
-            validity_days=365,
-            auto_generate=False,
-            ca_path="/custom/ca",
-            gateway_path="/custom/gateway",
-            plugins_path="/custom/plugins"
-        )
+        config = CertificatesConfig(validity_days=365, auto_generate=False, ca_path="/custom/ca", gateway_path="/custom/gateway", plugins_path="/custom/plugins")
         assert config.validity_days == 365
         assert config.auto_generate is False
         assert config.ca_path == "/custom/ca"
@@ -193,15 +169,7 @@ class TestInfrastructureConfig:
 
     def test_postgres_custom(self):
         """Test PostgreSQL custom configuration."""
-        config = PostgresConfig(
-            enabled=True,
-            image="postgres:16",
-            database="customdb",
-            user="customuser",
-            password="custompass",
-            storage_size="20Gi",
-            storage_class="fast-ssd"
-        )
+        config = PostgresConfig(enabled=True, image="postgres:16", database="customdb", user="customuser", password="custompass", storage_size="20Gi", storage_class="fast-ssd")
         assert config.image == "postgres:16"
         assert config.database == "customdb"
         assert config.storage_class == "fast-ssd"
@@ -224,10 +192,7 @@ class TestMCPStackConfig:
 
     def test_minimal_config(self):
         """Test minimal valid configuration."""
-        config = MCPStackConfig(
-            deployment=DeploymentConfig(type="compose", project_name="test"),
-            gateway=GatewayConfig(image="mcpgateway:latest")
-        )
+        config = MCPStackConfig(deployment=DeploymentConfig(type="compose", project_name="test"), gateway=GatewayConfig(image="mcpgateway:latest"))
         assert config.deployment.type == "compose"
         assert config.gateway.image == "mcpgateway:latest"
         assert config.plugins == []
@@ -236,17 +201,10 @@ class TestMCPStackConfig:
         """Test full configuration with all options."""
         config = MCPStackConfig(
             deployment=DeploymentConfig(type="kubernetes", namespace="prod"),
-            gateway=GatewayConfig(
-                image="mcpgateway:latest",
-                port=4444,
-                mtls_enabled=True
-            ),
-            plugins=[
-                PluginConfig(name="Plugin1", image="plugin1:latest"),
-                PluginConfig(name="Plugin2", image="plugin2:latest")
-            ],
+            gateway=GatewayConfig(image="mcpgateway:latest", port=4444, mtls_enabled=True),
+            plugins=[PluginConfig(name="Plugin1", image="plugin1:latest"), PluginConfig(name="Plugin2", image="plugin2:latest")],
             certificates=CertificatesConfig(validity_days=365),
-            infrastructure=InfrastructureConfig()
+            infrastructure=InfrastructureConfig(),
         )
         assert config.deployment.namespace == "prod"
         assert len(config.plugins) == 2
@@ -258,10 +216,7 @@ class TestMCPStackConfig:
             MCPStackConfig(
                 deployment=DeploymentConfig(type="compose"),
                 gateway=GatewayConfig(image="test:latest"),
-                plugins=[
-                    PluginConfig(name="DuplicatePlugin", image="plugin1:latest"),
-                    PluginConfig(name="DuplicatePlugin", image="plugin2:latest")
-                ]
+                plugins=[PluginConfig(name="DuplicatePlugin", image="plugin1:latest"), PluginConfig(name="DuplicatePlugin", image="plugin2:latest")],
             )
 
     def test_unique_plugin_names(self):
@@ -269,11 +224,7 @@ class TestMCPStackConfig:
         config = MCPStackConfig(
             deployment=DeploymentConfig(type="compose"),
             gateway=GatewayConfig(image="test:latest"),
-            plugins=[
-                PluginConfig(name="Plugin1", image="plugin1:latest"),
-                PluginConfig(name="Plugin2", image="plugin2:latest"),
-                PluginConfig(name="Plugin3", image="plugin3:latest")
-            ]
+            plugins=[PluginConfig(name="Plugin1", image="plugin1:latest"), PluginConfig(name="Plugin2", image="plugin2:latest"), PluginConfig(name="Plugin3", image="plugin3:latest")],
         )
         assert len(config.plugins) == 3
         assert [p.name for p in config.plugins] == ["Plugin1", "Plugin2", "Plugin3"]
@@ -282,18 +233,8 @@ class TestMCPStackConfig:
         """Test configuration with repository builds."""
         config = MCPStackConfig(
             deployment=DeploymentConfig(type="compose"),
-            gateway=GatewayConfig(
-                repo="https://github.com/org/gateway.git",
-                ref="v2.0.0"
-            ),
-            plugins=[
-                PluginConfig(
-                    name="BuiltPlugin",
-                    repo="https://github.com/org/plugin.git",
-                    ref="main",
-                    context="plugins/src"
-                )
-            ]
+            gateway=GatewayConfig(repo="https://github.com/org/gateway.git", ref="v2.0.0"),
+            plugins=[PluginConfig(name="BuiltPlugin", repo="https://github.com/org/plugin.git", ref="main", context="plugins/src")],
         )
         assert config.gateway.repo is not None
         assert config.gateway.ref == "v2.0.0"
@@ -316,21 +257,13 @@ class TestBuildableConfig:
 
     def test_env_vars(self):
         """Test environment variables."""
-        config = GatewayConfig(
-            image="test:latest",
-            env_vars={"LOG_LEVEL": "DEBUG", "PORT": "4444"}
-        )
+        config = GatewayConfig(image="test:latest", env_vars={"LOG_LEVEL": "DEBUG", "PORT": "4444"})
         assert config.env_vars["LOG_LEVEL"] == "DEBUG"
         assert config.env_vars["PORT"] == "4444"
 
     def test_multi_stage_build(self):
         """Test multi-stage build target."""
-        config = PluginConfig(
-            name="TestPlugin",
-            repo="https://github.com/org/plugin.git",
-            containerfile="Dockerfile",
-            target="production"
-        )
+        config = PluginConfig(name="TestPlugin", repo="https://github.com/org/plugin.git", containerfile="Dockerfile", target="production")
         assert config.containerfile == "Dockerfile"
         assert config.target == "production"
 

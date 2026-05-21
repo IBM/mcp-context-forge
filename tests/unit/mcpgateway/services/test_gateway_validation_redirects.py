@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_validation_redirects.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -19,6 +19,7 @@ import httpx
 from unittest.mock import patch
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+
 
 @pytest.mark.asyncio
 async def test_streamablehttp_follows_3xx_redirects_and_validates():
@@ -58,6 +59,7 @@ async def test_streamablehttp_follows_3xx_redirects_and_validates():
         # expose stream method used by gateway_service
         def stream(self, method, url, **kwargs):
             return mock_resilient.client.stream(method, url, **kwargs)
+
 
 @pytest.mark.asyncio
 async def test_200_with_location_is_not_treated_as_redirect():

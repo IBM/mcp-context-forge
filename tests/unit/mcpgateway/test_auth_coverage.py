@@ -1,4 +1,10 @@
-"""Additional tests for auth.py coverage gaps.
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_auth_coverage.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Additional tests for auth.py coverage gaps.
 
 This module contains targeted tests for specific uncovered lines in mcpgateway/auth.py
 to achieve 100% coverage.

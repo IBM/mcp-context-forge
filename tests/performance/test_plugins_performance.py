@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/performance/test_plugins_performance.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
@@ -47,7 +47,7 @@ sys.path.insert(0, ROOT_DIR)
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent  # noqa: E402
-from mcpgateway.plugins.framework import (  # noqa: E402
+from cpex.framework import (  # noqa: E402
     GlobalContext,
     PluginManager,
     PromptHookType,

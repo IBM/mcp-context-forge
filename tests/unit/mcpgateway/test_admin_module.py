@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.admin helpers and auth flows."""
+"""Location: ./tests/unit/mcpgateway/test_admin_module.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for mcpgateway.admin helpers and auth flows.
+"""
 
 # Standard
 import base64
@@ -246,6 +252,8 @@ async def test_rate_limit_enforcement(monkeypatch):
 
 
 def test_user_identity_helpers():
+    # Test email-over-sub precedence (canonical order)
+    assert admin.get_user_email({"email": "primary@example.com", "sub": "secondary@example.com"}) == "primary@example.com"
     assert admin.get_user_email({"sub": "a@example.com"}) == "a@example.com"
     assert admin.get_user_email({"email": "b@example.com"}) == "b@example.com"
     assert admin.get_user_email("c@example.com") == "c@example.com"
@@ -267,35 +275,25 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
     assert admin.validate_password_strength("short") == (True, "")
 
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 8)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", True)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", True)
-    monkeypatch.setattr(admin.settings, "password_require_special", True)
+    # PasswordPolicyService uses password_min_length_user=12 and 3-of-4 complexity
 
-    ok, msg = admin.validate_password_strength("Abcdef1!")
+    ok, msg = admin.validate_password_strength("AzxWq1!MnbvC2@")
     assert ok is True and msg == ""
 
     ok, msg = admin.validate_password_strength("abcdef1!")
-    assert ok is False and "uppercase" in msg
+    assert ok is False and "at least 12" in msg
 
 
 @pytest.mark.parametrize(
-    ("required_attr", "password", "expected_fragment"),
+    ("password", "expected_fragment"),
     [
-        ("password_require_lowercase", "ABCDEFGH", "lowercase"),
-        ("password_require_numbers", "Abcdefgh", "number"),
-        ("password_require_special", "Abcdefg1", "special character"),
+        ("ABCDEFGH", "at least 12"),       # Too short, no lowercase/numbers/special
+        ("Abcdefgh", "at least 12"),       # Too short, no numbers/special
+        ("Abcdefg1", "at least 12"),       # Too short, no special
     ],
 )
-def test_validate_password_strength_requirement_failures(monkeypatch, required_attr, password, expected_fragment):
+def test_validate_password_strength_requirement_failures(monkeypatch, password, expected_fragment):
     monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
-    monkeypatch.setattr(admin.settings, "password_min_length", 1)
-    monkeypatch.setattr(admin.settings, "password_require_uppercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_lowercase", False)
-    monkeypatch.setattr(admin.settings, "password_require_numbers", False)
-    monkeypatch.setattr(admin.settings, "password_require_special", False)
-    monkeypatch.setattr(admin.settings, required_attr, True)
 
     ok, msg = admin.validate_password_strength(password)
     assert ok is False
@@ -832,7 +830,9 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
 
     response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
-    assert "jwt_token" in response.headers.get("set-cookie", "")
+    # Check that JWT token cookie is set (may be alongside other cookies like csrf_token)
+    set_cookie_header = response.headers.get("set-cookie", "")
+    assert "jwt_token=" in set_cookie_header or any("jwt_token=" in cookie for cookie in response.headers.getlist("set-cookie"))
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["selected_team_id"] == "team-1"
     assert len(context["tools"]) == 1

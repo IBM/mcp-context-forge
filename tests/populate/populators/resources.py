@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Resource populator - creates resources via POST /resources."""
+"""Location: ./tests/populate/populators/resources.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Resource populator - creates resources via POST /resources.
+"""
 
 # Standard
 import random

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/test_auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
@@ -83,7 +83,7 @@ class TestAuthentication:
         """Test rejection with invalid email/password credentials."""
         page = context.new_page()
 
-        self._login(page, "invalid@example.com", "wrong-password")
+        self._login(page, "invalid@example.com", "WrongP@ssw0rd!Test2026")
 
         # Expect redirect back to login with an error
         login_page = LoginPage(page, BASE_URL)

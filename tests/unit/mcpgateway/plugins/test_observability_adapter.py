@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/test_observability_adapter.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
@@ -12,8 +12,8 @@ from contextvars import copy_context
 from unittest.mock import MagicMock, patch
 
 # First-Party
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
+from cpex.framework.manager import PluginManager
+from cpex.framework.observability import current_trace_id as plugins_trace_id
 
 # ---------------------------------------------------------------------------
 # ObservabilityServiceAdapter unit tests

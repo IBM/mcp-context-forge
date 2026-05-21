@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add jwks_uri column to sso_providers
+"""Location: ./mcpgateway/alembic/versions/x7h8i9j0k1l2_add_jwks_uri_to_sso_providers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add jwks_uri column to sso_providers
 
 Revision ID: x7h8i9j0k1l2
 Revises: w6g7h8i9j0k1

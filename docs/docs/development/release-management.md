@@ -10,13 +10,13 @@ This document describes the complete release process for ContextForge, from pre-
 |-------|-------|
 | [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
 | [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
-| [3. Rust, Go & JS Dependency Updates](#3-rust-go--javascript-dependency-updates) | cargo update, go get -u, npm update |
+| [3. Rust, Go & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, go get -u, npm update |
 | [4. Quality Gates](#4-quality-gates) | Code formatting, linting, secrets scanning, security analysis |
 | [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
 | [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
 | [7. SSO Verification](#7-sso-verification) | Keycloak SSO login flow |
 | [8. Observability Verification](#8-observability-verification) | Monitoring stack under load |
-| [9. Security & Analysis](#9-security--analysis) | SonarQube, container scanning |
+| [9. Security & Analysis](#9-security-analysis) | SonarQube, container scanning |
 | [10. Deployment Verification](#10-deployment-verification) | Helm chart lint, IaC scanning, Minikube deploy |
 | [11. Documentation Verification](#11-documentation-verification) | Broken links, build, deploy |
 | [12. Plugin Testing](#12-plugin-testing) | PII filter, plugin framework, tool invocation hooks |
@@ -37,13 +37,8 @@ Use `bump2version` to update all version references atomically:
 bump2version --verbose --new-version=X.Y.Z-RC-N build
 ```
 
-This updates the version string in the four canonical locations defined in `.bumpversion.cfg`:
+This updates the version string in the canonical locations defined in `.bumpversion.cfg`:
 
-| File | Field |
-|------|-------|
-| `mcpgateway/__init__.py` | `__version__` |
-| `pyproject.toml` | `version` |
-| `Containerfile.lite` | `version` label |
 
 !!! note "bump2version does not commit or tag"
     The project's `.bumpversion.cfg` has `commit = False` and `tag = False`. You must commit and tag manually after all gates pass.
@@ -118,22 +113,29 @@ Update `Containerfile.lite` with the latest tags, then verify the image builds:
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
 ```
 
-### 1.7 Close the GitHub milestone
-
-- Move all remaining open issues to the next milestone
-- Close the current milestone on GitHub
-
----
-
 ## 2. Python Dependency Updates
 
 Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
 
-### 2.1 Update dependencies with `update_dependencies.py`
+### 2.1 Update CPEX dependencies
+Update the `[tool.uv.exclude-newer-package]` section of `pyproject.toml` file to the current date/time and execute
+`uv lock --upgrade` to get the latest depenencies and update the uv.lock file.
 
+### 2.2 Update dependencies with `update_dependencies.py`
+
+```bash
+find . -path "./mcp-servers/templates" -prune -o -path "*/.venv" -prune -o -name "pyproject.toml" -type f -print | while read -r toml_file; do
+  dir=$(dirname "$toml_file")
+  echo "Updating dependencies in $dir"
+  (cd "$dir" && uv lock --upgrade)
+done
+```
+
+!!! Optional: The above step may not update all dependencies as expected. Run the following command to update all dependencies in pyproject.toml files and not work from dynamic versions.
 The repository includes an async dependency updater at `.github/tools/update_dependencies.py`. Run it against every `pyproject.toml` and `requirements.txt` in the tree:
 
 ```bash
+
 # Main project
 python .github/tools/update_dependencies.py --file pyproject.toml
 
@@ -160,7 +162,7 @@ python .github/tools/update_dependencies.py --file tests/populate/requirements.t
 !!! tip "Dry-run first"
     Use `--dry-run` to preview changes before applying: `python .github/tools/update_dependencies.py --file pyproject.toml --dry-run`
 
-### 2.2 Reinstall and verify
+### 2.3 Reinstall and verify
 
 After updating, reinstall the dev environment and verify everything still resolves:
 
@@ -168,7 +170,7 @@ After updating, reinstall the dev environment and verify everything still resolv
 make install-dev
 ```
 
-### 2.3 Audit for vulnerabilities
+### 2.4 Audit for vulnerabilities
 
 ```bash
 make pip-audit
@@ -215,16 +217,44 @@ make rust-check
 | `cargo clippy -- -D warnings` | Lint for common mistakes and anti-patterns |
 | `cargo test --lib --release` | Run Rust unit tests |
 
-### 3.2 Go dependencies
+### 3.2 Rust supply-chain vetting
 
-Update `go.mod` and `go.sum` for all Go modules:
+After any Rust dependency update, run cargo-vet before release freeze:
 
 ```bash
-cd a2a-agents/go/a2a-echo-agent && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/fast-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/slow-time-server && go get -u ./... && go mod tidy && cd ../../..
-cd mcp-servers/go/benchmark-server && go get -u ./... && go mod tidy && cd ../../..
+make rust-vet
 ```
+
+This runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+
+If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
+
+| Option | When to use it | What to do |
+|--------|----------------|------------|
+| Use an imported audit | A trusted upstream audit set already covers the crate/version | Review the suggested import, then update `supply-chain/config.toml` and `supply-chain/imports.lock` if the trust relationship is acceptable |
+| Audit the diff | Cargo-vet suggests a small `cargo vet diff <crate> <old> <new>` | Review the exact version diff, then record it with `cargo vet certify <crate> <old> <new>` |
+| Audit the crate fully | The crate is new, or the diff is not a useful review unit | Inspect the exact crate source with `cargo vet inspect <crate> <version>`, then record it with `cargo vet certify <crate> <version>` |
+| Add a temporary exemption | The update is needed now, but a full audit is not practical before release | Add the narrowest `[[exemptions.<crate>]]` entry in `supply-chain/config.toml` with the required criteria, and document why it is acceptable |
+| Skip or revert the update | The audit cost or risk is too high for the release window | Keep the currently vetted version and move the dependency update to a follow-up task |
+
+Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
+
+When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+### 3.3 Go dependencies
+
+1. Update `go.mod` and `go.sum` for all Go modules:
+
+```bash
+find . -path "./mcp-servers/templates" -prune -o -name "go.mod" -type f -print | while read -r mod_file; do
+  dir=$(dirname "$mod_file")
+  echo "Updating Go dependencies in $dir"
+  (cd "$dir" && go get -u ./... && go mod tidy)
+done
+```
+
+2. Update `LINT_GO_TOOLCHAIN ?= go1.26.3` appropriately in the _root_/Makefile
+3. Update Dockerfile e.g. `FROM golang:1.26.3`
 
 Verify Go code compiles and passes security checks:
 
@@ -238,7 +268,7 @@ make linting-go-govulncheck
 | `linting-go-gosec` | Security static analysis across all Go modules |
 | `linting-go-govulncheck` | Known vulnerability scanning in Go dependencies |
 
-### 3.3 JavaScript dependencies (npm)
+### 3.4 JavaScript dependencies (npm)
 
 Update `package.json` and verify the frontend builds and passes linting:
 
@@ -255,7 +285,7 @@ make lint-web
 make test-js-coverage
 ```
 
-### 3.4 Frontend CDN dependencies
+### 3.5 Frontend CDN dependencies
 
 The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
 
@@ -304,7 +334,7 @@ The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror
 !!! warning "Three files must stay in sync"
     A version bump in `cdn_resources.py` without matching changes in `download-cdn-assets.sh` and the HTML templates will cause SRI verification failures or broken airgapped builds. Always update all three together.
 
-### 3.5 Rebuild containers
+### 3.6 Rebuild containers
 
 After updating all dependency ecosystems, rebuild the production container from scratch to verify everything integrates:
 
@@ -829,6 +859,11 @@ Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
 ```yaml
 - name: "PIIFilterPlugin"
   kind: "cpex_pii_filter.PIIFilterPlugin"
+  hooks:
+    [
+      "tool_pre_invoke",
+      "tool_post_invoke",
+    ]
   mode: "enforce"  # Change from "disabled" to "enforce"
   priority: 50
   config:
@@ -857,84 +892,142 @@ Register a simple REST tool and invoke it with PII-laden arguments to verify the
 
 ```bash
 # Create a tool that echoes its input
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-       "name": "echo_tool",
-       "description": "Echoes input for testing",
-       "url": "https://httpbin.org/post",
-       "request_type": "POST",
-       "integration_type": "REST",
-       "input_schema": {
-         "type": "object",
-         "properties": {
-           "message": {"type": "string", "description": "Message to echo"}
+       "tool": {
+         "name": "echo_tool",
+         "description": "Echoes input for testing",
+         "url": "https://httpbin.org/post",
+         "request_type": "POST",
+         "integration_type": "REST",
+         "input_schema": {
+           "type": "object",
+           "properties": {
+             "message": {"type": "string", "description": "Message to echo"}
+           }
          }
        }
      }' \
-     $BASE_URL/tools | jq
+     "$BASE_URL/tools" | jq
 ```
 
-Invoke the tool with various PII types and verify masking:
+The create response returns the canonical tool name as `echo-tool` (hyphenated). Use that name for JSON-RPC tool calls.
+
+Invoke the tool with supported PII types and verify masking:
 
 ```bash
 # Test with SSN
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "My SSN is 123-45-6789"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     "$BASE_URL/rpc" | jq
 
 # Test with credit card number
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Card: 4111-1111-1111-1111"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Card: 4111-1111-1111-1111"}}}' \
+     "$BASE_URL/rpc" | jq
 
 # Test with email address
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Contact john.doe@example.com for details"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Contact john.doe@example.com for details"}}}' \
+     "$BASE_URL/rpc" | jq
 
-# Test with AWS key
-curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+# Test with phone number
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"arguments": {"message": "Key: AKIAIOSFODNN7EXAMPLE"}}' \
-     $BASE_URL/tools/echo_tool/invoke | jq
+     -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Call me at 212-555-0199"}}}' \
+     "$BASE_URL/rpc" | jq
 ```
 
-**Acceptance criteria:** Each response should show the PII values partially masked (e.g., `123-**-****`, `4111-****-****-1111`). The original PII must not appear in the tool invocation payload.
+**Acceptance criteria:** Each response should show the PII values masked in the upstream payload returned by httpbin (for example, `123-45-6789` becomes `***-**-6789`). The original PII must not appear in the tool invocation payload. If `tools/call` returns an ambiguous tool error, remove duplicate `echo-tool` entries or create the test tool with a unique name and invoke the returned canonical name.
 
 ### 12.3 Test PII detection via MCP protocol
 
-Connect through a virtual server's SSE or Streamable HTTP endpoint and invoke a tool with PII via the MCP protocol (using MCP Inspector or `mcp-cli`) to verify the plugin hooks fire on the MCP transport path as well.
+Create a virtual server for the tool and invoke it through the Streamable HTTP MCP endpoint:
+
+```bash
+# Create a virtual server that exposes the echo tool.
+# Replace TOOL_ID with the id from the /tools create response above.
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "server": {
+         "name": "step12-pii-server",
+         "description": "Step 12 PII MCP verification",
+         "associated_tools": ["TOOL_ID"]
+       },
+       "visibility": "public"
+     }' \
+     "$BASE_URL/servers" | jq
+```
+
+Initialize an MCP session against the returned server id:
+
+```bash
+SERVER_ID="..."  # id from the /servers create response
+
+curl -i -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2025-11-25",
+         "capabilities": {},
+         "clientInfo": {"name": "step12-curl", "version": "1.0.0"}
+       }
+     }'
+```
+
+Copy the `mcp-session-id` response header, then call the tool through MCP:
+
+```bash
+MCP_SESSION_ID="..."  # mcp-session-id response header from initialize
+
+curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -H "mcp-session-id: $MCP_SESSION_ID" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     | jq
+```
+
+**Acceptance criteria:** The MCP `tools/call` response should show the SSN masked in the upstream payload, and the original `123-45-6789` value must not appear.
 
 ### 12.4 Verify plugin health and status
 
-Check the plugin framework is healthy via the Admin UI or API:
+Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     $BASE_URL/admin/api/plugins | jq
+export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --admin \
+  --exp 10080 \
+  --secret "${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}" \
+  --algo HS256 \
+  2>/dev/null | tail -n 1)
+
+curl -sS -H "Authorization: Bearer $MCPGATEWAY_ADMIN_TOKEN" \
+     -H "Accept: application/json" \
+     "$BASE_URL/admin/plugins/PIIFilterPlugin" | jq '{name,status,mode,hooks,kind}'
 ```
 
 Verify:
 
-- The PII filter plugin shows `status: active` and `mode: enforce`
-- Hook execution counts are incrementing after the test invocations above
+- The PII filter plugin shows `status: enabled` and `mode: enforce`
+- The plugin has both `tool_pre_invoke` and `tool_post_invoke` in `hooks`
 - No plugin errors appear in the gateway logs (`make compose-logs | grep -i plugin`)
 
-### 12.5 Run plugin unit tests
-
-```bash
-# PII filter unit tests
-pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
-
-# Rust PII filter tests (if Rust toolchain is available)
-make rust-test
-```
-
-### 12.6 Cleanup
+### 12.5 Cleanup
 
 Reset the plugin config back to disabled mode before proceeding:
 
@@ -1112,7 +1205,11 @@ The migration test suite follows an **n-2 support policy** and tests sequential 
 
 ## 14. Manual Testing
 
-These tests verify core user-facing workflows that automated tests do not fully cover. Perform them against the running compose stack (`make testing-up`).
+These tests verify core user-facing workflows that automated tests do not fully cover. Build and start the compose stack first:
+
+```bash
+make docker-prod && make testing-up
+```
 
 ### 14.1 Generate a JWT token
 
@@ -1123,82 +1220,78 @@ export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
   --secret my-test-key-but-now-longer-than-32-bytes)
-```
 
-Set the base URL (use `8080` for the nginx-proxied compose stack):
-
-```bash
 export BASE_URL="http://localhost:8080"
 ```
 
 ### 14.2 Register an MCP server via SSE
 
-Start a sample MCP server and register it as an SSE gateway:
+The translate process must bind to `0.0.0.0` so the gateway container can reach it via `host.docker.internal`:
 
 ```bash
-# Start a sample MCP time server exposed via SSE
+# Start MCP time server exposed via SSE (bind to 0.0.0.0 for Docker reachability)
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
   --expose-sse \
-  --port 8002 &
+  --port 8002 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (use host.docker.internal since gateway runs in Docker)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_sse","url":"http://localhost:8002/sse"}' \
+     -d '{"name":"release_test_sse","url":"http://host.docker.internal:8002/sse"}' \
      $BASE_URL/gateways | jq
-```
 
-Verify the tools from the server appear in the catalog:
-
-```bash
+# Verify tools appear in catalog
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.3 Register an MCP server via Streamable HTTP
 
-Register a server using the Streamable HTTP transport:
+Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
 
 ```bash
-# Start a sample MCP server exposed via Streamable HTTP
+# Start MCP server exposed via Streamable HTTP
 python3 -m mcpgateway.translate \
-  --stdio "uvx mcp_server_time -- --local-timezone=UTC" \
-  --port 8003 &
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
+  --expose-streamable-http \
+  --port 8003 \
+  --host 0.0.0.0 &
 
-# Register it with the gateway
+# Register with gateway (explicit transport field required)
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_streamable","url":"http://localhost:8003/mcp"}' \
+     -d '{"name":"release_test_streamable","url":"http://host.docker.internal:8003/mcp","transport":"STREAMABLEHTTP"}' \
      $BASE_URL/gateways | jq
+
+# Verify tools
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
 ```
 
 ### 14.4 Create a virtual server and export it
 
-Bundle the imported tools into a virtual MCP server:
+The request body must wrap the server fields under a `"server"` key:
 
 ```bash
-# Create the virtual server
+# Create virtual server
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"release_test_server","description":"Release validation tools","associatedTools":["1","2"]}' \
+     -d '{"server":{"name":"release_test_server","description":"Release validation tools","associatedTools":[]}}' \
      $BASE_URL/servers | jq
+
+# Verify (shows id, name, associatedTools)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq '[.[] | {id, name, associatedTools}]'
 ```
 
-Verify the server was created:
+Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
 
 ```bash
-curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq
-```
-
-Export the configuration for backup verification:
-
-```bash
-python -m mcpgateway.cli export --out release-test-export.json
+HOST=localhost PORT=8080 python -m mcpgateway.cli export --out release-test-export.json
 ```
 
 ### 14.5 Test with MCP Inspector
 
-Connect interactively via MCP Inspector to validate the protocol layer:
+Registered MCP gateways cannot be accessed directly via Inspector — they must be exposed through a virtual server. Add the SSE and Streamable HTTP gateways to `release_test_server` via the Admin UI or API, then connect Inspector to the virtual server.
 
 ```bash
 npx -y @modelcontextprotocol/inspector
@@ -1207,15 +1300,15 @@ npx -y @modelcontextprotocol/inspector
 In the Inspector UI:
 
 1. Set **Transport** to `SSE`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/sse`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/sse`
 3. Set **Header** `Authorization` to `Bearer <YOUR_TOKEN>`
 4. Click **Connect**
-5. Verify: tools list loads, you can execute a tool call, and the response is correct
+5. Verify: tools from both registered gateways appear, you can execute a tool call, and the response is correct
 
 Repeat with **Streamable HTTP**:
 
 1. Set **Transport** to `Streamable HTTP`
-2. Set **URL** to `$BASE_URL/servers/<SERVER_UUID>/mcp`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
 3. Set the same Authorization header
 4. Verify: tools list loads and tool calls execute correctly
 
@@ -1230,7 +1323,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-sse": {
       "type": "sse",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/sse",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/sse",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1246,7 +1339,7 @@ Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration en
   "servers": {
     "contextforge-http": {
       "type": "http",
-      "url": "http://localhost:8080/servers/<SERVER_UUID>/mcp/",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/mcp/",
       "headers": {
         "Authorization": "Bearer <YOUR_JWT_TOKEN>"
       }
@@ -1339,6 +1432,10 @@ Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.
 ### 16.1 Close the milestone
 
 If not already done in step 1.5, close the GitHub milestone and ensure all issues are accounted for.
+- Move all remaining open issues to the next milestone
+- Close the current milestone on GitHub
+
+---
 
 ### 16.2 Create the next milestone
 
@@ -1443,9 +1540,9 @@ cd docs && make deploy
 # 14. Plugin testing
 # ... enable PII filter in plugins/config.yaml (mode: "enforce") ...
 make compose-restart
-# ... invoke tools with PII (SSN, credit card, email, AWS key) ...
+# ... invoke tools with PII (SSN, credit card, email, phone number) ...
 # ... verify masking in responses ...
-pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
+# ... run PII filter unit tests if present ...
 # ... revert plugin config, restart ...
 
 # 15. Upgrade testing

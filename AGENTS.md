@@ -28,12 +28,12 @@ mcpgateway/                 # Core FastAPI application
 ├── routers/                # HTTP endpoint definitions (19 routers)
 ├── middleware/             # Cross-cutting concerns (16 middleware)
 ├── transports/             # Protocol implementations (SSE, WebSocket, stdio, streamable HTTP)
-├── plugins/                # Plugin framework infrastructure
+├── plugins/                # Plugin integration (uses cpex external package)
 └── alembic/                # Database migrations
 
 tests/                      # Test suite (see tests/AGENTS.md)
 plugins/                    # Plugin implementations (see plugins/AGENTS.md)
-plugin_templates/           # Starter templates for building new plugins
+plugins_rust/               # Rust plugin implementations for performance-sensitive paths
 charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
@@ -122,6 +122,16 @@ ContextForge implements a **two-layer security model**:
 - Never trust client-provided ownership fields (`owner_email`, `team_id`, session owner); derive authorization from authenticated identity and server-side state.
 - Security-sensitive changes must include deny-path regression tests (unauthenticated, wrong team, insufficient permissions, feature disabled).
 
+#### UAID Cross-Gateway Security
+
+- UAID cross-gateway routing requires explicit domain allowlist (fail-closed default)
+- Empty `UAID_ALLOWED_DOMAINS` blocks all cross-gateway routing unless `UAID_ALLOW_ALL_DOMAINS=true`
+- Cross-gateway calls forward bearer tokens for RBAC enforcement on remote gateways
+- Both gateways must trust the same JWT issuer (shared `JWT_SECRET_KEY` or federated SSO)
+- `UAID_ALLOW_ALL_DOMAINS=true` is unsafe for production (bypasses allowlist validation)
+- Startup validation logs ERROR if A2A enabled but allowlist not configured
+- Remote gateway 401/403 responses raise `A2AAgentError` with troubleshooting guidance
+
 ### Built-in Roles
 
 | Role | Scope | Key Permissions |
@@ -136,6 +146,17 @@ ContextForge implements a **two-layer security model**:
 - **Full RBAC guide**: `docs/docs/manage/rbac.md`
 - **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
 - **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+### User Identity Extraction
+
+**Canonical Email Precedence**: All user-email extraction helpers use a consistent **email-over-sub** precedence order to ensure forensic accuracy across visibility checks and audit logs:
+
+- When a user dict contains both `email` and `sub` keys, `email` takes precedence
+- The canonical implementation is `get_user_email()` in `mcpgateway/auth_context.py`
+- All other helpers (including `admin.get_user_email`) re-export or delegate to this canonical implementation
+- This ensures that the identity used for RBAC evaluation matches the identity logged in audit trails
+
+**Rationale**: The `email` field is the human-readable identifier used throughout AGENTS.md and user-facing documentation. Consistent precedence prevents forensic confusion where an incident review pivots on a logged email that differs from the principal actually evaluated by RBAC.
+
 
 ## Observability Transaction Behavior
 
@@ -301,6 +322,63 @@ make test
 
 - **"Multiple heads are present"**: Your `down_revision` points to wrong parent. Fix by updating to actual current head.
 - **"Target database is not up to date"**: Run `alembic upgrade head` first.
+
+### Hermetic Downgrade: Config Snapshot Pattern
+
+Any migration whose `downgrade()` logic depends on runtime configuration (i.e., reads from
+`mcpgateway.config.settings`) **must** snapshot those values into `migration_metadata` during
+`upgrade()` and read them back during `downgrade()`. This makes the migration hermetic —
+its behaviour is determined by database state, not the current environment.
+
+```python
+from mcpgateway.config import settings
+from sqlalchemy import inspect, text
+
+REVISION = "your_revision_id"
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    # ... schema changes ...
+
+    # Snapshot any settings values used in downgrade
+    if "migration_metadata" in inspect(bind).get_table_names():
+        bind.execute(
+            text(
+                "INSERT INTO migration_metadata (revision, key, value, created_at) "
+                "VALUES (:rev, :key, :val, CURRENT_TIMESTAMP) "
+                "ON CONFLICT (revision, key) DO UPDATE SET value = excluded.value"
+            ),
+            {"rev": REVISION, "key": "some_setting", "val": settings.some_setting},
+        )
+
+def downgrade() -> None:
+    bind = op.get_bind()
+
+    # Read from snapshot; fall back to live settings only if table is absent
+    # (pre-existing DB that was upgraded before this pattern was introduced)
+    cfg = {}
+    if "migration_metadata" in inspect(bind).get_table_names():
+        rows = bind.execute(
+            text("SELECT key, value FROM migration_metadata WHERE revision = :rev"),
+            {"rev": REVISION},
+        ).all()
+        cfg = {r[0]: r[1] for r in rows}
+
+    some_setting = cfg.get("some_setting") or settings.some_setting
+
+    # ... use some_setting for downgrade logic ...
+
+    # Clean up snapshot rows
+    if "migration_metadata" in inspect(bind).get_table_names():
+        bind.execute(
+            text("DELETE FROM migration_metadata WHERE revision = :rev"),
+            {"rev": REVISION},
+        )
+```
+
+**Rule:** If your migration imports `settings` and uses it in `downgrade()`, you must follow this
+pattern. Migrations that only use `settings` in `upgrade()` (e.g., for seeding initial data) are
+exempt.
 
 ## Coding Standards
 

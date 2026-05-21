@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add grpc_services table
+"""Location: ./mcpgateway/alembic/versions/3c89a45f32e5_add_grpc_services_table.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add grpc_services table
 
 Revision ID: 3c89a45f32e5
 Revises: g1a2b3c4d5e6
 Create Date: 2025-10-05 12:00:00.000000
-
 """
 
 # Standard

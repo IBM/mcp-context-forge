@@ -15,7 +15,7 @@ and started once, and further used by all test cases for policy evaluations.
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

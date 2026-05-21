@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/sso_bootstrap.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -332,6 +332,13 @@ def get_predefined_sso_providers() -> List[Dict]:
             "trusted_domains": settings.sso_trusted_domains,
             "auto_create_users": settings.sso_auto_create_users,
             "team_mapping": {},
+            "provider_metadata": {
+                "groups_claim": settings.sso_generic_groups_claim,
+                "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
+                "role_mappings": settings.sso_generic_role_mappings,
+                "default_role": settings.sso_generic_default_role,
+                "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
+            },
         }
         if settings.sso_generic_jwks_uri:
             provider_config["jwks_uri"] = settings.sso_generic_jwks_uri

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/sparc_static_validator/test_sparc_static_validator.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Osher Elhadad
 
@@ -28,14 +28,14 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Tool
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
     ToolHookType,
     ToolPreInvokePayload,
 )
-from mcpgateway.plugins.framework.constants import TOOL_METADATA
+from cpex.framework.constants import TOOL_METADATA
 from plugins.sparc_static_validator.sparc_static_validator import (
     SPARCStaticValidatorPlugin,
 )

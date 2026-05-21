@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""URL authentication helpers for query parameter auth.
+"""Location: ./mcpgateway/utils/url_auth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+URL authentication helpers for query parameter auth.
 Provides utilities for appending decrypted auth query parameters to URLs
 and sanitizing URLs for safe logging (redacting sensitive query params).
-
 Security Note:
     Query parameter authentication is inherently insecure (CWE-598: Use of GET
     Request Method With Sensitive Query Strings). API keys in URLs may appear
     in proxy logs, browser history, and server access logs. Use only when the
     upstream server (e.g., Tavily MCP) requires this authentication method.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

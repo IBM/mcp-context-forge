@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from mcpgateway.plugins.framework import PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload
-from mcpgateway.plugins.framework.models import GlobalContext
+from cpex.framework import PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload
+from cpex.framework.models import GlobalContext
 from plugins.test_tool_output_sentinel import ToolOutputSentinelPlugin
 
 

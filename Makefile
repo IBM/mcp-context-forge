@@ -302,7 +302,7 @@ install-dev: venv
 	fi
 	@$(MAKE) build-ui
 
-# help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
+# help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
 build-ui:
 	@if [ "$(SKIP_UI_BUILD)" = "1" ]; then \
@@ -315,6 +315,7 @@ build-ui:
 			echo "ℹ️  package-lock.json not found — falling back to 'npm install'"; \
 			npm install --no-audit --no-fund; \
 		fi && \
+		npm run build:css && \
 		npm run vite:build; \
 	else \
 		echo "❌ npm not found — install Node.js (https://nodejs.org) to build the Admin UI."; \
@@ -341,7 +342,9 @@ check-env-dev:
 	@echo "🔎  Validating .env (dev, warnings do not fail)..."
 	@python -c "import sys; from mcpgateway.scripts import validate_env as ve; sys.exit(ve.main(env_file='.env', exit_on_warnings=False))"
 
-
+.PHONY: init-secrets
+init-secrets: ## Generate secure secrets for the gateway (US-3)
+	python3 -m mcpgateway.scripts.init_secrets
 
 # =============================================================================
 # ▶️ SERVE
@@ -373,9 +376,9 @@ check-env-dev:
         js-build
 
 ## --- JS build ----------------------------------------------------------------
-js-build:                        ## Install npm dependencies and build JS bundle with Vite
+js-build:                        ## Install npm dependencies and build CSS and JS bundles
 	@if command -v npm >/dev/null 2>&1; then \
-		npm install --no-audit --no-fund && npm run vite:build; \
+		npm install --no-audit --no-fund && npm run build:css && npm run vite:build; \
 	else \
 		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
 	fi
@@ -396,8 +399,12 @@ serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
 serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
-dev: js-build
-	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+dev:
+	@echo "🚀 Starting development server with CSS watch..."
+	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
+	$(MAKE) js-build watch-css & \
+	WATCH_CSS_PID=$$!; \
+	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo
 dev-echo: js-build               ## Run dev server with SQL query logging enabled
@@ -418,16 +425,41 @@ stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
 	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
-	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
-	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@echo "Done."
+# -----------------------------------------------------------------------------
+# 🎨 CSS BUILD TARGETS
+# -----------------------------------------------------------------------------
+# help: 🎨 CSS BUILD TARGETS
+# help: build-css            - Build Tailwind CSS (pre-compiled, no JIT)
+# help: watch-css            - Watch and rebuild Tailwind CSS on changes
+# help: dev-css              - Run dev server with CSS watching in parallel
+
+.PHONY: build-css
+build-css:                       ## Build pre-compiled Tailwind CSS
+	@echo "🎨 Building Tailwind CSS..."
+	@npm run build:css
+	@echo "✅ Tailwind CSS built successfully"
+
+.PHONY: watch-css
+watch-css:                       ## Watch and rebuild Tailwind CSS on changes
+	@echo "👀 Watching Tailwind CSS for changes..."
+	@npm run watch:css
+
+.PHONY: dev-css
+dev-css:                         ## Alias for 'make dev' (kept for backward compatibility)
+	@echo "ℹ️  Note: 'make dev' now includes CSS watching by default"
+	@echo "ℹ️  Use 'make dev-no-css' if you don't want CSS watching"
+	@$(MAKE) dev
+
 
 stop-dev:                        ## Stop uvicorn dev server (port 8000)
-	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 
 stop-serve:                      ## Stop gunicorn production server (port 4444)
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
-	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 
 run: js-build
 	./run.sh
@@ -752,6 +784,12 @@ clean:
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+# help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
+# help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
+# help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
+# help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -778,15 +816,18 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
-# Dirs/files always excluded from standard pytest runs
+# Dirs/files always excluded from standard pytest runs.
+# tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
+# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# Invoke via `make test-live-gateway` (everything) or a targeted helper
+# (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
+# test-protocol-compliance{,-reference,-gateway}).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
-    tests/e2e/test_entra_id_integration.py \
-    tests/e2e/test_mcp_protocol_e2e.py \
-    tests/e2e/test_mcp_rbac_transport.py \
-    tests/e2e_rust \
-    tests/protocol_compliance
+    tests/live_gateway
 
 # Expand to --ignore=<path> flags for pytest CLI
 PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
@@ -798,80 +839,88 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e:  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
-			|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }; \
-		echo "✅ MCP protocol E2E tests passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
+		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
+	@echo "✅ MCP protocol E2E tests passed!"
 
 test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
 	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
 	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
 	@$(MAKE) test-mcp-protocol-e2e
 
-test-protocol-compliance:  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
-	@echo "📜 Running MCP protocol compliance harness (tests/protocol_compliance)..."
+test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
+	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
-			|| { echo "❌ protocol compliance harness failed!"; exit 1; }; \
-		echo "✅ protocol compliance harness passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
+		|| { echo "❌ protocol compliance harness failed!"; exit 1; }
+	@echo "✅ protocol compliance harness passed!"
 
-test-protocol-compliance-reference:  ## Protocol compliance harness — reference server only (fast, always-on)
+test-protocol-compliance-reference: uv  ## Protocol compliance harness — reference server only (fast, always-on)
 	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "reference-stdio" -v --tb=short \
-			|| { echo "❌ reference-target compliance harness failed!"; exit 1; }; \
-		echo "✅ reference-target compliance harness passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "reference-stdio" -v --tb=short \
+		|| { echo "❌ reference-target compliance harness failed!"; exit 1; }
+	@echo "✅ reference-target compliance harness passed!"
 
-test-protocol-compliance-gateway:  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
+test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
 	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
-			|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }; \
-		echo "✅ gateway-target compliance harness passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
+		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
+	@echo "✅ gateway-target compliance harness passed!"
 
-test-protocol-compliance-matrix:  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/python scripts/compliance_matrix.py $(MATRIX_ARGS)'
+test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
+	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
-test-mcp-rbac:  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
+test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack with SSE gateway registered"
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip show pytest-playwright >/dev/null 2>&1 || \
-			{ echo "📦 Installing playwright dependencies..."; $(UV_BIN) pip install -q ".[playwright]" && $(VENV_DIR)/bin/playwright install --with-deps chromium; } && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_rbac_transport.py -v -s --tb=short \
-			|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }; \
-		echo "✅ MCP RBAC transport tests passed!"'
+	@$(UV_BIN) run playwright install --with-deps chromium >/dev/null
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/mcp/test_mcp_rbac_transport.py -v -s --tb=short \
+		|| { echo "❌ MCP RBAC transport tests failed!"; exit 1; }
+	@echo "✅ MCP RBAC transport tests passed!"
 
-test-mcp-access-matrix:  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
+test-mcp-access-matrix: uv  ## Detailed Rust MCP role/access matrix test with strong tool/resource/prompt sentinels
 	@echo "🧪 Running MCP role/access matrix tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
-			|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }; \
-		echo "✅ MCP role/access matrix tests passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_access_matrix.py -v -s --tb=short \
+		|| { echo "❌ MCP role/access matrix tests failed!"; exit 1; }
+	@echo "✅ MCP role/access matrix tests passed!"
 
-test-mcp-plugin-parity:  ## MCP plugin parity E2E for current Python or Rust stack using a test-specific plugin config
+test-mcp-plugin-parity: uv  ## MCP plugin parity E2E for current Python or Rust stack using a test-specific plugin config
 	@echo "🧪 Running MCP plugin parity tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: stack started with PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml"
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e/test_mcp_plugin_parity.py -v -s --tb=short \
-			|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }; \
-		echo "✅ MCP plugin parity tests passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_plugin_parity.py -v -s --tb=short \
+		|| { echo "❌ MCP plugin parity tests failed!"; exit 1; }
+	@echo "✅ MCP plugin parity tests passed!"
 
-test-mcp-session-isolation:  ## MCP session/auth isolation tests for the Rust public transport path
+test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust public transport path
 	@echo "🧪 Running MCP session/auth isolation tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Requires: docker-compose stack rebuilt in Rust edge/full mode"
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		$(VENV_DIR)/bin/pytest tests/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
-			|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }; \
-		echo "✅ MCP session/auth isolation tests passed!"'
+	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
+		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
+	@echo "✅ MCP session/auth isolation tests passed!"
+
+test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires one of:"
+	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
+	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
+	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
+		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
+	@echo "✅ SSO E2E tests passed!"
+
+test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compliance)
+	@echo "🌐 Running all tests in tests/live_gateway/ ..."
+	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
+	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
+	@echo "   Tests probe BASE_URL ($${MCP_CLI_BASE_URL:-http://localhost:8080}) and self-skip when unreachable."
+	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
+		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
+	@echo "✅ Live-gateway test suite finished."
 
 MCP_ISOLATION_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_isolation.py
 MCP_ISOLATION_LOAD_HOST ?= http://localhost:8080
@@ -894,263 +943,203 @@ test-mcp-session-isolation-load: ## Multi-user MCP session/auth isolation correc
 			--exit-code-on-error=1 \
 			--only-summary'
 
-test:
+test: uv
 	@echo "🧪 Running tests..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		$(VENV_DIR)/bin/pytest -n auto --maxfail=0 -v --durations=5 \
-			$(PYTEST_IGNORE_FLAGS)"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 ARGON2ID_TIME_COST=1 \
+	 ARGON2ID_MEMORY_COST=1024 \
+	 $(UV_BIN) run --extra plugins pytest -n auto --maxfail=0 -v --durations=5 \
+		$(PYTEST_IGNORE_FLAGS)
 
-test-verbose:
+test-verbose: uv
 	@echo "🧪 Running tests (verbose, sequential)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		$(VENV_DIR)/bin/pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 ARGON2ID_TIME_COST=1 \
+	 ARGON2ID_MEMORY_COST=1024 \
+	 $(UV_BIN) run --extra plugins pytest --maxfail=0 -v --tb=short --instafail $(PYTEST_IGNORE_FLAGS)
 
-test-profile:
+test-profile: uv
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		$(VENV_DIR)/bin/pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 ARGON2ID_TIME_COST=1 \
+	 ARGON2ID_MEMORY_COST=1024 \
+	 $(UV_BIN) run --extra plugins pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v $(PYTEST_IGNORE_FLAGS)
 
 .PHONY: coverage-pytest
-coverage-pytest: install-dev
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
+coverage-pytest: uv
 	@mkdir -p $(TEST_DOCS_DIR)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' && \
-		export PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' && \
-		export DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' && \
-		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
-		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
-		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-			--durations=120 --cov-report=term --cov=mcpgateway \
-			$(PYTEST_IGNORE_FLAGS) tests/ || true"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
+	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
+	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
+	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
+	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
+		--durations=120 --cov-report=term --cov=mcpgateway \
+		$(PYTEST_IGNORE_FLAGS) tests/ || true
 
-coverage: coverage-pytest install-dev
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' && \
-		export PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' && \
-		export DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' && \
-		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
-		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
-		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
-			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-			--cov=mcpgateway mcpgateway/ || true"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
+coverage: coverage-pytest
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' \
+	 PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' \
+	 DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' \
+	 JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' \
+	 AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' \
+	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+		--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
+		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+		--cov=mcpgateway mcpgateway/ || true
+	@$(UV_BIN) run coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*
+	@$(UV_BIN) run coverage xml
+	@$(UV_BIN) run coverage report -m --no-skip-covered
 	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR) & XML ✔"
 
 .PHONY: coverage-annotated
 coverage-annotated: coverage
 	@echo "🔍  Generating annotated coverage files..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
+	@$(UV_BIN) run coverage annotate -d .
 	@echo "✅  Annotated files (.py,cover) generated ✔"
 
-test-docs:
+test-docs: uv
 	@echo "📝  Generating test documentation (docs/docs/test/unittest.md)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
-			--cov=mcpgateway mcpgateway/ || true"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
-			--durations=120 --cov-report=term --cov=mcpgateway \
-			$(PYTEST_IGNORE_FLAGS) tests/ || true"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+		--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+		--cov=mcpgateway mcpgateway/ || true
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 $(UV_BIN) run --extra plugins pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+		--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
+		--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+		--durations=120 --cov-report=term --cov=mcpgateway \
+		$(PYTEST_IGNORE_FLAGS) tests/ || true
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		coverage report --format=markdown -m --no-skip-covered \
-		>> $(DOCS_DIR)/docs/test/unittest.md"
+	@$(UV_BIN) run coverage report --format=markdown -m --no-skip-covered \
+		>> $(DOCS_DIR)/docs/test/unittest.md
 	@echo "✅  Test docs generated → $(DOCS_DIR)/docs/test/unittest.md"
 
-htmlcov:
+htmlcov: uv
 	@echo "📊  Generating HTML coverage report..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(COVERAGE_DIR)
-	# If there's no existing coverage data, fall back to the full test-run
 	@if [ ! -f .coverage ]; then \
 		echo "ℹ️  No .coverage file found - running full coverage first..."; \
 		$(MAKE) --no-print-directory coverage; \
 	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -i -d $(COVERAGE_DIR)"
+	@$(UV_BIN) run coverage html -i -d $(COVERAGE_DIR)
 	@echo "✅  HTML coverage report ready → $(COVERAGE_DIR)/index.html"
 
-diff-cover:
+diff-cover: uv
 	@echo "📊  Running diff-cover against main branch..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@if [ ! -f coverage.xml ]; then \
 		echo "ℹ️  No coverage.xml found - running coverage first..."; \
 		$(MAKE) --no-print-directory coverage; \
 	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		diff-cover coverage.xml --compare-branch=main --fail-under=90"
+	@$(UV_BIN) run diff-cover coverage.xml --compare-branch=main --fail-under=90
 
-pytest-examples:
+pytest-examples: uv
 	@echo "🧪 Testing README examples..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@test -f test_readme.py || { echo "⚠️  test_readme.py not found - skipping"; exit 0; }
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -q pytest pytest-examples && \
-		pytest -v test_readme.py"
+	@$(UV_BIN) run pytest -v test_readme.py
 
 test-curl:
 	./test_endpoints.sh
 
 ## --- Doctest targets ---------------------------------------------------------
-doctest:
+doctest: uv
 	@echo "🧪 Running doctest on all modules..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4"
+	@JWT_SECRET_KEY=secret \
+	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
-doctest-verbose:
+doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4"
+	@JWT_SECRET_KEY=secret \
+	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
-doctest-coverage:
+doctest-coverage: uv
 	@echo "📊 Generating doctest coverage report..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pytest --doctest-modules mcpgateway/ \
+	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ \
 		--cov=mcpgateway --cov-report=term --cov-report=html:htmlcov-doctest \
-		--cov-report=xml:coverage-doctest.xml"
+		--cov-report=xml:coverage-doctest.xml
 	@echo "✅ Doctest coverage report generated in htmlcov-doctest/"
 
-doctest-check:
+doctest-check: uv
 	@echo "🔍 Checking doctest coverage..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
-		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
+	@$(UV_BIN) run pytest --doctest-modules mcpgateway/ --tb=no -q && \
+		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)
 
 ## --- Database Performance Testing --------------------------------------------
-test-db-perf:                    ## Run database performance and N+1 detection tests
+test-db-perf: uv  ## Run database performance and N+1 detection tests
 	@echo "🔍 Running database performance tests..."
 	@echo "   Tip: Use 'make dev-echo' to debug queries in dev server"
 	@echo "   Docs: docs/docs/development/db-performance.md"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v --tb=short"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v --tb=short
 
-test-db-perf-verbose:            ## Run database performance tests with full SQL query output
+test-db-perf-verbose: uv  ## Run database performance tests with full SQL query output
 	@echo "🔍 Running database performance tests with query logging..."
 	@echo "   All SQL queries will be printed to help identify N+1 patterns"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export SQLALCHEMY_ECHO=true && \
-		$(VENV_DIR)/bin/pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+	@DATABASE_URL='sqlite:///:memory:' \
+	 TEST_DATABASE_URL='sqlite:///:memory:' \
+	 SQLALCHEMY_ECHO=true \
+	 $(UV_BIN) run pytest tests/performance/test_db_query_patterns.py -v -s --tb=short
 
-2025-11-25:                      ## Run full MCP 2025-11-25 compliance suite
+# Shared env-var prefix for the 2025-11-25 compliance series.
+# Defined as a make variable so each target stays compact while keeping
+# the env identical across subset runs (-core / -tasks / -auth / -report).
+MCP_2025_TEST_ENV := \
+	DATABASE_URL='sqlite:///:memory:' \
+	TEST_DATABASE_URL='sqlite:///:memory:' \
+	ARGON2ID_TIME_COST=1 \
+	ARGON2ID_MEMORY_COST=1024 \
+	MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' \
+	MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' \
+	MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)'
+
+2025-11-25: uv  ## Run full MCP 2025-11-25 compliance suite
 	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
-		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
-		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
+	@$(MCP_2025_TEST_ENV) \
+	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" $(MCP_2025_PYTEST_ARGS)
 
-2025-11-25-core:                 ## Run MCP core compliance subset
+2025-11-25-core: uv  ## Run MCP core compliance subset
 	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
-		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
-		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
+	@$(MCP_2025_TEST_ENV) \
+	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_core" $(MCP_2025_PYTEST_ARGS)
 
-2025-11-25-tasks:                ## Run MCP tasks compliance subset
+2025-11-25-tasks: uv  ## Run MCP tasks compliance subset
 	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
-		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
-		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
+	@$(MCP_2025_TEST_ENV) \
+	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_tasks" $(MCP_2025_PYTEST_ARGS)
 
-2025-11-25-auth:                 ## Run MCP authorization compliance subset
+2025-11-25-auth: uv  ## Run MCP authorization compliance subset
 	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
-		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
-		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
+	@$(MCP_2025_TEST_ENV) \
+	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER) and mcp_auth" $(MCP_2025_PYTEST_ARGS)
 
-2025-11-25-report:               ## Run MCP suite and emit JUnit XML + Markdown reports
+2025-11-25-report: uv  ## Run MCP suite and emit JUnit XML + Markdown reports
 	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
 	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export DATABASE_URL='sqlite:///:memory:' && \
-		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
-		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
-		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
-		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
-		$(VENV_DIR)/bin/pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
-			--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
-			--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
-			$(MCP_2025_PYTEST_ARGS)"
+	@$(MCP_2025_TEST_ENV) \
+	 $(UV_BIN) run pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m "$(MCP_2025_MARKER)" \
+		--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
+		--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
+		$(MCP_2025_PYTEST_ARGS)
 	@echo "✅ Compliance artifacts:"
 	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/junit.xml"
 	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/report.md"
@@ -1274,6 +1263,7 @@ generate-report:                           ## Display most recent load test repo
 # 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
 # =============================================================================
 # help: 📊 REST API POPULATION
+# help: populate-tiny        - Populate via REST API (50 each, ~500 entities, ~30 sec)
 # help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
 # help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
 # help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
@@ -1282,7 +1272,18 @@ generate-report:                           ## Display most recent load test repo
 # help: populate-clean       - Delete all loadtest.example.com entities via API
 # help: populate-report      - Show latest population report
 
-.PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+.PHONY: populate-tiny populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+
+populate-tiny:                             ## Populate via REST API - tiny (50 each)
+	@echo "📊 Populating via REST API (tiny profile)..."
+	@echo "   Target: 50 of each entity type, ~500 entities"
+	@echo "   Time: ~30 seconds"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile tiny"
+	@echo ""
+	@echo "✅ Tiny API population complete!"
+	@echo "📄 Report: reports/tiny_populate_report.json"
 
 populate-small:                            ## Populate via REST API - small (100 users)
 	@echo "📊 Populating via REST API (small profile)..."
@@ -1674,6 +1675,12 @@ HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
+	@# Fail early if port 8080 is already bound (nginx needs it)
+	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
+		echo "❌ Port 8080 is already in use. Cannot start nginx proxy."; \
+		echo "   Run: lsof -i :8080   to find the process, then stop it."; \
+		exit 1; \
+	fi
 	@mkdir -p reports
 	@echo "   Using image $(IMAGE_LOCAL)"
 	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
@@ -3854,7 +3861,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.26.2
+LINT_GO_TOOLCHAIN ?= go1.26.3
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3996,7 +4003,7 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		export HELM_CONFIG_HOME='$(LINT_HELM_ROOT)/config'; \
 		mkdir -p '$(LINT_HELM_ROOT)/plugins' '$(LINT_HELM_ROOT)/data' '$(LINT_HELM_ROOT)/cache' '$(LINT_HELM_ROOT)/config'; \
 		if ! helm plugin list 2>/dev/null | grep -q '^unittest[[:space:]]'; then \
-			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
+			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
 		fi; \
 		helm unittest $(CHART_DIR)"
 
@@ -4758,7 +4765,6 @@ tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
 	@find . -type f -name '*.toml' \
 	  -not -path './.cache/*' \
-	  -not -path './plugin_templates/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \
 	  | xargs -0 -I{} $(UV_BIN) tool run tomlcheck==$(TOMLCHECK_VERSION) "{}"
@@ -5889,7 +5895,11 @@ docker-shell:
 # help: compose-tls-https     - 🔒 Start stack with TLS, force HTTPS redirect (HTTPS:8443 only)
 # help: compose-tls-down      - Stop TLS-enabled stack
 # help: compose-tls-logs      - Tail logs from TLS stack
+# help: compose-test-hardened - 🔒 Test hardened runtime (read_only + cap_drop + runtime/default seccomp)
 # help: compose-tls-ps        - Show TLS stack status
+# help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
+# help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
+# help: compose-siem-logs     - 📜 Tail logs for gateway + OpenSearch SIEM services
 
 # ─────────────────────────────────────────────────────────────────────────────
 # You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
@@ -5936,6 +5946,7 @@ endef
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
+compose-siem-up compose-siem-down compose-siem-logs \
 	monitoring-lite-up monitoring-lite-down \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
@@ -6042,8 +6053,37 @@ compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.o
 	@echo "🚀  Starting lite stack (with override)..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml up -d
 
+compose-siem-up: compose-validate ## 🛡️ Start stack with OpenSearch SIEM sink
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	@echo "🛡️  Starting stack with SIEM OpenSearch override..."
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml up -d
+	@echo "✅ SIEM stack started."
+	@echo "   Gateway:    http://localhost:8080"
+	@echo "   OpenSearch: http://localhost:9200"
+	@echo "   Tip: curl -s http://localhost:9200/_cat/indices?v"
+
+compose-siem-down: compose-validate ## 🛑 Stop SIEM test stack
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping SIEM stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml down --remove-orphans
+	@echo "✅ SIEM stack stopped."
+
+compose-siem-logs: ## 📜 Tail logs for SIEM stack services
+	@if [ ! -f "docker-compose.siem-opensearch.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.siem-opensearch.yml"; \
+		exit 1; \
+	fi
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
+
 .PHONY: compose-restart
-compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
 	$(COMPOSE) build
@@ -6217,6 +6257,90 @@ compose-tls-logs:
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
 
 compose-tls-ps:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hardened Runtime Testing - Verify security constraints work in practice
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: compose-test-hardened
+
+compose-test-hardened: compose-validate
+	@echo "🔒 Testing hardened runtime configuration..."
+	@echo ""
+	@echo "   Security constraints:"
+	@echo "   ├─ read_only: true (read-only root filesystem)"
+	@echo "   ├─ cap_drop: ALL (zero capabilities)"
+	@echo "   ├─ seccomp: runtime/default (Docker's default syscall filter)"
+	@echo "   └─ tmpfs: /tmp, /var/tmp, /run (writable mounts)"
+	@echo ""
+	@echo "🚀 Starting hardened stack..."
+	@$(MAKE) --no-print-directory compose-up
+	@echo ""
+	@echo "⏳ Waiting for services to initialize (30s)..."
+	@sleep 30
+	@echo ""
+	@echo "🏥 Testing health endpoint..."
+	@if curl -f -s http://localhost:8080/health > /dev/null 2>&1; then \
+		echo "✅ Health check passed"; \
+	else \
+		echo "❌ Health check failed"; \
+		echo ""; \
+		echo "📋 Gateway logs:"; \
+		$(COMPOSE) logs --tail=50 gateway; \
+		echo ""; \
+		echo "🛑 Stopping stack..."; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "🔐 Testing authenticated /tools endpoint..."
+	@if [ -z "$(JWT_SECRET_KEY)" ]; then \
+		echo "⚠️  JWT_SECRET_KEY not set, using default from .env"; \
+		SECRET=$$(grep '^JWT_SECRET_KEY=' .env 2>/dev/null | cut -d= -f2 || echo "dev-secret-key-change-in-production"); \
+	else \
+		SECRET="$(JWT_SECRET_KEY)"; \
+	fi; \
+	TOKEN=$$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 60 --secret "$$SECRET" 2>/dev/null || echo ""); \
+	if [ -z "$$TOKEN" ]; then \
+		echo "⚠️  Could not generate JWT token (python module may not be available)"; \
+		echo "   Skipping authenticated endpoint test"; \
+	else \
+		if curl -f -s -H "Authorization: Bearer $$TOKEN" http://localhost:8080/tools > /dev/null 2>&1; then \
+			echo "✅ Authenticated /tools endpoint passed"; \
+		else \
+			echo "❌ Authenticated /tools endpoint failed"; \
+			echo ""; \
+			echo "📋 Gateway logs:"; \
+			$(COMPOSE) logs --tail=50 gateway; \
+			echo ""; \
+			echo "🛑 Stopping stack..."; \
+			$(MAKE) --no-print-directory compose-down; \
+			exit 1; \
+		fi; \
+	fi
+	@echo ""
+	@echo "🔍 Verifying security constraints are active..."
+	@echo "   Checking read-only filesystem..."
+	@if $(COMPOSE) exec -T gateway sh -c 'touch /test-write 2>/dev/null' 2>/dev/null; then \
+		echo "❌ Read-only filesystem check failed (write succeeded)"; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	else \
+		echo "✅ Read-only filesystem verified (write blocked)"; \
+	fi
+	@echo "   Checking tmpfs mounts are writable..."
+	@if $(COMPOSE) exec -T gateway sh -c 'touch /tmp/test-write && rm /tmp/test-write' 2>/dev/null; then \
+		echo "✅ Tmpfs mounts verified (writable)"; \
+	else \
+		echo "❌ Tmpfs mounts check failed"; \
+		$(MAKE) --no-print-directory compose-down; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "✅ All hardened runtime tests passed!"
+	@echo ""
+	@echo "💡 Stack is still running. To stop: make compose-down"
+	@echo "💡 To view logs: make compose-logs"
+	@echo "💡 To check status: make compose-ps"
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls ps
 
 # =============================================================================
@@ -7393,20 +7517,17 @@ endif
 
 
 ## --- Playwright Setup -------------------------------------------------------
-playwright-install:
+# Playwright + pytest-playwright + python-owasp-zap-v2.4 live in the `dev`
+# dependency group, so `uv run` syncs them automatically. These targets only
+# install the browser binaries (a separate step from the Python package).
+playwright-install: uv
 	@echo "🎭 Installing Playwright browsers (chromium)..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
-		playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium"
+	@$(UV_BIN) run playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium
 	@echo "✅ Playwright chromium browser installed!"
 
-playwright-install-all:
+playwright-install-all: uv
 	@echo "🎭 Installing all Playwright browsers..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -e '.[playwright]' 2>/dev/null || $(UV_BIN) pip install playwright pytest-playwright && \
-		playwright install $(PLAYWRIGHT_INSTALL_FLAGS)"
+	@$(UV_BIN) run playwright install $(PLAYWRIGHT_INSTALL_FLAGS)
 	@echo "✅ All Playwright browsers installed!"
 
 playwright-preflight:
@@ -7421,89 +7542,97 @@ playwright-preflight:
 	fi
 
 ## --- Playwright test macro ---------------------------------------------------
-# Run a Playwright test variant.
+# Run a Playwright test variant via `uv run pytest`.
 # $(1) = label (e.g., "headed", "headless parallel")
 # $(2) = directories to mkdir -p (space-separated, or empty for none)
-# $(3) = extra pip packages (space-separated, or empty)
-# $(4) = env var exports before pytest (e.g., "PWDEBUG=1", or empty)
-# $(5) = pytest arguments (variant-specific part)
-# $(6) = fail behavior: "fail" or "continue" (|| true)
+# $(3) = env var exports before pytest (e.g., "PWDEBUG=1", or empty)
+# $(4) = pytest arguments (variant-specific part)
+# $(5) = fail behavior: "fail" or "continue" (|| true)
+#
+# pytest-xdist and pytest-html no longer require an inline `uv pip install`
+# (both live in the `dev` dependency group); `uv run` syncs them on demand.
+#
+# Two plugins are suppressed globally via `addopts` in pyproject.toml and only
+# opted back in by the targets that need them:
+#   * pytest-playwright (`-p no:playwright`) — its session fixtures pollute the
+#     asyncio event loop and break unrelated async tests. UI targets re-enable
+#     it with `-p playwright` (run_playwright_test below).
+#   * pytest-benchmark (`-p no:benchmark`) — its single-process timing model
+#     conflicts with pytest-xdist (`-n auto`/`-n N`) used by `make test` and
+#     friends. The benchmarking targets (e.g. `migration-test-performance`)
+#     re-enable it with `-p benchmark` and run without `-n`.
 define run_playwright_test
 	@echo "🎭 Running Playwright UI tests ($(1))..."
 	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	$(if $(strip $(2)),@mkdir -p $(2),)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(if $(strip $(3)),$(UV_BIN) pip install -q $(3) &&,) \
-		$(if $(strip $(4)),export $(4) &&,) \
-		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		pytest $(5) \
+	@$(if $(strip $(3)),$(3),) TEST_BASE_URL='$(TEST_BASE_URL)' \
+	 $(UV_BIN) run pytest -p playwright $(4) \
 		--browser chromium \
-		$(if $(filter fail,$(6)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)"
+		$(if $(filter fail,$(5)),|| { echo '❌ UI tests failed!'; exit 1; },|| true)
 endef
 
 ## --- UI Test Execution ------------------------------------------------------
-test-ui: playwright-install
-	$(call run_playwright_test,headed,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,,\
+test-ui: uv playwright-install
+	$(call run_playwright_test,headed,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_TEST_TARGET) -v --headed --screenshot=only-on-failure,fail)
 	@echo "✅ UI tests completed!"
 
-test-ui-headless: playwright-install
-	$(call run_playwright_test,headless,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,,\
+test-ui-headless: uv playwright-install
+	$(call run_playwright_test,headless,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_TEST_TARGET) -v --screenshot=only-on-failure,fail)
 	@echo "✅ UI tests completed!"
 
-test-ui-headless-parallel: playwright-install
-	$(call run_playwright_test,headless parallel,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),pytest-xdist,,\
+test-ui-headless-parallel: uv playwright-install
+	$(call run_playwright_test,headless parallel,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_TEST_TARGET) -v -n auto --dist loadscope --screenshot=only-on-failure,fail)
 	@echo "✅ UI parallel tests completed!"
 
-test-ui-debug: playwright-install
-	$(call run_playwright_test,debug,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),,PWDEBUG=1,\
+test-ui-debug: uv playwright-install
+	$(call run_playwright_test,debug,$(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS),PWDEBUG=1,\
 		$(PLAYWRIGHT_TEST_TARGET) -v -s --headed,fail)
 
-test-ui-smoke: playwright-install
-	$(call run_playwright_test,smoke,,,,\
+test-ui-smoke: uv playwright-install
+	$(call run_playwright_test,smoke,,,\
 		$(PLAYWRIGHT_DIR)/ -v -m smoke --headed,fail)
 	@echo "✅ UI smoke tests passed!"
 
-test-ui-ci-smoke: playwright-install
-	$(call run_playwright_test,CI smoke,$(PLAYWRIGHT_REPORTS),,,\
+test-ui-ci-smoke: uv playwright-install
+	$(call run_playwright_test,CI smoke,$(PLAYWRIGHT_REPORTS),,\
 		-v --screenshot=only-on-failure $(PLAYWRIGHT_CI_SMOKE_TESTS),fail)
 	@echo "✅ UI CI smoke tests passed!"
 
-test-ui-parallel: playwright-install
-	$(call run_playwright_test,parallel,,pytest-xdist,,\
+test-ui-parallel: uv playwright-install
+	$(call run_playwright_test,parallel,,,\
 		$(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope,fail)
 	@echo "✅ UI parallel tests completed!"
 
 ## --- UI Test Reporting ------------------------------------------------------
-test-ui-report: playwright-install
-	$(call run_playwright_test,report,$(PLAYWRIGHT_REPORTS),pytest-html,,\
+test-ui-report: uv playwright-install
+	$(call run_playwright_test,report,$(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure --html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html,continue)
 	@echo "✅ UI test report generated: $(PLAYWRIGHT_REPORTS)/report.html"
 	@echo "   Open with: open $(PLAYWRIGHT_REPORTS)/report.html"
 
-test-ui-coverage: playwright-install
-	$(call run_playwright_test,coverage,$(PLAYWRIGHT_REPORTS),,,\
+test-ui-coverage: uv playwright-install
+	$(call run_playwright_test,coverage,$(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin --cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage --cov-report=term,continue)
 	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
 
-test-ui-screenshots: playwright-install
-	$(call run_playwright_test,screenshots,$(PLAYWRIGHT_REPORTS),,,\
+test-ui-screenshots: uv playwright-install
+	$(call run_playwright_test,screenshots,$(PLAYWRIGHT_REPORTS),,\
 		$(PLAYWRIGHT_DIR)/ -v --screenshot=on,fail)
 	@echo "✅ Playwright screenshots captured"
 	@echo "📁 Artifacts saved to: test-results/"
 
-test-ui-record: playwright-install
-	$(call run_playwright_test,record,$(PLAYWRIGHT_VIDEOS),,,\
+test-ui-record: uv playwright-install
+	$(call run_playwright_test,record,$(PLAYWRIGHT_VIDEOS),,\
 		$(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO),fail)
 	@echo "✅ Playwright videos + screenshots saved"
 	@echo "📁 Artifacts saved to: test-results/"
 
 ## --- UI Test Utilities ------------------------------------------------------
-test-ui-update-snapshots: playwright-install
-	$(call run_playwright_test,update-snapshots,,,,\
+test-ui-update-snapshots: uv playwright-install
+	$(call run_playwright_test,update-snapshots,,,\
 		$(PLAYWRIGHT_DIR)/ -v --update-snapshots,fail)
 	@echo "✅ Snapshots updated!"
 
@@ -7517,35 +7646,31 @@ test-ui-clean:
 	@echo "✅ Playwright artifacts cleaned!"
 
 ## --- OWASP / ZAP Security Testing ------------------------------------------
-test-owasp: playwright-install  ## 🔒 Run OWASP access-control security tests (no ZAP required)
+test-owasp: uv playwright-install  ## 🔒 Run OWASP access-control security tests (no ZAP required)
 	@echo "🔒 Running OWASP access-control security tests..."
 	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(ZAP_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
-			-v -m owasp_a01 --tb=short \
-			|| { echo '❌ OWASP security tests failed!'; exit 1; }"
+	@TEST_BASE_URL='$(TEST_BASE_URL)' \
+	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+		-v -m owasp_a01 --tb=short \
+		|| { echo '❌ OWASP security tests failed!'; exit 1; }
 	@echo "✅ OWASP security tests completed!"
 
-test-zap: playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
+test-zap: uv playwright-install  ## 🔒 Run ZAP DAST security scan (requires ZAP daemon; set ZAP_BASE_URL)
 	@echo "🔒 Running ZAP DAST security scan against $(TEST_BASE_URL)..."
 	@if [ -z "$(ZAP_BASE_URL)" ]; then \
 		echo "❌ ZAP_BASE_URL is not set. Start the testing stack with: make testing-up"; \
 		exit 1; \
 	fi
 	@$(MAKE) --no-print-directory playwright-preflight
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(ZAP_REPORTS)
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		export ZAP_BASE_URL='$(ZAP_BASE_URL)' && \
-		export ZAP_API_KEY='$(ZAP_API_KEY)' && \
-		export ZAP_TARGET_URL='$(ZAP_TARGET_URL)' && \
-		$(VENV_DIR)/bin/pytest tests/playwright/security/owasp/ \
-			-v -m owasp_a01_zap --tb=short \
-			|| { echo '❌ ZAP DAST scan failed!'; exit 1; }"
+	@TEST_BASE_URL='$(TEST_BASE_URL)' \
+	 ZAP_BASE_URL='$(ZAP_BASE_URL)' \
+	 ZAP_API_KEY='$(ZAP_API_KEY)' \
+	 ZAP_TARGET_URL='$(ZAP_TARGET_URL)' \
+	 $(UV_BIN) run pytest -p playwright tests/playwright/security/owasp/ \
+		-v -m owasp_a01_zap --tb=short \
+		|| { echo '❌ ZAP DAST scan failed!'; exit 1; }
 	@echo "✅ ZAP DAST scan completed! Reports in $(ZAP_REPORTS)/"
 
 ## --- Combined Testing -------------------------------------------------------
@@ -7667,10 +7792,11 @@ PROFILE_DIR := $(ASYNC_TEST_DIR)/profiles
 REPORTS_DIR := $(ASYNC_TEST_DIR)/reports
 VENV_PYTHON := $(VENV_DIR)/bin/python
 
-async-test: async-lint async-debug
+async-test: uv async-lint async-debug
 	@echo "🔄 Running comprehensive async safety tests..."
 	@mkdir -p $(REPORTS_DIR)
-	@PYTHONASYNCIODEBUG=1 $(VENV_PYTHON) -m pytest \
+	@PYTHONASYNCIODEBUG=1 \
+	 $(UV_BIN) run --extra plugins pytest \
 		tests/ \
 		--asyncio-mode=auto \
 		--tb=short \
@@ -7710,9 +7836,9 @@ async-monitor:
 		--host localhost \
 		--console-enabled
 
-async-debug:
+async-debug: uv
 	@echo "🐛 Running async tests with debug mode..."
-	@PYTHONASYNCIODEBUG=1 $(VENV_PYTHON) -X dev \
+	@PYTHONASYNCIODEBUG=1 $(UV_BIN) run --extra plugins python -X dev \
 		-m pytest tests/ \
 		--asyncio-mode=auto \
 		--capture=no \
@@ -7767,7 +7893,7 @@ detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for se
 		--use-all-plugins \
 		--exclude-files $(DETECT_SECRETS_FILES_EXCLUDE)
 	@echo "📊 detect-secrets findings report:"
-	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline || true
+	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets audit --report .secrets.baseline
 
 .PHONY: detect-secrets-audit
 detect-secrets-audit: uv                     ## 🔎  detect-secrets audit for reviewing findings
@@ -8273,29 +8399,38 @@ pre-commit-fix-headers:             ## 🪝 Fix headers for pre-commit hooks
 # help: fuzz-clean         - Clean fuzzing artifacts and generated reports
 
 .PHONY: fuzz-install
-fuzz-install:                       ## 🔧 Install all fuzzing dependencies
-	@echo "🔧 Installing fuzzing dependencies..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -e .[fuzz]"
-	@echo "✅ Fuzzing tools installed"
+fuzz-install: uv  ## 🔧 Sync project env (fuzz tooling now lives in the dev dependency group)
+	@echo "🔧 Syncing project environment for fuzzing..."
+	@$(UV_BIN) sync
+	@echo "✅ Fuzzing tools available (hypothesis / pytest-benchmark / schemathesis from dev group; atheris layered ad-hoc by 'make fuzz-atheris')"
 
 .PHONY: fuzz-hypothesis
-fuzz-hypothesis: fuzz-install         ## 🧪 Run Hypothesis property-based tests
+fuzz-hypothesis: uv  ## 🧪 Run Hypothesis property-based tests
 	@echo "🧪 Running Hypothesis property-based tests..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pytest tests/fuzz/ -v \
+	@$(UV_BIN) run pytest tests/fuzz/ -v \
 		--hypothesis-show-statistics \
 		--hypothesis-profile=dev \
 		-k 'not (test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
-		|| true"
+		|| true
+
+ATHERIS_RUNS         ?= 10000
+ATHERIS_TIME_BUDGET  ?= 300
+ATHERIS_FUZZERS      := tests/fuzz/fuzzers/fuzz_jsonpath.py \
+                         tests/fuzz/fuzzers/fuzz_jsonrpc.py \
+                         tests/fuzz/fuzzers/fuzz_config_parser.py
 
 .PHONY: fuzz-atheris
-fuzz-atheris:                       ## 🎭 Run Atheris coverage-guided fuzzing
+fuzz-atheris: uv  ## 🎭 Run Atheris coverage-guided fuzzing (Linux: prebuilt wheel; macOS arm64: needs `brew install llvm`)
 	@echo "🎭 Running Atheris coverage-guided fuzzing..."
-	@echo "⚠️  Atheris requires clang/libfuzzer - skipping for now"
+	@echo "   Runs: $(ATHERIS_RUNS), max wall time: $(ATHERIS_TIME_BUDGET)s per fuzzer"
 	@mkdir -p corpus tests/fuzz/fuzzers/results reports
-	@echo "✅ Atheris setup completed (requires manual clang installation)"
+	@for script in $(ATHERIS_FUZZERS); do \
+		echo "  → $$script"; \
+		$(UV_BIN) run --with 'atheris>=3.0.0' python "$$script" \
+			-runs=$(ATHERIS_RUNS) -max_total_time=$(ATHERIS_TIME_BUDGET) \
+			|| echo "  ⚠️  $$script returned non-zero (continuing)"; \
+	done
+	@echo "✅ Atheris fuzzing complete"
 
 .PHONY: fuzz-api
 fuzz-api:                           ## 🌐 Run Schemathesis API fuzzing
@@ -8325,46 +8460,43 @@ fuzz-restler:                       ## 🧪 Run RESTler API fuzzing (instruction
 	@echo "✅ RESTler instructions emitted"
 
 .PHONY: fuzz-restler-auto
-fuzz-restler-auto:                  ## 🤖 Run RESTler via Docker automatically (server must be running)
+fuzz-restler-auto: uv  ## 🤖 Run RESTler via Docker automatically (server must be running)
 	@echo "🤖 Running RESTler via Docker against a running server..."
 	@if ! command -v docker >/dev/null 2>&1; then \
 		echo "🐳 Docker not found; skipping RESTler fuzzing (fuzz-restler-auto)."; \
 		echo "   Hint: Install Docker or use 'make fuzz-restler' for manual steps."; \
 		exit 0; \
 	fi
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 tests/fuzz/scripts/run_restler_docker.py"
+	@$(UV_BIN) run python tests/fuzz/scripts/run_restler_docker.py
 
 .PHONY: fuzz-security
-fuzz-security: fuzz-install          ## 🔐 Run security-focused fuzzing tests
+fuzz-security: uv  ## 🔐 Run security-focused fuzzing tests
 	@echo "🔐 Running security-focused fuzzing tests..."
 	@echo "⚠️  Security tests require running application with auth - they may fail in isolation"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		HYPOTHESIS_PROFILE=dev python3 -m pytest tests/fuzz/test_security_fuzz.py -v \
-		|| true"
+	@HYPOTHESIS_PROFILE=dev \
+	 $(UV_BIN) run pytest tests/fuzz/test_security_fuzz.py -v \
+		|| true
 
 .PHONY: fuzz-quick
-fuzz-quick: fuzz-install             ## ⚡ Run quick fuzzing for CI
+fuzz-quick: uv  ## ⚡ Run quick fuzzing for CI
 	@echo "⚡ Running quick fuzzing for CI..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		HYPOTHESIS_PROFILE=ci python3 -m pytest tests/fuzz/ -v \
+	@HYPOTHESIS_PROFILE=ci \
+	 $(UV_BIN) run pytest tests/fuzz/ -v \
 		-k 'not (test_very_large or test_sql_injection or test_xss_prevention or test_integer_overflow or test_rate_limiting)' \
-		|| true"
+		|| true
 
 .PHONY: fuzz-extended
-fuzz-extended: fuzz-install          ## 🕐 Run extended fuzzing for nightly runs
+fuzz-extended: uv  ## 🕐 Run extended fuzzing for nightly runs
 	@echo "🕐 Running extended fuzzing suite..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		HYPOTHESIS_PROFILE=thorough python3 -m pytest tests/fuzz/ -v \
-		--durations=20 || true"
+	@HYPOTHESIS_PROFILE=thorough \
+	 $(UV_BIN) run pytest tests/fuzz/ -v \
+		--durations=20 || true
 
 .PHONY: fuzz-report
-fuzz-report: fuzz-install            ## 📊 Generate fuzzing report
+fuzz-report: uv  ## 📊 Generate fuzzing report
 	@echo "📊 Generating fuzzing report..."
 	@mkdir -p reports
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 tests/fuzz/scripts/generate_fuzz_report.py"
+	@$(UV_BIN) run python tests/fuzz/scripts/generate_fuzz_report.py
 
 .PHONY: fuzz-clean
 fuzz-clean:                         ## 🧹 Clean fuzzing artifacts
@@ -8384,73 +8516,84 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## �
 # help: migration-test-sqlite    - Run SQLite container migration tests only
 # help: migration-test-postgres  - Run PostgreSQL compose migration tests only
 # help: migration-test-performance - Run migration performance benchmarking
+# help: migration-test-rollback  - Run only downgrade/reverse migration tests (pytest + roundtrip)
+# help: migration-test-cross-db  - Run cross-database schema consistency test
 # help: migration-setup          - Setup migration test environment
 # help: migration-cleanup        - Clean up migration test containers and volumes
 # help: migration-debug          - Debug migration test failures with diagnostic info
 # help: migration-status         - Show current version configuration and supported versions
-# help: upgrade-validate         - Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+# help: upgrade-validate         - Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 
 # Migration testing configuration
 MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
-UPGRADE_BASE_IMAGE ?= ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+UPGRADE_BASE_IMAGE ?= ghcr.io/ibm/mcp-context-forge:1.0.0
 UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 
 # Get supported versions from version config (n-2 policy)
 MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
-        migration-setup migration-cleanup migration-debug migration-status upgrade-validate
+        migration-test-rollback migration-test-cross-db migration-setup migration-cleanup migration-debug migration-status upgrade-validate
 
-migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
+migration-test-all: uv migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
 	@echo "📋 Testing SQLite migrations..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
 		-v --tb=short --maxfail=3 \
-		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
+		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
 	@echo "📋 Testing PostgreSQL migrations..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
 		-v --tb=short --maxfail=3 \
-		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'"
+		--log-cli-level=INFO --log-cli-format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 	@echo ""
 	@echo "📊 Generating migration test report..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from tests.migration.utils.reporting import MigrationReportGenerator; \
-		r = MigrationReportGenerator(); r.generate_summary_report()'"
+	@$(UV_BIN) run python -c 'from tests.migration.utils.reporting import MigrationReportGenerator; \
+		r = MigrationReportGenerator(); r.generate_summary_report()'
 	@echo "✅ Migration tests complete! Reports in $(MIGRATION_REPORTS_DIR)/"
 
-migration-test-sqlite:                     ## Run SQLite container migration tests only
+migration-test-sqlite: uv                     ## Run SQLite container migration tests only
 	@echo "🐍 Running SQLite migration tests..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
-		-v --tb=short --log-cli-level=INFO"
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+		-v --tb=short --log-cli-level=INFO
 	@echo "✅ SQLite migration tests complete!"
 
-migration-test-postgres:                   ## Run PostgreSQL compose migration tests only
+migration-test-postgres: uv                   ## Run PostgreSQL compose migration tests only
 	@echo "🐘 Running PostgreSQL migration tests..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
-		-v --tb=short --log-cli-level=INFO"
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+		-v --tb=short --log-cli-level=INFO
 	@echo "✅ PostgreSQL migration tests complete!"
 
-migration-test-performance:               ## Run migration performance benchmarking
+migration-test-performance: uv               ## Run migration performance benchmarking
 	@echo "⚡ Running migration performance tests..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(MIGRATION_TEST_DIR)/test_migration_performance.py \
-		-v --tb=short --log-cli-level=INFO"
+	@# pytest-benchmark is suppressed globally (`-p no:benchmark` in pyproject.toml)
+	@# because its measurement model conflicts with pytest-xdist's worker pool. This
+	@# target is the canonical opt-in: `-p benchmark` re-enables the plugin and the
+	@# absence of `-n` keeps execution single-process so timings stay meaningful.
+	@$(UV_BIN) run pytest -p benchmark $(MIGRATION_TEST_DIR)/test_migration_performance.py \
+		-v --tb=short --log-cli-level=INFO
 	@echo "✅ Performance tests complete!"
 
-.PHONY: migration-setup
-migration-setup:                           ## Setup migration test environment
+migration-test-rollback: uv               ## Run only downgrade/reverse migration tests (pytest + roundtrip)
+	@echo "⏪ Running reverse migration (downgrade) tests..."
+	@$(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_docker_sqlite_migrations.py \
+	                     $(MIGRATION_TEST_DIR)/test_compose_postgres_migrations.py \
+		-k 'reverse or rollback' \
+		-v --tb=short --log-cli-level=INFO
+	@echo "🔄 Running upgrade/downgrade roundtrip validation..."
+	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
+	@echo "✅ Rollback tests complete!"
+
+migration-test-cross-db: uv               ## Run cross-database schema consistency test
+	@echo "🔀 Running cross-database schema consistency test..."
+	@UPGRADE_TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) \
+	 $(UV_BIN) run pytest $(MIGRATION_TEST_DIR)/test_cross_db_schema_consistency.py \
+		-v --tb=short --log-cli-level=INFO
+	@echo "✅ Cross-database schema consistency check complete!"
+
+migration-setup:                          ## Setup migration test environment
 	@echo "🔧 Setting up migration test environment..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(MIGRATION_REPORTS_DIR)
 	@mkdir -p $(MIGRATION_TEST_DIR)/logs
 	@echo "📦 Pulling required container images..."
@@ -8469,12 +8612,12 @@ migration-cleanup:                         ## Clean up migration test containers
 	@echo "🧹 Cleaning up migration test environment..."
 	@if command -v docker >/dev/null 2>&1; then \
 		echo "🛑 Stopping migration test containers..."; \
-		docker ps -a --filter "name=migration-test-" -q | xargs -r docker stop; \
-		docker ps -a --filter "name=migration-test-" -q | xargs -r docker rm; \
+		docker ps -a --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker stop; \
+		docker ps -a --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker rm; \
 		echo "🗑️  Removing migration test volumes..."; \
-		docker volume ls --filter "name=migration-test-" -q | xargs -r docker volume rm; \
+		docker volume ls --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker volume rm; \
 		echo "🧼 Pruning migration test networks..."; \
-		docker network ls --filter "name=migration-test-" -q | xargs -r docker network rm; \
+		docker network ls --filter "name=migration-test-" -q | xargs $(XARGS_FLAGS) docker network rm; \
 	fi
 	@echo "🗂️  Cleaning up temporary files..."
 	@rm -rf /tmp/migration_test_*
@@ -8514,7 +8657,7 @@ migration-status:                          ## Show current version configuration
 		cd $(MIGRATION_TEST_DIR) && python3 version_status.py"
 
 .PHONY: upgrade-validate
-upgrade-validate:                         ## Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+upgrade-validate:                         ## Validate fresh + upgrade + roundtrip DB paths (SQLite + PostgreSQL)
 	@echo "🔄 Running upgrade validation harness..."
 	@echo "  Base image:   $(UPGRADE_BASE_IMAGE)"
 	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"

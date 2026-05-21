@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/oauth_manager.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -20,7 +20,7 @@ import logging
 import re
 import secrets
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
 import httpx
@@ -28,7 +28,7 @@ import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
@@ -235,20 +235,55 @@ class OAuthManager:
             settings = get_settings()
             encryption = get_encryption_service(settings.auth_encryption_secret)
             runtime_credentials = await decrypt_oauth_config_for_runtime(credentials, encryption=encryption)
-            if isinstance(runtime_credentials, dict):
-                return runtime_credentials
         except Exception as exc:
-            logger.warning("Failed to prepare runtime OAuth credentials for %s flow: %s", flow_name, exc)
-        return credentials
+            logger.warning("Failed to decrypt runtime OAuth credentials for %s flow; falling back to stored values: %s", flow_name, exc)
+            return credentials
 
-    async def _post_token_request(self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> httpx.Response:
-        """POST to a token endpoint, using a custom SSL context when CA certs are provided.
+        if not isinstance(runtime_credentials, dict):
+            raise OAuthError(f"Invalid runtime OAuth configuration for {flow_name} flow")
 
-        When ``ca_certificate`` is supplied, an isolated ``httpx.AsyncClient``
-        is created with the corresponding SSL context so that OAuth token
-        exchange works against self-signed or custom-CA upstream servers.
+        token_url = runtime_credentials.get("token_url")
+        if isinstance(token_url, str) and token_url:
+            runtime_credentials["token_url"] = validate_core_url(token_url, "OAuth config token_url")
+
+        auth_server = runtime_credentials.get("authorization_server")
+        if isinstance(auth_server, str) and auth_server:
+            runtime_credentials["authorization_server"] = validate_core_url(auth_server, "OAuth config authorization_server")
+
+        issuer = runtime_credentials.get("issuer")
+        if isinstance(issuer, str) and issuer:
+            runtime_credentials["issuer"] = validate_core_url(issuer, "OAuth config issuer")
+
+        auth_servers = runtime_credentials.get("authorization_servers")
+        if auth_servers not in (None, ""):
+            if not isinstance(auth_servers, list):
+                raise OAuthError("OAuth configuration authorization_servers must be a list")
+            validated_servers = []
+            for idx, server_url in enumerate(auth_servers):
+                if not isinstance(server_url, str):
+                    raise OAuthError(f"OAuth configuration authorization_servers[{idx}] must be a string URL")
+                if server_url:
+                    validated_servers.append(validate_core_url(server_url, f"OAuth config authorization_servers[{idx}]"))
+            runtime_credentials["authorization_servers"] = validated_servers
+
+        return runtime_credentials
+
+    async def _post_token_request(
+        self, url: str, data: Any, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None, headers: Optional[Dict[str, str]] = None
+    ) -> httpx.Response:
+        """POST to a token endpoint, using a custom SSL context when CA certs or mTLS are provided.
+
+        When ``ca_certificate``, ``client_cert``, or ``client_key`` is supplied,
+        an isolated ``httpx.AsyncClient`` is created with the corresponding SSL
+        context so that OAuth token exchange works against self-signed or
+        custom-CA upstream servers and/or presents client certificates for mTLS.
         Otherwise the shared HTTP client (which respects the global
         ``SKIP_SSL_VERIFY`` setting) is used.
+
+        Note:
+            When only ``client_cert``/``client_key`` are provided (no custom CA),
+            the isolated client uses the system's default trust store and does
+            not honour ``SKIP_SSL_VERIFY``.
 
         Args:
             url: Token endpoint URL.
@@ -256,16 +291,17 @@ class OAuthManager:
             ca_certificate: Optional PEM-encoded CA certificate.
             client_cert: Optional client certificate for mTLS.
             client_key: Optional client private key for mTLS.
+            headers: Optional HTTP headers (e.g., Authorization for Basic Auth).
 
         Returns:
             The HTTP response from the token endpoint.
         """
-        if ca_certificate:
+        if ca_certificate or client_cert or client_key:
             ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             async with httpx.AsyncClient(verify=ssl_context) as client:
-                return await client.post(url, data=data, timeout=self.request_timeout)
+                return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
         client = await self._get_client()
-        return await client.post(url, data=data, timeout=self.request_timeout)
+        return await client.post(url, data=data, headers=headers, timeout=self.request_timeout)
 
     # Keys whose values must never be echoed in error messages or logs.
     _SENSITIVE_TOKEN_KEYS = frozenset({"access_token", "refresh_token", "id_token", "client_secret", "password"})
@@ -403,6 +439,17 @@ class OAuthManager:
                 redacted[key] = value
         return redacted
 
+    @staticmethod
+    def _build_basic_auth_header(client_id: str, client_secret: str) -> str:
+        """Build an RFC 6749 Section 2.3.1 Basic Auth header value.
+
+        Client credentials are first URL-encoded per RFC 6749 Appendix B,
+        then combined as ``client_id:client_secret`` and base64-encoded.
+        """
+        credentials_str = f"{quote(client_id, safe='')}:{quote(client_secret, safe='')}"
+        encoded_credentials = base64.b64encode(credentials_str.encode("utf-8")).decode("utf-8")
+        return f"Basic {encoded_credentials}"
+
     async def _client_credentials_flow(
         self,
         credentials: Dict[str, Any],
@@ -428,14 +475,26 @@ class OAuthManager:
         client_id = runtime_credentials["client_id"]
         client_secret = runtime_credentials["client_secret"]
         token_url = runtime_credentials["token_url"]
+        if not isinstance(token_url, str):
+            raise OAuthError("OAuth configuration missing valid token_url")
         scopes = runtime_credentials.get("scopes", [])
 
-        # Prepare token request data
-        token_data = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token request data and headers
+        token_data = {"grant_type": "client_credentials"}
+        headers = {}
+
+        if use_basic_auth:
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -443,13 +502,13 @@ class OAuthManager:
         # Fetch token with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=headers)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
 
                 if "access_token" not in token_response:
-                    raise OAuthError(f"No access_token in response: {self._redact_token_response(token_response)}")
+                    raise OAuthError("OAuth token endpoint response did not contain access_token")
 
                 logger.info("""Successfully obtained access token via client credentials""")
                 return token_response["access_token"]
@@ -660,7 +719,7 @@ class OAuthManager:
         token_data: Dict[str, str] = {
             "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
             "subject_token": subject_token,
-            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",  # nosec
             "requested_token_type": requested_token_type,
             "client_id": client_id,
             "client_secret": client_secret,
@@ -783,6 +842,15 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
+            # Handle scope as either string or list (OAuth providers vary)
+            scope_value = token_response.get("scope", "")
+            if isinstance(scope_value, list):
+                scopes_list = [s for s in scope_value if isinstance(s, str)]
+            elif isinstance(scope_value, str):
+                scopes_list = scope_value.split() if scope_value else []
+            else:
+                scopes_list = []
+
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
@@ -790,7 +858,7 @@ class OAuthManager:
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=parse_expires_in(token_response),
-                scopes=token_response.get("scope", "").split(),
+                scopes=scopes_list,
             )
 
             return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None, "token_aud": token_aud}
@@ -1394,9 +1462,10 @@ class OAuthManager:
             code: Authorization code from callback
             code_verifier: Optional PKCE code verifier (RFC 7636)
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format).
-                When provided, creates an isolated HTTP client with custom SSL context
-                instead of using the shared client. This enables OAuth token exchange
-                with self-signed or custom CA upstream OAuth servers.
+                When provided along with ``client_cert``/``client_key``, creates an
+                isolated HTTP client with custom SSL context instead of using the
+                shared client. This enables OAuth token exchange with self-signed or
+                custom CA upstream OAuth servers and/or mTLS authentication.
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
 
@@ -1412,17 +1481,33 @@ class OAuthManager:
         token_url = runtime_credentials["token_url"]
         redirect_uri = runtime_credentials["redirect_uri"]
 
-        # Prepare token exchange data
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token exchange data and headers
         token_data = {
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-            "client_id": client_id,
         }
+        headers = {}
 
-        # Only include client_secret if present (public clients don't have secrets)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if use_basic_auth and client_secret:
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        elif use_basic_auth and not client_secret:
+            # Public PKCE clients can't use Basic Auth (no secret to encode)
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode (public client)")
+            token_data["client_id"] = client_id
+            logger.debug("Using POST body for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            # Only include client_secret if present (public clients don't have secrets)
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
@@ -1446,7 +1531,7 @@ class OAuthManager:
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=headers)
                 response.raise_for_status()
 
                 token_response = self._parse_token_response(response)
@@ -1506,16 +1591,32 @@ class OAuthManager:
         if not client_id:
             raise OAuthError("No client_id configured for OAuth provider")
 
-        # Prepare token refresh request
+        # Check if provider requires Basic Auth for client authentication (RFC 6749 Section 2.3.1)
+        # Default to form-based auth for backward compatibility
+        use_basic_auth = runtime_credentials.get("token_endpoint_auth_method", "client_secret_post") == "client_secret_basic"
+
+        # Prepare token refresh request and headers
         token_data = {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": client_id,
         }
+        headers = {}
 
-        # Add client_secret if available (some providers require it)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if use_basic_auth and client_secret:
+            headers["Authorization"] = self._build_basic_auth_header(client_id, client_secret)
+            logger.debug("Using HTTP Basic Auth for token endpoint authentication")
+        elif use_basic_auth and not client_secret:
+            # Misconfiguration: Basic Auth requested but no secret available
+            logger.warning("Basic Auth requested but client_secret is missing - falling back to POST body mode")
+            token_data["client_id"] = client_id
+            logger.debug("Using POST body for token endpoint authentication")
+        else:
+            # Default: client credentials in POST body (client_secret_post)
+            token_data["client_id"] = client_id
+            # Add client_secret if available (some providers require it)
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using POST body for token endpoint authentication")
 
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
@@ -1535,7 +1636,7 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
+                response = await self._post_token_request(token_url, token_data, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key, headers=headers)
                 if response.status_code == 200:
                     token_response = self._parse_token_response(response)
 

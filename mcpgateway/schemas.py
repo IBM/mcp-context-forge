@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/schemas.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -47,6 +47,47 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# Shared validation helpers
+# ============================================================================
+
+
+def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
+    """Validate and normalize server association IDs (tools, resources, prompts, agents).
+
+    Accepts a comma-separated string or a list of strings, validates each item
+    as a UUID using SecurityValidator, and returns the normalized hex form.
+    Empty or None items are silently skipped.
+
+    Args:
+        v: Input string or list of IDs.
+        field_name: Human-readable name of the association field (for errors).
+
+    Returns:
+        List of validated, normalized UUID strings, or the original value.
+
+    Raises:
+        ValueError: If any item is not a valid UUID.
+    """
+    if isinstance(v, str):
+        v = [item.strip() for item in v.split(",") if item.strip()]
+    if isinstance(v, list):
+        validated: list[str] = []
+        for item in v:
+            if not item:
+                continue
+            item_str = str(item).strip()
+            if not item_str:
+                continue
+            try:
+                validated.append(SecurityValidator.validate_uuid(item_str, field_name))
+            except ValueError:
+                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
+        return validated
+    return v
+
+
 # ============================================================================
 # Precompiled regex patterns (compiled once at module load for performance)
 # ============================================================================
@@ -83,6 +124,45 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
+
+
+def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
+
+    Applies only to known outbound or redirect endpoints that the gateway may
+    later contact or surface to a client. This closes the gap where
+    ``oauth_config["token_url"]`` previously bypassed [`validate_core_url`](mcpgateway/common/validators.py:1939).
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a URL-bearing field is not a string or fails validation.
+    """
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("oauth_config must be an object")
+    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server"):
+        raw_value = v.get(field_name)
+        if raw_value in (None, ""):
+            continue
+        if not isinstance(raw_value, str):
+            raise ValueError(f"oauth_config.{field_name} must be a string URL")
+        validate_core_url(raw_value, f"OAuth config {field_name}")
+    raw_servers = v.get("authorization_servers")
+    if raw_servers in (None, ""):
+        return v
+    if not isinstance(raw_servers, list):
+        raise ValueError("oauth_config.authorization_servers must be a list of URLs")
+    for idx, server in enumerate(raw_servers):
+        if not isinstance(server, str):
+            raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
+        validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
 
 
 def _validate_mapping_size(v: dict | None) -> dict | None:
@@ -1518,6 +1598,7 @@ class ToolRead(BaseModelWithConfigDict):
     enabled: bool
     reachable: bool
     gateway_id: Optional[str]
+    grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
     execution_count: Optional[int] = Field(None)
     metrics: Optional[ToolMetrics] = Field(None)
     name: str
@@ -2749,7 +2830,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the gateway")
-    url: Union[str, AnyHttpUrl] = Field(..., description="Gateway endpoint URL")
+    url: str = Field(..., description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
@@ -2860,6 +2941,12 @@ class GatewayCreate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return validate_core_url(v, "Gateway URL")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
 
     @field_validator("description")
     @classmethod
@@ -3097,7 +3184,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     """
 
     name: Optional[str] = Field(None, description="Unique name for the gateway")
-    url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
+    url: Optional[str] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
     transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
@@ -3195,6 +3282,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return validate_core_url(v, "Gateway URL")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
 
     @field_validator("description", mode="before")
     @classmethod
@@ -3524,6 +3617,9 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
     tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+
+    # Tools skipped during gateway import due to validation errors (transient, not persisted)
+    skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
 
     @model_validator(mode="before")
     @classmethod
@@ -4136,19 +4232,17 @@ class ServerCreate(BaseModel):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
     @field_validator("team_id")
     @classmethod
@@ -4297,19 +4391,17 @@ class ServerUpdate(BaseModelWithConfigDict):
 
     @field_validator("associated_tools", "associated_resources", "associated_prompts", "associated_a2a_agents", mode="before")
     @classmethod
-    def split_comma_separated(cls, v):
-        """
-        Splits a comma-separated string into a list of strings if needed.
+    def split_comma_separated(cls, v: Any, info: ValidationInfo) -> Any:
+        """Split comma-separated string and validate UUID format.
 
         Args:
-            v: Input string
+            v: Input string or list of IDs.
+            info: Pydantic validation info providing the field name.
 
         Returns:
-            list: Comma separated array of input string
+            List of validated, normalized UUID strings, or the original value.
         """
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+        return _validate_association_ids(v, info.field_name)
 
 
 class ServerRead(BaseModelWithConfigDict):
@@ -4571,6 +4663,7 @@ class A2AAgentCreate(BaseModel):
     uaid_protocol: Optional[str] = Field(default="a2a", description="Protocol for UAID (a2a, mcp, rest, grpc)")
     uaid_skills: Optional[list[int]] = Field(default_factory=list, description="Skill IDs for UAID hash generation (deterministic identity)")
     version: Optional[str] = Field(default="1.0.0", description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod
@@ -4894,6 +4987,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     uaid_registry: Optional[str] = Field(default=None, description="Registry name for UAID generation (e.g., 'context-forge')")
     uaid_protocol: Optional[str] = Field(default=None, description="Protocol for UAID (a2a, mcp, rest, grpc)")
     version: Optional[str] = Field(default=None, description="Agent version for UAID generation")
+    uaid_native_id_override: Optional[str] = Field(None, description="Override nativeId in UAID for cross-gateway routing (defaults to endpoint_url if not provided)")
 
     @field_validator("tags")
     @classmethod
@@ -6758,7 +6852,9 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        team_id: Optional team ID for team-scoped tokens
         is_active: Token active status (defaults to True)
+        user_email: Optional email of user to create token for (admin only)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6778,6 +6874,7 @@ class TokenCreateRequest(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     is_active: bool = Field(default=True, description="Token active status")
+    user_email: Optional[EmailStr] = Field(None, description="Email of user to create token for (admin only)")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -6851,7 +6948,7 @@ class TokenResponse(BaseModel):
     id: str = Field(..., description="Token ID")
     name: str = Field(..., description="Token name")
     description: Optional[str] = Field(None, description="Token description")
-    user_email: str = Field(..., description="Token creator's email")
+    user_email: str = Field(..., description="Token owner's email")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
     server_id: Optional[str] = Field(None, description="Server scope limitation")
     resource_scopes: List[str] = Field(..., description="Permission scopes")
@@ -7555,7 +7652,17 @@ class PluginModeUpdateRequest(BaseModel):
 
     # Mirrors PluginMode.value; importing the enum here would create a cycle
     # (schemas -> plugins.framework -> services -> schemas), so use a Literal.
-    mode: Literal["enforce", "enforce_ignore_error", "permissive", "disabled"] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled")
+    mode: Literal[
+        "enforce",
+        "enforce_ignore_error",
+        "permissive",
+        "disabled",
+        "sequential",
+        "concurrent",
+        "transform",
+        "audit",
+        "fire_and_forget",
+    ] = Field(..., description="Plugin mode: enforce, enforce_ignore_error, permissive, disabled, or cpex native modes")
 
 
 class PluginModeUpdateResponse(BaseModel):
@@ -8220,8 +8327,14 @@ class PluginBindingMode(str, Enum):
     """Plugin execution mode for tool plugin bindings."""
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"  # Deprecated: use SEQUENTIAL + on_error=ignore
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
+    SEQUENTIAL = "sequential"
+    CONCURRENT = "concurrent"
+    TRANSFORM = "transform"
+    AUDIT = "audit"
+    FIRE_AND_FORGET = "fire_and_forget"
 
 
 # --- Policy item (one plugin, one or more tools) ---
@@ -8242,12 +8355,15 @@ class PluginPolicyItem(BaseModel):
 
     tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
     plugin_id: str = Field(..., description="Plugin class name to bind, e.g. 'OutputLengthGuardPlugin'")
-    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
+    mode: PluginBindingMode = Field(
+        PluginBindingMode.ENFORCE, description="Execution mode: enforce, enforce_ignore_error, permissive, disabled, sequential, concurrent, transform, audit, or fire_and_forget"
+    )
     priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
     config: Dict[str, Any] = Field(
         ...,
         description="Plugin-specific configuration. On upsert the entire config is fully replaced; there is no merge with the previously stored config.",
     )
+    on_error: Optional[Literal["fail", "ignore", "disable"]] = Field(None, description="Error handling: fail (block on error), ignore (swallow errors), disable (disable plugin on error)")
     binding_reference_id: Optional[str] = Field(
         None,
         max_length=255,
@@ -8325,6 +8441,7 @@ class ToolPluginBindingResponse(BaseModelWithConfigDict):
     mode: str = Field(..., description="Execution mode")
     priority: int = Field(..., description="Execution priority")
     config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
     binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID for correlating with an upstream system")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="Email of creator")
@@ -8348,4 +8465,122 @@ class ToolPluginBindingListResponse(BaseModelWithConfigDict):
     """Response for GET /v1/tools/plugin_bindings[/{team_id}]."""
 
     bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
+    total: int = Field(0, description="Total number of bindings returned")
+
+
+# --- A2A Agent Plugin Schemas ---
+
+A2A_AGENT_METADATA = "a2a_agent"
+# Metadata key used in GlobalContext.metadata for A2A agent plugin context.
+# Defined locally to avoid depending on the cpex package version for a string constant.
+
+
+class PydanticA2AAgent(BaseModelWithConfigDict):
+    """A2A agent metadata for plugin context.
+
+    Used in GlobalContext.metadata[A2A_AGENT_METADATA] to provide
+    agent configuration to pre/post-invoke plugins. This schema exposes
+    the relevant A2A agent configuration fields that plugins may need
+    for policy decisions, such as authorization type visibility, and
+    header pass-through configuration.
+
+    Attributes:
+        id: A2A agent UUID identifier.
+        name: Agent name (used in context_id generation for plugin bindings).
+        team_id: Team the agent belongs to (None for public agents).
+        visibility: Agent visibility scope (public, private, etc.).
+        enabled: Whether the agent is currently enabled.
+        tags: List of string tags for agent classification (Note: differs from Gateway.tags which is List[Dict[str,str]]).
+        oauth_config: OAuth configuration for the agent (if any).
+        passthrough_headers: List of HTTP header names that should be passed through to upstream agent.
+        auth_type: Authentication type (basic, bearer, api_key, etc.).
+    """
+
+    id: str = Field(..., description="A2A agent UUID identifier")
+    name: str = Field(..., description="Agent name")
+    team_id: Optional[str] = Field(None, description="Team ID the agent belongs to")
+    visibility: str = Field(..., description="Agent visibility scope")
+    enabled: bool = Field(..., description="Whether the agent is enabled")
+    tags: List[str] = Field(default_factory=list, description="String tags for agent classification")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth configuration")
+    passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
+    auth_type: Optional[str] = Field(None, description="Authentication type")
+    content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
+
+    class Config:
+        """Pydantic config for A2A agent metadata."""
+
+        from_attributes = True  # SQLAlchemy ORM compatibility
+
+
+class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):
+    """Request schema for creating/updating A2A agent plugin bindings.
+
+    Attributes:
+        agent_name: Agent name (or "*" for team-wide policies).
+        plugin_id: Plugin identifier.
+        mode: Plugin execution mode (enforce, detect).
+        priority: Execution priority (lower runs first).
+        config: Plugin-specific configuration.
+        on_error: Error handling policy (fail, ignore, disable).
+    """
+
+    agent_name: str = Field(..., min_length=1, max_length=255, description="Agent name or '*' for team-wide")
+    plugin_id: str = Field(..., min_length=1, max_length=64, description="Plugin identifier")
+    mode: str = Field(default="enforce", description="Plugin execution mode")
+    priority: int = Field(default=50, description="Execution priority")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy (fail, ignore, disable)")
+
+
+class A2AAgentPluginBindingResponse(BaseModelWithConfigDict):
+    """Response schema for A2A agent plugin bindings.
+
+    Attributes:
+        id: Unique binding identifier (UUID).
+        team_id: Team the binding belongs to.
+        agent_name: Agent name the policy applies to.
+        plugin_id: Plugin identifier.
+        mode: Execution mode.
+        priority: Execution priority.
+        config: Plugin-specific configuration.
+        on_error: Error handling policy.
+        binding_reference_id: Optional external reference ID.
+        created_at: Creation timestamp.
+        created_by: Email of creator.
+        updated_at: Last update timestamp.
+        updated_by: Email of last updater.
+    """
+
+    id: str = Field(..., description="Unique binding identifier")
+    team_id: str = Field(..., description="Team the binding belongs to")
+    agent_name: str = Field(..., description="Agent name the policy applies to")
+    plugin_id: str = Field(..., description="Plugin identifier")
+    mode: str = Field(..., description="Execution mode")
+    priority: int = Field(..., description="Execution priority")
+    config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    created_by: str = Field(..., description="Email of creator")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_by: str = Field(..., description="Email of last updater")
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dt(self, v: datetime) -> str:
+        """Serialize datetime fields to ISO 8601.
+
+        Args:
+            v: Datetime to serialize.
+
+        Returns:
+            ISO 8601 string.
+        """
+        return encode_datetime(v)
+
+
+class A2AAgentPluginBindingListResponse(BaseModelWithConfigDict):
+    """Response for GET /v1/a2a-agents/{team_id}/plugin-bindings."""
+
+    bindings: List[A2AAgentPluginBindingResponse] = Field(default_factory=list, description="List of A2A agent plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")

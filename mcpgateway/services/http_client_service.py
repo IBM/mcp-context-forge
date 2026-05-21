@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/http_client_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Shared HTTP Client Service.
 
@@ -120,7 +121,7 @@ class SharedHttpClient:
             limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
-            follow_redirects=True,
+            follow_redirects=False,
             verify=not settings.skip_ssl_verify,
         )
         self._initialized = True

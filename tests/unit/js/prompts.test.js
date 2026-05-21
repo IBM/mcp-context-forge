@@ -671,7 +671,7 @@ describe("editPrompt - Extended", () => {
 
     // Mock URL with team_id
     Object.defineProperty(window, "location", {
-      value: { href: "http://localhost?team_id=team1" },
+      value: { href: "http://localhost?team_id=team1", search: "?team_id=team1" },
       writable: true,
     });
 
@@ -679,6 +679,61 @@ describe("editPrompt - Extended", () => {
 
     // Should coerce public to team when ALLOW_PUBLIC_VISIBILITY=false
     expect(teamRadio.checked).toBe(true);
+    consoleSpy.mockRestore();
+  });
+
+  test("does not coerce visibility when team_id is whitespace-only", async () => {
+    window.ROOT_PATH = "";
+    window.ALLOW_PUBLIC_VISIBILITY = false;
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const nameInput = document.createElement("input");
+    nameInput.id = "edit-prompt-name";
+    document.body.appendChild(nameInput);
+
+    const descInput = document.createElement("textarea");
+    descInput.id = "edit-prompt-description";
+    document.body.appendChild(descInput);
+
+    const publicRadio = document.createElement("input");
+    publicRadio.type = "radio";
+    publicRadio.id = "edit-prompt-visibility-public";
+    document.body.appendChild(publicRadio);
+
+    const teamRadio = document.createElement("input");
+    teamRadio.type = "radio";
+    teamRadio.id = "edit-prompt-visibility-team";
+    document.body.appendChild(teamRadio);
+
+    const privateRadio = document.createElement("input");
+    privateRadio.type = "radio";
+    privateRadio.id = "edit-prompt-visibility-private";
+    document.body.appendChild(privateRadio);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          id: "p1",
+          name: "test-prompt",
+          description: "desc",
+          arguments: [],
+          template: "Hello",
+          visibility: "public",
+        }),
+    });
+
+    // Whitespace-only team_id should not trigger coercion
+    Object.defineProperty(window, "location", {
+      value: { href: "http://localhost?team_id=%20", search: "?team_id=%20" },
+      writable: true,
+    });
+
+    await editPrompt("p1");
+
+    // public visibility should be preserved — no coercion for whitespace-only team_id
+    expect(publicRadio.checked).toBe(true);
+    expect(teamRadio.checked).toBe(false);
     consoleSpy.mockRestore();
   });
 

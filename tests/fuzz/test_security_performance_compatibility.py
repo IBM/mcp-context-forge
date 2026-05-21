@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/fuzz/test_security_performance_compatibility.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -31,6 +31,7 @@ class TestPerformanceImpact:
 
     def test_middleware_overhead_minimal(self):
         """Test security middleware has minimal performance overhead."""
+
         def _measure_average_request_time(client: TestClient, endpoint: str, iterations: int, warmup: int = 20) -> float:
             # Warmup reduces one-time startup variance from skewing the ratio.
             for _ in range(warmup):
@@ -377,10 +378,10 @@ class TestSecurityHeadersStandardsCompliance:
         for directive in required_directives:
             assert directive in csp
 
-        # Should not use deprecated directives
-        deprecated_directives = ["script-src-elem", "script-src-attr"]
-        for directive in deprecated_directives:
-            assert directive not in csp
+        # CSP Level 3 layered script directives (modern browser support)
+        level3_directives = ["script-src-elem", "script-src-attr"]
+        for directive in level3_directives:
+            assert directive in csp, f"CSP must include {directive} for Level 3 compliance"
 
     def test_security_headers_case_sensitivity(self):
         """Test security headers use correct case."""

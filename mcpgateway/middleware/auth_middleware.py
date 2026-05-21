@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/auth_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -33,6 +33,8 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway.services.siem_export_service import get_siem_export_service
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
@@ -45,22 +47,27 @@ _HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "T
 
 
 def _should_log_auth_success() -> bool:
-    """Check if successful authentication should be logged based on settings.
+    """Check if successful authentication should be captured.
 
     Returns:
-        True if security_logging_level is "all", False otherwise.
+        True when DB security logging requires it or SIEM auth source is enabled.
     """
-    return settings.security_logging_level == "all"
+    db_logging_enabled = settings.security_logging_enabled and settings.security_logging_level == "all"
+    siem_service = get_siem_export_service()
+    siem_logging_enabled = (settings.siem_export_enabled or siem_service.enabled or bool(siem_service.destinations)) and siem_service.is_source_enabled("auth")
+    return db_logging_enabled or siem_logging_enabled
 
 
 def _should_log_auth_failure() -> bool:
-    """Check if failed authentication should be logged based on settings.
+    """Check if failed authentication should be captured.
 
     Returns:
-        True if security_logging_level is "all" or "failures_only", False for "high_severity".
+        True when DB security logging requires it or SIEM auth source is enabled.
     """
-    # Log failures for "all" and "failures_only" levels, not for "high_severity"
-    return settings.security_logging_level in ("all", "failures_only")
+    db_logging_enabled = settings.security_logging_enabled and settings.security_logging_level in ("all", "failures_only")
+    siem_service = get_siem_export_service()
+    siem_logging_enabled = (settings.siem_export_enabled or siem_service.enabled or bool(siem_service.destinations)) and siem_service.is_source_enabled("auth")
+    return db_logging_enabled or siem_logging_enabled
 
 
 def _get_or_create_session(request: Request) -> tuple[Session, bool]:
@@ -144,19 +151,27 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if request.cookies:
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
-        # 2. Try Authorization header
+        # 2. Try configured authentication header (default: Authorization)
         if not token:
-            auth_header = request.headers.get("authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header.replace("Bearer ", "")
+            auth_header = get_auth_header_value(request.headers)
+            if auth_header:
+                scheme, _, credentials_value = auth_header.partition(" ")
+                if scheme.lower() == "bearer" and credentials_value:
+                    token = credentials_value
 
         # If no token found, continue without user context
         if not token:
             return await call_next(request)
 
+        # Store bearer token in request.state for downstream use (e.g., cross-gateway auth forwarding)
+        # This prevents duplicate token extraction and ensures consistent token handling
+        request.state.bearer_token = token
+
         # Check logging settings once upfront to avoid DB session when not needed
         log_success = _should_log_auth_success()
         log_failure = _should_log_auth_failure()
+        siem_runtime_enabled = settings.siem_export_enabled or get_siem_export_service().enabled
+        persist_to_db = settings.security_logging_enabled or not siem_runtime_enabled
 
         # Try to authenticate and populate user context
         # Note: get_current_user manages its own DB sessions internally
@@ -187,6 +202,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         client_ip=request.client.host if request.client else "unknown",
                         user_agent=request.headers.get("user-agent"),
                         db=db,
+                        persist=persist_to_db,
                     )
                     # Commit immediately to persist logs even if exception occurs later in middleware chain
                     # Route handler's get_db() may commit again (no-op if no new changes)
@@ -226,6 +242,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             user_agent=request.headers.get("user-agent"),
                             failure_reason=str(e.detail),
                             db=db,
+                            persist=persist_to_db,
                         )
                         # Commit immediately to persist logs, especially for hard-deny paths (API requests)
                         # that return JSONResponse without reaching get_db()
@@ -294,10 +311,11 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         user_agent=request.headers.get("user-agent"),
                         failure_reason=str(e),
                         db=db,
+                        persist=persist_to_db,
                     )
-                    # Commit immediately to persist logs even if exception occurs later
-                    # When owned=True, session is closed after this block, so commit is required
-                    # When owned=False, get_db() may commit again (no-op if no new changes)
+                    # Commit immediately to persist logs, especially for hard-deny paths (API requests)
+                    # that return JSONResponse without reaching get_db()
+                    # For browser requests that continue to route handler, get_db() commits again (no-op)
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")

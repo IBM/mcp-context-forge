@@ -533,7 +533,7 @@ repos:
     rev: 1.7.0  # or master if you're bold
     hooks:
       - id: interrogate
-        args: [--quiet, --fail-under=100]
+        args: [--fail-under=100]
         files: ^mcpgateway/
 
   # -----------------------------------------------------------------------------
@@ -562,7 +562,7 @@ repos:
 
       - id: check-migration-patterns
         name: 🔐 Check Migration Patterns
-        description: Verifies Alembic migration naming, hashes, and source patterns.
+        description: Verifies Alembic migration naming, revision IDs, duplicates, and single-head chain.
         entry: python3 scripts/pre-commit/check_migration_patterns.py
         language: system
         files: ^mcpgateway/alembic/versions/.*\.py$

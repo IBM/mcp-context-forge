@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/builder/schema.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
-Pydantic schemas for MCP Stack configuration validation"""
+Pydantic schemas for MCP Stack configuration validation
+"""
 
 # Standard
 import re

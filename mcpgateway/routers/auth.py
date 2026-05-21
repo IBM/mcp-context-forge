@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -25,6 +25,7 @@ from mcpgateway.routers.email_auth import create_access_token, get_client_ip, ge
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 # Initialize logging
 logging_service = LoggingService()
@@ -120,6 +121,56 @@ class LoginRequest(BaseModel):
             raise ValueError("Either email or username must be provided")
 
 
+@auth_router.get("/csrf-token")
+async def get_csrf_token(request: Request, current_user: "EmailUser" = Depends(get_current_user)):
+    """Get a fresh CSRF token for the current authenticated user.
+
+    This endpoint generates a new CSRF token for the current session and sets it
+    as a cookie. Used by the frontend to refresh expired tokens.
+
+    Args:
+        request: FastAPI request object
+        current_user: Currently authenticated user
+
+    Returns:
+        dict: JSON response with csrf_token field
+
+    Raises:
+        HTTPException: If user authentication fails
+
+    Examples:
+        >>> # GET /auth/csrf-token
+        >>> # Headers: Authorization: Bearer <token>
+        >>> # Response: {"csrf_token": "abc123..."}
+    """
+    # Third-Party
+    from fastapi.responses import JSONResponse
+
+    # First-Party
+    from mcpgateway.config import settings
+    from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+
+    try:
+        session_id = getattr(request.state, "jti", None)
+        if not session_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing session identifier")
+
+        # Generate fresh CSRF token
+        csrf_token = generate_csrf_token(user_id=current_user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+
+        # Create response with CSRF cookie
+        response = JSONResponse(content={"csrf_token": csrf_token})
+        set_csrf_cookie(response, csrf_token, settings)
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating CSRF token for {current_user.email}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate CSRF token")
+
+
 @auth_router.post("/login", response_model=AuthenticationResponse)
 async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Authenticate user and return session JWT token.
@@ -173,6 +224,35 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
 
         logger.info(f"User {email} authenticated successfully")
 
+        # Generate CSRF token for session (rotate on login)
+        if settings.csrf_rotate_on_login:
+            try:
+                # Third-Party
+                from fastapi.responses import JSONResponse
+                import jwt
+
+                # First-Party
+                from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+
+                # Decode JWT to get jti (don't verify since we just created it)
+                payload = jwt.decode(access_token, options={"verify_signature": False})
+                session_id = payload.get("jti", "")
+
+                # Generate CSRF token
+                csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+
+                auth_response = AuthenticationResponse(
+                    access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+                )  # nosec B106 - OAuth2 token type, not a password
+                response = JSONResponse(content=auth_response.model_dump(mode="json"))
+
+                set_csrf_cookie(response, csrf_token, settings)
+
+                return response
+            except Exception as e:
+                logger.warning(f"Failed to set CSRF token for {user.email}: {e}")
+                # Fall back to response without CSRF token (non-critical)
+
         # Return session token for UI access and API key management
         return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
@@ -218,12 +298,16 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
         # User is already authenticated via dependency injection
         user = current_user
 
-        # Extract JWT from Authorization header
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        # Extract JWT from the configured auth header (default: Authorization).
+        # Reading from settings.auth_header_name keeps logout aligned with the
+        # auth dependency that just validated the same caller; otherwise a custom
+        # AUTH_HEADER_NAME lets a request authenticate but never revoke its token.
+        auth_header = get_auth_header_value(request.headers) or ""
+        scheme, _, raw_token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not raw_token:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No valid authorization token provided")
 
-        token = auth_header[7:]  # Remove "Bearer " prefix
+        token = raw_token.strip()
 
         # Decode token to get JTI and expiry
         # Third-Party

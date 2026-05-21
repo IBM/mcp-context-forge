@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Base model utilities for ContextForge.
+"""Location: ./mcpgateway/utils/base_models.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Base model utilities for ContextForge.
 This module provides shared base classes and utilities for Pydantic models
 to avoid circular dependencies between models.py and schemas.py.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

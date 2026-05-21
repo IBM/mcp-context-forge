@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for admin observability SQL functions.
+"""Location: ./tests/unit/mcpgateway/test_admin_observability_sql.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for admin observability SQL functions.
 
 Tests SQL-based and Python-based computation paths for:
 - Latency percentiles
@@ -297,8 +302,6 @@ class TestLatencyHeatmapPython:
         assert total_count == 10
 
 
-
-
 class TestToolUsageStatistics:
     """Tests for tool usage statistics with different databases."""
 
@@ -337,6 +340,7 @@ class TestToolUsageStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_tool_usage(mock_request, hours=24, limit=20, _user=mock_user))
 
         assert "tools" in result
@@ -379,6 +383,7 @@ class TestToolErrorStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_tool_errors(mock_request, hours=24, limit=20, _user=mock_user))
 
         assert "tools" in result
@@ -425,6 +430,7 @@ class TestToolChains:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_tool_chains(mock_request, hours=24, limit=20, _user=mock_user))
 
         assert "chains" in result
@@ -466,6 +472,7 @@ class TestPromptStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_prompt_usage(mock_request, hours=24, limit=20, _user=mock_user))
 
         assert "prompts" in result
@@ -502,6 +509,7 @@ class TestPromptStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_prompts_errors(hours=24, limit=20, _user=mock_user))
 
         assert "prompts" in result
@@ -542,6 +550,7 @@ class TestResourceStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_resource_usage(mock_request, hours=24, limit=20, _user=mock_user))
 
         assert "resources" in result
@@ -578,6 +587,7 @@ class TestResourceStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
+
                 result = asyncio.run(get_resources_errors(hours=24, limit=20, _user=mock_user))
 
         assert "resources" in result

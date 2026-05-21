@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add pagination indexes
+"""Location: ./mcpgateway/alembic/versions/g1a2b3c4d5e6_add_pagination_indexes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add pagination indexes
 
 Revision ID: g1a2b3c4d5e6
 Revises: e5a59c16e041
 Create Date: 2025-10-13 10:00:00.000000
-
 """
 
 # Standard

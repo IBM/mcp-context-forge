@@ -13,7 +13,7 @@ deployment).
 |---------|---------|---------|
 | HTMX | 2.0.3 | AJAX interactions, HTML-over-HTTP (bundled via npm/Vite) |
 | Alpine.js | 3.x | Lightweight reactive components |
-| Tailwind CSS | CDN | Utility-first styling |
+| Tailwind CSS | Pre-compiled | Utility-first styling (built from source) |
 | CodeMirror | 5.65.18 | Syntax-highlighted code editing |
 | Chart.js | - | Data visualization |
 | Marked.js | - | Markdown rendering |
@@ -102,8 +102,8 @@ app is mounted behind a proxy.
   ```
 
 ### Colors & Tailwind
-- Tailwind is initialised in `admin.html` via `https://cdn.tailwindcss.com` with
-  `darkMode: "class"`.
+- Tailwind is pre-compiled into `mcpgateway/static/css/tailwind.min.css` from
+  `tailwind.config.js` with `darkMode: "class"`.
 
 - Add a custom config block to extend colours/fonts and swap utility classes, for example:
   ```html

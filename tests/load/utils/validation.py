@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Data validation utilities."""
+"""Location: ./tests/load/utils/validation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Data validation utilities.
+"""
 
 import logging
 from typing import Any, Dict, List

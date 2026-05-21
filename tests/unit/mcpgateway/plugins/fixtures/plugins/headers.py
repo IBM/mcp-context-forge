@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/headers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Fred Araujo
 
@@ -10,8 +10,8 @@ Headers plugin.
 
 import logging
 
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.plugins.framework import (
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from cpex.framework import (
     PluginContext,
     Plugin,
     HttpHeaderPayload,

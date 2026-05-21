@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # mcpgateway/services/cancellation_service.py
 """Location: ./mcpgateway/services/cancellation_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 

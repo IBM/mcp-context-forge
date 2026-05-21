@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.paths.resolve_root_path.
+"""Location: ./tests/unit/mcpgateway/utils/test_paths.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.paths.resolve_root_path.
 
 Covers the canonical root-path resolution helper introduced in issue #3298
 to replace the 12 direct ``request.scope.get("root_path", "")`` call sites

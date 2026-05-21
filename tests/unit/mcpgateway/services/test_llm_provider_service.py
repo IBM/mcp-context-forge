@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for LLM provider service."""
+"""Location: ./tests/unit/mcpgateway/services/test_llm_provider_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for LLM provider service.
+"""
 
 # Standard
 import asyncio
@@ -536,9 +542,7 @@ def test_provider_config_recursive_list_and_non_dict_branches(monkeypatch: pytes
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"enc:{data['data']}")
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"data": "clear-secret"})
 
-    protected = _protect_provider_config_fragment(
-        {"items": [{"api_key": "secret-1"}, {"region": "us-east-1"}]}
-    )
+    protected = _protect_provider_config_fragment({"items": [{"api_key": "secret-1"}, {"region": "us-east-1"}]})
     assert protected["items"][0]["api_key"] == {"_mcpgateway_encrypted_value_v1": "enc:secret-1"}
     assert protected["items"][1]["region"] == "us-east-1"
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for permission-based menu visibility in admin UI.
+"""Location: ./tests/unit/mcpgateway/test_admin_menu_visibility.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for permission-based menu visibility in admin UI.
 
 Tests the get_hidden_sections_for_user function that determines which
 menu sections should be hidden based on user RBAC permissions.

@@ -11,7 +11,7 @@ plugins:
       - "resource_pre_fetch"
       - "prompt_pre_fetch"
     tags: ["test", "cross-hook", "context-sharing"]
-    mode: "enforce"
+    mode: "sequential"
     priority: 50
     config: {}
 

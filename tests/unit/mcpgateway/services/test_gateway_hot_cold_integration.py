@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for hot/cold server classification with GatewayService.
-
-Tests the integration between ServerClassificationService and GatewayService
-for health checks and auto-refresh polling.
-
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_hot_cold_integration.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for hot/cold server classification with GatewayService.
+Tests the integration between ServerClassificationService and GatewayService
+for health checks and auto-refresh polling.
 """
 
 # Standard
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -482,7 +483,7 @@ class TestBranchSpecificMissingLines:
 
         mock_gateway = _make_mock_gateway(url="http://test-server:8000", name="test-gateway")
         # Naive datetime (no tzinfo), old enough that time_since_refresh > 300s
-        mock_gateway.last_refresh_at = datetime.utcnow() - timedelta(hours=2)
+        mock_gateway.last_refresh_at = datetime.now(timezone.utc) - timedelta(hours=2)
         mock_gateway.refresh_interval_seconds = None
 
         mock_refresh = AsyncMock(return_value={"added": 0, "updated": 0, "removed": 0})
@@ -515,7 +516,7 @@ class TestBranchSpecificMissingLines:
 
         mock_gateway = _make_mock_gateway(url="http://test-server:8000", name="test-gateway")
         # Naive datetime, refreshed 30 seconds ago (within 3600s interval)
-        mock_gateway.last_refresh_at = datetime.utcnow() - timedelta(seconds=30)
+        mock_gateway.last_refresh_at = datetime.now(timezone.utc) - timedelta(seconds=30)
         mock_gateway.refresh_interval_seconds = None
 
         mock_refresh = AsyncMock(return_value={"added": 0, "updated": 0, "removed": 0})
@@ -626,7 +627,7 @@ class TestMarkPollCompletedInRefreshPath:
 
         # Mock _initialize_gateway to return empty (no changes, but success)
         with (
-            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], []))),
+            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_fn,
@@ -655,9 +656,7 @@ class TestMarkPollCompletedInRefreshPath:
             )
 
         # mark_poll_completed must have been called with the base URL
-        mock_classification.mark_poll_completed.assert_awaited_once_with(
-            "http://refresh-gw:8000", "tool_discovery", gateway_id="gw-123"
-        )
+        mock_classification.mark_poll_completed.assert_awaited_once_with("http://refresh-gw:8000", "tool_discovery", gateway_id="gw-123")
 
     @pytest.mark.asyncio
     async def test_refresh_mark_poll_exception_ignored(self, gateway_service_with_classification, monkeypatch):
@@ -673,7 +672,7 @@ class TestMarkPollCompletedInRefreshPath:
         mock_gateway.refresh_interval_seconds = None
 
         with (
-            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], []))),
+            patch.object(gateway_service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service._get_registry_cache") as mock_cache_fn,
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache") as mock_tl_fn,
@@ -693,7 +692,8 @@ class TestMarkPollCompletedInRefreshPath:
 
             # Must not raise despite mark_poll_completed failure
             result = await gateway_service._refresh_gateway_tools_resources_prompts(
-                gateway_id="gw-123", gateway=mock_gateway,
+                gateway_id="gw-123",
+                gateway=mock_gateway,
             )
             assert result["success"]
 
@@ -800,7 +800,7 @@ class TestUpdateGatewayPollSchedule:
         gateway_update.gateway_mode = None
 
         with (
-            patch.object(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], []))),
+            patch.object(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], []))),
             patch.object(service, "_notify_gateway_updated", AsyncMock()),
             patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=AsyncMock()),
             patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=AsyncMock()),
@@ -813,6 +813,4 @@ class TestUpdateGatewayPollSchedule:
 
             await service.update_gateway(mock_db, "gw-update-1", gateway_update)
 
-        mock_classification.mark_poll_completed.assert_awaited_once_with(
-            "http://update-gw:8000", "tool_discovery", gateway_id="gw-update-1"
-        )
+        mock_classification.mark_poll_completed.assert_awaited_once_with("http://update-gw:8000", "tool_discovery", gateway_id="gw-update-1")

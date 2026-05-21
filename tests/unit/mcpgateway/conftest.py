@@ -2,12 +2,19 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for mcpgateway unit tests."""
+"""Location: ./tests/unit/mcpgateway/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for mcpgateway unit tests.
+"""
 
 # Future
 from __future__ import annotations
 
 # Standard
+import socket
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -17,7 +24,8 @@ import pytest
 # Save original RBAC decorator functions at conftest import time.
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
-from mcpgateway.plugins.framework.settings import settings
+from cpex.framework.settings import settings
+from mcpgateway import config
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
 _ORIG_REQUIRE_ADMIN_PERMISSION = _rbac_mod.require_admin_permission
@@ -86,7 +94,7 @@ def _reset_plugin_framework_redis_provider():
     that state out of the hot path; plugin-suite tests (which have their
     own conftest) re-install a real dynamic provider after this runs.
     """
-    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
 
     set_shared_redis_provider(None)
     yield
@@ -106,3 +114,30 @@ def reset_app_root_path(monkeypatch):
     by setting the monkeypatch value explicitly in the test.
     """
     monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "")
+
+
+@pytest.fixture
+def configure_gateway_test_allowlist(monkeypatch):
+    """Configure gateway test endpoint allowlist for unit tests.
+
+    This fixture is opt-in and should be used by tests that need to bypass
+    gateway test endpoint security validation. It configures the gateway test
+    endpoint to allow *.example.com and mocks DNS resolution to return public IPs.
+
+    Usage: Add @pytest.mark.usefixtures("configure_gateway_test_allowlist")
+    to test classes or functions that need this behavior.
+
+    This is necessary because the security fix (ICA_ContextForgeICACF-14) now
+    enforces an allowlist for the /admin/gateways/test endpoint.
+    """
+    # Configure allowlist to allow test domains
+    monkeypatch.setattr(config.settings, "gateway_test_allow_registered_only", False)
+    monkeypatch.setattr(config.settings, "gateway_test_allowed_hosts", ["example.com", "*.example.com", "google.com", "*.google.com"])
+
+    # Mock DNS resolution to return public IP for all test domains
+    # Scope to the validator module to avoid affecting other code
+    def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        """Mock getaddrinfo to return public IP (8.8.8.8) for all domains in tests."""
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', port or 443))]
+
+    monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)

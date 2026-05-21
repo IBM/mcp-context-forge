@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_email_auth_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Response
 import pytest
 
 # First-Party
@@ -79,8 +79,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
 
-        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, \
-             patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, patch("mcpgateway.routers.email_auth.settings") as mock_settings:
             mock_service = MockAuthService.return_value
             mock_service.authenticate_user = AsyncMock(return_value=mock_user_needs_password_change)
 
@@ -191,6 +190,50 @@ class TestEmailAuthLoginPasswordChangeRequired:
                         assert isinstance(response, AuthenticationResponse)
                         assert response.access_token == "test_token_123"
                         assert response.token_type == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_login_sets_csrf_cookie_when_rotation_enabled(self, mock_user_normal):
+        """Test login returns ORJSONResponse with rotated CSRF cookie."""
+        from mcpgateway.routers.email_auth import login
+        from mcpgateway.schemas import EmailLoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+        mock_request.headers = {"User-Agent": "TestAgent/1.0"}
+
+        mock_db = MagicMock()
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            mock_service = MockAuthService.return_value
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user_normal)
+
+            with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
+                mock_password_service = MockPasswordService.return_value
+                mock_password_service.verify_password.return_value = False
+                mock_password_service.verify_password_async = AsyncMock(return_value=False)
+
+                with (
+                    patch("mcpgateway.routers.email_auth.settings") as mock_settings,
+                    patch("jwt.decode") as mock_jwt_decode,
+                    patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+                    patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+                ):
+                    mock_settings.default_user_password.get_secret_value.return_value = "default_password"
+                    mock_settings.token_expiry = 60
+                    mock_settings.jwt_issuer = "test-issuer"
+                    mock_settings.jwt_audience = "test-audience"
+                    mock_settings.csrf_rotate_on_login = True
+                    mock_settings.csrf_secret_key = "secret"
+                    mock_settings.csrf_token_expiry = 60
+                    mock_jwt_decode.return_value = {"jti": "session-123"}
+
+                    response = await login(login_request, mock_request, mock_db)
+
+        assert response.status_code == 200
+        mock_generate.assert_called_once_with(user_id="test@example.com", session_id="session-123", secret="secret", expiry=60)
+        mock_set_cookie.assert_called_once()
 
 
 class TestCreateAccessTokenTeamsFormat:
@@ -591,8 +634,31 @@ async def test_admin_get_update_delete_user():
             admin_origin_source="api",
         )
 
+        #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+        response_input = Response()
+        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated2", is_admin=True)
+        response = await email_auth.update_user_deprecated("user@example.com", update_request, response_input, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        # Verify update_user was called with correct params
+        auth_service.update_user.assert_called_with(
+            email="user@example.com",
+            full_name="Updated2",
+            is_admin=True,
+            is_active=None,
+            email_verified=None,
+            password_change_required=None,
+            password="newPassword123!",
+            admin_origin_source="api",
+        )
+        assert response_input.headers["deprecation"] == "@1775001599"
+        assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 GMT"
+        #----------->
+
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert delete_response.success is True
+
+        #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+        assert datetime.now(timezone.utc) < datetime(2026, 8, 16, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
+        #----------->
 
 
 @pytest.mark.asyncio

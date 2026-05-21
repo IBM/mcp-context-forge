@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/security/test_log_injection_protection.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Tests for log injection protection (CWE-117).
 
@@ -42,9 +43,9 @@ class TestLogInjectionProtection:
         """Test that ANSI escape sequences are removed."""
         # Red text: \x1B[31m
         # Reset: \x1B[0m
-        message = "User: \x1B[31madmin\x1B[0m"
+        message = "User: \x1b[31madmin\x1b[0m"
         result = SecurityValidator.sanitize_log_message(message)
-        assert "\x1B" not in result
+        assert "\x1b" not in result
         assert result == "User: admin"
 
     def test_sanitize_log_removes_control_chars(self):
@@ -125,12 +126,12 @@ class TestLogInjectionProtection:
 
     def test_sanitize_log_multiple_attack_vectors(self):
         """Test message with multiple attack vectors combined."""
-        message = "User\nFake\rEntry\x00\x1B[31mColored\x1B[0m"
+        message = "User\nFake\rEntry\x00\x1b[31mColored\x1b[0m"
         result = SecurityValidator.sanitize_log_message(message)
         assert "\n" not in result
         assert "\r" not in result
         assert "\x00" not in result
-        assert "\x1B" not in result
+        assert "\x1b" not in result
         # Should have spaces where newlines were
         assert "User Fake Entry" in result
 
@@ -200,8 +201,8 @@ class TestLogInjectionIntegration:
 
     def test_sanitize_tool_name_in_log(self):
         """Test sanitizing tool names that might contain ANSI codes."""
-        tool_name = "\x1B[32mmalicious_tool\x1B[0m"
+        tool_name = "\x1b[32mmalicious_tool\x1b[0m"
         sanitized = SecurityValidator.sanitize_log_message(tool_name)
         log_message = f"Tool {sanitized} executed"
-        assert "\x1B" not in log_message
+        assert "\x1b" not in log_message
         assert "malicious_tool" in log_message

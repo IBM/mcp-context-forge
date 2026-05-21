@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for G1 + G2 — tenant-id end-to-end through the gateway.
+"""Location: ./tests/integration/test_rate_limiter_multi_tenant.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for G1 + G2 — tenant-id end-to-end through the gateway.
 
 Covers issue #4343:
   - G1: GlobalContext.tenant_id is populated so by_tenant rate limiting
@@ -33,6 +38,7 @@ import pytest
 import requests
 
 from tests.helpers.integration_constants import PLUGIN_MODE_PROPAGATION_WAIT_SECONDS
+from tests.helpers.mcp_session import initialize_mcp_session
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8080")
 GATEWAY_EMAIL = os.environ.get("GATEWAY_EMAIL", "admin@example.com")
@@ -95,7 +101,25 @@ def _set_plugin_mode(mode: str) -> None:
 
 
 def _invoke_tool_once(server_id: str, tool_name: str) -> int:
-    """Make a single MCP tool invocation and return its HTTP status."""
+    """Make a single MCP tool invocation and return its HTTP status.
+
+    Performs an MCP initialize + initialized handshake first to obtain a
+    session id, then issues the tools/call request with that id in the
+    ``Mcp-Session-Id`` header (required by the gateway's session-aware
+    transport).
+    """
+    sid = initialize_mcp_session(
+        GATEWAY_URL, server_id, _fresh_headers(),
+        client_name="rate-limiter-multi-tenant-test",
+    )
+    if sid is None:
+        # initialize_mcp_session already logged the failing step; surface a
+        # descriptive failure here instead of returning a sentinel HTTP status
+        # that the caller would print as `assert 0 == 200` (PR #4635 R4).
+        pytest.fail(
+            f"MCP session handshake failed for server {server_id!r} — "
+            f"see logger output for the failing step"
+        )
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -105,10 +129,15 @@ def _invoke_tool_once(server_id: str, tool_name: str) -> int:
             "arguments": {"message": "multi-tenant-test"} if "echo" in tool_name else {},
         },
     }
+    headers = {
+        **_fresh_headers(),
+        "Accept": "application/json, text/event-stream",
+        "Mcp-Session-Id": sid,
+    }
     resp = requests.post(
         f"{GATEWAY_URL}/servers/{server_id}/mcp",
         json=payload,
-        headers=_fresh_headers(),
+        headers=headers,
         timeout=15,
     )
     return resp.status_code

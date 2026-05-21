@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/db.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -1123,6 +1123,24 @@ class Base(DeclarativeBase):
 # ---------------------------------------------------------------------------
 
 
+class MigrationMetadata(Base):
+    """Migration metadata for hermetic config snapshots.
+
+    Stores runtime configuration values at migration upgrade time so that
+    downgrade operations can be deterministic regardless of current env vars.
+    """
+
+    __tablename__ = "migration_metadata"
+
+    # Composite primary key
+    revision: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Config value and timestamp
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class Role(Base):
     """Role model for RBAC system."""
 
@@ -1304,6 +1322,7 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_COMPLIANCE = "admin.compliance"
     ADMIN_OVERVIEW = "admin.overview"
     ADMIN_DASHBOARD = "admin.dashboard"
     ADMIN_EVENTS = "admin.events"
@@ -1817,6 +1836,31 @@ class PasswordResetToken(Base):
             bool: True when `used_at` is set.
         """
         return self.used_at is not None
+
+
+class PasswordHistory(Base):
+    """Password history tracking for preventing password reuse.
+
+    Stores hashed passwords to enforce password history policy,
+    preventing users from reusing their last N passwords.
+
+    Attributes:
+        id (str): Primary key UUID
+        user_email (str): Email of the user
+        password_hash (str): Argon2id hash of the password
+        changed_at (datetime): When the password was changed
+    """
+
+    __tablename__ = "password_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_history_user_email_changed_at", "user_email", "changed_at"),)
 
 
 class EmailTeam(Base):
@@ -2412,24 +2456,24 @@ class PendingUserApproval(Base):
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", String(36), ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("tool_id", String(36), ForeignKey("tools.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and resources
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and prompts
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -2473,7 +2517,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False, index=True)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2499,7 +2543,7 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False, index=True)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2551,7 +2595,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False, index=True)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="CASCADE"), nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -3244,6 +3288,10 @@ class Tool(Base):
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))
     gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
+
+    # Federation relationship with a gRPC service
+    grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"))
+    grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_tool_association, back_populates="tools")
@@ -5151,6 +5199,9 @@ class GrpcService(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # Relationship with tools discovered from this gRPC service
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="grpc_service", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
         """Return a string representation of the GrpcService instance.
 
@@ -5972,21 +6023,6 @@ def extract_json_field(column, json_path: str, dialect_name: Optional[str] = Non
     return func.json_extract(column, json_path)
 
 
-# Create all tables
-def init_db():
-    """
-    Initialize database tables.
-
-    Raises:
-        Exception: If database initialization fails.
-    """
-    try:
-        # Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-    except SQLAlchemyError as e:
-        raise Exception(f"Failed to initialize database: {str(e)}")
-
-
 # ============================================================================
 # Structured Logging Models
 # ============================================================================
@@ -6545,8 +6581,6 @@ if __name__ == "__main__":
     # Wait for database to be ready before initializing
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
-    init_db()
-
 
 @event.listens_for(Gateway, "before_insert")
 def set_gateway_slug(_mapper, _conn, target):
@@ -6778,6 +6812,7 @@ class ToolPluginBinding(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    on_error: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -6791,6 +6826,7 @@ class ToolPluginBinding(Base):
         Index("ix_tool_plugin_bindings_team_id", "team_id"),
         Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
         Index("ix_tool_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_tool_plugin_bindings_on_error_valid"),
     )
 
     def __repr__(self) -> str:
@@ -6800,3 +6836,84 @@ class ToolPluginBinding(Base):
             str: String representation of ToolPluginBinding instance.
         """
         return f"<ToolPluginBinding(id='{self.id}', team_id='{self.team_id}', tool_name='{self.tool_name}', plugin_id='{self.plugin_id}')>"
+
+
+class A2AAgentPluginBinding(Base):
+    """ORM model for per-agent per-tenant plugin policy bindings for A2A agents.
+
+    Each row represents a single plugin policy applied to a specific A2A agent
+    within a specific team. Multiple rows for the same (team, agent) pair
+    are allowed as long as the plugin_id differs — each plugin type may only
+    appear once per (team_id, agent_name, plugin_id) triple (enforced via
+    UniqueConstraint). A POST with an existing triple performs an upsert
+    (updates the existing row's config/mode/priority).
+
+    This model mirrors ToolPluginBinding but for A2A agents, enabling per-agent
+    plugin policies (e.g., enable VaultPlugin only for specific agents).
+
+    Attributes:
+        id (str): UUID primary key.
+        team_id (str): FK to ``email_teams.id``.
+        agent_name (str): Name of the A2A agent the policy applies to; ``"*"`` means all team agents.
+        plugin_id (str): One of the supported plugin identifiers.
+        mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
+        priority (int): Execution priority — lower numbers run first.
+        config (dict): Plugin-specific JSON configuration blob.
+        binding_reference_id (str): Optional external reference ID for bulk delete and stale-agent pruning.
+        on_error (str): Error handling policy (fail, ignore, disable).
+        created_at (datetime): Row creation timestamp (UTC).
+        created_by (str): Email of the user who created the binding.
+        updated_at (datetime): Last update timestamp (UTC).
+        updated_by (str): Email of the user who last updated the binding.
+
+    Examples:
+        >>> binding = A2AAgentPluginBinding(
+        ...     team_id="abc123",
+        ...     agent_name="secure-agent",
+        ...     plugin_id="VaultPlugin",
+        ...     mode="enforce",
+        ...     priority=10,
+        ...     config={"vault_path": "/secret/myapp"},
+        ...     created_by="admin@example.com",
+        ...     updated_by="admin@example.com",
+        ... )
+        >>> binding.plugin_id
+        'VaultPlugin'
+        >>> binding.mode
+        'enforce'
+    """
+
+    __tablename__ = "a2a_agent_plugin_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    binding_reference_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    on_error: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Relationship back to team
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", foreign_keys=[team_id])
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "agent_name", "plugin_id", name="uq_a2a_agent_plugin_binding"),
+        Index("ix_a2a_agent_plugin_bindings_team_id", "team_id"),
+        Index("ix_a2a_agent_plugin_bindings_agent_name", "agent_name"),
+        Index("ix_a2a_agent_plugin_bindings_binding_reference_id", "binding_reference_id"),
+        CheckConstraint("on_error IN ('fail', 'ignore', 'disable') OR on_error IS NULL", name="ck_a2a_agent_plugin_bindings_on_error_valid"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            str: String representation of A2AAgentPluginBinding instance.
+        """
+        return f"<A2AAgentPluginBinding(id='{self.id}', team_id='{self.team_id}', agent_name='{self.agent_name}', plugin_id='{self.plugin_id}')>"

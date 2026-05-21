@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_cancellation_router.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -23,7 +23,7 @@ def allow_permission(monkeypatch):
     """Bypass RBAC permission checks for router unit tests."""
     # First-Party
     import mcpgateway.middleware.rbac as rbac_module
-    import mcpgateway.plugins.framework as plugins_framework
+    import cpex.framework as plugins_framework
 
     class DummyPermissionService:
         def __init__(self, db):

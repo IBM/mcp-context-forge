@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/common/validators.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
@@ -78,9 +78,7 @@ logger = logging.getLogger(__name__)
 _HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
-_MIME_TYPE_RE: Pattern[str] = re.compile(
-    r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$'
-)
+_MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')
 _URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 _SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
 _ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
@@ -350,6 +348,7 @@ class SecurityValidator:
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
+    MAX_TOOL_NAME_LENGTH = settings.validation_max_tool_name_length  # Default: 128 (MCP spec)
     MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 8192 (8KB)
     MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
     MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
@@ -699,7 +698,7 @@ class SecurityValidator:
             >>> try:
             ...     SecurityValidator.validate_tool_name(long_tool_name)
             ... except ValueError as e:
-            ...     'exceeds maximum length' in str(e)
+            ...     'exceeds MCP spec limit' in str(e)
             True
         """
         if not value:
@@ -713,8 +712,8 @@ class SecurityValidator:
         if _HTML_SPECIAL_CHARS_RE.search(value):
             raise ValueError("Tool name cannot contain HTML special characters")
 
-        if len(value) > cls.MAX_NAME_LENGTH:
-            raise ValueError(f"Tool name exceeds maximum length of {cls.MAX_NAME_LENGTH}")
+        if len(value) > cls.MAX_TOOL_NAME_LENGTH:
+            raise ValueError(f"Tool name exceeds MCP spec limit of {cls.MAX_TOOL_NAME_LENGTH} characters (got {len(value)})")
 
         return value
 
@@ -1316,6 +1315,78 @@ class SecurityValidator:
 
         return value
 
+    @staticmethod
+    def _normalize_hostname(hostname: str) -> str:
+        """Normalize hostname for security checks.
+
+        Performs:
+        - Lowercase conversion
+        - Trailing dot removal
+        - IDN to ASCII (Punycode) conversion for non-ASCII domains
+        - RFC 1123 fallback for ASCII hostnames (allows underscores for Docker/K8s)
+        - Handles wildcard patterns (*.example.com)
+        - Skips normalization for IP addresses
+
+        Args:
+            hostname: Raw hostname from URL (may include wildcard prefix)
+
+        Returns:
+            Normalized hostname (with wildcard prefix preserved if present)
+
+        Raises:
+            ValueError: If hostname contains invalid IDN or fails RFC 1123 validation
+
+        Examples:
+            >>> SecurityValidator._normalize_hostname("Example.COM.")
+            'example.com'
+            >>> SecurityValidator._normalize_hostname("münchen.de")
+            'xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("*.münchen.de")
+            '*.xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("fast_time_server")
+            'fast_time_server'
+        """
+        # Third-Party
+        import idna  # pylint: disable=import-outside-toplevel
+
+        # Handle wildcard patterns separately
+        wildcard_prefix = ""
+        if hostname.startswith("*."):
+            wildcard_prefix = "*."
+            hostname = hostname[2:]  # Remove "*." for normalization
+
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Skip normalization for IP addresses (IPv4 and IPv6)
+        try:
+            ipaddress.ip_address(hostname_normalized)
+            return wildcard_prefix + hostname_normalized
+        except ValueError:
+            pass  # Not an IP address, proceed with hostname normalization
+
+        # Non-ASCII hostnames MUST pass strict IDNA encoding (homograph protection)
+        if not hostname_normalized.isascii():
+            try:
+                hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+                return wildcard_prefix + hostname_normalized
+            except idna.IDNAError as e:
+                raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+
+        # For ASCII hostnames, try IDN first (covers ASCII-only IDN domains)
+        try:
+            hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+            return wildcard_prefix + hostname_normalized
+        except idna.IDNAError:
+            pass  # Not a valid IDN domain, fall through to RFC 1123
+
+        # IDN failed — validate as RFC 1123 hostname (allows underscores for internal names)
+        _rfc1123_label_re = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
+        labels = hostname_normalized.split(".")
+        if all(_rfc1123_label_re.match(label) for label in labels if label):
+            return wildcard_prefix + hostname_normalized
+
+        raise ValueError(f"Invalid hostname: {hostname}")
+
     @classmethod
     def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
         """Validate hostname/IP against SSRF protection rules.
@@ -1379,12 +1450,12 @@ class SecurityValidator:
         # callers other than validate_url() which already decodes.
         hostname = _unquote_if_needed(hostname)
 
-        # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
-        hostname_normalized = hostname.lower().rstrip(".")
+        # Normalize hostname: lowercase, strip trailing dots, IDN conversion
+        hostname_normalized = cls._normalize_hostname(hostname)
 
         # Check blocked hostnames (case-insensitive, normalized)
         for blocked_host in settings.ssrf_blocked_hosts:
-            blocked_normalized = blocked_host.lower().rstrip(".")
+            blocked_normalized = cls._normalize_hostname(blocked_host)
             if hostname_normalized == blocked_normalized:
                 raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
 
@@ -1392,13 +1463,13 @@ class SecurityValidator:
         # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
         ip_addresses: list = []
         try:
-            # Try to parse as IP address directly
-            ip_addresses = [ipaddress.ip_address(hostname)]
+            # Try to parse as IP address directly (use normalized hostname)
+            ip_addresses = [ipaddress.ip_address(hostname_normalized)]
         except ValueError:
             # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
             try:
-                # getaddrinfo returns all A/AAAA records
-                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                # getaddrinfo returns all A/AAAA records (use normalized hostname)
+                addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
                 for _, _, _, _, sockaddr in addr_info:
                     try:
                         ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
@@ -1451,6 +1522,192 @@ class SecurityValidator:
 
                     if not allowed_private:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+
+    @classmethod
+    def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> str:
+        """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
+
+        This method implements strict validation for the gateway test endpoint to prevent
+        SSRF attacks and unauthorized proxy usage. It performs:
+        1. FQDN normalization (strips trailing dots to prevent bypass)
+        2. Allowlist enforcement against provided host patterns
+        3. Unconditional blocking of private IPs, loopback, and link-local addresses
+        4. Standard URL validation (scheme, structure, XSS patterns)
+
+        **Security Note - DNS TOCTOU Limitation:**
+        This validation resolves DNS at validation time to check for private IPs, but the
+        HTTP client will re-resolve DNS at connection time. An attacker controlling DNS can
+        return a public IP during validation and a private IP during connection (DNS rebinding).
+        True mitigation requires pinning the validated IP into the connection (custom resolver/
+        transport, or IP allowlist check at connect callback). This is tracked as a known
+        limitation for future improvement.
+
+        Args:
+            value (str): The URL to validate
+            allowed_hosts (list[str]): List of allowed host patterns. Supports:
+                - Exact hostnames: "example.com"
+                - Wildcard subdomains: "*.example.com"
+                Empty list means reject all URLs.
+            field_name (str): Name of field being validated (for error messages)
+
+        Returns:
+            str: The validated URL if acceptable
+
+        Raises:
+            ValueError: If URL fails validation (generic message, no internal details)
+
+        Examples:
+            Valid URL matching allowlist:
+
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://api.example.com/test',
+            ...     ['*.example.com'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            'https://api.example.com/test'
+
+            Trailing dot bypass attempt (blocked):
+
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://evil.com./bypass',
+            ...     ['trusted.com'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Private IP address (blocked unconditionally):
+
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://192.168.1.1/',
+            ...     ['192.168.1.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Loopback address (blocked unconditionally):
+
+            >>> SecurityValidator.validate_gateway_test_url(
+            ...     'https://127.0.0.1/',
+            ...     ['127.0.0.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # First, perform standard URL validation (scheme, structure, XSS, etc.)
+        # This also does the initial SSRF checks
+        try:
+            validated_url = cls.validate_url(value, field_name)
+        except ValueError:
+            # Return generic error message (don't expose validation details)
+            raise ValueError(f"{field_name} is not allowed")
+
+        # Parse the URL to extract hostname for allowlist check
+        try:
+            result = urlparse(validated_url)
+            hostname = result.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not allowed")
+        except Exception:
+            raise ValueError(f"{field_name} is not allowed")
+
+        # FQDN normalization: strip trailing dots to prevent bypass
+        # Example: evil.com. should be normalized to evil.com before allowlist check
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Unconditionally block private IPs, loopback, and link-local addresses
+        # This prevents testing internal services regardless of allowlist
+        try:
+            ip_addr = ipaddress.ip_address(hostname_normalized)
+            # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+            # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
+            if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
+                ip_addr = ip_addr.ipv4_mapped
+
+            # Check for carrier-grade NAT (100.64.0.0/10) - not covered by is_private
+            is_cgnat = False
+            if ip_addr.version == 4:
+                cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                is_cgnat = ip_addr in cgnat_network
+
+            # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+            # Block loopback (127.0.0.0/8, ::1)
+            # Block link-local (169.254.0.0/16, fe80::/10)
+            # Block unspecified (0.0.0.0, ::)
+            # Block multicast (224.0.0.0/4, ff00::/8)
+            # Block reserved (240.0.0.0/4)
+            # Block carrier-grade NAT (100.64.0.0/10)
+            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local or ip_addr.is_unspecified or ip_addr.is_multicast or ip_addr.is_reserved or is_cgnat:
+                raise ValueError(f"{field_name} is not allowed")
+        except ValueError as e:
+            # If it's our security error, re-raise it
+            if "is not allowed" in str(e):
+                raise
+            # Otherwise it's not a valid IP, continue to hostname check
+
+        # Resolve hostname to check for private IPs (prevent DNS rebinding)
+        try:
+            addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _, _, _, _, sockaddr in addr_info:
+                try:
+                    resolved_ip = ipaddress.ip_address(sockaddr[0])
+                    # Unwrap IPv4-mapped IPv6 addresses
+                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                        resolved_ip = resolved_ip.ipv4_mapped
+
+                    # Check for carrier-grade NAT (100.64.0.0/10)
+                    is_cgnat = False
+                    if resolved_ip.version == 4:
+                        cgnat_network = ipaddress.IPv4Network("100.64.0.0/10")
+                        is_cgnat = resolved_ip in cgnat_network
+
+                    if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
+                        raise ValueError(f"{field_name} is not allowed")
+                except ValueError as e:
+                    if "is not allowed" in str(e):
+                        raise
+                    continue
+        except (socket.gaierror, socket.herror):
+            # DNS resolution failed - reject with generic message
+            raise ValueError(f"{field_name} is not allowed")
+
+        # Check against allowlist
+        if not allowed_hosts:
+            # Empty allowlist means reject all
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        allowed = False
+        for pattern in allowed_hosts:
+            # Normalize pattern (lowercase, strip trailing dots)
+            pattern_normalized = pattern.lower().rstrip(".")
+
+            if pattern_normalized.startswith("*."):
+                # Wildcard subdomain pattern: *.example.com
+                # Matches subdomains ONLY, not the base domain itself (per DNS conventions)
+                domain_suffix = pattern_normalized[2:]  # Remove "*."
+                if hostname_normalized.endswith("." + domain_suffix):
+                    allowed = True
+                    break
+            else:
+                # Exact hostname match
+                if hostname_normalized == pattern_normalized:
+                    allowed = True
+                    break
+
+        if not allowed:
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        return validated_url
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

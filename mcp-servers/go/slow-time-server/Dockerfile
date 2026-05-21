@@ -13,7 +13,7 @@
 # =============================================================================
 # STAGE 1 - BUILD STATIC BINARY (Go 1.23, CGO disabled)
 # =============================================================================
-FROM golang:1.23 AS builder
+FROM golang:1.26.3 AS builder
 
 ARG TARGETARCH
 WORKDIR /src

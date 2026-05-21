@@ -18,8 +18,8 @@ import re
 # Third-Party
 import orjson
 
-# First-Party
-from mcpgateway.plugins.framework import (
+# Third-Party
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,

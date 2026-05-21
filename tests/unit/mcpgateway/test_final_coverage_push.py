@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_final_coverage_push.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -25,7 +25,7 @@ from mcpgateway.schemas import BaseModelWithConfigDict
 async def _call_toolops(handler, monkeypatch, **kwargs):
     # First-Party
     import mcpgateway.middleware.rbac as rbac_module
-    import mcpgateway.plugins.framework as plugins_framework
+    import cpex.framework as plugins_framework
 
     class DummyPermissionService:
         def __init__(self, db):

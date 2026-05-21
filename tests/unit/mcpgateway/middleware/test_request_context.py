@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for request context caching helpers."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_request_context.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for request context caching helpers.
+"""
 
 # Standard
 from types import SimpleNamespace

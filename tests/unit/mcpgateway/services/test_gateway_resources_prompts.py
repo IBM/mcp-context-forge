@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_gateway_resources_prompts.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -75,7 +75,7 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.list_prompts.return_value = mock_prompts_response
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
+            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities["resources"]["listChanged"] is True
@@ -132,7 +132,7 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify
             assert "resources" not in capabilities
@@ -191,7 +191,7 @@ class TestGatewayResourcesPrompts:
             mock_session_instance.list_prompts.side_effect = Exception("Failed to fetch prompts")
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")
+            capabilities, tools, resources, prompts, _ = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify - should return empty lists for resources/prompts on failure
             assert len(tools) == 1
@@ -303,10 +303,7 @@ class TestOrphanedResourceUpsert:
         resource_with_deleted_gateway.uri = "file://resource/"
 
         # Check if it's orphaned
-        is_orphaned = (
-            resource_with_deleted_gateway.gateway_id is None
-            or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
-        )
+        is_orphaned = resource_with_deleted_gateway.gateway_id is None or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
 
         assert is_orphaned is True
 

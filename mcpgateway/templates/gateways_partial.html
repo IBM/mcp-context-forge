@@ -117,7 +117,7 @@
               <hr class="border-gray-200 dark:border-gray-600 my-1">
 
               <!-- Activate / Deactivate -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="gateways">
                 <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
                 <button
                   type="submit"
@@ -128,7 +128,7 @@
               </form>
 
               <!-- Delete -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="gateway" data-arg1="{{ gateway_label|tojson_attr }}" data-arg2="gateways">
                 <button
                   type="submit"
                   role="menuitem"

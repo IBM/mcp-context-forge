@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for analyze_query_log utilities."""
+"""Location: ./tests/unit/mcpgateway/utils/test_analyze_query_log.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for analyze_query_log utilities.
+"""
 
 # Standard
 from pathlib import Path
@@ -20,7 +26,7 @@ def _write_jsonl(path: Path, entries):
 
 def test_load_json_log_skips_invalid_lines(tmp_path: Path):
     log_path = tmp_path / "log.jsonl"
-    log_path.write_text("{}\ninvalid\n{\"query_count\": 1}\n\n")
+    log_path.write_text('{}\ninvalid\n{"query_count": 1}\n\n')
 
     entries = analyze_query_log.load_json_log(log_path)
 

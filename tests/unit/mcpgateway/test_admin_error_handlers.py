@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_admin_error_handlers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -49,9 +49,9 @@ def mock_request():
                 "name": "test_server",
                 "description": "Test description",
                 "icon": "http://example.com/icon.png",
-                "associatedTools": ["1", "2"],
-                "associatedResources": ["3"],
-                "associatedPrompts": ["4"],
+                "associatedTools": ["550e8400e29b41d4a716446655440001", "550e8400e29b41d4a716446655440002"],  # pragma: allowlist secret
+                "associatedResources": ["550e8400e29b41d4a716446655440003"],  # pragma: allowlist secret
+                "associatedPrompts": ["550e8400e29b41d4a716446655440004"],  # pragma: allowlist secret
                 "is_inactive_checked": "false",
                 "visibility": "private",
             }
@@ -76,7 +76,7 @@ def allow_permission(monkeypatch):
     mock_perm_service = MagicMock()
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
+    monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
 
@@ -213,7 +213,7 @@ class TestAdminEditServerErrors:
                     "name": "updated_server",
                     "description": "Updated description",
                     "icon": "http://example.com/icon.png",
-                    "associatedTools": ["1"],
+                    "associatedTools": ["550e8400e29b41d4a716446655440001"],  # pragma: allowlist secret
                     "associatedResources": [],
                     "associatedPrompts": [],
                     "is_inactive_checked": "false",

@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Centralized Redis client factory for consistent configuration.
+"""Location: ./mcpgateway/utils/redis_client.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Centralized Redis client factory for consistent configuration.
 This module provides a single source of truth for Redis client creation,
 ensuring all services use the same connection pool and settings.
-
 Performance: Uses hiredis C parser by default (ADR-026) for up to 83x faster
 response parsing on large responses. Falls back to pure-Python parser if
 hiredis is unavailable or explicitly disabled via REDIS_PARSER setting.
-
-SPDX-License-Identifier: Apache-2.0
-
 Usage:
     from mcpgateway.utils.redis_client import get_redis_client, close_redis_client
 
@@ -26,6 +26,7 @@ Usage:
 import logging
 from typing import Any, Optional
 
+# First-Party
 from mcpgateway.utils.db_isready import _sanitize
 
 logger = logging.getLogger(__name__)

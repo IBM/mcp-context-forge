@@ -11,7 +11,7 @@
     <!-- SRI intentionally omitted: Tailwind Play CDN is JIT and does not provide stable CORS/SRI semantics -->
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     {% endif %}
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       if (window.tailwind && typeof window.tailwind === "object") {
         window.tailwind.config = {
           darkMode: "class",
@@ -68,7 +68,7 @@
     {% else %}
     <link
       rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
       integrity="{{ sri_hashes.fontawesome }}"
       crossorigin="anonymous"
     />
@@ -204,7 +204,7 @@
                   />
                   <button
                     type="button"
-                    onclick="togglePassword()"
+                    id="toggle-password-btn"
                     class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                   >
                     <i id="password-icon" class="fas fa-eye"></i>
@@ -435,7 +435,7 @@
       </div>
     </div>
 
-    <script>
+    <script nonce="{{ csp_nonce(request) }}">
       // Initialize ROOT_PATH for JavaScript URL composition
       window.ROOT_PATH = {{ root_path | tojson }};
 
@@ -526,6 +526,12 @@
         const emailField = document.getElementById("email");
         if (emailField && emailField.value) {
           document.getElementById("password").focus();
+        }
+
+        // Bind password toggle button directly
+        const toggleBtn = document.getElementById("toggle-password-btn");
+        if (toggleBtn) {
+          toggleBtn.addEventListener("click", togglePassword);
         }
 
         document.querySelectorAll("form").forEach((form) => {

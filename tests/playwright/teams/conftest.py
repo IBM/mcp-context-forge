@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Shared fixtures for team collaboration E2E tests."""
+"""Location: ./tests/playwright/teams/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared fixtures for team collaboration E2E tests.
+"""
 
 # Future
 from __future__ import annotations
@@ -23,7 +29,7 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 logger = logging.getLogger(__name__)
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
@@ -35,13 +41,13 @@ def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
     )
 
 
-def create_test_user(admin_api: APIRequestContext, email: str) -> bool:
-    """Create a test user in the database. Returns True on success or already-exists."""
+def create_test_user(admin_api: APIRequestContext, email: str) -> None:
+    """Create a test user in the database. Raises on failure."""
     resp = admin_api.post(
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": f"Test User {email.split('@')[0]}"},
     )
-    return resp.status in (200, 201, 409)
+    assert resp.status in (200, 201, 409), f"Failed to create user {email}: {resp.status} {resp.text()}"
 
 
 def delete_test_user(admin_api: APIRequestContext, email: str) -> None:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/reverse_proxy.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -433,8 +433,9 @@ async def send_request_to_session(
     try:
         await session.send_message(message)
         return {"status": "sent", "session_id": session_id}
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
+    except Exception:
+        LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
 
 
 def _get_user_from_credentials(credentials: str | dict) -> tuple[str | None, bool]:

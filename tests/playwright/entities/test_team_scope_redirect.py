@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/entities/test_team_scope_redirect.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -35,7 +35,7 @@ def _create_tool_via_api(api_request_context: APIRequestContext, suffix: str) ->
     payload = {
         "tool": {
             "name": f"team-redirect-tool-{suffix}",
-            "url": "https://api.example.com/test",
+            "url": "https://httpbin.org/post",
             "description": "Temporary tool for team redirect test",
             "integration_type": "REST",
             "request_type": "GET",

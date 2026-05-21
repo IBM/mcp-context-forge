@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.ssl_context_cache."""
+"""Location: ./tests/unit/mcpgateway/utils/test_ssl_context_cache.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.ssl_context_cache.
+"""
 
 # Standard
 import hashlib
@@ -37,6 +43,23 @@ def test_get_cached_ssl_context_caches_by_sha_for_str_and_bytes() -> None:
     assert b is ctx
     assert mock_create.call_count == 1
     ctx.load_verify_locations.assert_called_once()
+
+
+def test_get_cached_ssl_context_with_none_ca_and_client_certs() -> None:
+    """When CA is None but client_cert/client_key are provided, create context without load_verify_locations."""
+    pem_cert = "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"
+    pem_key = _fake_pem_key("FAKEKEY")
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.get_cached_ssl_context(None, client_cert=pem_cert, client_key=pem_key)
+
+    assert result is ctx
+    ctx.load_verify_locations.assert_not_called()
+    ctx.load_cert_chain.assert_called_once()
+    assert mock_create.call_count == 1
 
 
 def test_get_cached_ssl_context_handles_non_string_objects_via_str() -> None:
@@ -252,6 +275,7 @@ def test_ssl_context_cache_ttl_invalid_value_raises_error():
         with patch.dict(os.environ, {"SSL_CONTEXT_CACHE_TTL": "not-a-number"}):
             try:
                 import mcpgateway.utils.ssl_context_cache
+
                 # If we get here, manually trigger the validation logic
                 ttl_val = os.getenv("SSL_CONTEXT_CACHE_TTL")
                 if ttl_val and ttl_val.strip():
@@ -280,6 +304,7 @@ def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):
         try:
             # Simulate module reload with invalid TTL
             import mcpgateway.utils.ssl_context_cache as module
+
             # Manually trigger the parsing logic
             ttl_value = "invalid"
             if ttl_value.strip() != "":

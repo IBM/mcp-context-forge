@@ -643,10 +643,21 @@ When `AUTH_REQUIRED=false`:
 | Use Case | Recommended Token Scope |
 |----------|------------------------|
 | Admin UI access | Session token (admin bypass is DB-derived; no `teams` claim needed) |
-| CI/CD pipeline | `teams: []` (public-only) |
+| Public-only CI/CD pipeline | `teams: []` (public resources only) |
+| Team-scoped CI/CD pipeline | Team-scoped token provisioned by an un-narrowed platform admin |
 | Service integration | Specific team(s) |
 | Developer access | Personal team + project teams |
 | Monitoring/alerting | `teams: []` with read permissions |
+| Service account provisioning | Un-narrowed platform admin (`is_admin: true`, `teams: null`) can create and list team tokens without joining the team |
+
+**Service Account Provisioning**: Un-narrowed platform admins (tokens with `is_admin: true` and `teams: null`) can create and list team-scoped tokens without being active team members. This enables:
+
+- Centralized token provisioning for CI/CD pipelines
+- Emergency access scenarios without joining teams
+- Automated service account management across teams
+- Cross-team token auditing and lifecycle management
+
+Narrowed admin sessions and regular users still require active team membership to create or list team tokens.
 
 ---
 

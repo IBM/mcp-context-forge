@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for encoded exfiltration detector plugin."""
+"""Location: ./tests/integration/test_encoded_exfil.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Integration tests for encoded exfiltration detector plugin.
+"""
 
 # Standard
 import base64
@@ -7,8 +13,10 @@ import base64
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_encoded_exfil_detection", reason="cpex-encoded-exfil-detection plugin not installed")
+
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Team populator - creates teams via POST /teams."""
+"""Location: ./tests/populate/populators/teams.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Team populator - creates teams via POST /teams.
+"""
 
 # Standard
 import asyncio

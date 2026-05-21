@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -71,8 +71,9 @@ from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -80,7 +81,8 @@ from starlette.requests import Request
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError, UserContext
+from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
@@ -90,10 +92,22 @@ from mcpgateway.utils.trace_context import (
     set_trace_user_email,
     set_trace_user_is_admin,
 )
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    security,
+    verify_jwt_token_cached,
+)
 
-# Security scheme
-security = HTTPBearer(auto_error=False)
+__all__ = [
+    "ConfigurableHTTPBearer",
+    "TokenValidationError",
+    "security",
+    "get_current_user",
+    "validate_token_user",
+    "get_user_team_roles",
+    "normalize_token_teams",
+    "resolve_session_teams",
+]
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
@@ -1095,6 +1109,67 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
     )
 
 
+class TokenValidationError(Exception):
+    """Exception raised when token validation fails.
+
+    Used by validate_token_user to wrap HTTPExceptions from get_current_user
+    into a uniform exception type that callers can handle without importing
+    FastAPI-specific classes.
+    """
+
+    def __init__(self, detail: str, *, status_code: int = 401, original: Optional[Exception] = None) -> None:
+        """Initialize with validation failure detail and optional status code.
+
+        Args:
+            detail: Human-readable error message.
+            status_code: HTTP status code to return (default 401).
+            original: The original exception that caused this error, if any.
+        """
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+        self.original = original
+
+
+async def validate_token_user(request: Request, token: str) -> EmailUser:
+    """Validate a bearer token through the full get_current_user() stack.
+
+    This is the single shared validation path for all admin-token checks.
+    Both /admin/login (redirect-to-dashboard) and /admin (dashboard itself)
+    should call this so they agree on whether a token is acceptable.
+
+    Args:
+        request: FastAPI request object (for request-level caching and state).
+        token: Raw JWT token string (from cookie or header).
+
+    Returns:
+        EmailUser: The fully validated, authenticated user.
+
+    Raises:
+        TokenValidationError: If the token is missing, invalid, expired,
+            revoked, or the user is inactive / not found.
+    """
+    if not token:
+        raise TokenValidationError("Authentication token required", status_code=401)
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    try:
+        return await get_current_user(credentials, request=request)
+    except HTTPException as exc:
+        raise TokenValidationError(
+            str(exc.detail),
+            status_code=exc.status_code,
+            original=exc,
+        ) from exc
+    except Exception as exc:
+        raise TokenValidationError(
+            "Token validation failed",
+            status_code=401,
+            original=exc,
+        ) from exc
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1840,7 +1915,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     """Inject user identity into the plugin_global_context.
 
     Always populates both the legacy ``global_context.user`` dict (for backward
-    compatibility) and the new structured ``global_context.user_context``
+    compatibility) and the structured ``global_context.user_context``
     (:class:`UserContext`).
 
     Args:

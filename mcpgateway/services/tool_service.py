@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/tool_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -33,6 +33,17 @@ import uuid
 
 # Third-Party
 import anyio
+from cpex.framework import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
 import jq
 import jsonschema
@@ -61,8 +72,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginContextTable, PluginError, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload, UserContext
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -80,7 +89,8 @@ from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, Ru
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
-from mcpgateway.utils.admin_check import is_user_admin
+from mcpgateway.transports.context import UserContext
+from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -451,13 +461,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
         text = str(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # nosec B110
         pass
     try:
         text = repr(obj)
         if isinstance(text, str):
             return text
-    except Exception:  # nosec B110 - intentional fallback for unrepresentable objects  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # nosec B110
         pass
     # ``fallback_type`` came from ``_safe_type_name`` so it's
     # guaranteed to be a ``str`` already.
@@ -1046,6 +1056,7 @@ class ToolService(BaseService):
             "custom_name_slug": tool.custom_name_slug,
             "display_name": tool.display_name,
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
+            "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
@@ -1079,6 +1090,7 @@ class ToolService(BaseService):
                 "gateway_mode": getattr(gateway, "gateway_mode", "cache"),  # Gateway mode for direct proxy support
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
+                "auth_value": getattr(gateway, "auth_value", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -2831,9 +2843,10 @@ class ToolService(BaseService):
             if not include_inactive:
                 query = query.where(DbTool.enabled)
 
-            # Add visibility filtering if user context OR token_teams provided
-            # This ensures unauthenticated requests with token_teams=[] only see public tools
-            if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
+            # Admin bypass: skip visibility filtering entirely for unrestricted admin calls
+            if is_admin_bypass_granted(db, user_email, token_teams):
+                pass  # No visibility filter — admin sees all tools
+            elif user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
                 # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
                 if token_teams is not None:
                     team_ids = token_teams
@@ -4120,9 +4133,9 @@ class ToolService(BaseService):
         if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             return (None, False)
 
-        # First-Party
-        from mcpgateway.plugins.framework import PluginMode  # pylint: disable=import-outside-toplevel
-        from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
+        # Third-Party
+        from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
+        from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
@@ -4552,6 +4565,7 @@ class ToolService(BaseService):
             if isinstance(runtime_tool_oauth_config, dict):
                 tool_oauth_config = runtime_tool_oauth_config
         tool_gateway_id = tool_payload.get("gateway_id")
+        tool_grpc_service_id = tool_payload.get("grpc_service_id")
         tool_query_mapping = tool_payload.get("query_mapping") if isinstance(tool_payload.get("query_mapping"), dict) else None
         if tool_query_mapping is not None:
             tool_query_mapping = _validate_mapping_contents(tool_query_mapping, "query_mapping", name)
@@ -5256,7 +5270,7 @@ class ToolService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
@@ -5429,6 +5443,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5612,6 +5629,9 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                        except asyncio.CancelledError:
+                            # Cancellation must propagate; do not wrap it as a tool failure.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -5806,6 +5826,35 @@ class ToolService(BaseService):
                             error_message = f"HTTP {status_code}: {response_text}"
                             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                             tool_result = ToolResult(content=content, is_error=True)
+                elif tool_integration_type == "gRPC" and tool_grpc_service_id:
+                    # gRPC tool invocation using the registered gRPC service
+                    try:
+                        # First-Party
+                        # NOTE: lazy import to avoid circular dependency
+                        from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
+
+                        grpc_manager = GrpcServiceManager()
+                        with fresh_db_session() as grpc_db:
+                            response = await asyncio.wait_for(
+                                grpc_manager.invoke_method(grpc_db, tool_grpc_service_id, tool_name_original, arguments or {}, timeout=effective_timeout),
+                                timeout=effective_timeout,
+                            )
+                        serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                        success = True
+                    except asyncio.CancelledError:  # pylint: disable=try-except-raise
+                        # Re-raise so the LATER ``except Exception`` below cannot swallow cancellation.
+                        # Removing this clause would re-introduce the swallowed-cancellation bug from
+                        # PR #3202 review B7.
+                        raise
+                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
+                        logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
+                        if plugin_manager:
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
+                    except Exception as grpc_err:
+                        logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"gRPC invocation error: {grpc_err}")], is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -5829,8 +5878,9 @@ class ToolService(BaseService):
                                 # Safely obtain structured content using .get() to avoid KeyError when
                                 # plugins provide only the content without structured content fields.
                                 structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
+                                is_error = modified_result.get("isError") if "isError" in modified_result else modified_result.get("is_error", tool_result.is_error)
 
-                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
+                                tool_result = ToolResult(content=modified_result["content"], structured_content=structured, is_error=is_error)
                             else:
                                 # If result is not in expected format, convert it to text content
                                 try:
@@ -5888,6 +5938,9 @@ class ToolService(BaseService):
                         skip_pre_invoke,
                         "timeout",
                     )
+                raise
+            except asyncio.CancelledError:
+                # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)

@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for UpstreamSessionRegistry (issue #4205).
+"""Location: ./tests/unit/mcpgateway/services/test_upstream_session_registry.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Unit tests for UpstreamSessionRegistry (issue #4205).
 The registry's contract under test:
   - 1:1 binding of (downstream_session_id, gateway_id) to an upstream MCP
     ClientSession. Never shared across downstream sessions.
@@ -10,12 +14,8 @@ The registry's contract under test:
   - evict_session / evict_gateway / close_all close the owner task cleanly.
   - The registry is in-process only; multi-worker correctness is the concern
     of the session-affinity layer (not tested here).
-
 Tests avoid real MCP transports by injecting a fake SessionFactory that
 returns a FakeClientSession recording the probe calls it receives.
-
-Copyright 2026
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Future
@@ -280,9 +280,6 @@ async def test_concurrent_acquires_for_same_key_create_exactly_one_session(facto
     assert snap.creates == 1
     assert snap.reuses == 1
     await reg.close_all()
-
-
-
 
 
 # --------------------------------------------------------------------------- #

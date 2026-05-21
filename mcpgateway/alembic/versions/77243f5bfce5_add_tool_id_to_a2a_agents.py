@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Add tool_id to a2a_agents
+"""Location: ./mcpgateway/alembic/versions/77243f5bfce5_add_tool_id_to_a2a_agents.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add tool_id to a2a_agents
 
 Revision ID: 77243f5bfce5
 Revises: s3c4d5e6f7g8
 Create Date: 2026-01-08 00:13:26.384875
-
 """
 
 # Standard

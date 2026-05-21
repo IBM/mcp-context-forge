@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 import httpx
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
@@ -45,7 +45,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokeResult,
     ToolHookType,
 )
-from mcpgateway.plugins.framework.models import AppliedTo
+from cpex.framework.models import AppliedTo
 from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 
 # Initialize logging service first

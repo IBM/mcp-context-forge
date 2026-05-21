@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for security validation middleware.
+"""Location: ./tests/security/test_validation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for security validation middleware.
 
 This module tests the gateway-level input validation and output sanitization
 features that protect against:

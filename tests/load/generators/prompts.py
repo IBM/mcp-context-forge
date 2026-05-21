@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Prompt generator for load testing."""
+"""Location: ./tests/load/generators/prompts.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Prompt generator for load testing.
+"""
 
 import random
 from datetime import datetime

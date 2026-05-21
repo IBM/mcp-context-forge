@@ -37,6 +37,12 @@ data:
         ""      $scheme;
       }
 
+      # Preserve X-Forwarded-Host from upstream proxy; fall back to $http_host
+      map $http_x_forwarded_host $forwarded_host {
+        default $http_x_forwarded_host;
+        ""      $http_host;
+      }
+
       upstream gateway_upstream {
         server {{ $gatewayServiceName }}:{{ $gatewayServicePort }};
         keepalive 32;
@@ -75,7 +81,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $forwarded_proto;
-          proxy_set_header X-Forwarded-Host $http_host;
+          proxy_set_header X-Forwarded-Host $forwarded_host;
           proxy_set_header Connection "";
 
           proxy_request_buffering off;
@@ -97,7 +103,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $forwarded_proto;
-          proxy_set_header X-Forwarded-Host $http_host;
+          proxy_set_header X-Forwarded-Host $forwarded_host;
           proxy_set_header Connection "";
 
           proxy_connect_timeout 30s;
@@ -131,7 +137,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $forwarded_proto;
-          proxy_set_header X-Forwarded-Host $http_host;
+          proxy_set_header X-Forwarded-Host $forwarded_host;
           proxy_set_header Connection "";
 
           proxy_cache off;
@@ -150,7 +156,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $forwarded_proto;
-          proxy_set_header X-Forwarded-Host $http_host;
+          proxy_set_header X-Forwarded-Host $forwarded_host;
           proxy_set_header Connection "";
 
           proxy_request_buffering off;
@@ -172,7 +178,7 @@ data:
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $forwarded_proto;
-          proxy_set_header X-Forwarded-Host $http_host;
+          proxy_set_header X-Forwarded-Host $forwarded_host;
           proxy_set_header Connection "";
 
           proxy_connect_timeout 30s;

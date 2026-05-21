@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_a2a_agent.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 A2A Agent testing.
 
@@ -41,6 +42,20 @@ def mock_logging_services():
         mock_tool_logger.info = MagicMock(return_value=None)
         mock_tool_audit.log_action = MagicMock(return_value=None)
         yield
+
+
+@pytest.fixture(autouse=True)
+def bypass_uaid_security_for_tests(monkeypatch):
+    """Bypass UAID security validation for non-security tests.
+
+    This fixture uses autouse=True to globally disable UAID security checks
+    for all tests in this file, allowing tests to focus on A2A agent functionality
+    rather than security validation.
+    """
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_allow_all_domains", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_forward_auth", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.uaid_max_federation_hops", 5)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_default_timeout", 30)
 
 
 class TestUserInputForA2AAgentTest:

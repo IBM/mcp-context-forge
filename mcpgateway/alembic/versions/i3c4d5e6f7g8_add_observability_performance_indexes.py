@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add observability performance indexes
+"""Location: ./mcpgateway/alembic/versions/i3c4d5e6f7g8_add_observability_performance_indexes.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add observability performance indexes
 
 Revision ID: i3c4d5e6f7g8
 Revises: a23a08d61eb0
 Create Date: 2025-01-05 12:00:00.000000
-
 """
 
 # Standard
@@ -53,17 +57,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove observability performance indexes."""
     # Drop ObservabilityEvent composite index
-    op.drop_index("ix_observability_events_span_id_timestamp", table_name="observability_events")
+    op.drop_index("ix_observability_events_span_id_timestamp", table_name="observability_events", if_exists=True)
 
     # Drop ObservabilitySpan composite indexes
-    op.drop_index("ix_observability_spans_name", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_duration_ms", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_kind_status", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_resource_type_start_time", table_name="observability_spans")
-    op.drop_index("ix_observability_spans_trace_id_start_time", table_name="observability_spans")
+    op.drop_index("ix_observability_spans_name", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_duration_ms", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_kind_status", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_resource_type_start_time", table_name="observability_spans", if_exists=True)
+    op.drop_index("ix_observability_spans_trace_id_start_time", table_name="observability_spans", if_exists=True)
 
     # Drop ObservabilityTrace composite indexes
-    op.drop_index("ix_observability_traces_name", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_http_method_start_time", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_duration_ms", table_name="observability_traces")
-    op.drop_index("ix_observability_traces_status_start_time", table_name="observability_traces")
+    op.drop_index("ix_observability_traces_name", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_http_method_start_time", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_duration_ms", table_name="observability_traces", if_exists=True)
+    op.drop_index("ix_observability_traces_status_start_time", table_name="observability_traces", if_exists=True)

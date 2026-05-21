@@ -15,8 +15,7 @@ and started once, and further used by all test cases for policy evaluations.
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -27,7 +26,7 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPreInvokePayload,
 )
-
+from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
 from mcpgateway.services.logging_service import LoggingService
 from opapluginfilter.plugin import OPAPluginFilter
 

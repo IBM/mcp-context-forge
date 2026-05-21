@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_role_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -581,7 +581,9 @@ class TestAssignRoleToUser:
                         user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at
                     )
 
-                    MockUserRole.assert_called_once_with(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at, grant_source=None)
+                    MockUserRole.assert_called_once_with(
+                        user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com", expires_at=expires_at, grant_source=None
+                    )
 
     @pytest.mark.asyncio
     async def test_assign_personal_role_with_scope_id(self, role_service, sample_role):
@@ -671,24 +673,11 @@ class TestGetUserRoleAssignment:
         filter, preventing MultipleResultsFound when both active and inactive
         rows exist for the same (user_email, role_id, scope, scope_id) tuple.
         """
-        active_assignment = UserRole(
-            id=str(uuid.uuid4()),
-            user_email="user@example.com",
-            role_id=sample_role.id,
-            scope="team",
-            scope_id="team-789",
-            granted_by="admin@example.com",
-            is_active=True
-        )
+        active_assignment = UserRole(id=str(uuid.uuid4()), user_email="user@example.com", role_id=sample_role.id, scope="team", scope_id="team-789", granted_by="admin@example.com", is_active=True)
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = active_assignment
 
-        result = await role_service.get_user_role_assignment(
-            user_email="user@example.com",
-            role_id=sample_role.id,
-            scope="team",
-            scope_id="team-789"
-        )
+        result = await role_service.get_user_role_assignment(user_email="user@example.com", role_id=sample_role.id, scope="team", scope_id="team-789")
 
         assert result is not None
         assert result.is_active is True

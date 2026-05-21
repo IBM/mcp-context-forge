@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_tool_plugin_bindings.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhumohan Jaishankar
 
@@ -14,7 +14,8 @@ Tests cover:
     - POST /  (upsert): success, service exception → 400
     - GET /   (list all): success, empty
     - GET /{team_id}: filtered list, empty
-    - DELETE /{binding_id}: success → 200, not found → 404
+    - DELETE /{binding_id}: success → 200, not found → 404, non-admin foreign team → 403
+    - DELETE /: by reference, non-admin scoped to own teams (cross-team bindings silently skipped)
 """
 
 # Standard
@@ -45,8 +46,6 @@ from mcpgateway.schemas import (
     ToolPluginBindingRequest,
     ToolPluginBindingResponse,
 )
-from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError
-
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 # ---------------------------------------------------------------------------
@@ -79,6 +78,7 @@ def user_ctx(db_session):
         "email": "admin@example.com",
         "full_name": "Admin User",
         "is_admin": True,
+        "token_teams": None,
         "db": db_session,
         "permissions": ["tools.manage_plugins", "tools.read"],
     }
@@ -124,6 +124,7 @@ def _simple_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -143,6 +144,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_x"],
                         plugin_id="OutputLengthGuardPlugin",
                         mode=PluginBindingMode.ENFORCE,
+
                         priority=50,
                         config=dict(_OLG),
                     )
@@ -154,6 +156,7 @@ def _two_team_request() -> ToolPluginBindingRequest:
                         tool_names=["tool_y"],
                         plugin_id="RateLimiterPlugin",
                         mode=PluginBindingMode.PERMISSIVE,
+
                         priority=30,
                         config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
                     )
@@ -198,6 +201,7 @@ class TestToolPluginBindingsRouter:
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
+
         assert binding.priority == 50
         assert binding.created_by == "admin@example.com"
 
@@ -217,6 +221,7 @@ class TestToolPluginBindingsRouter:
                             tool_names=["tool_x"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
+
                             priority=99,
                             config={**_OLG, "max_chars": 500, "strategy": "block"},
                         )
@@ -283,7 +288,7 @@ class TestToolPluginBindingsRouter:
             "email": "member@example.com",
             "full_name": "Team Member",
             "is_admin": False,
-            "teams": ["team-a"],
+            "token_teams": ["team-a"],
             "db": db_session,
             "permissions": ["tools.manage_plugins"],
         }
@@ -302,7 +307,7 @@ class TestToolPluginBindingsRouter:
             "email": "outsider@example.com",
             "full_name": "Outsider",
             "is_admin": False,
-            "teams": ["team-b"],
+            "token_teams": ["team-b"],
             "db": db_session,
             "permissions": ["tools.manage_plugins"],
         }
@@ -324,6 +329,49 @@ class TestToolPluginBindingsRouter:
             db=db_session,
         )
         assert result.total == 2
+
+    @pytest.mark.asyncio
+    async def test_upsert_admin_with_empty_token_teams_can_target_any_team(self, db_session):
+        """
+        ``mcpgateway.auth.normalize_token_teams`` returns ``[]`` (not ``None``)
+        when the JWT lacks a ``teams`` claim — which is the case for every
+        normal admin token mint. The bypass must also fire when
+        ``token_teams`` is falsy (empty list).
+        """
+        admin_no_teams_claim_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": [],  # JWT had no "teams" claim → secure default []
+            "db": db_session,
+            "permissions": ["tools.manage_plugins", "tools.read"],
+        }
+        result = await upsert_tool_plugin_bindings(
+            request=_two_team_request(),
+            current_user_ctx=admin_no_teams_claim_ctx,
+            db=db_session,
+        )
+        assert result.total == 2
+
+    @pytest.mark.asyncio
+    async def test_upsert_narrowed_admin_still_restricted(self, db_session):
+        """Admin with an *explicitly* team-scoped token is still restricted to those teams."""
+        narrowed_admin_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": ["team-b"],  # explicitly scoped — does NOT include team-a
+            "db": db_session,
+            "permissions": ["tools.manage_plugins", "tools.read"],
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            await upsert_tool_plugin_bindings(
+                request=_simple_request(),  # targets team-a
+                current_user_ctx=narrowed_admin_ctx,
+                db=db_session,
+            )
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail == "Not authorized to configure bindings for team(s): team-a"
 
     # ------------------------------------------------------------------
     # GET / — list_tool_plugin_bindings
@@ -363,6 +411,7 @@ class TestToolPluginBindingsRouter:
         assert team_a.tool_name == "tool_x"
         assert team_a.plugin_id == "OutputLengthGuardPlugin"
         assert team_a.mode == "enforce"
+
         assert team_a.priority == 50
         assert team_a.config == _OLG
         assert team_a.created_by == "admin@example.com"
@@ -371,6 +420,7 @@ class TestToolPluginBindingsRouter:
         assert team_b.tool_name == "tool_y"
         assert team_b.plugin_id == "RateLimiterPlugin"
         assert team_b.mode == "permissive"
+
         assert team_b.priority == 30
         assert team_b.config == {**_RL, "by_user": "60/m", "by_tenant": "600/m"}
         assert team_b.created_by == "admin@example.com"
@@ -400,6 +450,7 @@ class TestToolPluginBindingsRouter:
         assert binding.tool_name == "tool_x"
         assert binding.plugin_id == "OutputLengthGuardPlugin"
         assert binding.mode == "enforce"
+
         assert binding.priority == 50
         assert binding.config == _OLG
         assert binding.created_by == "admin@example.com"
@@ -466,6 +517,207 @@ class TestToolPluginBindingsRouter:
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
         assert "nonexistent-id" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_delete_non_admin_foreign_team_raises_403(self, user_ctx, db_session):
+        """Non-admin cannot delete a binding that belongs to a team they're not a member of."""
+        # Seed a binding on team-a as admin
+        upsert_result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        binding_id = upsert_result.bindings[0].id
+
+        # Caller is a member of team-b only
+        non_admin_ctx = {
+            "email": "outsider@example.com",
+            "full_name": "Outsider",
+            "is_admin": False,
+            "token_teams": ["team-b"],
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_tool_plugin_binding(
+                binding_id=binding_id,
+                current_user_ctx=non_admin_ctx,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        # Binding must still exist
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_non_admin_scoped_to_own_teams(self, user_ctx, db_session):
+        """Non-admin DELETE ?binding_reference_id= only removes bindings for the caller's own teams.
+
+        Bindings belonging to other teams with the same reference ID are silently
+        skipped — not an error, and not deleted.
+        """
+        # Seed bindings on both team-a and team-b with the same reference ID
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id="OutputLengthGuardPlugin",
+                            config=dict(_OLG),
+                            binding_reference_id="shared-ref",
+                        )
+                    ]
+                ),
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_y"],
+                            plugin_id="OutputLengthGuardPlugin",
+                            config=dict(_OLG),
+                            binding_reference_id="shared-ref",
+                        )
+                    ]
+                ),
+            }
+        )
+        await upsert_tool_plugin_bindings(request=r, current_user_ctx=user_ctx, db=db_session)
+
+        # Non-admin member of team-a only
+        non_admin_ctx = {
+            "email": "member@example.com",
+            "full_name": "Team A Member",
+            "is_admin": False,
+            "token_teams": ["team-a"],
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        deleted = await delete_tool_plugin_bindings_by_reference(
+            binding_reference_id="shared-ref",
+            current_user_ctx=non_admin_ctx,
+            db=db_session,
+        )
+
+        # Only the team-a binding should be deleted
+        assert deleted.total == 1
+        assert deleted.bindings[0].team_id == "team-a"
+
+        # team-b binding must still be present
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 1
+        assert after.bindings[0].team_id == "team-b"
+
+    @pytest.mark.asyncio
+    async def test_delete_admin_narrowed_token_cannot_delete_foreign_team(self, user_ctx, db_session):
+        """Admin with a narrowed token (token_teams=["team-a"]) cannot delete a team-b binding."""
+        upsert_result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        binding_id = upsert_result.bindings[0].id
+
+        narrowed_admin_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": ["team-b"],  # narrowed — does NOT include team-a
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_tool_plugin_binding(
+                binding_id=binding_id,
+                current_user_ctx=narrowed_admin_ctx,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        # Binding must still exist
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_admin_unrestricted_token_can_delete_any_team(self, user_ctx, db_session):
+        """Admin with unrestricted token (token_teams=None) can delete any team's binding."""
+        upsert_result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        binding_id = upsert_result.bindings[0].id
+
+        unrestricted_admin_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": None,  # unrestricted
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        result = await delete_tool_plugin_binding(
+            binding_id=binding_id,
+            current_user_ctx=unrestricted_admin_ctx,
+            db=db_session,
+        )
+        assert result.id == binding_id
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_by_reference_admin_narrowed_token_scoped(self, user_ctx, db_session):
+        """Admin with narrowed token can only delete by-reference bindings in allowed teams."""
+        # Seed bindings on both team-a and team-b with the same reference ID
+        r = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id="OutputLengthGuardPlugin",
+                            config=dict(_OLG),
+                            binding_reference_id="shared-ref",
+                        )
+                    ]
+                ),
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_y"],
+                            plugin_id="OutputLengthGuardPlugin",
+                            config=dict(_OLG),
+                            binding_reference_id="shared-ref",
+                        )
+                    ]
+                ),
+            }
+        )
+        await upsert_tool_plugin_bindings(request=r, current_user_ctx=user_ctx, db=db_session)
+
+        # Admin narrowed to team-a only
+        narrowed_admin_ctx = {
+            "email": "admin@example.com",
+            "full_name": "Admin User",
+            "is_admin": True,
+            "token_teams": ["team-a"],
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        deleted = await delete_tool_plugin_bindings_by_reference(
+            binding_reference_id="shared-ref",
+            current_user_ctx=narrowed_admin_ctx,
+            db=db_session,
+        )
+
+        # Only the team-a binding should be deleted
+        assert deleted.total == 1
+        assert deleted.bindings[0].team_id == "team-a"
+
+        # team-b binding must still be present
+        after = await list_tool_plugin_bindings(current_user_ctx=user_ctx, db=db_session)
+        assert after.total == 1
+        assert after.bindings[0].team_id == "team-b"
 
     # ------------------------------------------------------------------
     # Structural

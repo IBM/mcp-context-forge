@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.main helper functions."""
+"""Location: ./tests/unit/mcpgateway/test_main_helpers.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.main helper functions.
+"""
 
 # Standard
 import asyncio
@@ -108,7 +114,7 @@ def test_jsonpath_modifier_invalid_expression(monkeypatch):
         raise ValueError("bad jsonpath")
 
     monkeypatch.setattr(main, "_parse_jsonpath", _raise)
-    with pytest.raises(HTTPException, match="Invalid main JSONPath expression"):
+    with pytest.raises(HTTPException, match="Invalid JSONPath expression"):
         main.jsonpath_modifier({"a": 1}, "$.a")
 
 
@@ -117,7 +123,7 @@ def test_transform_data_with_mappings_invalid_mapping(monkeypatch):
         raise ValueError("bad mapping")
 
     monkeypatch.setattr(main, "_parse_jsonpath", _raise)
-    with pytest.raises(HTTPException, match="Invalid mapping JSONPath"):
+    with pytest.raises(HTTPException, match="Invalid JSONPath expression for key"):
         main.transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
 
 
@@ -127,7 +133,7 @@ def test_transform_data_with_mappings_execution_error(monkeypatch):
             raise RuntimeError("boom")
 
     monkeypatch.setattr(main, "_parse_jsonpath", lambda _expr: _BadExpr())
-    with pytest.raises(HTTPException, match="Error executing mapping JSONPath"):
+    with pytest.raises(HTTPException, match="Error executing JSONPath expression for key"):
         main.transform_data_with_mappings([{"a": 1}], {"x": "$.a"})
 
 

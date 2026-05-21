@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add observability saved queries
+"""Location: ./mcpgateway/alembic/versions/j4d5e6f7g8h9_add_observability_saved_queries.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add observability saved queries
 
 Revision ID: j4d5e6f7g8h9
 Revises: i3c4d5e6f7g8
 Create Date: 2025-01-06 12:00:00.000000
-
 """
 
 # Standard
@@ -47,8 +51,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove observability_saved_queries table."""
-    op.drop_index("ix_observability_saved_queries_name", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_created_at", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_is_shared", table_name="observability_saved_queries")
-    op.drop_index("idx_observability_saved_queries_user_email", table_name="observability_saved_queries")
+    op.drop_index("ix_observability_saved_queries_name", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_created_at", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_is_shared", table_name="observability_saved_queries", if_exists=True)
+    op.drop_index("idx_observability_saved_queries_user_email", table_name="observability_saved_queries", if_exists=True)
     op.drop_table("observability_saved_queries")

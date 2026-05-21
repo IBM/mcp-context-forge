@@ -1,6 +1,6 @@
 title: Observability
 nav:
-  - index.md
+  - observability.md
   - opentelemetry.md
   - internal.md
   - prometheus.md

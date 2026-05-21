@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2025 ContextForge Contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for host header validation in demo_a2a_agent_auth.py.
+"""Location: ./tests/unit/scripts/test_demo_a2a_agent_auth.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for host header validation in demo_a2a_agent_auth.py.
 
 The demo script cannot be imported directly due to side effects,
 so we test the host header validation regex logic in isolation.

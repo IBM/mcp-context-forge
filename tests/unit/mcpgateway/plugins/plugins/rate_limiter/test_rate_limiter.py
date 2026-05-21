@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the packaged rate limiter plugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the packaged rate limiter plugin.
+"""
 
 # Standard
 from types import SimpleNamespace
@@ -8,9 +14,11 @@ from unittest.mock import AsyncMock, patch
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_rate_limiter", reason="cpex-rate-limiter plugin not installed")
+
 # First-Party
 from cpex_rate_limiter.rate_limiter import RateLimiterConfig, RateLimiterPlugin, _parse_rate
-from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginContext, PromptHookType, PromptPrehookPayload, ToolHookType, ToolPreInvokePayload
+from cpex.framework import GlobalContext, PluginConfig, PluginContext, PromptHookType, PromptPrehookPayload, ToolHookType, ToolPreInvokePayload
 
 
 def make_plugin(config: dict | None = None) -> RateLimiterPlugin:
@@ -81,8 +89,8 @@ class TestRateLimiterPlugin:
         assert third.continue_processing is False
         assert third.violation is not None
         assert third.violation.code == "RATE_LIMIT"
-        assert third.violation.http_status_code == 429
-        assert third.violation.http_headers["Retry-After"] == "1"
+        assert third.violation.details["remaining"] == 0
+        assert third.violation.details["reset_in"] == 1
 
     @pytest.mark.asyncio
     async def test_prompt_pre_fetch_success_includes_rate_limit_headers(self):
@@ -93,10 +101,8 @@ class TestRateLimiterPlugin:
         result = await plugin.prompt_pre_fetch(payload, ctx)
 
         assert result.violation is None
-        assert result.http_headers["X-RateLimit-Limit"] == "10"
-        assert result.http_headers["X-RateLimit-Remaining"] == "9"
-        assert "Retry-After" not in result.http_headers
-        assert int(result.http_headers["X-RateLimit-Reset"]) > 0
+        assert result.metadata["remaining"] == 9
+        assert result.metadata["reset_in"] == 1
 
     @pytest.mark.asyncio
     async def test_tool_pre_invoke_applies_per_tool_limit(self):
@@ -111,7 +117,7 @@ class TestRateLimiterPlugin:
 
         assert first.violation is None
         assert second.violation is not None
-        assert second.violation.http_status_code == 429
+        assert second.violation.details["remaining"] == 0
         assert third.violation is None
 
     @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_main_apis.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -826,7 +826,7 @@ class TestToolAPIs:
         long_name = "a" * 300
         response = await client.post("/tools", json={"tool": {"name": long_name, "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
-        assert "exceeds maximum length" in str(response.json())
+        assert "exceeds MCP spec limit" in str(response.json())
 
     async def test_get_tool(self, client: AsyncClient, mock_auth):
         """Test GET /tools/{tool_id}."""
@@ -1580,7 +1580,7 @@ class TestUtilityAPIs:
         assert response.status_code == 200
         result = response.json()
         assert "error" in result
-        assert result["error"]["code"] == -32000
+        assert result["error"]["code"] == -32601
 
     async def test_set_log_level(self, client: AsyncClient, mock_auth):
         """Test POST /logging/setLevel."""

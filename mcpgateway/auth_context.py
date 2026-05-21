@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/auth_context.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Per-request scope resolution and Rust-runtime trust-layer helpers.
 
@@ -114,6 +115,7 @@ import base64
 from functools import lru_cache
 import hashlib
 import hmac
+import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
@@ -124,6 +126,9 @@ import orjson
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.config import settings
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 # Trust-layer header names. ``INTERNAL_MCP_SESSION_VALIDATED_HEADER`` is part
 # of the module's public constant API (main.py's middleware compares against
 # it). The other two are implementation details of the header-derivation chain
@@ -133,7 +138,7 @@ _INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
 _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 
-def get_user_email(user):
+def get_user_email(user: Any) -> str:
     """Extract email from user object, handling both string and dict formats.
 
     Args:
@@ -155,6 +160,12 @@ def get_user_email(user):
         >>> user_dict_no_email = {'other': 'value'}
         >>> get_user_email(user_dict_no_email)
         'unknown'
+        >>> user_dict_bad_email = {'email': {'nested': 'value'}}
+        >>> get_user_email(user_dict_bad_email)
+        'unknown'
+        >>> user_dict_list_email = {'email': ['x'], 'sub': 'user@example.com'}
+        >>> get_user_email(user_dict_list_email)
+        'user@example.com'
         >>> user_string = 'legacy_user'
         >>> get_user_email(user_string)
         'legacy_user'
@@ -174,10 +185,24 @@ def get_user_email(user):
         >>> get_user_email(False)
         'unknown'
     """
-    if not user:
+    if user is None:
         return "unknown"
+    # Handle objects with email attribute (e.g., ORM models, dataclasses)
+    if hasattr(user, "email"):
+        email = getattr(user, "email", None)
+        if isinstance(email, str):
+            return email or "unknown"
+        # Non-string email attribute falls through to str(user) below
+    # Handle dict-like objects
     if isinstance(user, dict):
-        return user.get("email") or user.get("sub") or "unknown"
+        email = user.get("email")
+        if isinstance(email, str) and email:
+            return email
+        sub = user.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+        return "unknown"
+    # Fallback to string conversion for other types
     return str(user) if user else "unknown"
 
 
@@ -320,7 +345,7 @@ def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     return []
 
 
-def get_rpc_filter_context(request: Request, user) -> tuple:
+def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]], bool]:
     """Extract ``(user_email, token_teams, is_admin)`` for RPC filtering.
 
     Args:
@@ -331,6 +356,10 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         Tuple of ``(user_email, token_teams, is_admin)`` where ``is_admin`` is
         sourced from the verified token, not the DB user, so that scoped tokens
         (empty ``teams``) cannot inherit admin bypass.
+
+        **Type validation**: ``user_email`` is validated to be a string or None.
+        Non-string values (dict, list, int, etc.) are logged and converted to None
+        for fail-safe public-only access, preventing SQL binding errors.
 
     Examples:
         >>> from unittest.mock import MagicMock
@@ -347,12 +376,12 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
         >>> is_admin
         True
     """
-    if hasattr(user, "email"):
-        user_email = getattr(user, "email", None)
-    elif isinstance(user, dict):
-        user_email = user.get("sub") or user.get("email")
-    else:
-        user_email = str(user) if user else None
+    # Use existing get_user_email() helper for consistent email extraction
+    user_email = get_user_email(user)
+    # get_user_email() guarantees a string return, but may return "unknown"
+    # Convert "unknown" to None for downstream SQL queries
+    if user_email == "unknown":
+        user_email = None
 
     token_teams = get_token_teams_from_request(request)
 
@@ -362,7 +391,16 @@ def get_rpc_filter_context(request: Request, user) -> tuple:
     internal_auth_context = get_internal_mcp_auth_context(request)
     if isinstance(internal_auth_context, dict):
         if user_email is None:
-            user_email = internal_auth_context.get("email")
+            internal_email = internal_auth_context.get("email")
+            # SECURITY: Type-check internal auth context email
+            if internal_email is not None and not isinstance(internal_email, str):
+                logger.warning(
+                    "get_rpc_filter_context: internal_auth_context email non-string type=%s path=%s; forcing None to prevent SQL binding errors",
+                    type(internal_email).__name__,
+                    getattr(getattr(request, "url", None), "path", "unknown"),
+                )
+                internal_email = None
+            user_email = internal_email
         is_admin = bool(internal_auth_context.get("is_admin", False))
         if token_teams is not None and len(token_teams) == 0:
             is_admin = False
@@ -458,4 +496,74 @@ def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional
         return None, None
     if token_teams is None:
         return user_email, []
+    return user_email, token_teams
+
+
+def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any]]) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve scoped visibility from a user_context dict (StreamableHTTP transport).
+
+    This is the Layer-1 entry point for MCP handlers in the StreamableHTTP
+    transport that operate on a ``user_context`` dict rather than a FastAPI
+    ``Request`` object. It applies the same admin-bypass + public-only-secure-default
+    semantics as :func:`get_scoped_resource_access_context`.
+
+    SECURITY: Empty or ``None`` contexts return ``(None, [])`` (public-only secure
+    default), NOT ``(None, None)`` (admin bypass). This prevents unauthenticated
+    StreamableHTTP requests from widening visibility beyond public rows.
+
+    Args:
+        user_context: User context dict from StreamableHTTP auth layer, or ``None``
+            for unauthenticated requests.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` where:
+
+        - ``(email, None)``: admin bypass (authenticated admin with unrestricted token)
+        - ``(None, [])``: unauthenticated or empty context (public-only secure default)
+        - ``(email, [])``: authenticated public-only token
+        - ``(email, ["team-a", ...])``: authenticated team-scoped token
+
+    Examples:
+        >>> # Admin with unrestricted token
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": None, "is_admin": True})
+        ('admin@x.com', None)
+        >>> # Admin with missing teams key (secure default)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Admin with public-only token (narrowed)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": [], "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Regular user with team access
+        >>> get_scoped_visibility_from_user_context({"email": "user@x.com", "teams": ["t1"], "is_admin": False})
+        ('user@x.com', ['t1'])
+        >>> # Unauthenticated request (secure default)
+        >>> get_scoped_visibility_from_user_context(None)
+        (None, [])
+        >>> # Empty context (secure default)
+        >>> get_scoped_visibility_from_user_context({})
+        (None, [])
+    """
+    # SECURITY: Empty or None context returns public-only, not admin bypass.
+    if not user_context:
+        return None, []
+
+    user_email = user_context.get("email")
+    is_admin = user_context.get("is_admin", False)
+
+    # Distinguish missing "teams" key from explicit teams=None
+    if "teams" not in user_context:
+        return user_email, []
+
+    token_teams = user_context["teams"]
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    # Preserve user_email so downstream RBAC can verify admin status via is_user_admin()
+    if is_admin and token_teams is None:
+        return user_email, None
+
+    # Non-admin without teams = public-only (secure default)
+    if token_teams is None:
+        return user_email, []
+
     return user_email, token_teams

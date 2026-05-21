@@ -10,7 +10,7 @@ This section covers the testing strategy and tools for ContextForge.
 |-------|------|----------|--------|
 | **Unit tests** | pytest | `tests/unit/` | Implemented |
 | **Integration tests** | pytest | `tests/integration/` | Implemented |
-| **End-to-end tests** | pytest | `tests/e2e/`, `tests/e2e_rust/` | Implemented |
+| **End-to-end tests** | pytest | `tests/e2e/` (in-process), `tests/live_gateway/` (live infrastructure) | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
 | **Security / DAST** | Playwright + OWASP ZAP | `tests/playwright/security/` | Implemented |
 | **Load testing** | Locust | `tests/loadtest/` | Implemented |

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/tokens.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -18,15 +18,53 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import get_user_email
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail, should_expose_error_details
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
+
+
+def _handle_token_integrity_error(err_str: str) -> None:
+    """Handle IntegrityError for token creation with sanitized error messages.
+
+    Extracts duplicated logic for handling token name uniqueness constraint
+    violations. Raises HTTPException with appropriate status and detail.
+
+    Args:
+        err_str: The error string from the IntegrityError
+
+    Raises:
+        HTTPException: 409 CONFLICT with appropriate detail message
+    """
+    # Match the specific name constraint: PostgreSQL reports the constraint name
+    # (either the db.py name or the Alembic migration name); SQLite reports column paths.
+    if (
+        "uq_email_api_tokens_user_name_team" in err_str
+        or "uq_email_api_tokens_user_name" in err_str
+        or "uq_email_api_tokens_user_name_global" in err_str
+        or "uq_email_api_tokens_user_email_name" in err_str
+        or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
+    ):
+        if should_expose_error_details():
+            detail = "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name."
+        else:
+            detail = "A token with this name already exists. Please choose a different name."
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    # Generic conflict error
+    if should_expose_error_details():
+        detail = "Token creation failed due to a conflict. Please try again."
+    else:
+        detail = "Request could not be completed. Please try again."
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 def _require_authenticated_session(current_user: dict) -> None:
@@ -109,7 +147,7 @@ async def create_token(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenCreateResponse:
-    """Create a new API token for the current user.
+    """Create a new API token for the current user or another user (admin only).
 
     Args:
         request: Token creation request with name, description, scoping, etc.
@@ -120,7 +158,7 @@ async def create_token(
         TokenCreateResponse: Created token details with raw token
 
     Raises:
-        HTTPException: If token name already exists or validation fails
+        HTTPException: If token name already exists, validation fails, or insufficient permissions
 
     Examples:
         >>> import asyncio
@@ -128,6 +166,40 @@ async def create_token(
         True
     """
     _require_authenticated_session(current_user)
+
+    caller_email = get_user_email(current_user)
+
+    # Determine target user for token creation.
+    # When the caller passes their own email (even with different casing),
+    # use the canonical caller_email to avoid case-drift in the database.
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        target_user_email = request.user_email
+    else:
+        target_user_email = caller_email
+
+    # If creating token for different user, require un-narrowed platform admin
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        # Require platform admin privilege
+        if not current_user.get("is_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required to create tokens for other users",
+            )
+
+        # Require un-narrowed admin access (token_teams=None)
+        # Narrowed admin sessions cannot delegate token creation
+        token_teams = current_user.get("token_teams")
+        if token_teams is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin-delegated token creation requires un-narrowed admin access. Your session is narrowed to specific teams.",
+            )
+
+        logger.info(
+            "Admin %s creating token for user %s",
+            caller_email,
+            target_user_email,
+        )
 
     # Auto-inherit team_id from the caller's single team when not explicitly provided.
     # This prevents tokens from being silently scoped to public-only (team_id=None)
@@ -147,10 +219,12 @@ async def create_token(
 
     service = TokenCatalogService(db)
 
-    # Get caller permissions for scope containment (if custom scope requested)
-    caller_permissions = None
-    if request.scope and request.scope.permissions:
-        caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
+    # CRITICAL: Always fetch caller_permissions for admin bypass check.
+    # The service needs this to determine if the caller is an un-narrowed admin
+    # who can bypass team membership requirements, regardless of whether a custom
+    # scope is provided.
+    caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
+    is_admin = current_user.get("is_admin", False)
 
     # Convert request to TokenScope if provided
     scope = None
@@ -165,7 +239,7 @@ async def create_token(
 
     try:
         token_record, raw_token = await service.create_token(
-            user_email=current_user["email"],
+            user_email=target_user_email,
             name=request.name,
             description=request.description,
             scope=scope,
@@ -173,7 +247,11 @@ async def create_token(
             tags=request.tags,
             team_id=effective_team_id,
             caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
             is_active=request.is_active,
+            caller_email=caller_email,
         )
 
         # Create TokenResponse for the token info
@@ -201,24 +279,17 @@ async def create_token(
             token=token_response,
             access_token=raw_token,
         )
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        # Match the specific name constraint: PostgreSQL reports the constraint name
-        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
-        if (
-            "uq_email_api_tokens_user_name_team" in err_str
-            or "uq_email_api_tokens_user_name" in err_str
-            or "uq_email_api_tokens_user_email_name" in err_str
-            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
-            )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
+        logger.error("Token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
+        _handle_token_integrity_error(err_str)
 
 
 @router.get("", response_model=TokenListResponse)
@@ -434,8 +505,12 @@ async def update_token(
         db.commit()
         db.close()
         return result
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Token update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
 
 
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -679,28 +754,69 @@ async def create_team_token(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenCreateResponse:
-    """Create a new API token for a team (only team owners can do this).
+    """Create a new API token for a team.
+
+    Team members and un-narrowed platform admins (is_admin=True with wildcard
+    permissions) can create tokens. Narrowed admins and regular non-members
+    still require active team membership.
 
     Args:
         team_id: Team ID to create token for
         request: Token creation request with name, description, scoping, etc.
-        current_user: Authenticated user (must be team owner)
+        current_user: Authenticated user (must be active team member, or un-narrowed platform admin)
         db: Database session
 
     Returns:
         TokenCreateResponse: Created token details with raw token
 
     Raises:
-        HTTPException: If user is not team owner or validation fails
+        HTTPException: If user is not a team member (and admin bypass does not apply) or validation fails
     """
     _require_authenticated_session(current_user)
 
+    caller_email = get_user_email(current_user)
+
+    # Determine target user for token creation.
+    # When the caller passes their own email (even with different casing),
+    # use the canonical caller_email to avoid case-drift in the database.
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        target_user_email = request.user_email
+    else:
+        target_user_email = caller_email
+
+    # If creating token for different user, require un-narrowed platform admin
+    if request.user_email and request.user_email.lower() != caller_email.lower():
+        # Require platform admin privilege
+        if not current_user.get("is_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required to create tokens for other users",
+            )
+
+        # Require un-narrowed admin access (token_teams=None)
+        # Narrowed admin sessions cannot delegate token creation
+        token_teams = current_user.get("token_teams")
+        if token_teams is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin-delegated token creation requires un-narrowed admin access. Your session is narrowed to specific teams.",
+            )
+
+        logger.info(
+            "Admin %s creating team token for user %s",
+            caller_email,
+            target_user_email,
+        )
+
     service = TokenCatalogService(db)
 
-    # Use team_id from path for permission context
-    caller_permissions = None
-    if request.scope and request.scope.permissions:
-        caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    # CRITICAL: Always fetch caller_permissions for admin bypass check.
+    # The service needs this to determine if the caller is an un-narrowed admin
+    # who can bypass team membership requirements, regardless of whether a custom
+    # scope is provided.
+    caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    is_admin = current_user.get("is_admin", False)
+    caller_token_teams = current_user.get("token_teams")
 
     # Convert request to TokenScope if provided
     scope = None
@@ -715,15 +831,19 @@ async def create_team_token(
 
     try:
         token_record, raw_token = await service.create_token(
-            user_email=current_user["email"],
+            user_email=target_user_email,
             name=request.name,
             description=request.description,
             scope=scope,
             expires_in_days=request.expires_in_days,
             tags=request.tags,
-            team_id=team_id,  # This will validate team ownership
+            team_id=team_id,
             caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
             is_active=request.is_active,
+            caller_email=caller_email,
         )
 
         # Create TokenResponse for the token info
@@ -751,24 +871,17 @@ async def create_team_token(
             token=token_response,
             access_token=raw_token,
         )
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Team token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except IntegrityError as e:
         db.rollback()
         err_str = str(e.orig) if hasattr(e, "orig") and e.orig else str(e)
-        # Match the specific name constraint: PostgreSQL reports the constraint name
-        # (either the db.py name or the Alembic migration name); SQLite reports column paths.
-        if (
-            "uq_email_api_tokens_user_name_team" in err_str
-            or "uq_email_api_tokens_user_name" in err_str
-            or "uq_email_api_tokens_user_email_name" in err_str
-            or ("email_api_tokens.user_email" in err_str and "email_api_tokens.name" in err_str)
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
-            )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Token creation failed due to a conflict. Please try again.")
+        logger.error("Team token creation integrity error: %s", SecurityValidator.sanitize_log_message(err_str))
+        _handle_token_integrity_error(err_str)
 
 
 @router.get("/teams/{team_id}", response_model=TokenListResponse)
@@ -781,33 +894,46 @@ async def list_team_tokens(
     current_user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> TokenListResponse:
-    """List API tokens for a team (requires active team membership).
+    """List API tokens for a team.
+
+    Team members and un-narrowed platform admins (is_admin=True with wildcard
+    permissions) can list tokens. Narrowed admins and regular non-members
+    still require active team membership.
 
     Args:
         team_id: Team ID to list tokens for
         include_inactive: Include inactive/expired tokens
         limit: Maximum number of tokens to return (default 50)
         offset: Number of tokens to skip for pagination
-        current_user: Authenticated user (must be an active member of the team)
+        current_user: Authenticated user (must be active team member, or un-narrowed platform admin)
         db: Database session
 
     Returns:
         TokenListResponse: List of team's API tokens
 
     Raises:
-        HTTPException: If user is not an active member of the team
+        HTTPException: If user is not a team member (and admin bypass does not apply)
     """
     _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
+    # Fetch caller permissions and admin status for potential admin bypass
+    caller_permissions = await _get_caller_permissions(db, current_user, team_id)
+    is_admin = current_user.get("is_admin", False)
+    caller_token_teams = current_user.get("token_teams")
+
     try:
         tokens = await service.list_team_tokens(
             team_id=team_id,
-            user_email=current_user["email"],  # This will validate team ownership
+            user_email=current_user["email"],
             include_inactive=include_inactive,
             limit=limit,
             offset=offset,
+            caller_permissions=caller_permissions,
+            is_admin=is_admin,
+            caller_token_teams=caller_token_teams,
+            caller_token_teams_provided=True,
         )
 
         total_count = await service.count_team_tokens(
@@ -849,5 +975,9 @@ async def list_team_tokens(
         db.commit()
         db.close()
         return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("List team tokens validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for token scoping utilities."""
+"""Location: ./tests/unit/mcpgateway/utils/test_token_scoping_utils.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for token scoping utilities.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch

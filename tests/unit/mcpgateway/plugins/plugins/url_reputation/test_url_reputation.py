@@ -1,11 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Tests for URLReputationPlugin."""
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/url_reputation/test_url_reputation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for URLReputationPlugin.
+"""
 
 # Third-Party
 import pytest
 
+pytest.importorskip("cpex_url_reputation", reason="cpex-url-reputation plugin not installed")
+
 # First-Party
-from mcpgateway.plugins.framework import PluginConfig, ResourceHookType, ResourcePreFetchPayload
+from cpex.framework import PluginConfig, ResourceHookType, ResourcePreFetchPayload
 from cpex_url_reputation.url_reputation import URLReputationConfig, URLReputationPlugin
 
 
@@ -164,7 +172,7 @@ async def test_blocked_domain():
 
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://bad.com/path"), None)
     assert not res.continue_processing
-    assert res.violation.reason == "Blocked domain"
+    assert res.violation.reason == "Domain in blocked set"
 
 
 @pytest.mark.asyncio
@@ -184,7 +192,7 @@ async def test_subdomain_of_blocked_domain():
 
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://api.bad.com/v1"), None)
     assert not res.continue_processing
-    assert res.violation.reason == "Blocked domain"
+    assert res.violation.reason == "Domain in blocked set"
 
 
 @pytest.mark.asyncio

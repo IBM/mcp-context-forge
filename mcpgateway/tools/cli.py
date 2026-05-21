@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/cli.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
@@ -36,10 +36,10 @@ $ cforge --help
 """
 
 # Third-Party
+import cpex.tools.cli as plugins
 import typer
 
 # First-Party
-import mcpgateway.plugins.tools.cli as plugins
 import mcpgateway.tools.builder.cli as builder
 
 app = typer.Typer(help="Command line tools for building, deploying, and interacting with ContextForge AI Gateway")

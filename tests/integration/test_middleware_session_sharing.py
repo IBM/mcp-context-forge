@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_middleware_session_sharing.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Integration tests for middleware session sharing (Issue #3622).
 
@@ -67,10 +68,7 @@ async def test_auth_middleware_creates_temporary_session_when_no_middleware_sess
     assert db is new_session, "Auth should create a new session"
     assert owned is True, "Auth owns the session"
     # Must NOT be stored in request.state.db
-    assert mock_request.state.db is None, (
-        "Owned session must not be stored in request.state.db "
-        "to prevent downstream use of a closed session"
-    )
+    assert mock_request.state.db is None, "Owned session must not be stored in request.state.db " "to prevent downstream use of a closed session"
 
 
 @pytest.mark.asyncio
@@ -104,8 +102,7 @@ async def test_rbac_get_db_creates_own_session_when_none_available():
 
     mock_session = _make_mock_session()
 
-    with warnings.catch_warnings(), \
-         patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+    with warnings.catch_warnings(), patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
         warnings.simplefilter("ignore", DeprecationWarning)
         gen = get_db(request=None)
         db = next(gen)
@@ -151,9 +148,11 @@ async def test_shared_session_rollback_on_auth_logging_failure():
     mock_security_logger = MagicMock()
     mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("connection error")
 
-    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
-         patch("mcpgateway.middleware.auth_middleware.get_current_user", return_value=mock_user), \
-         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+    with (
+        patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True),
+        patch("mcpgateway.middleware.auth_middleware.get_current_user", return_value=mock_user),
+        patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger),
+    ):
         response = await middleware.dispatch(request, async_call_next)
 
     assert response.status_code == 200
@@ -180,10 +179,12 @@ async def test_session_count_with_full_middleware_stack():
         session_count += 1
         return _make_mock_session()
 
-    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", counting_session_local), \
-         patch("mcpgateway.middleware.auth_middleware.SessionLocal", counting_session_local), \
-         patch("mcpgateway.middleware.rbac.SessionLocal", counting_session_local), \
-         patch("mcpgateway.main.SessionLocal", counting_session_local):
+    with (
+        patch("mcpgateway.middleware.observability_middleware.SessionLocal", counting_session_local),
+        patch("mcpgateway.middleware.auth_middleware.SessionLocal", counting_session_local),
+        patch("mcpgateway.middleware.rbac.SessionLocal", counting_session_local),
+        patch("mcpgateway.main.SessionLocal", counting_session_local),
+    ):
 
         client = TestClient(app)
         session_count = 0  # Reset after TestClient setup

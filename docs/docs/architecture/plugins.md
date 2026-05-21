@@ -258,14 +258,7 @@ The `conditions` array contains objects that specify when plugins should execute
 | `user_patterns` | `string[]` | Execute for users matching regex patterns | `["admin_.*", ".*@company.com"]` |
 | `content_types` | `string[]` | Execute for specific content types | `["application/json", "text/plain"]` |
 
-The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution.
-
-!!! warning "Breaking Change in 1.0.0-RC3"
-    Plugin condition evaluation logic changed from pure OR to hybrid AND/OR in version 1.0.0-RC3. If you're upgrading from 0.9.x, review your plugin configurations to ensure they work as expected with the new evaluation model.
-
-    **Migration Guide:** See [Plugin Condition Migration Guide](MIGRATION-PLUGIN-CONDITIONS.md) for detailed migration instructions and validation scripts.
-
-
+The plugin framework uses **hybrid AND/OR condition evaluation** for precise control over plugin execution. This evaluation model was introduced in version 1.0.0-RC3, replacing the previous pure OR logic. If you're upgrading from 0.9.x, review your plugin configurations to ensure they work as expected with the new model (see [Plugin Condition Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md) for migration instructions).
 
 #### Evaluation Logic
 
@@ -1597,6 +1590,57 @@ capabilities:
   - hook:invoke:prompt_pre_fetch
   - read:context
 ```
+
+### Plugin Violation Observability
+
+When a plugin returns a violation, the gateway records violation metadata on the active span so that policy blocks and enforcement failures are visible in tracing backends.
+
+#### Span Attributes
+
+The following attributes are added to the span when a violation is present:
+
+- `plugin.had_violation`: Boolean flag indicating that a plugin blocked or rejected the request
+- `plugin.violation.reason`: Human-readable reason such as `Content policy violation`
+- `plugin.violation.code`: Machine-readable code such as `PROHIBITED_CONTENT`
+- `plugin.violation.description`: Detailed explanation of the violation
+- `plugin.violation.http_status_code`: Optional HTTP status code, such as `403`
+- `plugin.violation.mcp_error_code`: Optional MCP error code, such as `-32001`
+- `plugin.violation.details.*`: Sanitized violation detail fields emitted as span attributes
+
+The plugin name remains available through the existing `plugin.name` attribute, which can be combined with the violation fields for filtering and aggregation.
+
+#### Querying Violations
+
+Example Jaeger and OpenTelemetry-style filters:
+
+**All plugin violations**
+
+```text
+service.name="mcpgateway" AND plugin.had_violation=true
+```
+
+**Filter by violation code**
+
+```text
+plugin.violation.code="PROHIBITED_CONTENT"
+```
+
+**Aggregate by plugin and violation code**
+
+```text
+GROUP BY plugin.name, plugin.violation.code
+```
+
+These queries make it easier to identify which plugins are blocking requests most often and which policy codes are driving those decisions.
+
+#### Security
+
+Violation details are sanitized before they are written to span attributes.
+
+- Fields matching `OTEL_REDACT_FIELDS` patterns are redacted before export
+- Common sensitive keys such as `password`, `secret`, `token`, and `api_key` are masked as `***`
+- Identity-related fields respect the `OTEL_CAPTURE_IDENTITY_ATTRIBUTES` setting
+- Prefer stable codes in `plugin.violation.code` for dashboards and alerts, and reserve descriptions for operator-facing detail
 
 ### Plugin Signing
 

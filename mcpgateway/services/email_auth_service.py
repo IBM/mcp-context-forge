@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/services/email_auth_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -72,6 +72,74 @@ logger = logging_service.get_logger(__name__)
 
 _GET_ALL_USERS_LIMIT = 10000
 _DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=1$9x/nTs9D0R97+BI7BWP2Tg$V/40qCuaGh4i+94HpGpxJESEVs3IDpLzUqtNqRPuty4"
+
+
+def _user_obj_to_dict(user: EmailUser) -> dict:
+    """Serialise an EmailUser ORM object to a plain dict safe for caching.
+
+    password_hash is intentionally excluded — same reasoning as JWT payloads
+    (per module docstring): storing credential material in Redis risks exposure
+    on a Redis compromise.  Mutation paths (authenticate_user, unlock_user_account)
+    always fetch session-attached objects directly from the DB.
+    """
+
+    def _iso(v: Optional[datetime]) -> Optional[str]:
+        """Render a datetime as ISO-8601 for JSON-safe cache storage; pass through None."""
+        return v.isoformat() if v is not None else None
+
+    return {
+        "email": user.email,
+        "full_name": user.full_name,
+        "is_admin": user.is_admin,
+        "is_active": user.is_active,
+        "auth_provider": user.auth_provider,
+        "password_hash_type": user.password_hash_type,
+        "password_change_required": user.password_change_required,
+        "failed_login_attempts": user.failed_login_attempts,
+        "locked_until": _iso(user.locked_until),
+        "email_verified_at": _iso(user.email_verified_at),
+        "created_at": _iso(user.created_at),
+        "updated_at": _iso(user.updated_at),
+        "last_login": _iso(user.last_login),
+        "admin_origin": user.admin_origin,
+        "password_changed_at": _iso(user.password_changed_at),
+    }
+
+
+def _user_dict_to_obj(d: dict) -> EmailUser:
+    """Reconstruct a detached EmailUser from a cached dict.
+
+    The returned object is NOT tracked by any SQLAlchemy session.  Use only
+    for read-only lookups.  Mutation paths must use session-attached objects
+    fetched directly from the DB.
+    """
+
+    def _dt(v: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO-8601 string back into a datetime; pass through None and existing datetimes."""
+        if v is None:
+            return None
+        if isinstance(v, datetime):
+            return v
+        return datetime.fromisoformat(v)
+
+    return EmailUser(
+        email=d["email"],
+        password_hash=d.get("password_hash", ""),  # not cached; empty for read-only paths
+        full_name=d.get("full_name"),
+        is_admin=d.get("is_admin", False),
+        is_active=d.get("is_active", False),  # fail-closed: missing key → inactive
+        auth_provider=d.get("auth_provider", "local"),
+        password_hash_type=d.get("password_hash_type", "argon2id"),
+        password_change_required=d.get("password_change_required", False),
+        failed_login_attempts=d.get("failed_login_attempts", 0),
+        locked_until=_dt(d.get("locked_until")),
+        email_verified_at=_dt(d.get("email_verified_at")),
+        created_at=_dt(d.get("created_at")) or datetime.now(timezone.utc),
+        updated_at=_dt(d.get("updated_at")) or datetime.now(timezone.utc),
+        last_login=_dt(d.get("last_login")),
+        admin_origin=d.get("admin_origin"),
+        password_changed_at=_dt(d.get("password_changed_at")),
+    )
 
 
 @dataclass(frozen=True)
@@ -255,11 +323,13 @@ class EmailAuthService:
 
         return True
 
-    def validate_password(self, password: str) -> bool:
-        """Validate password against policy requirements.
+    def validate_password(self, password: str, email: Optional[str] = None, is_privileged: bool = False) -> bool:
+        """Validate password against comprehensive policy requirements.
 
         Args:
             password: Password to validate
+            email: User's email address (for username-based validation)
+            is_privileged: Whether this is a privileged account
 
         Returns:
             bool: True if password meets policy
@@ -269,28 +339,7 @@ class EmailAuthService:
 
         Examples:
             >>> service = EmailAuthService(None)
-            >>> service.validate_password("Password123!")  # Meets all requirements
-            True
-            >>> service.validate_password("ValidPassword123!")
-            True
-            >>> service.validate_password("Shortpass!")  # 8+ chars with requirements
-            True
-            >>> service.validate_password("VeryLongPasswordThatMeetsMinimumRequirements!")
-            True
-            >>> try:
-            ...     service.validate_password("")
-            ... except PasswordValidationError as e:
-            ...     "Password is required" in str(e)
-            True
-            >>> try:
-            ...     service.validate_password(None)
-            ... except PasswordValidationError as e:
-            ...     "Password is required" in str(e)
-            True
-            >>> try:
-            ...     service.validate_password("short")  # Only 5 chars, should fail with default min_length=8
-            ... except PasswordValidationError as e:
-            ...     "characters long" in str(e)
+            >>> service.validate_password("SecureP@ssw0rd!", "alice@example.com")
             True
         """
         if not password:
@@ -300,29 +349,43 @@ class EmailAuthService:
         if not getattr(settings, "password_policy_enabled", True):
             return True
 
-        # Get password policy settings
-        min_length = getattr(settings, "password_min_length", 8)
-        require_uppercase = getattr(settings, "password_require_uppercase", False)
-        require_lowercase = getattr(settings, "password_require_lowercase", False)
-        require_numbers = getattr(settings, "password_require_numbers", False)
-        require_special = getattr(settings, "password_require_special", False)
+        # Use new comprehensive password policy service
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
-        if len(password) < min_length:
-            raise PasswordValidationError(f"Password must be at least {min_length} characters long")
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            return policy_service.validate_user_password(password, email, is_privileged)
+        except PasswordPolicyError as e:
+            # Wrap PasswordPolicyError in PasswordValidationError for consistency
+            raise PasswordValidationError(str(e)) from e
+        except ImportError:
+            # Fallback to legacy validation if new service not available
+            logger.warning("PasswordPolicyService not available, using legacy validation")
 
-        if require_uppercase and not re.search(r"[A-Z]", password):
-            raise PasswordValidationError("Password must contain at least one uppercase letter")
+            # Legacy validation (kept for backward compatibility)
+            min_length = getattr(settings, "password_min_length", 8)
+            require_uppercase = getattr(settings, "password_require_uppercase", False)
+            require_lowercase = getattr(settings, "password_require_lowercase", False)
+            require_numbers = getattr(settings, "password_require_numbers", False)
+            require_special = getattr(settings, "password_require_special", False)
 
-        if require_lowercase and not re.search(r"[a-z]", password):
-            raise PasswordValidationError("Password must contain at least one lowercase letter")
+            if len(password) < min_length:
+                raise PasswordValidationError(f"Password must be at least {min_length} characters long")
 
-        if require_numbers and not re.search(r"[0-9]", password):
-            raise PasswordValidationError("Password must contain at least one number")
+            if require_uppercase and not re.search(r"[A-Z]", password):
+                raise PasswordValidationError("Password must contain at least one uppercase letter")
 
-        if require_special and not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-            raise PasswordValidationError("Password must contain at least one special character")
+            if require_lowercase and not re.search(r"[a-z]", password):
+                raise PasswordValidationError("Password must contain at least one lowercase letter")
 
-        return True
+            if require_numbers and not re.search(r"[0-9]", password):
+                raise PasswordValidationError("Password must contain at least one number")
+
+            if require_special and not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+                raise PasswordValidationError("Password must contain at least one special character")
+
+            return True
 
     @staticmethod
     def _hash_reset_token(token: str) -> str:
@@ -507,6 +570,8 @@ class EmailAuthService:
     async def get_user_by_email(self, email: str) -> Optional[EmailUser]:
         """Get user by email address.
 
+        Checks the auth cache (L1 → L2) before hitting the DB.
+
         Args:
             email: Email address to look up
 
@@ -518,13 +583,44 @@ class EmailAuthService:
             # user = await service.get_user_by_email("test@example.com")
             # user.email if user else None  # Returns: 'test@example.com'
         """
+        normalized = email.lower().strip()
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
         try:
-            stmt = select(EmailUser).where(EmailUser.email == email.lower())
+            cached = await auth_cache.get_user(normalized)
+            if cached is not None:
+                return _user_dict_to_obj(cached)
+        except Exception as e:
+            logger.debug("Cache read failed for user %s, falling back to DB: %s", normalized, e)
+
+        try:
+            stmt = select(EmailUser).where(EmailUser.email == normalized)
             result = self.db.execute(stmt)
             user = result.scalar_one_or_none()
+            if user is not None:
+                try:
+                    await auth_cache.set_user(normalized, _user_obj_to_dict(user))
+                except Exception as e:
+                    logger.debug("Cache write failed for user %s: %s", normalized, e)
             return user
         except Exception as e:
             logger.error(f"Error getting user by email {SecurityValidator.sanitize_log_message(email)}: {e}")
+            return None
+
+    def _fetch_user_from_db(self, email: str) -> Optional[EmailUser]:
+        """Fetch a session-attached EmailUser directly from the DB, bypassing cache.
+
+        Required for mutation paths (authenticate_user, unlock_user_account) where
+        the returned object must be tracked by self.db so that ORM mutations and
+        self.db.commit() are durable.  Never use the cached detached object for writes.
+        """
+        try:
+            stmt = select(EmailUser).where(EmailUser.email == email)
+            result = self.db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Error fetching user from DB {SecurityValidator.sanitize_log_message(email)}: {e}")
             return None
 
     async def create_user(
@@ -585,7 +681,9 @@ class EmailAuthService:
         # Validate inputs
         self.validate_email(email)
         if not skip_password_validation:
-            self.validate_password(password)
+            # Determine if this is a privileged account
+            is_privileged_account = is_admin or auth_provider != "local"
+            self.validate_password(password, email, is_privileged_account)
 
         # Hash before the first DB read so PgBouncer transaction pooling does not
         # hold an idle transaction open across the async hashing call.
@@ -775,8 +873,10 @@ class EmailAuthService:
         email = email.lower().strip()
         start_time = time.monotonic()
 
-        # Get user from database
-        user = await self.get_user_by_email(email)
+        # Fetch session-attached object from DB — mutations (increment_failed_attempts,
+        # reset_failed_attempts) must be tracked by self.db; a cached detached object
+        # would silently discard those writes.
+        user = self._fetch_user_from_db(email)
 
         # Track authentication attempt
         auth_success = False
@@ -1019,17 +1119,49 @@ class EmailAuthService:
             PasswordValidationError: If new password violates policy or reuse checks.
         """
         reset_token = await self.validate_password_reset_token(token, ip_address=ip_address, user_agent=user_agent)
-        user = await self.get_user_by_email(reset_token.user_email)
+        # Use _fetch_user_from_db to get a session-attached object — mutations
+        # (password_hash, password_changed_at, failed_login_attempts) must be
+        # tracked by self.db so self.db.commit() is durable.  Also ensures the
+        # real password_hash is present for the reuse check (cached objects store "").
+        user = self._fetch_user_from_db(reset_token.user_email)
         if not user or not user.is_active:
             password_reset_completions_counter.labels(outcome="invalid_user").inc()
             raise AuthenticationError("This reset link is invalid")
 
-        self.validate_password(new_password)
-        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+        self.validate_password(new_password, user.email, user.is_admin)
+
+        # Check password history (prevents reuse of last N passwords and current password)
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            history_count = getattr(settings, "password_history_count", 5)
+            await policy_service.check_password_history(user.email, new_password, history_count, user.password_hash)
+        except ImportError:
+            # Fallback to simple current password check
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+                password_reset_completions_counter.labels(outcome="reused_password").inc()
+                raise PasswordValidationError("New password must be different from current password")
+        except PasswordPolicyError as e:
             password_reset_completions_counter.labels(outcome="reused_password").inc()
-            raise PasswordValidationError("New password must be different from current password")
+            raise PasswordValidationError(str(e)) from e
+        except Exception as e:
+            logger.error("Password history check failed unexpectedly: %s", e)
+            raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         now = utc_now()
+
+        # Save old password to history before updating
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            await policy_service.save_password_to_history(user.email, user.password_hash)
+        except Exception as history_error:
+            logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
+
         user.password_hash = await self.password_service.hash_password_async(new_password)
         user.password_change_required = False
         user.password_changed_at = now
@@ -1079,7 +1211,9 @@ class EmailAuthService:
             ValueError: If the target user cannot be found.
         """
         normalized_email = email.lower().strip()
-        user = await self.get_user_by_email(normalized_email)
+        # Fetch session-attached object — mutations must be tracked by self.db;
+        # a cached detached object would silently discard the unlock.
+        user = self._fetch_user_from_db(normalized_email)
         if not user:
             raise ValueError(f"User {normalized_email} not found")
 
@@ -1087,6 +1221,7 @@ class EmailAuthService:
         user.locked_until = None
         user.updated_at = utc_now()
         self.db.commit()
+        await self._invalidate_user_auth_cache(normalized_email)
         self._log_auth_event(
             event_type="ACCOUNT_UNLOCKED",
             success=True,
@@ -1133,16 +1268,44 @@ class EmailAuthService:
             raise AuthenticationError("Current password is incorrect")
 
         # Validate new password
-        self.validate_password(new_password)
+        self.validate_password(new_password, email, user.is_admin)
 
-        # Check if new password is same as old (optional policy)
-        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
-            raise PasswordValidationError("New password must be different from current password")
+        # Check password history (prevents reuse of last N passwords and current password)
+        try:
+            # First-Party
+            from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+            policy_service = PasswordPolicyService(self.db, self.password_service)
+            history_count = getattr(settings, "password_history_count", 5)
+            await policy_service.check_password_history(email, new_password, history_count, user.password_hash)
+        except ImportError:
+            # Fallback to simple current password check
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+                raise PasswordValidationError("New password must be different from current password")
+        except PasswordPolicyError as e:
+            # Wrap PasswordPolicyError in PasswordValidationError for consistency
+            raise PasswordValidationError(str(e)) from e
+        except Exception as e:
+            # Fail closed: if history check fails, reject the password change
+            logger.error("Password history check failed unexpectedly: %s", e)
+            raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         success = False
         try:
             # Hash new password and update
             new_password_hash = await self.password_service.hash_password_async(new_password)
+
+            # Save old password to history before updating
+            try:
+                # First-Party
+                from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                policy_service = PasswordPolicyService(self.db, self.password_service)
+                await policy_service.save_password_to_history(email, user.password_hash)
+            except Exception as history_error:
+                logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(email), history_error)
+                # Continue with password change even if history save fails
+
             user.password_hash = new_password_hash
             # Clear the flag that requires the user to change password
             user.password_change_required = False
@@ -1743,7 +1906,36 @@ class EmailAuthService:
                 user.is_active = is_active
 
             if password is not None:
-                self.validate_password(password)
+                self.validate_password(password, user.email, user.is_admin)
+
+                # Check password history (prevents reuse of last N passwords and current password)
+                try:
+                    # First-Party
+                    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                    policy_service = PasswordPolicyService(self.db, self.password_service)
+                    history_count = getattr(settings, "password_history_count", 5)
+                    await policy_service.check_password_history(user.email, password, history_count, user.password_hash)
+                except ImportError:
+                    # Fallback to simple current password check
+                    if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(password, user.password_hash):
+                        raise PasswordValidationError("New password must be different from current password")
+                except PasswordPolicyError as e:
+                    raise PasswordValidationError(str(e)) from e
+                except Exception as e:
+                    logger.error("Password history check failed unexpectedly: %s", e)
+                    raise PasswordValidationError("Unable to verify password history. Please try again.") from e
+
+                # Save old password to history before updating
+                try:
+                    # First-Party
+                    from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
+
+                    policy_service = PasswordPolicyService(self.db, self.password_service)
+                    await policy_service.save_password_to_history(user.email, user.password_hash)
+                except Exception as history_error:
+                    logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
+
                 user.password_hash = await self.password_service.hash_password_async(password)
                 # Only clear password_change_required if it wasn't explicitly set
                 if password_change_required is None:
@@ -1757,6 +1949,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             return user
 
@@ -1789,6 +1982,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} activated")
             return user
@@ -1822,6 +2016,7 @@ class EmailAuthService:
             user.updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
+            await self._invalidate_user_auth_cache(email)
 
             logger.info(f"User {SecurityValidator.sanitize_log_message(email)} deactivated")
             return user

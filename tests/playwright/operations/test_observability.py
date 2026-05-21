@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Observability & Metrics E2E Tests.
+"""Location: ./tests/playwright/operations/test_observability.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Observability & Metrics E2E Tests.
 
 Tests health endpoints, metrics, and observability endpoints.
 Observability endpoints may be disabled in test env (gracefully skipped).

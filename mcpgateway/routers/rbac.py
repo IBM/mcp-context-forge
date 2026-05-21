@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/rbac.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -19,19 +19,21 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Generator, List, Optional
+from typing import Generator, List
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, QueryTeamContext
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.role_service import RoleService
+from mcpgateway.utils.error_formatter import PublicValidationError, safe_error_detail
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +118,12 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         db.close()
         return RoleResponse.model_validate(role)
 
-    except ValueError as e:
-        logger.error(f"Role creation validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role creation failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create role")
@@ -127,7 +132,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 @router.get("/roles", response_model=List[RoleResponse])
 @require_permission("admin.user_management")
 async def list_roles(
-    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by scope"),
+    scope: QueryIdentifierDotted = None,
     active_only: bool = Query(True, description="Show only active roles"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -240,9 +245,12 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
     except HTTPException:
         raise
-    except ValueError as e:
-        logger.error(f"Role update validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role update validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role update failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update role")
@@ -283,8 +291,12 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
     except HTTPException:
         raise
-    except ValueError as e:
+    except PublicValidationError as e:
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role deletion validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role deletion failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete role")
@@ -326,9 +338,12 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         db.close()
         return UserRoleResponse.model_validate(user_role)
 
-    except ValueError as e:
-        logger.error(f"Role assignment validation error: {e}")
+    except PublicValidationError as e:
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        logger.error("Role assignment validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safe_error_detail(e))
     except Exception as e:
         logger.error(f"Role assignment failed: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to assign role")
@@ -338,7 +353,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
 @require_permission("admin.user_management")
 async def get_user_roles(
     user_email: str,
-    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Filter by scope"),
+    scope: QueryIdentifierDotted = None,
     active_only: bool = Query(True, description="Show only active assignments"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
@@ -382,8 +397,8 @@ async def get_user_roles(
 async def revoke_user_role(
     user_email: str,
     role_id: str,
-    scope: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_.-]+$", description="Scope filter"),
-    scope_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Scope ID filter"),
+    scope: QueryIdentifierDotted = None,
+    scope_id: QueryScopeId = None,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -476,7 +491,7 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 @require_permission("admin.security_audit")
 async def get_user_permissions(
     user_email: str,
-    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Team context"),
+    team_id: QueryTeamContext = None,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ):
@@ -575,7 +590,9 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
 
 @router.get("/my/permissions", response_model=List[str])
 async def get_my_permissions(
-    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+    team_id: QueryTeamContext = None,
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get current user's effective permissions.
 

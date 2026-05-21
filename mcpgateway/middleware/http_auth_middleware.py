@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""HTTP Authentication Middleware.
+"""Location: ./mcpgateway/middleware/http_auth_middleware.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+HTTP Authentication Middleware.
 
 This middleware allows plugins to:
 1. Transform request headers before authentication (HTTP_PRE_REQUEST)
@@ -11,14 +16,16 @@ import logging
 from typing import Optional
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
+from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +94,24 @@ async def run_pre_request_hooks(
         #
         # This guard can be disabled with PLUGINS_CAN_OVERRIDE_AUTH_HEADERS=true
         # for deployments that require plugin-driven token exchange (e.g. WXO auth).
+        #
+        # When AUTH_HEADER_NAME is customized (e.g. X-MCP-Gateway-Auth), the
+        # standard Authorization header carries the downstream-server token and
+        # MUST also stay protected from plugin overrides — otherwise a plugin
+        # could swap out a client-supplied downstream token. Both headers are
+        # protected; plugins may still create either header when the client
+        # did not send it.
         if not settings.plugins_can_override_auth_headers:
-            _auth_protected_headers = {"authorization", "cookie", "x-api-key", "proxy-authorization"}
+            auth_header_name = _resolve_auth_header_name(settings)
+
+            _auth_protected_headers = {
+                auth_header_name.lower(),
+                "authorization",
+                "cookie",
+                "x-api-key",
+                "proxy-authorization",
+            }
+
             original_lower = {h.lower() for h in headers}
             overridden = {k.lower() for k in modified_headers_dict if k.lower() in _auth_protected_headers and k.lower() in original_lower}
             if overridden:

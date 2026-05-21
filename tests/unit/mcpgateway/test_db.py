@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_db.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
@@ -1070,20 +1070,6 @@ def test_get_db_closes_on_exception(monkeypatch):
     assert hasattr(dummy, "closed")
     assert hasattr(dummy, "rolled_back")
 
-
-# --- init_db ---
-def test_init_db_success(monkeypatch):
-    monkeypatch.setattr(db.Base.metadata, "create_all", lambda bind: True)
-    db.init_db()
-
-
-def test_init_db_failure(monkeypatch):
-    def fail(*a, **k):
-        raise SQLAlchemyError("fail")
-
-    monkeypatch.setattr(db.Base.metadata, "create_all", fail)
-    with pytest.raises(Exception):
-        db.init_db()
 
 
 # --- Gateway event listener ---

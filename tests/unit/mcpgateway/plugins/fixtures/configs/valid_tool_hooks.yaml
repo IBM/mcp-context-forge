@@ -7,7 +7,7 @@ plugins:
     author: "ContextForge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "tool-hooks"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "sequential"  # sequential | transform | disabled
     priority: 150
     conditions:
       # Apply to specific tools

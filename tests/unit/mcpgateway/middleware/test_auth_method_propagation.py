@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test auth_method propagation from plugin to RBAC.
+"""Location: ./tests/unit/mcpgateway/middleware/test_auth_method_propagation.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test auth_method propagation from plugin to RBAC.
 
 This test verifies that when a plugin authenticates a user via the
 HTTP_AUTH_RESOLVE_USER hook, the auth_method metadata flows through
@@ -28,12 +33,13 @@ from fastapi.security import HTTPAuthorizationCredentials
 from mcpgateway.auth import get_current_user
 from mcpgateway.db import EmailUser
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.plugins.framework import PluginResult
+from cpex.framework import PluginResult
 
 
 @pytest.mark.asyncio
 async def test_auth_method_propagation_from_plugin():
     """Test that auth_method flows from plugin through to user_context."""
+
     # Create a mock request with a real object for state (not a MagicMock)
     # This is needed because we set attributes directly on request.state
     # Don't use spec=Request because it prevents setting custom attributes
@@ -65,7 +71,7 @@ async def test_auth_method_propagation_from_plugin():
     )
 
     # Patch both the framework module and auth module since auth imports from framework
-    with patch("mcpgateway.plugins.framework.get_plugin_manager") as mock_get_pm_framework:
+    with patch("mcpgateway.plugins.get_plugin_manager") as mock_get_pm_framework:
         with patch("mcpgateway.auth.get_plugin_manager") as mock_get_pm_auth:
             mock_db_user = EmailUser(
                 email="test@example.com",
@@ -105,6 +111,7 @@ async def test_auth_method_propagation_from_plugin():
 @pytest.mark.asyncio
 async def test_auth_method_in_user_context():
     """Test that get_current_user_with_permissions includes auth_method from request.state."""
+
     # Create a mock request with a real object for state
     class MockState:
         pass
@@ -124,8 +131,8 @@ async def test_auth_method_in_user_context():
     mock_user.full_name = "Test User"
     mock_user.is_admin = False
 
-    # Mock get_current_user to return the mock user
-    with patch("mcpgateway.middleware.rbac.get_current_user", new_callable=AsyncMock) as mock_get_user:
+    # Mock validate_token_user to return the mock user
+    with patch("mcpgateway.auth.validate_token_user", new_callable=AsyncMock) as mock_get_user:
         mock_get_user.return_value = mock_user
 
         # Call get_current_user_with_permissions

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Eleni Kechrioti
 
 ContextForge AI Gateway - Main FastAPI Application.
 
@@ -32,7 +32,6 @@ import base64
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
 import html
 import json
 import logging
@@ -46,6 +45,7 @@ import uuid
 import warnings
 
 # Third-Party
+from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
@@ -61,7 +61,7 @@ from jsonpath_ng.jsonpath import JSONPath
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
@@ -72,7 +72,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     decode_internal_mcp_auth_context,
     get_internal_mcp_auth_context,
@@ -88,38 +88,38 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
+from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
+from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
+from mcpgateway.middleware.forwarded_host import ForwardedHostMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
+from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
-from mcpgateway.plugins.framework import (
+from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.plugins import (
     enable_plugins,
     get_plugin_manager,
-    HttpHookType,
+    get_plugin_manager_factory,
     init_plugin_manager_factory,
-    PluginError,
-    PluginViolationError,
-    PromptHookType,
-    ResourceHookType,
     shutdown_plugin_manager_factory,
     start_plugin_invalidation_listener,
     stop_plugin_invalidation_listener,
 )
-from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
+from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -190,6 +190,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils import uaid as uaid_utils
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
+from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -201,7 +202,14 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import (
+    _resolve_auth_header_name,
+    extract_websocket_bearer_token,
+    get_auth_header_value,
+    is_proxy_auth_trust_active,
+    require_admin_auth,
+    require_docs_auth_override,
+)
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
 
@@ -282,6 +290,31 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     return True
 
 
+def _is_jwt_token(token: str) -> bool:
+    """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
+
+    Rejects local opaque tokens (cf_sess_*, cf_pat_*) that remote gateways
+    cannot validate.
+    """
+    if not token:
+        return False
+    if token.startswith(("cf_sess_", "cf_pat_")):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+
+    for part in parts:
+        if not part:
+            return False
+        try:
+            padded = part + "=" * (-len(part) % 4)
+            base64.urlsafe_b64decode(padded)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+    return True
+
+
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
 
@@ -305,7 +338,8 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     try:
         auth_context = decode_internal_mcp_auth_context(header_value)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid trusted MCP auth context: {exc}") from exc
+        logger.debug("Invalid trusted MCP auth context: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid trusted MCP auth context") from exc
 
     setattr(request.state, "_mcp_internal_auth_context", auth_context)
 
@@ -1125,12 +1159,14 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
+        logger.debug("Invalid main JSONPath expression: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid JSONPath expression")
 
     try:
         main_matches = main_expr.find(data)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error executing main JSONPath: {e}")
+        logger.debug("Error executing main JSONPath: %s", e)
+        raise HTTPException(status_code=400, detail="Error executing JSONPath expression")
 
     results = [match.value for match in main_matches]
 
@@ -1168,7 +1204,8 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
         try:
             parsed_mappings[new_key] = _parse_jsonpath(mapping_expr_str)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+            logger.debug("Invalid mapping JSONPath for key '%s': %s", new_key, e)
+            raise HTTPException(status_code=400, detail=f"Invalid JSONPath expression for key '{new_key}'")
 
     mapped_results = []
     for item in data:
@@ -1177,7 +1214,8 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+                logger.debug("Error executing mapping JSONPath for key '%s': %s", new_key, e)
+                raise HTTPException(status_code=400, detail=f"Error executing JSONPath expression for key '{new_key}'")
 
             if not mapping_matches:
                 mapped_item[new_key] = None
@@ -1267,6 +1305,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
+    siem_export_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1296,9 +1335,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # modules can reach Redis without importing mcpgateway.utils directly
     # (isolation enforced by scripts/pre-commit/check_framework_imports.py).
     # First-Party
-    from mcpgateway.plugins.framework._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins._redis import set_shared_redis_provider  # pylint: disable=import-outside-toplevel
 
     set_shared_redis_provider(get_redis_client)
+
+    # Initialize SIEM export service early so security/audit events can flow from startup.
+    # First-Party
+    from mcpgateway.services.siem_export_service import get_siem_export_service  # pylint: disable=import-outside-toplevel
+
+    siem_export_service = get_siem_export_service()
+    await siem_export_service.initialize()
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -1380,13 +1426,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         await init_llmchat_redis()
 
-    # Initialize observability (Phoenix tracing)
-    init_telemetry()
-    logger.info("Observability initialized")
-
     try:
         # Validate security configuration
         validate_security_configuration()
+
+        # Validate UAID security configuration
+        validate_uaid_security_config()
 
         # Initialize the plugin manager factory whenever the YAML config is
         # available. We used to gate this on ``settings.plugins.enabled`` but
@@ -1426,9 +1471,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 init_exc,
             )
             # First-Party
-            from mcpgateway.plugins.framework import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins import mark_factory_init_degraded  # pylint: disable=import-outside-toplevel
 
             mark_factory_init_degraded()
+
+        # Load SpanAttributeCustomizer baggage emission policy before telemetry starts
+        # creating spans. Baggage remains the propagation mechanism; this policy
+        # controls the span attribute names exported from allowed baggage keys.
+        configure_baggage_span_attribute_policy(extract_baggage_span_attribute_policy(get_plugin_manager_factory()))
+        init_telemetry()
+        logger.info("Observability initialized")
 
         try:
             plugin_manager = await get_plugin_manager()
@@ -1456,7 +1508,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Wire observability adapter to plugin manager if observability is enabled
         if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
             # First-Party
-            from mcpgateway.plugins.framework import set_global_observability  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins import set_global_observability  # pylint: disable=import-outside-toplevel
             from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter  # pylint: disable=import-outside-toplevel
 
             set_global_observability(ObservabilityServiceAdapter(service=_service))
@@ -1705,6 +1757,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             session_registry,
         ]
 
+        if siem_export_service is not None:
+            services_to_shutdown.insert(0, siem_export_service)
+
         # Add cancellation service if enabled
         if settings.mcpgateway_tool_cancellation_enabled:
             services_to_shutdown.insert(0, cancellation_service)  # Shutdown early to stop accepting new cancellations
@@ -1828,55 +1883,54 @@ def validate_security_configuration():
      Raises: Passthrough Errors/Exceptions but doesn't raise any of its own.
     """
     logger.info("🔒 Validating security configuration...")
+    try:
+        current_settings = get_settings()
 
-    # Get security status
-    security_status: settings.SecurityStatus = settings.get_security_status()
-    security_warnings = security_status["warnings"]
+        security_status: settings.SecurityStatus = current_settings.get_security_status()
+        security_warnings = security_status["warnings"]
 
-    log_security_warnings(security_warnings)
+        log_security_warnings(security_warnings)
 
-    # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
-    critical_issues = []
+        # Warn about ephemeral storage without strict user-in-DB mode
+        if not getattr(current_settings, "require_user_in_db", False):
 
-    if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes") and not settings.dev_mode:  # nosec B105 - checking for default values
-        critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
+            is_ephemeral = ":memory:" in current_settings.database_url or current_settings.database_url == "sqlite:///./mcp.db"
+            if is_ephemeral:
+                logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
-    if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
-        critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
+        # Warn about default JWT issuer/audience in non-development environments
+        if current_settings.environment != "development":
+            if current_settings.jwt_issuer == "mcpgateway":
 
-    log_critical_issues(critical_issues)
+                logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", current_settings.environment)
+            if current_settings.jwt_audience == "mcpgateway-api":
+                logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", current_settings.environment)
 
-    # UAID Cross-Gateway Routing Security Check
-    if not settings.uaid_allowed_domains:
-        if not settings.auth_required:
-            logger.error(
-                "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
-                "Cross-gateway routing is enabled without domain restrictions or authentication. "
-                "This allows UAID-based agents to route to ANY remote gateway without validation. "
-                "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
-            )
-        else:
-            logger.warning(
-                "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
-                "Any UAID-based agent can route to any remote gateway endpoint. "
-                "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
-                'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
-            )
+        # UAID Cross-Gateway Routing Security Check
+        if not current_settings.uaid_allowed_domains:
+            if not current_settings.auth_required:
+                logger.error(
+                    "⚠️  INSECURE CONFIGURATION: UAID_ALLOWED_DOMAINS is empty AND AUTH_REQUIRED=false. "
+                    "Cross-gateway routing is enabled without domain restrictions or authentication. "
+                    "This allows UAID-based agents to route to ANY remote gateway without validation. "
+                    "STRONGLY RECOMMENDED: Set UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
+                )
+            else:
+                logger.warning(
+                    "⚠️  UAID_ALLOWED_DOMAINS is empty - cross-gateway routing allows ALL domains. "
+                    "Any UAID-based agent can route to any remote gateway endpoint. "
+                    "RECOMMENDED: Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted gateways only. "
+                    'Example: UAID_ALLOWED_DOMAINS=["trusted-gateway.example.com", "partner.org"]'
+                )
 
-    # Warn about ephemeral storage without strict user-in-DB mode
-    if not getattr(settings, "require_user_in_db", False):
-        is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
-        if is_ephemeral:
-            logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
+        # Audit logging for explicit security overrides in production
+        if current_settings.environment == "production" and not current_settings.require_strong_secrets:
+            logger.warning("SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. This override is being logged for audit purposes as per US-1 requirements.")
 
-    # Warn about default JWT issuer/audience in non-development environments
-    if settings.environment != "development":
-        if settings.jwt_issuer == "mcpgateway":
-            logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
-        if settings.jwt_audience == "mcpgateway-api":
-            logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
-
-    log_security_recommendations(security_status)
+        log_security_recommendations(security_status)
+    except SecurityConfigurationError as e:
+        logger.critical(f"FAIL-CLOSED: {e}")
+        sys.exit(1)
 
 
 def log_security_warnings(security_warnings: list[str]):
@@ -1954,6 +2008,45 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
             logger.info("  • Enable SSL verification: SKIP_SSL_VERIFY=false")
 
         logger.info("=" * 60)
+
+
+def validate_uaid_security_config() -> None:
+    """Validate UAID security configuration at startup.
+
+    Behavior:
+    - Logs ERROR if A2A enabled but UAID allowlist not configured
+    - Fails startup if UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true (strict mode)
+
+    Design Decision (Issue #4236, Task #5):
+    Default behavior is ERROR logging (non-blocking) to maintain backward compatibility
+    and avoid breaking existing deployments. Operators can opt into fail-fast behavior
+    via UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true for stricter security posture.
+
+    Rationale:
+    - ERROR logging: Visible in logs, doesn't break deployments
+    - Fail-fast (opt-in): Best for production, catches misconfig early
+    - Not implemented: Admin UI banner (requires UI work, not always enabled)
+
+    Raises:
+        RuntimeError: If allowlist misconfigured and strict mode enabled
+    """
+    if settings.mcpgateway_a2a_enabled:
+        if not settings.uaid_allowed_domains and not settings.uaid_allow_all_domains:
+            error_msg = (
+                "🚨 SECURITY: UAID cross-gateway routing is DISABLED. "
+                "Configure UAID_ALLOWED_DOMAINS with trusted domains or set UAID_ALLOW_ALL_DOMAINS=true (unsafe for production). "
+                "Cross-gateway UAID calls will fail until allowlist is configured."
+            )
+
+            logger.error(error_msg)
+
+            # Check for strict mode (fail-fast on misconfiguration)
+            if settings.uaid_require_allowlist_on_startup:
+                raise RuntimeError(
+                    f"{error_msg}\n\n"
+                    "Gateway startup aborted due to UAID_REQUIRE_ALLOWLIST_ON_STARTUP=true. "
+                    "Fix configuration or set UAID_REQUIRE_ALLOWLIST_ON_STARTUP=false to allow startup with ERROR log only."
+                )
 
     logger.info("✅ Security validation completed")
 
@@ -2193,8 +2286,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
                      otherwise defaults to 200 for JSON-RPC compliance.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
-        >>> from mcpgateway.plugins.framework.models import PluginViolation
+        >>> from cpex.framework import PluginViolationError
+        >>> from cpex.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
@@ -2276,8 +2369,8 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginError
-        >>> from mcpgateway.plugins.framework.models import PluginErrorModel
+        >>> from cpex.framework import PluginError
+        >>> from cpex.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
         >>> import json
@@ -2314,6 +2407,32 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
             error_details["plugin_name"] = exc.error.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> ORJSONResponse:
+    """Catch-all handler for unhandled exceptions.
+
+    Logs the full exception server-side and returns a generic message to the
+    client so that stack traces and internal details are never exposed in
+    production responses.
+
+    Args:
+        request: The incoming request.
+        _exc: The unhandled exception (unused; logged via logger.exception context).
+
+    Returns:
+        ORJSONResponse: 500 response with a generic error message.
+    """
+    logger.exception(
+        "Unhandled exception on %s %s",
+        request.method,
+        request.url.path,
+    )
+    return ORJSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please try again."},
+    )
 
 
 @app.exception_handler(ContentTypeError)
@@ -2435,7 +2554,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         if is_protected:
             try:
-                token = request.headers.get("Authorization")
+                token = get_auth_header_value(request.headers)
                 cookie_token = request.cookies.get("jwt_token")
 
                 # Use dedicated docs authentication that bypasses global auth settings
@@ -2500,6 +2619,18 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return RedirectResponse(url=login_url, status_code=302)
         return ORJSONResponse(status_code=status_code, content={"detail": detail})
 
+    @staticmethod
+    def _auth_error_param(detail: str) -> Optional[str]:
+        """Map TokenValidationError detail to browser redirect error param."""
+        normalized = (detail or "").lower()
+        if "revoked" in normalized:
+            return "token_revoked"
+        if "disabled" in normalized:
+            return "account_disabled"
+        if "expired" in normalized or "idle timeout" in normalized:
+            return "session_expired"
+        return None
+
     async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements
         """
         Check admin privileges for admin routes.
@@ -2538,134 +2669,130 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # For protected admin routes, verify admin status
         try:
-            token = request.headers.get("Authorization")
+            raw_token = None
+            auth_user_email = None
+            auth_user_is_admin = False
+
+            auth_header = get_auth_header_value(request.headers)
             cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
-            # Extract token from header or cookie
-            jwt_token = None
+            # Preserve existing precedence: cookie first, then Authorization bearer.
             if cookie_token:
-                jwt_token = cookie_token
-            elif token and token.startswith("Bearer "):
-                jwt_token = token.split(" ", 1)[1]
+                raw_token = cookie_token
+            elif auth_header:
+                scheme, _, credentials_value = auth_header.partition(" ")
+                if scheme.lower() == "bearer" and credentials_value:
+                    raw_token = credentials_value.strip() or None
 
-            username = None
-            token_teams = None
-
-            if jwt_token:
-                # Try JWT authentication first
+            if raw_token:
                 try:
-                    payload = await verify_jwt_token(jwt_token)
-                    username = payload.get("sub") or payload.get("email")
+                    auth_user = await validate_token_user(request, raw_token)
+                except TokenValidationError as exc:
+                    logger.warning(
+                        "Admin auth token validation failed: %s",
+                        SecurityValidator.sanitize_log_message(str(exc.detail)),
+                    )
+                    return self._error_response(
+                        request,
+                        root_path,
+                        exc.status_code,
+                        exc.detail,
+                        self._auth_error_param(exc.detail),
+                    )
 
-                    if not username:
-                        return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
+                auth_user_email = auth_user.email
+                auth_user_is_admin = bool(auth_user.is_admin)
 
-                    # Check if token is revoked (if JTI exists)
-                    jti = payload.get("jti")
-                    if jti:
-                        try:
-                            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
-                            if is_revoked:
-                                logger.warning(f"Admin access denied for revoked token: {SecurityValidator.sanitize_log_message(str(username))}")
-                                return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
-                        except Exception as revoke_error:
-                            logger.warning(f"Token revocation check failed: {revoke_error}")
-                            # Continue - don't fail auth if revocation check fails
-
-                    # SECURITY: Apply token scope semantics for admin paths.
-                    # Use the same token_use-aware resolution as auth.py.
-                    token_use = payload.get("token_use")
-                    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                        is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
-                    else:
-                        # API token or legacy path: embedded teams claim semantics
-                        token_teams = normalize_token_teams(payload)
-                except Exception:
-                    # JWT validation failed, try API token
-                    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
-                    api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
-
-                    if api_token_info:
-                        if api_token_info.get("expired"):
-                            return ORJSONResponse(status_code=401, content={"detail": "API token expired"})
-                        if api_token_info.get("revoked"):
-                            return ORJSONResponse(status_code=401, content={"detail": "API token has been revoked"})
-                        username = api_token_info["user_email"]
-                        logger.debug(f"Admin auth via API token: {SecurityValidator.sanitize_log_message(str(username))}")
-
-            # NOTE: Basic auth is NOT supported for admin UI endpoints.
-            # While AdminAuthMiddleware could validate Basic credentials, the admin
-            # endpoints use get_current_user_with_permissions which requires JWT tokens.
-            # Supporting Basic auth would require passing auth context to routes,
-            # which increases complexity and attack surface. Use JWT or API tokens instead.
-
-            if not username and is_proxy_auth_trust_active(settings):
-                # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
+            elif is_proxy_auth_trust_active(settings):
                 proxy_user = request.headers.get(settings.proxy_user_header)
                 if proxy_user:
-                    username = proxy_user
-                    logger.debug(f"Admin auth via proxy header: {SecurityValidator.sanitize_log_message(str(username))}")
+                    request.state.auth_method = "proxy"
+                    auth_user_email = proxy_user
 
-            if not username:
-                # No authentication method succeeded - redirect to login or return 401
+                    # Preserve existing proxy behavior: DB active/admin check,
+                    # with platform-admin bootstrap when REQUIRE_USER_IN_DB=false.
+                    with SessionLocal() as db:
+                        auth_service = EmailAuthService(db)
+                        proxy_db_user = await auth_service.get_user_by_email(proxy_user)
+
+                        if not proxy_db_user:
+                            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                            if not settings.require_user_in_db and proxy_user == platform_admin_email:
+                                logger.info(
+                                    "Platform admin bootstrap authentication for %s",
+                                    SecurityValidator.sanitize_log_message(str(proxy_user)),
+                                )
+                                auth_user_is_admin = True
+                            else:
+                                return self._error_response(request, root_path, 401, "User not found")
+                        else:
+                            if not proxy_db_user.is_active:
+                                logger.warning(
+                                    "Admin access denied for disabled user: %s",
+                                    SecurityValidator.sanitize_log_message(str(proxy_user)),
+                                )
+                                return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                            auth_user_is_admin = bool(proxy_db_user.is_admin)
+
+            if not auth_user_email:
                 return self._error_response(request, root_path, 401, "Authentication required")
 
-            # SECURITY: Public-only tokens (teams=[]) never grant admin-path access,
-            # even for admin identities. Admin bypass requires explicit teams=null + is_admin=true.
+            token_teams = getattr(request.state, "token_teams", None)
+
+            # Preserve public-only denial invariant.
             if token_teams is not None and len(token_teams) == 0:
-                logger.warning(f"Admin access denied for public-only token: {SecurityValidator.sanitize_log_message(str(username))}")
-                return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+                logger.warning(
+                    "Admin access denied for public-only token: %s",
+                    SecurityValidator.sanitize_log_message(str(auth_user_email)),
+                )
+                return self._error_response(
+                    request,
+                    root_path,
+                    403,
+                    "Admin privileges required",
+                    "admin_required",
+                )
 
-            # Check if user exists, is active, and has admin permissions
-            db = next(get_db())
-            try:
-                auth_service = EmailAuthService(db)
-                user = await auth_service.get_user_by_email(username)
+            # Validate optional team_id against token-visible teams.
+            request_team_id = request.query_params.get("team_id")
+            if request_team_id:
+                try:
+                    request_team_id = uuid.UUID(request_team_id).hex
+                except (ValueError, AttributeError):
+                    pass
 
-                if not user:
-                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
-                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
-                    if not settings.require_user_in_db and username == platform_admin_email:
-                        logger.info(f"Platform admin bootstrap authentication for {SecurityValidator.sanitize_log_message(str(username))}")
-                        # Allow platform admin through - they have implicit admin privileges
-                    else:
-                        return self._error_response(request, root_path, 401, "User not found")
-                else:
-                    # User exists in DB - check active status
-                    if not user.is_active:
-                        logger.warning(f"Admin access denied for disabled user: {SecurityValidator.sanitize_log_message(str(username))}")
-                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+            validated_team_id = request_team_id if token_teams and request_team_id and request_team_id in token_teams else None
 
-                    # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
-                    # This allows granular admin access for users with specific admin permissions.
-                    # When the request is team-scoped (?team_id=...), include team-scoped roles
-                    # so that developer/viewer roles with admin.dashboard can access the UI.
+            # validate_token_user already returned DB-authoritative is_admin,
+            # including platform-admin bootstrap.
+            if not auth_user_is_admin:
+                with SessionLocal() as db:
                     permission_service = PermissionService(db)
-                    request_team_id = request.query_params.get("team_id")
-                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
-                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
-                    if request_team_id:
-                        try:
-                            request_team_id = uuid.UUID(request_team_id).hex
-                        except (ValueError, AttributeError):
-                            pass  # keep raw value for non-UUID token_teams
-                    # Only trust team_id if it is in the user's DB-resolved teams
-                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
-                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id, token_teams=token_teams)
-                    if not has_admin_access:
-                        logger.warning(f"Admin access denied for user without admin permissions: {SecurityValidator.sanitize_log_message(str(username))}")
-                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
-            finally:
-                db.close()
+                    has_admin_access = await permission_service.has_admin_permission(
+                        auth_user_email,
+                        team_id=validated_team_id,
+                        token_teams=token_teams,
+                    )
 
-        except HTTPException as e:
-            return self._error_response(request, root_path, e.status_code, e.detail)
-        except Exception as e:
-            logger.error(f"Admin auth middleware error: {e}")
+                if not has_admin_access:
+                    logger.warning(
+                        "Admin access denied for user without admin permissions: %s",
+                        SecurityValidator.sanitize_log_message(str(auth_user_email)),
+                    )
+                    return self._error_response(
+                        request,
+                        root_path,
+                        403,
+                        "Admin privileges required",
+                        "admin_required",
+                    )
+
+        except HTTPException as exc:
+            return self._error_response(request, root_path, exc.status_code, exc.detail)
+        except Exception as exc:
+            logger.error("Admin auth middleware error: %s", exc)
             return ORJSONResponse(status_code=500, content={"detail": "Authentication error"})
 
-        # Proceed to next middleware or route
         return await call_next(request)
 
 
@@ -2885,6 +3012,17 @@ else:
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Add rate limiting middleware (after HttpAuthMiddleware for user-aware limiting)
+if settings.rate_limiting_enabled:
+    app.add_middleware(RateLimitMiddleware)
+    logger.info(
+        f"🚦 Rate limiting enabled: Redis={settings.rate_limiting_redis_enabled}, "
+        f"Tiers[CRITICAL={settings.rate_limit_critical_rpm}, "
+        f"HIGH={settings.rate_limit_high_rpm}, "
+        f"MEDIUM={settings.rate_limit_medium_rpm}, "
+        f"LOW={settings.rate_limit_low_rpm}]"
+    )
+
 # Add validation middleware if explicitly enabled
 if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
@@ -2930,6 +3068,18 @@ app.add_middleware(DocsAuthMiddleware)
 # This ensures all /admin/* routes (except login/logout) require admin status
 app.add_middleware(AdminAuthMiddleware)
 
+# Rewrite Host header from X-Forwarded-Host when behind a reverse proxy.
+# Uvicorn's ProxyHeadersMiddleware handles X-Forwarded-Proto and X-Forwarded-For
+# but not X-Forwarded-Host (upstream issue encode/uvicorn#965).
+# This ensures request.base_url reflects the proxy's public host, fixing the
+# OAuth redirect_uri hint and other URL construction throughout the admin UI.
+# Registered alongside ProxyHeadersMiddleware with the same trust model.
+#
+# Registered BEFORE ProxyHeadersMiddleware so that it is inner (executes after
+# ProxyHeadersMiddleware in the ASGI call chain) and can rely on the scheme
+# already being corrected when deriving the default port for scope["server"].
+app.add_middleware(ForwardedHostMiddleware)
+
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
@@ -2939,17 +3089,49 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
-# Add authentication context middleware if security logging is enabled
+# Add authentication context middleware if security logging is enabled OR password change enforcement is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
-# Note: This is independent of observability - security logging is always important
-if settings.security_logging_enabled:
+# Note: SIEM export can also require auth event capture even when DB security logging is off.
+# Note: Password change enforcement also requires user context to be available
+# IMPORTANT: Middleware runs in REVERSE order of addition in Starlette/FastAPI
+# Add PasswordChangeEnforcementMiddleware FIRST so it runs AFTER AuthContextMiddleware
+_siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
+
+# Add password change enforcement middleware FIRST (runs SECOND due to reverse order)
+# This middleware enforces mandatory password changes for users with password_change_required flag
+# Note: Runs after AuthContextMiddleware (added below) so request.state.user is available
+if settings.password_change_enforcement_enabled:
+    # First-Party
+    from mcpgateway.middleware.password_change_enforcement import PasswordChangeEnforcementMiddleware
+
+    app.add_middleware(PasswordChangeEnforcementMiddleware)
+    logger.info("🔒 Password change enforcement middleware enabled - blocking access for users requiring password change")
+else:
+    logger.info("🔒 Password change enforcement middleware disabled")
+
+# Add authentication context middleware SECOND (runs FIRST due to reverse order)
+# This populates request.state.user for downstream middleware and handlers
+_auth_context_required = settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled or settings.password_change_enforcement_enabled
+if _auth_context_required:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
     app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - logging security events")
+    logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
 else:
     logger.info("🔐 Security event logging disabled")
+
+# Add CSRF protection middleware
+# This validates CSRF tokens on state-changing requests to prevent Cross-Site Request Forgery attacks
+# Note: Runs after AuthContextMiddleware so request.state.user is available for token validation
+if settings.csrf_enabled:
+    # First-Party
+    from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+
+    app.add_middleware(CSRFMiddleware)
+    logger.info("🛡️  CSRF protection middleware enabled - validating tokens on state-changing requests")
+else:
+    logger.info("🛡️  CSRF protection middleware disabled")
 
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
@@ -3010,6 +3192,15 @@ if settings.db_query_log_enabled:
     logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
 else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
+# Client disconnect middleware — MUST be outermost (added last, runs first).
+# Cancels in-flight request handlers when the client (nginx) closes the connection,
+# preventing CLOSE_WAIT accumulation and associated memory leaks.
+if settings.client_disconnect_middleware_enabled:
+    app.add_middleware(ClientDisconnectMiddleware)
+    logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
+else:
+    logger.debug("Client disconnect middleware disabled (enable with CLIENT_DISCONNECT_MIDDLEWARE_ENABLED=true)")
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
@@ -3074,6 +3265,9 @@ def tojson_attr(value: object) -> str:
 
 
 jinja_env.filters["tojson_attr"] = tojson_attr
+
+
+jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
 
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
@@ -3647,7 +3841,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 @require_permission("servers.read")
 async def list_servers(
     request: Request,
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    cursor: QueryPaginationCursor = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of servers to return"),
     include_inactive: bool = False,
@@ -4049,7 +4243,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
         auth_token = None
-        auth_header = request.headers.get("authorization", "")
+        auth_header = get_auth_header_value(request.headers) or ""
         if auth_header.lower().startswith("bearer "):
             auth_token = auth_header[7:]
         elif hasattr(request, "cookies") and request.cookies:
@@ -4347,9 +4541,9 @@ async def list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility (private, team, public)"),
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    team_id: QueryTeamId = None,
+    visibility: QueryVisibility = None,
+    cursor: QueryPaginationCursor = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
@@ -4725,6 +4919,24 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+_SENSITIVE_REQUEST_HEADER_PATTERNS = (
+    re.compile(r"^authorization$", re.IGNORECASE),
+    re.compile(r"^proxy-authorization$", re.IGNORECASE),
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^host$", re.IGNORECASE),
+)
+
+
+def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Strip sensitive/credential headers from a dict before passing to plugins."""
+    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -4780,6 +4992,35 @@ async def invoke_a2a_agent(
         # and self-referential `endpoint_url` loops.
         hop_count = uaid_utils.read_hop_count(request.headers)
 
+        # Extract bearer token for cross-gateway forwarding
+        # Prefer token extracted by auth middleware (validated and normalized)
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        # (e.g., when auth middleware is disabled or skipped for certain paths)
+        #
+        # Security Note: This fallback extracts the token without local validation,
+        # but security is preserved because:
+        # 1. Remote gateway MUST validate the token (AUTH_REQUIRED enforcement)
+        # 2. Invalid/expired tokens will be rejected by remote gateway's auth middleware
+        # 3. This enables token forwarding even when local auth is disabled for A2A endpoints
+        #
+        # If the token is invalid, remote gateway returns 401, and we propagate error to caller.
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -4789,6 +5030,102 @@ async def invoke_a2a_agent(
             user_email=user_email,
             token_teams=token_teams,
             hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/invoke", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def invoke_a2a_agent_by_id(
+    request: Request,
+    agent_id: str = Body(..., description="Agent UUID or UAID"),
+    parameters: Dict[str, Any] = Body(default_factory=dict),
+    interaction_type: str = Body(default="query"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Invokes an A2A agent by UUID or UAID (passed in body to support forward slashes in UAID).
+
+    This endpoint accepts the agent identifier in the request body instead of the URL path,
+    which allows invoking agents by UAID even when the UAID contains forward slashes
+    (e.g., in the nativeId component).
+
+    Args:
+        request (Request): The FastAPI request object for team_id retrieval.
+        agent_id (str): The UUID or UAID of the agent to invoke.
+        parameters (Dict[str, Any]): Parameters for the agent interaction.
+        interaction_type (str): Type of interaction (query, execute, etc.).
+        db (Session): The database session used to interact with the data store.
+        user (str): The authenticated user making the request.
+
+    Returns:
+        Dict[str, Any]: The response from the A2A agent.
+
+    Raises:
+        HTTPException: If the agent is not found, user lacks access, or there is an error during invocation.
+    """
+    try:
+        logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} is invoking A2A agent '{agent_id}' with type '{interaction_type}'")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
+
+        # Get filtering context from token (respects token scope)
+        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+        # Admin bypass - only when token has NO team restrictions
+        if is_admin and token_teams is None:
+            token_teams = None  # Admin unrestricted
+        elif token_teams is None:
+            token_teams = []  # Non-admin without teams = public-only
+
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+
+        # Read the federation hop counter from the request header
+        hop_count = uaid_utils.read_hop_count(request.headers)
+
+        # Extract bearer token for cross-gateway forwarding
+        bearer_token = getattr(request.state, "bearer_token", None)
+
+        # Fallback: extract from Authorization header if middleware didn't set it
+        if not bearer_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                bearer_token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Only forward JWT-shaped tokens; local opaque tokens cannot be validated by remote gateways
+        if bearer_token and not _is_jwt_token(bearer_token):
+            logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
+            bearer_token = None
+
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
+        return await a2a_service.invoke_agent(
+            db,
+            agent_name=None,  # Not using name lookup
+            parameters=parameters,
+            interaction_type=interaction_type,
+            agent_id=agent_id,  # Pass agent_id for UUID/UAID lookup
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+            hop_count=hop_count,
+            bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -4809,9 +5146,9 @@ async def list_tools(
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of tools to return. 0 means all (no limit). Default uses pagination_default_page_size."),
     include_inactive: bool = False,
     tags: Optional[str] = None,
-    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
-    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
+    team_id: QueryTeamId = None,
+    visibility: QueryVisibility = None,
+    gateway_id: QueryGatewayId = None,
     db: Session = Depends(get_db),
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
     user=Depends(get_current_user_with_permissions),
@@ -5384,14 +5721,14 @@ async def toggle_resource_status(
 @require_permission("resources.read")
 async def list_resources(
     request: Request,
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    cursor: QueryPaginationCursor = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
+    gateway_id: QueryGatewayId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5904,14 +6241,14 @@ async def toggle_prompt_status(
 @require_permission("prompts.read")
 async def list_prompts(
     request: Request,
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    cursor: QueryPaginationCursor = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of prompts to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    gateway_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by gateway ID"),
+    gateway_id: QueryGatewayId = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -6214,7 +6551,7 @@ async def get_prompt_no_args(
     except PromptNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PromptError as e:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
 
@@ -6420,12 +6757,12 @@ async def toggle_gateway_status(
 @require_permission("gateways.read")
 async def list_gateways(
     request: Request,
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Cursor for pagination"),
+    cursor: QueryPaginationCursor = None,
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, ge=0, description="Maximum number of gateways to return"),
     include_inactive: bool = False,
-    team_id: Optional[str] = Query(None, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$", description="Filter by team ID"),
-    visibility: Optional[str] = Query(None, pattern=r"^(private|team|public)$", description="Filter by visibility: private, team, public"),
+    team_id: QueryTeamId = None,
+    visibility: QueryVisibility = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[GatewayRead], Dict[str, Any]]:
@@ -6576,6 +6913,8 @@ async def register_gateway(
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, DataError):
+            return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=status.HTTP_400_BAD_REQUEST)
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -6842,7 +7181,7 @@ async def export_root(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected root export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Root export failed: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Root export failed")
 
 
 @root_router.get("/changes")
@@ -9556,11 +9895,12 @@ async def handle_internal_mcp_tools_call(request: Request):
         request: Trusted internal MCP tools/call request.
 
     Returns:
-        JSON-RPC response payload for the tools/call request.
+        dict: JSON-RPC response containing result on success,
+              or JSON-RPC error on plugin failures.
+              All plugin errors returned as structured JSON-RPC (never re-raised)
+              since this is an internal Rust↔Python interface.
 
     Raises:
-        PluginError: Re-raised so plugin middleware can preserve existing behavior.
-        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
         Exception: Propagated after best-effort rollback when unexpected failures occur.
     """
     req_id = None
@@ -9636,8 +9976,19 @@ async def handle_internal_mcp_tools_call(request: Request):
             db.close()
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
-    except (PluginError, PluginViolationError):
-        raise
+    except PluginViolationError as exc:
+        # Use violation's codes if present, otherwise JSON-RPC defaults
+        error_code = -32602  # Invalid params (JSON-RPC standard)
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603  # Internal error (JSON-RPC standard)
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
@@ -9666,11 +10017,12 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         request: Trusted internal MCP tools/call resolve request.
 
     Returns:
-        JSON response containing either an execution plan or a JSON-RPC-visible error.
+        ORJSONResponse: JSON-RPC response containing execution plan on success,
+                        or JSON-RPC error on validation/permission/plugin failures.
+                        All errors returned as structured JSON-RPC (never re-raised)
+                        since this is an internal Rust↔Python interface.
 
     Raises:
-        PluginError: Re-raised so plugin middleware can preserve existing behavior.
-        PluginViolationError: Re-raised so plugin middleware can preserve existing behavior.
         Exception: Propagated after best-effort rollback when unexpected failures occur.
     """
     db = SessionLocal()
@@ -9765,8 +10117,48 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
                 "id": request_id,
             },
         )
-    except (PluginError, PluginViolationError):
-        raise
+    except PluginViolationError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        # Use violation's codes if present, otherwise JSON-RPC defaults
+        error_code = -32602  # Invalid params (JSON-RPC standard)
+        http_status = 422
+        if exc.violation:
+            if hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+                error_code = exc.violation.mcp_error_code
+            if hasattr(exc.violation, "http_status_code") and isinstance(exc.violation.http_status_code, int):
+                candidate_status = exc.violation.http_status_code
+                if VALID_HTTP_STATUS_CODES.get(candidate_status):
+                    http_status = candidate_status
+
+        response = ORJSONResponse(
+            status_code=http_status,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": error_code, "message": str(exc)},
+                "id": request_id,
+            },
+        )
+        # Forward validated HTTP headers from violation if present
+        headers = exc.violation.http_headers if exc.violation and exc.violation.http_headers else None
+        if headers:
+            validated_headers = _validate_http_headers(headers)
+            if validated_headers:
+                response.headers.update(validated_headers)
+        return response
+    except PluginError as exc:
+        request_id = body.get("id") if isinstance(body, dict) else None
+        error_code = -32603  # Internal error (JSON-RPC standard)
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+
+        return ORJSONResponse(
+            status_code=500,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": error_code, "message": str(exc)},
+                "id": request_id,
+            },
+        )
     except JSONRPCError as exc:
         request_id = body.get("id") if isinstance(body, dict) else None
         return ORJSONResponse(
@@ -10483,10 +10875,14 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except Exception:
-                # Log error and return invalid method
+            except ToolNotFoundError:
+                # Method name not registered as a tool → spec-mandated -32601
                 logger.error("Method not found: %s", method)
-                raise JSONRPCError(-32000, "Invalid method", params)
+                raise JSONRPCError(-32601, f"Method not found: {method}", {})
+            except Exception as exc:
+                # Truly unexpected error during handling → -32603
+                logger.error("Unexpected error invoking method %s: %s", method, exc)
+                raise JSONRPCError(-32603, "Internal error", {})
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
@@ -10627,10 +11023,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 data = await websocket.receive_text()
                 client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
-                # Build headers for /rpc request - forward auth credentials
+                # Build headers for /rpc request - forward auth credentials.
+                # Use the configured AUTH_HEADER_NAME so ConfigurableHTTPBearer in
+                # the loopback target finds the JWT.
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
                 if auth_token:
-                    rpc_headers["Authorization"] = f"Bearer {auth_token}"
+                    rpc_headers[_resolve_auth_header_name(settings)] = f"Bearer {auth_token}"
                 if proxy_user:
                     rpc_headers[settings.proxy_user_header] = proxy_user
                 # Forward passthrough headers captured from the WebSocket handshake (see #3640).
@@ -10711,7 +11109,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
-        auth_header = request.headers.get("authorization", "")
+        auth_header = get_auth_header_value(request.headers) or ""
         if auth_header.lower().startswith("bearer "):
             auth_token = auth_header[7:]
         elif hasattr(request, "cookies") and request.cookies:
@@ -11159,7 +11557,7 @@ async def list_tags(
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve tags")
 
 
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
@@ -11213,7 +11611,7 @@ async def get_entities_by_tag(
         return entities
     except Exception as e:
         logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve entities: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve entities")
 
 
 ####################
@@ -11305,7 +11703,7 @@ async def export_configuration(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
@@ -11369,7 +11767,7 @@ async def export_selective_configuration(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected selective export error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @export_import_router.post("/import", response_model=Dict[str, Any])
@@ -11432,16 +11830,16 @@ async def import_configuration(
         raise
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+        raise HTTPException(status_code=422, detail="Import validation failed")
     except ImportConflictError as e:
         logger.error(f"Import conflict for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=409, detail=f"Conflict error: {str(e)}")
+        raise HTTPException(status_code=409, detail="Import conflict detected")
     except ImportServiceError as e:
         logger.error(f"Import failed for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Import failed")
     except Exception as e:
         logger.error(f"Unexpected import error for user {SecurityValidator.sanitize_log_message(str(user))}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Import failed")
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
@@ -11524,6 +11922,19 @@ app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
 
+# Compliance report router (admin API)
+if settings.mcpgateway_admin_api_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.compliance_router import router as compliance_router
+
+        app.include_router(compliance_router)
+        logger.info("Compliance router included")
+    except ImportError as e:  # pragma: no cover - optional import guard
+        logger.warning(f"Compliance router not available: {e}")
+else:
+    logger.info("Compliance router not included - admin API disabled")
+
 # Tool plugin bindings router
 try:
     # First-Party
@@ -11533,6 +11944,16 @@ try:
     logger.info("Tool plugin bindings router included")
 except ImportError as e:
     logger.error(f"Tool plugin bindings router not available: {e}")
+
+# A2A agent plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(a2a_agent_plugin_bindings_router)
+    logger.info("A2A agent plugin bindings router included")
+except ImportError as e:
+    logger.error(f"A2A agent plugin bindings router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
@@ -11546,6 +11967,20 @@ if getattr(settings, "structured_logging_enabled", True):
         logger.warning(f"Failed to import log search router: {e}")
 else:
     logger.info("Log search router not included - structured logging disabled")
+
+# Include SIEM admin router for destination management and health endpoints
+if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
+    try:
+        # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
+        from mcpgateway.routers.siem import router as siem_router
+
+        app.include_router(siem_router, dependencies=[Depends(enforce_admin_csrf)])
+        logger.info("SIEM router included")
+    except ImportError as e:  # pragma: no cover - optional import guard
+        logger.warning(f"SIEM router not available: {e}")
+else:
+    logger.info("SIEM router not included - admin API or SIEM export disabled")
 
 # Conditionally include observability router if enabled
 if settings.observability_enabled:
@@ -11678,13 +12113,14 @@ if settings.llmchat_enabled:
     # Include LLM configuration and proxy routers (internal API)
     try:
         # First-Party
+        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
         from mcpgateway.routers.llm_admin_router import llm_admin_router
         from mcpgateway.routers.llm_config_router import llm_config_router
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router
 
         app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
         logger.info("LLM configuration, proxy, and admin routers included")
     except ImportError as e:
         logger.debug(f"LLM routers not available: {e}")
@@ -11725,7 +12161,7 @@ if ADMIN_API_ENABLED:
     # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
     # Only load it when the admin API is actually mounted.
     # First-Party
-    from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
@@ -11737,7 +12173,7 @@ if ADMIN_API_ENABLED:
     # First-Party
     from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

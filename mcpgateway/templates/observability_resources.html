@@ -1,5 +1,5 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
-<script defer>
+<script defer nonce="{{ csp_nonce(request) }}">
 window.createResourcesController = function() {
   return {
     timeRange: 24,

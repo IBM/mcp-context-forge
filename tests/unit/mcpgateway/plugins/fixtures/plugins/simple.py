@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/simple.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Test Suite
 
@@ -10,7 +10,7 @@ registration, priority sorting, hook filtering, etc.
 """
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     Plugin,
     PluginContext,
     PromptPosthookPayload,

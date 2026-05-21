@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for CacheInvalidationSubscriber.
+"""Location: ./tests/unit/mcpgateway/cache/test_cache_invalidation_subscriber.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for CacheInvalidationSubscriber.
 
 This module tests the cross-worker cache invalidation via Redis pubsub.
 The CacheInvalidationSubscriber listens for invalidation messages published

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/tools/test_cli.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
@@ -22,8 +22,8 @@ from typer.testing import CliRunner
 import yaml
 
 # First-Party
-import mcpgateway.plugins.tools.cli as cli
-from mcpgateway.plugins.tools.models import InstallManifest
+import cpex.tools.cli as cli
+from cpex.tools.models import InstallManifest
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -108,7 +108,9 @@ def test_bootstrap_skips_without_git(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "cookiecutter.main", SimpleNamespace(cookiecutter=cc_func))
     monkeypatch.setattr(cli, "command_exists", lambda _name: False)
 
-    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git")
+    with pytest.raises(cli.typer.Exit) as excinfo:
+        cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git")
+    assert excinfo.value.exit_code == 1
     cc_func.assert_not_called()
 
 

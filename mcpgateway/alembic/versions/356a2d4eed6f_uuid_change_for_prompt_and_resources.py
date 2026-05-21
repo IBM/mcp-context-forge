@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""UUID Change for Prompt and Resources
+"""Location: ./mcpgateway/alembic/versions/356a2d4eed6f_uuid_change_for_prompt_and_resources.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+UUID Change for Prompt and Resources
 
 Revision ID: 356a2d4eed6f
 Revises: z1a2b3c4d5e6
 Create Date: 2025-12-01 14:52:01.957105
-
 """
 
 # Standard
@@ -638,6 +642,11 @@ def downgrade() -> None:
     """Downgrade schema."""
     conn = op.get_bind()
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
+
+    inspector = sa.inspect(conn)
+    if not inspector.has_table("prompts") and not inspector.has_table("resources"):
+        print("prompts and resources tables not found. Skipping downgrade.")
+        return
 
     # Best-effort: rebuild integer prompt ids and remap dependent FK columns.
     # 1) Create old-style prompts table with integer id (autoincrement)

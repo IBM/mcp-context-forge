@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/utils/time_restrictions.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Sebastian Iozu
 
@@ -271,5 +271,5 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
             # SECURITY: Fail closed - deny access on parsing errors to prevent bypass
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Token has invalid time format in time restrictions: {e}",
+                detail="Token has invalid time format in time restrictions",
             )

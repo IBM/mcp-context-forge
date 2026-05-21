@@ -97,7 +97,7 @@ Important behavior:
   selected ignores
   - it does **not** run Playwright
   - it does **not** run performance/compliance suites
-  - it now ignores `tests/e2e_rust/`, so Rust-mode-only live tests do not pollute
+  - it now ignores `tests/live_gateway/`, so live-infrastructure tests do not pollute
     the default backend test run
 - `make doctest` runs doctests against `mcpgateway/`
 - `make htmlcov` builds an HTML coverage report from `.coverage`

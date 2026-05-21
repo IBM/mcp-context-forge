@@ -1,6 +1,7 @@
 import { MASKED_AUTH_VALUE } from "./constants.js";
 import { getAuthToken } from "./tokens.js";
 import {
+  getCookie,
   safeGetElement,
   showSuccessMessage,
   showErrorMessage,
@@ -196,6 +197,11 @@ export async function getAuthHeaders(includeJsonContentType = false) {
   const token = await getAuthToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+
+  const csrfToken = getCookie("mcpgateway_csrf_token");
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
   }
 
   return headers;

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the metrics rollup service.
-
-Copyright 2025
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_rollup_service.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the metrics rollup service.
 """
 
 # Standard
@@ -417,6 +419,7 @@ class TestRollupLoop:
     @pytest.mark.asyncio
     async def test_rollup_loop_logs_when_backfill_large(self, monkeypatch):
         service = MetricsRollupService()
+
         async def fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
@@ -449,6 +452,7 @@ class TestRollupLoop:
     @pytest.mark.asyncio
     async def test_rollup_loop_error_sleeps_and_continues(self, monkeypatch):
         service = MetricsRollupService()
+
         async def fake_to_thread(func, *args, **kwargs):
             return func(*args, **kwargs)
 
@@ -1208,8 +1212,18 @@ class TestRollupInternals:
         entity_model = SimpleNamespace(__name__="Entity", name=MagicMock())
 
         monkeypatch.setattr(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock())
-        monkeypatch.setattr(metrics_rollup_service, "select", lambda *_args, **_kwargs: SimpleNamespace(where=lambda *_a, **_k: SimpleNamespace(group_by=lambda *_b, **_k2: SimpleNamespace(order_by=lambda *_c, **_k3: SimpleNamespace()))))
-        monkeypatch.setattr(metrics_rollup_service, "func", SimpleNamespace(count=lambda *_a, **_k: MagicMock(), sum=lambda *_a, **_k: MagicMock(), min=lambda *_a, **_k: MagicMock(), max=lambda *_a, **_k: MagicMock(), avg=lambda *_a, **_k: MagicMock()))
+        monkeypatch.setattr(
+            metrics_rollup_service,
+            "select",
+            lambda *_args, **_kwargs: SimpleNamespace(where=lambda *_a, **_k: SimpleNamespace(group_by=lambda *_b, **_k2: SimpleNamespace(order_by=lambda *_c, **_k3: SimpleNamespace()))),
+        )
+        monkeypatch.setattr(
+            metrics_rollup_service,
+            "func",
+            SimpleNamespace(
+                count=lambda *_a, **_k: MagicMock(), sum=lambda *_a, **_k: MagicMock(), min=lambda *_a, **_k: MagicMock(), max=lambda *_a, **_k: MagicMock(), avg=lambda *_a, **_k: MagicMock()
+            ),
+        )
         monkeypatch.setattr(metrics_rollup_service, "case", lambda *_a, **_k: MagicMock())
 
         with patch.object(metrics_rollup_service.logger, "exception") as mock_logger:

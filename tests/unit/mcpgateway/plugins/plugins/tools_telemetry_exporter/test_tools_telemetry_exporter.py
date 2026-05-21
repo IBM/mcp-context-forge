@@ -2,6 +2,7 @@
 """Location: ./tests/unit/mcpgateway/plugins/plugins/tools_telemetry_exporter/test_tools_telemetry_exporter.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for ToolsTelemetryExporterPlugin.
 """
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from cpex.framework import GlobalContext, HttpHeaderPayload, PluginConfig, PluginContext, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.tools_telemetry_exporter.telemetry_exporter import ToolsTelemetryExporterPlugin
 
 

@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01 test fixtures for cross-user and cross-tenant access control tests."""
+"""Location: ./tests/playwright/security/owasp/conftest.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OWASP A01 test fixtures for cross-user and cross-tenant access control tests.
+"""
 
 # Future
 from __future__ import annotations
@@ -21,7 +27,7 @@ import pytest
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _make_jwt(email: str, *, is_admin: bool, teams: list[str] | None = None, expires_in_minutes: int = 30) -> str:

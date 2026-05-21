@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/token_scoping.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -21,7 +21,6 @@ from typing import List, Optional, Pattern, Tuple
 
 # Third-Party
 from fastapi import HTTPException, Request, status
-from fastapi.security import HTTPBearer
 from sqlalchemy import and_, func, select
 
 # First-Party
@@ -32,10 +31,14 @@ from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import (
+    ConfigurableHTTPBearer,
+    get_auth_bearer_token_from_request,
+    verify_jwt_token_cached,
+)
 
 # Security scheme
-bearer_scheme = HTTPBearer(auto_error=False)
+bearer_scheme = ConfigurableHTTPBearer(auto_error=False)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -128,6 +131,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/tokens/teams/[^/]+(?:$|/)"), Permissions.TOKENS_CREATE),
     ("PUT", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_UPDATE),
     ("DELETE", re.compile(r"^/tokens/[^/]+(?:$|/)"), Permissions.TOKENS_REVOKE),
+    # Compliance reporting
+    ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
+    ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
 ]
 
 # Admin route permission map (granular by route group).
@@ -373,17 +379,11 @@ class TokenScopingMiddleware:
                 if isinstance(cookie_token, str) and cookie_token.strip():
                     return cookie_token.strip()
 
-        # Get authorization header and parse bearer scheme case-insensitively.
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            return None
-
-        parts = auth_header.split(" ", 1)
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            return None
-
-        token = parts[1].strip()
-        return token or None
+        # Get the configured auth header (default Authorization) and parse
+        # the Bearer scheme case-insensitively. Reading from the configured
+        # header keeps token scoping aligned with the auth dependency so
+        # scope restrictions cannot be bypassed by setting AUTH_HEADER_NAME.
+        return get_auth_bearer_token_from_request(request)
 
     async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.

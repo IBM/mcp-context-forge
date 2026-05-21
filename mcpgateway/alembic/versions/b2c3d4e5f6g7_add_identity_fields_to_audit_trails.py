@@ -1,9 +1,14 @@
-"""add identity fields to audit_trails
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/b2c3d4e5f6g7_add_identity_fields_to_audit_trails.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add identity fields to audit_trails
 
 Revision ID: b2c3d4e5f6g7
 Revises: a1b2c3d4e5f6
 Create Date: 2026-02-17
-
 """
 
 # Standard

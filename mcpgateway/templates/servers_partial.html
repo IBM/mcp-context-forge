@@ -43,7 +43,7 @@
   <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="relative"
-           x-data="Admin.overflowMenu('servers-table-wrapper')"
+           x-data="window.Admin?.overflowMenu?.('servers-table-wrapper')"
                @click.away="menuOpen = false"
                @keydown.escape="menuOpen = false; $refs.trigger.focus()">
         <button
@@ -82,7 +82,7 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; Admin.viewServer({{ server.id|tojson_attr }})"
+            @click="menuOpen = false; window.Admin?.viewServer?.({{ server.id|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
           >View</button>
           {% if can_modify %}
@@ -90,7 +90,7 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; Admin.editServer({{ server.id|tojson_attr }})"
+            @click="menuOpen = false; window.Admin?.editServer?.({{ server.id|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
           >Edit</button>
           {% endif %}
@@ -98,13 +98,13 @@
             type="button"
             role="menuitem"
             tabindex="0"
-            @click="menuOpen = false; Admin.showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
+            @click="menuOpen = false; window.Admin?.showConfigSelectionModal?.({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
             class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
             x-tooltip="'💡Generate client configuration files for this server'"
           >Export Config</button>
           {% if can_modify %}
           <hr class="border-gray-200 dark:border-gray-600 my-1">
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleToggleSubmit(event, 'servers')">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="servers">
             <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
             <button
               type="submit"
@@ -113,7 +113,7 @@
               class="w-full flex items-center px-4 py-2 text-sm {% if server.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
             >{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
           </form>
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" @submit="menuOpen = false" onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server_label|tojson_attr }}, 'servers')">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="server" data-arg1="{{ server_label|tojson_attr }}" data-arg2="servers">
             <button
               type="submit"
               role="menuitem"

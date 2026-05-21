@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/routers/test_teams_v2.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -54,10 +54,21 @@ with patch("mcpgateway.middleware.rbac.require_permission", mock_require_permiss
         )
         from mcpgateway.services.team_management_service import TeamManagementService
 
-        # Force reload teams module to apply mocked decorators
-        import importlib
 
-        importlib.reload(teams)
+def mock_permission_check(is_admin=False):
+    """Helper context manager to mock PermissionService.check_platform_admin_permission."""
+    from contextlib import contextmanager
+    from unittest.mock import AsyncMock, patch
+
+    @contextmanager
+    def _mock():
+        with patch("mcpgateway.routers.teams.PermissionService") as MockPermissionService:
+            mock_perm_service = AsyncMock()
+            mock_perm_service.check_platform_admin_permission = AsyncMock(return_value=is_admin)
+            MockPermissionService.return_value = mock_perm_service
+            yield mock_perm_service
+
+    return _mock()
 
 
 class TestTeamsRouterV2:
@@ -122,7 +133,9 @@ class TestTeamsRouterV2:
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(return_value=mock_team)
             MockService.return_value = mock_service
@@ -146,7 +159,9 @@ class TestTeamsRouterV2:
             max_members=50,
         )
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team = AsyncMock(side_effect=ValueError("Team name cannot be empty"))
             MockService.return_value = mock_service
@@ -197,7 +212,9 @@ class TestTeamsRouterV2:
         team_id = mock_team.id
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=100)
 
-        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        with mock_permission_check(is_admin=False), \
+             patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
@@ -207,7 +224,9 @@ class TestTeamsRouterV2:
             result = await teams.update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
-            mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False)
+            mock_service.update_team.assert_called_once_with(
+                team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False
+            )
 
     @pytest.mark.asyncio
     async def test_delete_team_success(self, mock_user_context, mock_db):
@@ -248,14 +267,7 @@ class TestTeamsRouterV2:
             mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
-            result = await teams.list_team_members(
-                team_id=team_id,
-                cursor=None,
-                limit=None,
-                include_pagination=False,
-                current_user=mock_user_context,
-                db=mock_db
-            )
+            result = await teams.list_team_members(team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db)
 
             assert isinstance(result, list)
             assert len(result) == 1

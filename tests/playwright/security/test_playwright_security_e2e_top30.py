@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Top-30 browser-driven security scenarios for Playwright."""
+"""Location: ./tests/playwright/security/test_playwright_security_e2e_top30.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Top-30 browser-driven security scenarios for Playwright.
+"""
 
 # Future
 from __future__ import annotations
@@ -32,7 +38,7 @@ from .conftest import BASE_URL
 pytestmark = [pytest.mark.ui, pytest.mark.e2e, pytest.mark.playwright_security_e2e]
 
 _UNSET = object()
-TEST_PASSWORD = "SecureTestPass123!"
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 
 def _extract_servers(response_json: Any) -> list[dict[str, Any]]:
@@ -174,14 +180,14 @@ def email_logged_in_page(context: BrowserContext) -> Page:
         pytest.skip("Email login form is unavailable in this environment.")
 
     admin_email = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-    candidate_passwords = [os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!"), os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")]
+    candidate_passwords = [os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW"), os.getenv("PLATFORM_ADMIN_PASSWORD", "5S1Nd8z$Ivb6N%Lsj^okvVF6")]
 
     login_succeeded = False
     for password in candidate_passwords:
         login_page.submit_login(admin_email, password)
 
         if login_page.is_on_change_password_page():
-            desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
+            desired_password = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "SV^cB9Qx3!em48fy$1VhjxkW")
             login_page.submit_password_change(password, desired_password)
 
         if "/admin/login" not in page.url and "/admin/change-password-required" not in page.url:
@@ -506,11 +512,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
         if "/admin/login" in page.url:
-            assert (
-                "error=admin_required" in page.url
-                or "error=invalid_credentials" in page.url
-                or page.url.rstrip("/").endswith("/admin/login")
-            )
+            assert "error=admin_required" in page.url or "error=invalid_credentials" in page.url or page.url.rstrip("/").endswith("/admin/login")
             return
 
         # Some deployments keep URL at /admin and render denied content; ensure admin-only API is blocked.
@@ -582,7 +584,7 @@ class TestPlaywrightSecurityE2EScopeAndRBAC:
                 "/auth/email/admin/users",
                 data={
                     "email": f"forbidden-{uuid.uuid4().hex[:8]}@example.com",
-                    "password": "SecurePass123!",
+                    "password": "SecureP@ssw0rd!Test2026",  # pragma: allowlist secret
                     "full_name": "Forbidden User",
                 },
             )
@@ -706,7 +708,7 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
         login_xss_marker = admin_page.page.evaluate(f"Boolean(window.__pw_xss_login_{nonce})")
         assert login_xss_marker is False, "Error query parameter executed JavaScript in login page."
 
-        server_name = f'<script>window.__pw_xss_catalog_{nonce}=1</script>xss-{nonce}'
+        server_name = f"<script>window.__pw_xss_catalog_{nonce}=1</script>xss-{nonce}"
         create_resp = admin_api.post(
             "/servers",
             data={

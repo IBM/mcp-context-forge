@@ -8,7 +8,7 @@ import {
   validateUrl,
 } from "./security";
 import { getEditSelections } from "./servers";
-import { isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+import { isInactiveChecked, safeGetElement, showErrorMessage, showSkippedToolsWarning } from "./utils";
 
 // ===================================================================
 // ENHANCED FORM HANDLERS with Input Validation
@@ -123,6 +123,9 @@ export const handleGatewayFormSubmit = async function (e) {
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Gateway");
     } else {
+      if (result.skipped_tools && result.skipped_tools.length > 0) {
+        await showSkippedToolsWarning(result.skipped_tools);
+      }
       const teamId = new URL(window.location.href).searchParams.get("team_id");
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
@@ -557,8 +560,12 @@ export const handleA2AFormSubmit = async function (e) {
     teamId && formData.append("team_id", teamId);
 
     // Submit to backend
-    // specifically log agentType only
-    console.log("agentType:", formData.get("agentType"));
+    // Debug: Log all form data being sent
+    console.log("=== A2A Form Data Being Sent ===");
+    for (const [key, value] of formData.entries()) {
+      console.log(`${key}:`, value);
+    }
+    console.log("=================================");
 
     const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
       method: "POST",
@@ -822,6 +829,9 @@ export const handleEditGatewayFormSubmit = async function (e) {
       throw new Error(result?.message || "Failed to edit Gateway");
     }
     // Only redirect on success
+    if (result.skipped_tools && result.skipped_tools.length > 0) {
+      await showSkippedToolsWarning(result.skipped_tools);
+    }
     const teamId = new URL(window.location.href).searchParams.get("team_id");
 
     const searchParams = new URLSearchParams();

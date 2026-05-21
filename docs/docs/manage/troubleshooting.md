@@ -74,9 +74,6 @@ brew install sqlite3 && brew link --force sqlite3
 brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'
 ```
 
-!!! tip "Full SQLite Guide"
-    See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) for deeper steps including WAL cleanup, integrity check, and recovery.
-
 ---
 
 ## WSL2: Port Publishing Issues

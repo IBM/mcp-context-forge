@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_config.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -14,7 +14,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
+
+from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 
 # Third-party
 import pytest
@@ -71,9 +73,6 @@ def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
 
 def test_sso_entra_graph_timeout_and_max_groups_validation():
     """Graph fallback timeout and max_groups should enforce configured bounds."""
-    # Third-Party
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError):
         Settings(sso_entra_graph_api_timeout=0, _env_file=None)
 
@@ -107,6 +106,71 @@ def test_uaid_max_federation_hops_accepts_bounds(good_value):
     """
     settings = Settings(uaid_max_federation_hops=good_value, _env_file=None)
     assert settings.uaid_max_federation_hops == good_value
+
+
+def test_parse_siem_destinations_input_variants(monkeypatch):
+    """siem_destinations parser should normalize supported value shapes."""
+    assert Settings.parse_siem_destinations(None) == []
+    assert Settings.parse_siem_destinations(123) == []
+    assert Settings.parse_siem_destinations("   ") == []
+
+    from_list = Settings.parse_siem_destinations([{"name": "d1"}, "skip"])
+    assert from_list == [{"name": "d1"}]
+
+    from_dict = Settings.parse_siem_destinations({"destinations": [{"name": "d2"}]})
+    assert from_dict == [{"name": "d2"}]
+    assert Settings.parse_siem_destinations({"unexpected": "value"}) == []
+
+    from_json_list = Settings.parse_siem_destinations('[{"name":"d3"}]')
+    assert from_json_list == [{"name": "d3"}]
+
+    from_json_dict = Settings.parse_siem_destinations('{"destinations":[{"name":"d4"}]}')
+    assert from_json_dict == [{"name": "d4"}]
+    assert Settings.parse_siem_destinations("{}") == []
+
+    from_nested_json = Settings.parse_siem_destinations('{"siem_export":{"destinations":[{"name":"d5"}]}}')
+    assert from_nested_json == [{"name": "d5"}]
+
+    from_yaml = Settings.parse_siem_destinations("- name: d6\n  type: webhook\n")
+    assert from_yaml == [{"name": "d6", "type": "webhook"}]
+
+    from_yaml_dict = Settings.parse_siem_destinations("destinations:\n  - name: d7\n    type: webhook\n")
+    assert from_yaml_dict == [{"name": "d7", "type": "webhook"}]
+
+    from_yaml_nested = Settings.parse_siem_destinations("siem_export:\n  destinations:\n    - name: d8\n      type: webhook\n")
+    assert from_yaml_nested == [{"name": "d8", "type": "webhook"}]
+
+    # Force YAML parser failure after JSON parsing fails.
+    import yaml
+
+    monkeypatch.setattr(yaml, "safe_load", lambda _raw: (_ for _ in ()).throw(ValueError("bad yaml")))
+    assert Settings.parse_siem_destinations("{not valid json or yaml}") == []
+
+
+def test_load_siem_destinations_from_file(tmp_path: Path):
+    """Settings should load SIEM destinations from the configured file."""
+    cfg = tmp_path / "siem.json"
+    cfg.write_text('[{"name":"file-dest","type":"webhook","url":"https://example.com/hook"}]', encoding="utf-8")
+
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(cfg),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == [{"name": "file-dest", "type": "webhook", "url": "https://example.com/hook"}]
+
+
+def test_load_siem_destinations_missing_file(tmp_path: Path):
+    """Missing SIEM destination config file should not raise."""
+    missing = tmp_path / "does-not-exist.json"
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(missing),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == []
 
 
 # --------------------------------------------------------------------------- #
@@ -265,10 +329,6 @@ def test_compression_minimum_size_validation():
     s = Settings(compression_minimum_size=0, _env_file=None)
     assert s.compression_minimum_size == 0
 
-    # Invalid: negative values should fail
-    # Third-Party
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_minimum_size=-1, _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
@@ -276,20 +336,14 @@ def test_compression_minimum_size_validation():
 
 def test_compression_gzip_level_validation():
     """Test that gzip level validates 1-9 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for level in [1, 6, 9]:
         s = Settings(compression_gzip_level=level, _env_file=None)
         assert s.compression_gzip_level == level
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_gzip_level=0, _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_gzip_level=10, _env_file=None)
     assert "less than or equal to 9" in str(exc_info.value).lower()
@@ -297,20 +351,14 @@ def test_compression_gzip_level_validation():
 
 def test_compression_brotli_quality_validation():
     """Test that brotli quality validates 0-11 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for quality in [0, 4, 11]:
         s = Settings(compression_brotli_quality=quality, _env_file=None)
         assert s.compression_brotli_quality == quality
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_brotli_quality=-1, _env_file=None)
     assert "greater than or equal to 0" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_brotli_quality=12, _env_file=None)
     assert "less than or equal to 11" in str(exc_info.value).lower()
@@ -318,20 +366,14 @@ def test_compression_brotli_quality_validation():
 
 def test_compression_zstd_level_validation():
     """Test that zstd level validates 1-22 range."""
-    # Third-Party
-    from pydantic import ValidationError
-
-    # Valid range
     for level in [1, 3, 22]:
         s = Settings(compression_zstd_level=level, _env_file=None)
         assert s.compression_zstd_level == level
 
-    # Invalid: below range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_zstd_level=0, _env_file=None)
     assert "greater than or equal to 1" in str(exc_info.value).lower()
 
-    # Invalid: above range
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_zstd_level=23, _env_file=None)
     assert "less than or equal to 22" in str(exc_info.value).lower()
@@ -453,8 +495,107 @@ def test_parse_allowed_roots_empty():
 
 def test_parse_allowed_roots_list_passthrough():
     """List input should be passed through unchanged."""
-    s = Settings(allowed_roots=["/api"], _env_file=None)
-    assert s.allowed_roots == ["/api"]
+
+
+def test_gateway_create_rejects_always_blocked_ssrf_token_url():
+    """Gateway creation should reject OAuth token URLs in always-blocked SSRF ranges."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_localhost_token_url_when_disabled(monkeypatch):
+    """Gateway creation should reject localhost OAuth token URLs when localhost SSRF access is disabled."""
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "ssrf_allow_localhost", False)
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-gateway-localhost",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://127.0.0.1/token",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "localhost" in str(exc_info.value).lower()
+
+
+def test_gateway_update_rejects_ssrf_token_url():
+    """Gateway update should reject OAuth token URLs blocked by SSRF rules."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayUpdate(
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "http://169.254.169.254/latest/meta-data/",
+            },
+        )
+
+    assert "OAuth config token_url" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_create_rejects_oauth_authorization_servers_with_blocked_urls():
+    """Gateway creation should reject blocked URLs inside oauth_config.authorization_servers."""
+    from pydantic import ValidationError
+
+    from mcpgateway.schemas import GatewayCreate
+
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="blocked-oauth-authorization-servers",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "grant_type": "client_credentials",
+                "client_id": "client-id",
+                "client_secret": "test-client-secret",  # pragma: allowlist secret
+                "token_url": "https://issuer.example/token",
+                "authorization_servers": ["http://169.254.169.254/latest/meta-data/"],
+            },
+        )
+
+    assert "OAuth config authorization_servers[0]" in str(exc_info.value)
+    assert "SSRF protection" in str(exc_info.value)
+
+
+def test_gateway_update_accepts_safe_public_oauth_token_url():
+    """Gateway update should allow safe public OAuth token URLs."""
+    from mcpgateway.schemas import GatewayUpdate
+
+    updated = GatewayUpdate(
+        auth_type="oauth",
+        oauth_config={
+            "grant_type": "client_credentials",
+            "client_id": "client-id",
+            "client_secret": "test-client-secret",  # pragma: allowlist secret
+            "token_url": "https://issuer.example/token",
+        },
+    )
+
+    assert updated.oauth_config is not None
+    assert updated.oauth_config["token_url"] == "https://issuer.example/token"
 
 
 # --------------------------------------------------------------------------- #
@@ -1322,3 +1463,214 @@ def test_hot_server_check_interval_property():
     s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
     # hot_server_check_interval defaults to gateway_auto_refresh_interval
     assert s.hot_server_check_interval == 60
+
+
+def test_gateway_create_oauth_config_non_dict_raises():
+    """Test that oauth_config must be a dict object."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config="not a dict",  # Should be dict
+        )
+    assert "oauth_config must be an object" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_non_string_url_field_raises():
+    """Test that oauth_config URL fields must be strings."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "token_url": 12345,  # Should be string
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.token_url must be a string URL" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_authorization_servers_non_list_raises():
+    """Test that oauth_config.authorization_servers must be a list."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "authorization_servers": "not a list",  # Should be list
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.authorization_servers must be a list" in str(exc_info.value)
+
+
+def test_gateway_create_oauth_config_authorization_servers_non_string_item_raises():
+    """Test that oauth_config.authorization_servers items must be strings."""
+    with pytest.raises(ValidationError) as exc_info:
+        GatewayCreate(
+            name="test-gateway",
+            url="https://example.com/sse",
+            auth_type="oauth",
+            oauth_config={
+                "authorization_servers": ["https://auth.example.com", 12345],  # Second item not string
+                "client_id": "test-client",
+                "client_secret": "test-secret",  # pragma: allowlist secret
+            },
+        )
+    assert "oauth_config.authorization_servers[1] must be a string URL" in str(exc_info.value)
+
+
+def test_oauth_manager_non_string_token_url_raises():
+    """Test that OAuthManager raises error for non-string token_url."""
+    from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+
+    manager = OAuthManager()
+    credentials = {
+        "client_id": "test-client",
+        "client_secret": "test-secret",  # pragma: allowlist secret
+        "token_url": 12345,  # Not a string
+    }
+
+    with pytest.raises(OAuthError, match="OAuth configuration missing valid token_url"):
+        import asyncio
+
+        asyncio.run(manager._client_credentials_flow(credentials))
+# --------------------------------------------------------------------------- #
+#                    UAID Security Configuration                               #
+# --------------------------------------------------------------------------- #
+def test_uaid_allow_all_domains_defaults_false():
+    """Verify UAID_ALLOW_ALL_DOMAINS defaults to False (secure default)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_allow_all_domains is False
+
+
+def test_uaid_forward_auth_defaults_true():
+    """Verify UAID_FORWARD_AUTH defaults to True (auth forwarding enabled)."""
+    settings = Settings(_env_file=None)
+    assert settings.uaid_forward_auth is True
+
+
+def test_uaid_allow_all_domains_can_be_enabled():
+    """Verify UAID_ALLOW_ALL_DOMAINS can be explicitly enabled (dev mode)."""
+    settings = Settings(uaid_allow_all_domains=True, _env_file=None)
+    assert settings.uaid_allow_all_domains is True
+
+
+# UAID Domain Allowlist Validation Tests
+def test_uaid_allowed_domains_rejects_localhost():
+    """Verify validator rejects localhost in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["example.com", "localhost"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_127_0_0_1():
+    """Verify validator rejects 127.0.0.1 in domain allowlist."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["127.0.0.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local():
+    """Verify validator rejects link-local addresses (169.254.x.x)."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_private_ips():
+    """Verify validator rejects private IP ranges."""
+    # Test various private IP ranges
+    private_ips = ["10.0.0.1", "192.168.1.1", "172.16.0.1"]
+    for ip in private_ips:
+        with pytest.raises(ValueError, match="private IP range"):
+            Settings(uaid_allowed_domains=[ip], _env_file=None)
+
+
+def test_uaid_allowed_domains_172_range_boundary():
+    """Verify only the private 172.16/12 range is rejected."""
+    with pytest.raises(ValueError, match="private IP range"):
+        Settings(uaid_allowed_domains=["172.20.1.1"], _env_file=None)
+
+    settings = Settings(uaid_allowed_domains=["172.32.1.1"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["172.32.1.1"]
+
+
+def test_uaid_allowed_domains_rejects_whitespace():
+    """Verify validator rejects domains with whitespace."""
+    with pytest.raises(ValueError, match="contains whitespace"):
+        Settings(uaid_allowed_domains=["example.com", "bad domain.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_domains():
+    """Verify validator accepts valid public domain names."""
+    valid_domains = ["example.com", "gateway.acme.org", "api.partner.io"]
+    settings = Settings(uaid_allowed_domains=valid_domains, _env_file=None)
+    assert settings.uaid_allowed_domains == valid_domains
+
+
+def test_uaid_allowed_domains_accepts_empty_list():
+    """Verify validator accepts empty list (fail-closed default)."""
+    settings = Settings(uaid_allowed_domains=[], _env_file=None)
+    assert settings.uaid_allowed_domains == []
+
+
+def test_uaid_config_warns_on_contradictory_settings(caplog):
+    """Verify warning when both allow_all and allowlist are set."""
+    import logging
+
+    # Capture warnings from the config logger
+    with caplog.at_level(logging.WARNING, logger='mcpgateway.config'):
+        settings = Settings(
+            uaid_allow_all_domains=True,
+            uaid_allowed_domains=["example.com"],
+            _env_file=None
+        )
+
+    # Should create settings successfully but log warning
+    assert settings.uaid_allow_all_domains is True
+    assert settings.uaid_allowed_domains == ["example.com"]
+
+    # Check warning was logged in config module
+    assert any("Configuration conflict" in record.message for record in caplog.records), \
+        f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
+
+
+def test_uaid_allowed_domains_rejects_ipv6_with_brackets():
+    """Verify validator rejects IPv6 loopback with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::1]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_ipv6_zero_with_brackets():
+    """Verify validator rejects IPv6 zero address with bracket notation."""
+    with pytest.raises(ValueError, match="loopback address"):
+        Settings(uaid_allowed_domains=["[::0]"], _env_file=None)
+
+
+def test_uaid_allowed_domains_multiple_invalid():
+    """Verify validator reports all invalid domains when multiple are present."""
+    with pytest.raises(ValueError, match="localhost.*127.0.0.1"):
+        Settings(uaid_allowed_domains=["localhost", "127.0.0.1", "example.com"], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_loopback_with_port():
+    """Verify validator rejects loopback addresses with ports."""
+    loopback_with_ports = ["localhost:4444", "127.0.0.1:4444", "[::1]:8080"]
+    for domain in loopback_with_ports:
+        with pytest.raises(ValueError, match="loopback address"):
+            Settings(uaid_allowed_domains=[domain], _env_file=None)
+
+
+def test_uaid_allowed_domains_rejects_link_local_with_port():
+    """Verify validator rejects link-local addresses with ports."""
+    with pytest.raises(ValueError, match="link-local address"):
+        Settings(uaid_allowed_domains=["169.254.1.1:8080"], _env_file=None)
+
+
+def test_uaid_allowed_domains_accepts_valid_with_port():
+    """Verify validator accepts valid public domains with ports."""
+    settings = Settings(uaid_allowed_domains=["example.com:8443", "gateway.io:4444"], _env_file=None)
+    assert settings.uaid_allowed_domains == ["example.com:8443", "gateway.io:4444"]

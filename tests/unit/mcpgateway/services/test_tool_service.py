@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/services/test_tool_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -10,15 +10,18 @@ Tests for tool service implementation.
 # Standard
 import asyncio
 import base64
-import json
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
+import json
 import logging
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
+from cpex.framework import PluginManager, PluginMode
+from cpex.framework.hooks.tools import ToolHookType
+from cpex.framework.models import PluginResult
 import jsonschema
 import orjson
 import pytest
@@ -30,9 +33,6 @@ from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.plugins.framework import PluginManager, PluginMode
-from mcpgateway.plugins.framework.hooks.tools import ToolHookType
-from mcpgateway.plugins.framework.models import PluginResult
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _build_retry_policy_config,
@@ -227,26 +227,25 @@ class TestToolServiceHelpersExtended:
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag controls whether the plugin factory is available."""
         # First-Party
-        import mcpgateway.plugins.framework as pf_mod  # pylint: disable=import-outside-toplevel
-        from mcpgateway.plugins.framework.settings import settings as plugin_settings  # pylint: disable=import-outside-toplevel
+        import mcpgateway.plugins as plugins_mod  # pylint: disable=import-outside-toplevel
 
-        # Enabled case: pre-install a mock factory so get_plugin_manager_factory() returns it
+        # Enabled case: pre-install a mock factory so get_plugin_manager() returns it
         mock_factory_instance = MagicMock()
         mock_factory_instance._managers = {}
-        monkeypatch.setattr(pf_mod, "_plugin_manager_factory", mock_factory_instance)
+        monkeypatch.setattr(plugins_mod, "_plugin_manager_factory", mock_factory_instance)
         monkeypatch.setenv("PLUGINS_ENABLED", "yes")
-        plugin_settings.cache_clear()
+        plugins_mod.enable_plugins(True)
 
         service = ToolService()  # noqa: F841
-        assert pf_mod._plugin_manager_factory is not None
+        assert plugins_mod._plugin_manager_factory is not None
 
         # Disabled case: factory should be None
-        monkeypatch.setattr(pf_mod, "_plugin_manager_factory", None)
+        monkeypatch.setattr(plugins_mod, "_plugin_manager_factory", None)
         monkeypatch.setenv("PLUGINS_ENABLED", "no")
-        plugin_settings.cache_clear()
+        plugins_mod.enable_plugins(False)
 
         service = ToolService()  # noqa: F841
-        assert pf_mod._plugin_manager_factory is None
+        assert plugins_mod._plugin_manager_factory is None
 
     @pytest.mark.asyncio
     async def test_get_top_tools_returns_cached(self, monkeypatch):
@@ -3611,6 +3610,7 @@ class TestToolService:
 
             # Return an object whose scalar_one_or_none() returns the real value
             class Result:
+
                 def scalar_one_or_none(self_inner):
                     return value
 
@@ -4368,9 +4368,9 @@ class TestToolService:
 
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with successful plugin post-invoke hook."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
 
         # Configure tool as REST
         mock_tool.integration_type = "REST"
@@ -4436,7 +4436,7 @@ class TestToolService:
 
         # Mock plugin manager and post-invoke hook with modified payload
         mock_modified_payload = Mock()
-        mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}]}
+        mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}], "isError": True}
 
         mock_post_result = Mock()
         mock_post_result.continue_processing = True
@@ -4444,8 +4444,8 @@ class TestToolService:
         mock_post_result.modified_payload = mock_modified_payload
         mock_post_result.retry_delay_ms = 0
 
-        # First-Party
-        from mcpgateway.plugins.framework import PluginResult, ToolHookType
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
 
         mock_pm = Mock()
 
@@ -4469,6 +4469,7 @@ class TestToolService:
 
         # Verify result was modified by plugin
         assert result.content[0].text == "Modified by plugin"
+        assert result.is_error is True
 
     async def test_invoke_tool_with_plugin_post_invoke_invalid_modified_payload(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with plugin post-invoke hook providing invalid modified payload."""
@@ -4497,9 +4498,9 @@ class TestToolService:
         mock_post_result.modified_payload = mock_modified_payload
         mock_post_result.retry_delay_ms = 0
 
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
 
         mock_pm = Mock()
 
@@ -4542,9 +4543,9 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock plugin manager with invoke_hook that raises error on POST_INVOKE
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import ToolHookType
+        from cpex.framework.models import PluginResult
 
         mock_pm = Mock()
 
@@ -6166,7 +6167,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()
@@ -6186,7 +6187,7 @@ class TestToolServiceTokenTeamsFiltering:
         tool_service.convert_tool_to_read = Mock(side_effect=[tool_read_a, tool_read_b])
 
         # Only team_a in token_teams - should only see team_a tools
-        result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
+        await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
 
         assert test_db.execute.called
 
@@ -6811,8 +6812,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPreInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
@@ -6845,8 +6848,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with short cooldown
@@ -6886,8 +6891,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
@@ -6929,8 +6936,10 @@ class TestToolTimeoutsAndRetries:
         from collections import deque
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with low consecutive failure threshold
@@ -6965,8 +6974,10 @@ class TestToolTimeoutsAndRetries:
         from collections import deque
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with specific error rate settings
@@ -7012,8 +7023,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPreInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
@@ -7042,8 +7055,10 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_metadata_includes_all_fields(self):
         """Verify post_invoke metadata includes all required fields."""
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         # Create plugin
@@ -7082,8 +7097,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         # Create plugin
@@ -7119,8 +7136,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with low threshold
@@ -7187,8 +7206,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPostInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with 1-second window
@@ -7257,8 +7278,10 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_plugin_initialization(self):
         """Verify plugin initializes correctly with config."""
+        # Third-Party
+        from cpex.framework import PluginConfig
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         config = PluginConfig(
@@ -7287,8 +7310,10 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_plugin_allows_requests_when_closed(self):
         """Verify plugin allows requests when circuit is closed."""
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPreInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
@@ -7309,8 +7334,10 @@ class TestToolTimeoutsAndRetries:
         # Standard
         import time
 
+        # Third-Party
+        from cpex.framework import PluginConfig, ToolPreInvokePayload
+
         # First-Party
-        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
         from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
@@ -7453,6 +7480,7 @@ class TestToolServiceHelpers:
             custom_name_slug="custom",
             display_name="Custom Tool",
             gateway_id=None,
+            grpc_service_id=None,
             enabled=True,
             reachable=True,
             tags=None,
@@ -7495,7 +7523,8 @@ class TestToolServiceHelpers:
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
-        assert "auth_value" not in payload["gateway"]
+        # auth_value is now included in gateway cache payload (required by Gateway Pydantic model)
+        assert payload["gateway"]["auth_value"] == "secret"
         assert "oauth_config" not in payload["gateway"]
         assert "auth_query_params" not in payload["gateway"]
 
@@ -8884,7 +8913,7 @@ class TestRustMcpExecutionPlan:
         # Create a mock plugin manager with proper registry structure
         mock_hook_ref = MagicMock()
         mock_hook_ref.plugin_ref.name = "SomeOtherPlugin"  # Not RetryWithBackoffPlugin
-        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.mode = PluginMode.SEQUENTIAL
         mock_hook_ref.plugin_ref.conditions = None
 
         mock_registry = MagicMock()
@@ -8912,7 +8941,7 @@ class TestRustMcpExecutionPlan:
         """RetryWithBackoffPlugin should produce a native retry policy when the package is installed."""
         mock_hook_ref = MagicMock()
         mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
-        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.mode = PluginMode.SEQUENTIAL
         mock_hook_ref.plugin_ref.conditions = None
         mock_hook_ref.plugin_ref.plugin.config.config = {
             "max_retries": settings.max_tool_retries + 5,
@@ -8950,7 +8979,7 @@ class TestRustMcpExecutionPlan:
         """Invalid retry config should force Python fallback."""
         mock_hook_ref = MagicMock()
         mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
-        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.mode = PluginMode.SEQUENTIAL
         mock_hook_ref.plugin_ref.conditions = None
         mock_hook_ref.plugin_ref.plugin.config.config = {"max_retries": 3, "tool_overrides": {"tool-one": "invalid"}}
 
@@ -9025,7 +9054,7 @@ class TestRustMcpExecutionPlan:
         """Text-content inspection in an override should force Python fallback."""
         mock_hook_ref = MagicMock()
         mock_hook_ref.plugin_ref.name = "RetryWithBackoffPlugin"
-        mock_hook_ref.plugin_ref.mode = PluginMode.ENFORCE
+        mock_hook_ref.plugin_ref.mode = PluginMode.SEQUENTIAL
         mock_hook_ref.plugin_ref.conditions = None
         mock_hook_ref.plugin_ref.plugin.config.config = {"tool_overrides": {"tool-one": {"check_text_content": "true"}}}
 
@@ -9434,6 +9463,7 @@ class TestRustMcpExecutionPlan:
             display_name=None,
             tags=[],
             gateway_id="gw-1",
+            grpc_service_id=None,
             gateway=gateway,
             query_mapping=None,
             header_mapping=None,
@@ -9508,6 +9538,7 @@ class TestRustMcpExecutionPlan:
             display_name=None,
             tags=[],
             gateway_id="gw-1",
+            grpc_service_id=None,
             gateway=gateway,
             query_mapping=None,
             header_mapping=None,
@@ -9818,9 +9849,8 @@ class TestRustMcpExecutionPlan:
         (mocked here) sets the Authorization header during tool_pre_invoke. The
         post-hook check sees Authorization is present and lets the plan through.
         """
-        # First-Party
-        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload, PluginResult, ToolPreInvokePayload
 
         cache = self._cache_mock(
             self._cache_payload(
@@ -10005,9 +10035,9 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):
         """Pre-invoke hooks only (no post-invoke) should produce eligible plan with hook results."""
-        # First-Party
-        from mcpgateway.plugins.framework import HttpHeaderPayload, ToolPreInvokePayload
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload, ToolPreInvokePayload
+        from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
 
@@ -10052,9 +10082,9 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_hook_modifies_tool_name(self, tool_service):
         """Pre-invoke hook that renames tool should update remoteToolName in plan."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolPreInvokePayload
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import ToolPreInvokePayload
+        from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload())
 
@@ -10113,8 +10143,8 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_passes_runtime_headers_not_request_headers(self, tool_service):
         """Pre-invoke hook should receive outbound runtime headers, not inbound request headers."""
-        # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload())
 
@@ -10153,9 +10183,9 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_receives_plugin_global_context(self, tool_service):
         """Pre-invoke hook should receive the middleware-provided GlobalContext, not a fresh one."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import GlobalContext
+        from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload())
 
@@ -10207,9 +10237,9 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_injects_user_into_global_context(self, tool_service):
         """Pre-invoke hook should populate global_context.user from app_user_email when the provided context has no user."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import GlobalContext
+        from cpex.framework.models import PluginResult
 
         cache = self._cache_mock(self._cache_payload())
 
@@ -10250,10 +10280,10 @@ class TestRustMcpExecutionPlan:
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_injects_tool_and_gateway_metadata(self, tool_service):
         """Pre-invoke hook should inject PydanticTool and PydanticGateway metadata into global context."""
-        # First-Party
-        from mcpgateway.plugins.framework import GlobalContext
-        from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-        from mcpgateway.plugins.framework.models import PluginResult
+        # Third-Party
+        from cpex.framework import GlobalContext
+        from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+        from cpex.framework.models import PluginResult
 
         # Supply fields required by PydanticTool (url) and PydanticGateway
         # (id, slug, transport, capabilities, last_seen) so model_validate succeeds.
@@ -10471,3 +10501,131 @@ async def test_list_server_mcp_tool_definitions_creates_span(tool_service):
     attrs = mock_create_span.call_args[0][1]
     assert attrs["mcp.definition_mode"] is True
     assert attrs["team.scope"] == "team-1"
+
+
+class TestGrpcToolInvocation:
+    """Tests for gRPC tool invocation via invoke_tool."""
+
+    @pytest.fixture
+    def tool_service(self):
+        return ToolService()
+
+    @pytest.fixture
+    def test_db(self):
+        db = MagicMock()
+        db.close = MagicMock()
+        db.commit = MagicMock()
+        return db
+
+    @pytest.fixture
+    def mock_grpc_tool(self):
+        """Create a mock gRPC tool."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "grpc-tool-1"
+        tool.original_name = "test.Svc.DoStuff"
+        tool.url = "localhost:8989"
+        tool.description = "gRPC method test.Svc.DoStuff"
+        tool.original_description = "gRPC method test.Svc.DoStuff"
+        tool.integration_type = "gRPC"
+        tool.request_type = "SSE"
+        tool.headers = {}
+        tool.input_schema = {"type": "object", "properties": {}}
+        tool.output_schema = None
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.gateway_id = None
+        tool.gateway = None
+        tool.grpc_service_id = "grpc-svc-1"
+        tool.annotations = {}
+        tool.name = "test-svc-dostuff"
+        tool.custom_name = "test.Svc.DoStuff"
+        tool.custom_name_slug = "test-svc-dostuff"
+        tool.display_name = "Test Svc Dostuff"
+        tool.enabled = True
+        tool.reachable = True
+        tool.tags = []
+        tool.team_id = None
+        tool.owner_email = "admin@example.com"
+        tool.visibility = "public"
+        tool.team = None
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_success(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test successful gRPC tool invocation."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "ok", "value": 42})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {"key": "val"}, request_headers=None)
+
+        assert response.is_error is not True
+        assert "ok" in response.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test gRPC tool invocation that raises an error."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is True
+        assert "gRPC invocation error" in response.content[0].text
+        assert "Connection refused" in response.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_propagates_cancellation(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """B7 anti-regression: a CancelledError from the gRPC manager must propagate, NOT get
+        wrapped as ``ToolInvocationError`` by the outer except BaseException."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(side_effect=asyncio.CancelledError())
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            with pytest.raises(asyncio.CancelledError):
+                await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_timeout_raises_tool_timeout_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """A timeout on the gRPC invocation must surface as ToolTimeoutError."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        async def slow_invoke(*_a, **_kw):
+            raise asyncio.TimeoutError()
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(side_effect=slow_invoke)
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            with pytest.raises(ToolTimeoutError):
+                await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+
+# Coverage decision-record (B7 anti-regression):
+#   ``invoke_tool`` has three byte-identical ``except asyncio.CancelledError: raise``
+#   clauses (REST ~5446, MCP ~5632, gRPC 5847) plus the gRPC timeout post-invoke hook
+#   (~5851). The gRPC clauses are exercised by ``TestGrpcToolInvocation``. Equivalent
+#   REST/MCP tests require coaxing CancelledError through ``asyncio.wait_for``, which
+#   converts cancellation into TimeoutError in some Python event-loop states. Since the
+#   pattern is structurally identical in all three branches, protecting it in one branch
+#   (gRPC) is sufficient to detect a regression that would affect all three.

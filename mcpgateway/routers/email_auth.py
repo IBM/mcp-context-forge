@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/routers/email_auth.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -22,12 +22,13 @@ from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.common.query_params import QueryPaginationCursorResults
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal, utc_now
@@ -295,10 +296,36 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
-        # Return authentication response
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
+        # Generate CSRF token for session
+        # Extract jti from JWT payload for session_id
+        try:
+            # Third-Party
+            import jwt
+
+            # First-Party
+            from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
+
+            # Decode JWT to get jti (don't verify since we just created it)
+            payload = jwt.decode(access_token, options={"verify_signature": False})
+            session_id = payload.get("jti", "")
+
+            # Generate CSRF token
+            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+
+            auth_response = AuthenticationResponse(
+                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+            )  # nosec B106 - OAuth2 token type, not a password
+            response = ORJSONResponse(content=auth_response.model_dump(mode="json"))
+
+            set_csrf_cookie(response, csrf_token, settings)
+
+            return response
+        except Exception as e:
+            logger.warning(f"Failed to set CSRF token for {user.email}: {e}")
+            # Fall back to response without CSRF token (non-critical)
+            return AuthenticationResponse(
+                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+            )  # nosec B106 - OAuth2 token type, not a password
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
@@ -578,7 +605,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 @email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
 @require_permission("admin.user_management")
 async def list_users(
-    cursor: Optional[str] = Query(None, max_length=500, pattern=r"^[a-zA-Z0-9_=+/-]+$", description="Pagination cursor for fetching the next set of results"),
+    cursor: QueryPaginationCursorResults = None,
     limit: Optional[int] = Query(
         None,
         ge=0,
@@ -760,10 +787,58 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
 
 
-@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
+@email_auth_router.patch("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
 async def update_user(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update user information (admin only).
+
+    Args:
+        user_email: Email of user to update
+        user_request: Updated user information
+        current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
+
+    Returns:
+        EmailUserResponse: Updated user information
+
+    Raises:
+        HTTPException: If user not found or update fails
+    """
+    return await update_user_delegate(user_email, user_request, current_user_ctx, db)
+
+
+# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as directed in the docstring of update_user_delegate
+@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
+@require_permission("admin.user_management")
+async def update_user_deprecated(
+    user_email: str, user_request: AdminUserUpdateRequest, response: Response, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+):
+    """Update user information (admin only). Deprecated: use PATCH instead.
+
+    Args:
+        user_email: Email of user to update
+        user_request: Updated user information
+        current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
+        response: FastAPI Response object to manipulate the headers
+
+    Returns:
+        EmailUserResponse: Updated user information
+
+    Raises:
+        HTTPException: If user not found or update fails
+    """
+    result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
+    deprecation_date = "@" + str(int(datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC).timestamp()))
+    response.headers["Deprecation"] = deprecation_date
+    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 GMT"
+    return result
+
+
+async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
+    """Update user information. Common function for both update_user and update_user_deprecated.
+    Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
+    Sun, 16 Aug 2026 23:59:59 UTC.
 
     Args:
         user_email: Email of user to update
@@ -806,6 +881,9 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     except Exception as e:
         logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
+
+
+# -------------------------->
 
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)

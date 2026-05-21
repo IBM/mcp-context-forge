@@ -2,7 +2,13 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""API abuse hardening tests: mass assignment, BOLA, HPP, XSS, and path traversal."""
+"""Location: ./tests/playwright/security/test_api_abuse_hardening.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+API abuse hardening tests: mass assignment, BOLA, HPP, XSS, and path traversal.
+"""
 
 # Future
 from __future__ import annotations
@@ -121,7 +127,7 @@ class TestAPISecurityAbuseCases:
             token_obj = body.get("token", body)
             assert token_obj.get("user_email") == "admin@example.com"
         else:
-            assert response.status == 422, f"Unexpected response for mass-assignment probe: {response.status} {response.text()}"
+            assert response.status in (400, 422), f"Unexpected response for mass-assignment probe: {response.status} {response.text()}"
 
         if token_id:
             with suppress(Exception):

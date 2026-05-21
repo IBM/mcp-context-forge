@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Add index on email_users.full_name for search performance
+"""Location: ./mcpgateway/alembic/versions/c96c11c111b4_create_index_on_user_name.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Add index on email_users.full_name for search performance
 
 Revision ID: c96c11c111b4
 Revises: 77243f5bfce5

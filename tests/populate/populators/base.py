@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Base populator class for all REST API entity populators."""
+"""Location: ./tests/populate/populators/base.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Base populator class for all REST API entity populators.
+"""
 
 # Standard
 from abc import ABC, abstractmethod

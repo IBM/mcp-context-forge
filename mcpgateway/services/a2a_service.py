@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=invalid-name, import-outside-toplevel, unused-import, no-name-in-module
 """Location: ./mcpgateway/services/a2a_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -13,11 +13,12 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import base64
 import binascii
 from datetime import datetime, timezone
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -100,6 +101,180 @@ def _get_tool_lookup_cache():
 
         _TOOL_LOOKUP_CACHE = tool_lookup_cache
     return _TOOL_LOOKUP_CACHE
+
+
+def _validate_uaid_endpoint_domain(endpoint_url: str, operation_context: str = "operation") -> None:
+    """Validate that an endpoint URL's domain is allowed for UAID operations.
+
+    This enforces fail-closed domain allowlist security for UAID-enabled agents.
+    Empty allowlist blocks all external routing unless UAID_ALLOW_ALL_DOMAINS=true.
+
+    Args:
+        endpoint_url: The endpoint URL to validate (e.g., "https://agent.example.com/api")
+        operation_context: Description of operation for error messages (e.g., "registration", "invocation")
+
+    Raises:
+        ValueError: If domain is not in UAID_ALLOWED_DOMAINS or allowlist is empty
+
+    Security Note:
+        This validation prevents SSRF and unauthorized cross-gateway routing by requiring
+        explicit domain authorization. Bypassing this check via UAID_ALLOW_ALL_DOMAINS=true
+        is unsafe for production and should only be used in development/testing.
+    """
+    # Check if bypass flag is set (unsafe for production)
+    if getattr(settings, "uaid_allow_all_domains", False):
+        return  # Bypass validation (development/testing only)
+
+    # Get domain allowlist (fail-closed: empty list means no domains allowed)
+    allowed_domains = getattr(settings, "uaid_allowed_domains", [])
+    if not allowed_domains:
+        raise ValueError(
+            f"UAID {operation_context} blocked for security: UAID_ALLOWED_DOMAINS is empty. "
+            f"Cannot use endpoint {endpoint_url!r} without explicit domain allowlist. "
+            f"Configure UAID_ALLOWED_DOMAINS to authorize trusted destination domains, "
+            f"or set UAID_ALLOW_ALL_DOMAINS=true for development (unsafe for production)."
+        )
+
+    # Extract domain from URL for validation
+    # Handle URLs with or without scheme
+    url_to_parse = endpoint_url if endpoint_url.startswith(("http://", "https://")) else f"https://{endpoint_url}"
+    parsed = urlparse(url_to_parse)
+
+    # Extract hostname:port (netloc) for validation to support port-specific allowlisting
+    # Examples:
+    #   - "https://127.0.0.1:4444/api" → "127.0.0.1:4444"
+    #   - "https://example.com/api" → "example.com" (no port)
+    #   - "[::1]:8080" → "[::1]:8080"
+    if parsed.netloc:
+        endpoint_domain = parsed.netloc
+    elif parsed.hostname:  # pragma: no cover
+        # Fallback: just hostname if netloc is empty
+        endpoint_domain = parsed.hostname
+    elif endpoint_url.startswith("[") and "]" in endpoint_url:  # pragma: no cover
+        # IPv6 with brackets: [::1]:8080 -> [::1]:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
+    else:  # pragma: no cover
+        # Regular hostname or IPv4: example.com:8080 -> example.com:8080
+        endpoint_domain = endpoint_url.split("/", maxsplit=1)[0]
+
+    # Validate against allowlist with subdomain matching
+    # Matching logic:
+    #   - Exact match: "127.0.0.1:4444" == "127.0.0.1:4444"
+    #   - Subdomain match: "api.example.com:8080" matches "example.com:8080" (same port)
+    #   - Subdomain match: "api.example.com" matches "example.com" (no port required)
+    #   - No match: "api.example.com:8080" does NOT match "example.com:9090" (different port)
+    #   - IPv6 match: "[::1]:8080" matches "::1" (brackets stripped for comparison)
+    def domain_matches(endpoint: str, allowed: str) -> bool:
+        """Check if endpoint domain matches allowed domain (with subdomain support)."""
+        # Exact match
+        if endpoint == allowed:
+            return True
+
+        # Helper to parse hostname and port from domain string
+        def parse_host_port(domain: str) -> tuple[str, str | None]:
+            """Parse domain into (hostname, port).
+
+            Returns:
+                (hostname, port) where port is None if not present
+
+            Examples:
+                "example.com:8080" → ("example.com", "8080")
+                "example.com" → ("example.com", None)
+                "[::1]:8080" → ("::1", "8080")
+                "[::1]" → ("::1", None)
+                "::1" → ("::1", None)
+                "2001:db8::1" → ("2001:db8::1", None)
+                "2001:0db8:0000:0000:0000:0000:0000:0001" → ("2001:0db8:0000:0000:0000:0000:0000:0001", None)
+            """
+            # Handle IPv6 with brackets: [::1]:8080 or [::1]
+            if domain.startswith("["):
+                if "]:" in domain:
+                    # [::1]:8080 → ::1, 8080
+                    host, port = domain.split("]:", 1)
+                    return (host[1:], port)  # Remove leading [
+                if domain.endswith("]"):
+                    # [::1] → ::1, None
+                    return (domain[1:-1], None)
+                # Malformed, treat as-is  # pragma: no cover
+                return (domain, None)  # pragma: no cover
+
+            # Count colons to distinguish IPv6 from hostname:port
+            # IPv6 addresses have multiple colons (::1 has 2, 2001:db8::1 has 3+)
+            # hostname:port has exactly one colon
+            colon_count = domain.count(":")
+
+            if colon_count == 0:
+                # No colons, just a hostname
+                return (domain, None)
+            if colon_count == 1:
+                # Exactly one colon, likely hostname:port
+                parts = domain.split(":", 1)
+                # Verify the second part is a valid port number
+                if parts[1].isdigit():
+                    return (parts[0], parts[1])
+                # Not a port, treat whole thing as hostname  # pragma: no cover
+                return (domain, None)  # pragma: no cover
+            # Multiple colons, must be IPv6 without brackets (::1, 2001:db8::1, etc.)
+            return (domain, None)
+
+        endpoint_host, endpoint_port = parse_host_port(endpoint)
+        allowed_host, allowed_port = parse_host_port(allowed)
+
+        # If both have ports, they must match
+        if endpoint_port is not None and allowed_port is not None:
+            if endpoint_port != allowed_port:
+                return False
+            # Ports match, now check hostname (subdomain matching)
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+
+        # If only one has a port, check if hostnames match (ignore port mismatch)
+        # This allows "example.com" in allowlist to match "example.com:8080" in endpoint
+        # But "example.com:8080" in allowlist requires exact port match
+        if allowed_port is None:
+            # Allowed domain has no port, so port-agnostic matching
+            return endpoint_host == allowed_host or endpoint_host.endswith(f".{allowed_host}")
+        # Allowed domain has a port, but endpoint doesn't - no match
+        return False
+
+    if not any(domain_matches(endpoint_domain, d) for d in allowed_domains):
+        raise ValueError(
+            f"UAID {operation_context} blocked: endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS. "
+            f"Endpoint: {endpoint_url!r}. "
+            f"Allowed domains: {allowed_domains!r}. "
+            f"Add the domain to UAID_ALLOWED_DOMAINS or set UAID_ALLOW_ALL_DOMAINS=true for development."
+        )
+
+
+def _is_jwt_token(token: str) -> bool:
+    """Check if a token looks like a JWT (has 2 dots, 3 base64url parts).
+
+    Rejects local opaque tokens (cf_sess_*, cf_pat_*) that remote gateways
+    cannot validate.
+
+    Args:
+        token: The token string to check.
+
+    Returns:
+        True if the token appears to be a JWT, False otherwise.
+    """
+    if not token:
+        return False
+    # Reject local opaque tokens - remote gateways cannot validate these
+    if token.startswith(("cf_sess_", "cf_pat_")):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    # Lightweight check: each part should be base64url-decodable and non-empty
+    for part in parts:
+        if not part:
+            return False
+        try:
+            padded = part + "=" * (-len(part) % 4)
+            base64.urlsafe_b64decode(padded)
+        except Exception:
+            return False
+    return True
 
 
 # Initialize logging service first
@@ -316,7 +491,7 @@ class A2AAgentService(BaseService):
 
         Access rules (matching tools/resources/prompts):
         - public visibility: Always allowed
-        - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
+        - token_teams is None AND user_email is None: Admin bypass — public + team agents only (private excluded per PR #4341)
         - No user context (but not admin): Deny access to non-public agents
         - team visibility: Allowed if agent.team_id in token_teams
         - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
@@ -325,7 +500,7 @@ class A2AAgentService(BaseService):
             db: Database session for admin lookup
             agent: The agent to check access for
             user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
+            token_teams: Teams from JWT. None = admin bypass ONLY when user_email is also None; [] = public-only
 
         Returns:
             True if access allowed, False otherwise.
@@ -357,11 +532,14 @@ class A2AAgentService(BaseService):
             return True
 
         # Team agents: check team membership
-        # token_teams=None means admin bypass — allow all team agents
+        # token_teams=None with user_email set → admin context, allow all team agents if caller is admin
         # ([] already handled by public-only check above)
         if agent.visibility == "team":
             if token_teams is None:
-                return True
+                # Upstream token normalization prevents non-admins from reaching
+                # this state, but defend-in-depth: only admins get the unscoped
+                # team bypass here.
+                return is_user_admin(db, user_email)
             return agent.team_id in token_teams
 
         return False
@@ -371,11 +549,10 @@ class A2AAgentService(BaseService):
         db: Session,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
-    ) -> Optional[List[str]]:
-        """Return IDs of agents visible to the caller, or None for admin bypass.
+    ) -> List[str]:
+        """Return IDs of agents visible to the caller.
 
-        Used by list_tasks to scope results to agents the caller can see.
-        Returns None when the caller has unrestricted (admin) access.
+        Used by list_tasks and list_push_configs_for_dispatch.
         Pushes visibility filtering into SQL to avoid loading all agents.
 
         Note: admin bypass here requires BOTH token_teams=None AND
@@ -385,30 +562,35 @@ class A2AAgentService(BaseService):
         _check_agent_access's admin bypass to prevent list_tasks from
         returning private agents owned by other users.
 
-        PR #4341: only the unscoped admin shape (user_email=None AND
-        token_teams=None) returns ``None``. DB-resolved admin sessions
-        ((email, None) shape) fall through to the SQL filter below, which
-        already enforces public + team + own-private. Using
-        ``is_admin_bypass_granted`` here would let DB admins bypass the
-        per-agent visibility filter and enumerate other users' private
-        agents via list_tasks / list_push_configs_for_dispatch.
+        PR #4341: Admin bypass (user_email=None AND token_teams=None) returns
+        agent IDs for public + team visibility only, explicitly excluding
+        private agents. This aligns with the post-#4341 invariant: admin bypass
+        must not grant visibility to another user's private resources.
         """
+        # Admin bypass: return public + team agents only (exclude private)
         if user_email is None and token_teams is None:
-            return None
+            query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True), DbA2AAgent.visibility.in_(["public", "team"]))
+            return [row[0] for row in query.all()]
 
         query = db.query(DbA2AAgent.id).filter(DbA2AAgent.enabled.is_(True))
 
         # Build visibility predicate matching _check_agent_access rules.
         visibility_filters = [DbA2AAgent.visibility == "public"]
+        caller_is_admin = token_teams is None and user_email is not None and is_user_admin(db, user_email)
 
         is_public_only = not user_email or (token_teams is not None and len(token_teams) == 0)
         if not is_public_only:
             if token_teams is not None and len(token_teams) > 0:
                 visibility_filters.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(token_teams)))
-            elif token_teams is None:
+            elif token_teams is None and caller_is_admin:
                 # token_teams is None with user_email set → admin with email context
                 visibility_filters.append(DbA2AAgent.visibility == "team")
-            visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
+            elif token_teams is None:
+                # Non-admin with token_teams=None should not see all team agents.
+                # The user_email check below still grants own-private access.
+                pass
+            if user_email:
+                visibility_filters.append(and_(DbA2AAgent.visibility == "private", DbA2AAgent.owner_email == user_email))
 
         query = query.filter(or_(*visibility_filters))
         return [row[0] for row in query.all()]
@@ -542,22 +724,51 @@ class A2AAgentService(BaseService):
                     # First-Party
                     from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
 
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # SECURITY: Validate endpoint domain and native_id BEFORE generating UAID
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # All validation runs OUTSIDE the try block so ValueError propagates
+                    # (security rejections must not be silently swallowed).
+                    _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="registration")
+
+                    # Determine native_id for UAID:
+                    # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                    # 2. Otherwise use endpoint_url (standard case)
+                    native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent_data.endpoint_url
+
+                    # Parse native_id consistently regardless of scheme presence
+                    # Reject paths, query strings, and fragments in native_id to prevent SSRF
+                    url_to_parse = native_id_source if native_id_source.startswith(("http://", "https://")) else f"https://{native_id_source}"
+                    parsed = urlparse(url_to_parse)
+                    native_id = parsed.netloc
+                    if parsed.path and parsed.path != "/":
+                        raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                    if parsed.query:
+                        raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                    if parsed.fragment:
+                        raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+
+                    # Validate the native_id against allowlist (if it's different from endpoint_url)
+                    if native_id_source != agent_data.endpoint_url:
+                        _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override")
+
                     try:
                         uaid = generate_uaid(
                             registry=getattr(agent_data, "uaid_registry", None) or "context-forge",
                             name=agent_data.name,
                             version=getattr(agent_data, "version", None) or "1.0.0",
                             protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            native_id=agent_data.endpoint_url,
+                            native_id=native_id,
                             skills=getattr(agent_data, "uaid_skills", None) or [],
                         )
 
                         # Store UAID in separate field, keep UUID for id (optimal indexing and URL routing)
+                        # Note: uaid_native_id stores the original endpoint_url (with protocol) for display
                         uaid_metadata = {
                             "uaid": uaid,
                             "uaid_registry": getattr(agent_data, "uaid_registry", None) or "context-forge",
                             "uaid_proto": getattr(agent_data, "uaid_protocol", None) or "a2a",
-                            "uaid_native_id": agent_data.endpoint_url,
+                            "uaid_native_id": native_id_source,  # Store the routing address (may differ from endpoint_url)
                         }
                         logger.info(f"Generated UAID for agent {agent_data.name}: {uaid!r}")
                     except Exception as uaid_error:
@@ -737,8 +948,9 @@ class A2AAgentService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
             team_id: Optional team ID to filter by specific team.
             visibility: Optional visibility filter (private, team, public).
 
@@ -984,8 +1196,9 @@ class A2AAgentService(BaseService):
             agent_id: Agent ID.
             include_inactive: Whether to include inactive a2a agents.
             user_email: User's email for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
 
         Returns:
             Agent data.
@@ -1089,8 +1302,8 @@ class A2AAgentService(BaseService):
             db: Database session.
             agent_name: Agent name.
             user_email: Email of the requesting user for access control.
-                None combined with token_teams=None means admin bypass.
-            token_teams: JWT-scoped team list. None=admin bypass, []=public-only, [...]=team-scoped.
+                None combined with token_teams=None means admin bypass (public + team only, private excluded).
+            token_teams: JWT-scoped team list. None=admin bypass ONLY when user_email is also None; []=public-only, [...]=team-scoped.
 
         Returns:
             Agent data.
@@ -1390,10 +1603,41 @@ class A2AAgentService(BaseService):
                     agent.auth_type = "query_param"
                     agent.auth_value = None  # Query param auth doesn't use auth_value
 
+            # SECURITY: Re-validate allowlist when endpoint_url changes for existing UAID agents
+            # This prevents SSRF via updating a UAID agent to point to a disallowed domain
+            if getattr(agent, "uaid", None) and is_url_changing:
+                _validate_uaid_endpoint_domain(agent_data.endpoint_url, operation_context="UAID agent endpoint_url update")
+
             # Generate UAID if requested and agent doesn't already have one (UAID is immutable)
             if getattr(agent_data, "generate_uaid", False) and not agent.uaid:
                 # First-Party
                 from mcpgateway.utils.uaid import generate_uaid  # pylint: disable=import-outside-toplevel
+
+                # SECURITY: Validate endpoint domain and native_id BEFORE generating UAID
+                # All validation runs OUTSIDE the try block so ValueError propagates
+                # (security rejections must not be silently swallowed).
+                _validate_uaid_endpoint_domain(agent.endpoint_url, operation_context="UAID generation during edit")
+
+                # Determine native_id for UAID:
+                # 1. Use uaid_native_id_override if provided (for cross-gateway routing scenarios)
+                # 2. Otherwise use endpoint_url (standard case)
+                native_id_source = getattr(agent_data, "uaid_native_id_override", None) or agent.endpoint_url
+
+                # Parse native_id consistently regardless of scheme presence
+                # Reject paths, query strings, and fragments in native_id to prevent SSRF
+                url_to_parse = native_id_source if native_id_source.startswith(("http://", "https://")) else f"https://{native_id_source}"
+                parsed = urlparse(url_to_parse)
+                native_id = parsed.netloc
+                if parsed.path and parsed.path != "/":
+                    raise ValueError(f"UAID native_id cannot contain path components: {native_id_source}")
+                if parsed.query:
+                    raise ValueError(f"UAID native_id cannot contain query strings: {native_id_source}")
+                if parsed.fragment:
+                    raise ValueError(f"UAID native_id cannot contain fragments: {native_id_source}")
+
+                # Validate the native_id against allowlist (if it's different from endpoint_url)
+                if native_id_source != agent.endpoint_url:
+                    _validate_uaid_endpoint_domain(native_id_source, operation_context="UAID nativeId override during edit")
 
                 try:
                     uaid = generate_uaid(
@@ -1401,7 +1645,7 @@ class A2AAgentService(BaseService):
                         name=agent.name,  # Use current agent name
                         version=getattr(agent_data, "version", None) or "1.0.0",
                         protocol=getattr(agent_data, "uaid_protocol", None) or "a2a",
-                        native_id=agent.endpoint_url,  # Use current endpoint_url
+                        native_id=native_id,  # Use native_id without protocol
                         skills=[],  # Empty skills list for now
                     )
 
@@ -1409,7 +1653,7 @@ class A2AAgentService(BaseService):
                     agent.uaid = uaid
                     agent.uaid_registry = getattr(agent_data, "uaid_registry", None) or "context-forge"
                     agent.uaid_proto = getattr(agent_data, "uaid_protocol", None) or "a2a"
-                    agent.uaid_native_id = agent.endpoint_url
+                    agent.uaid_native_id = native_id_source  # Store the routing address
 
                     logger.info(f"Generated UAID for existing agent {agent.name} (ID: {agent.id}): {uaid!r}")
                 except Exception as uaid_error:
@@ -1686,6 +1930,9 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
+        content_type: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent by name or ID (UUID/UAID).
 
@@ -1697,13 +1944,17 @@ class A2AAgentService(BaseService):
             agent_id: Optional agent ID (UUID or UAID format). If provided, takes precedence over agent_name.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
+                         None with user_email set = DB admin check (public+team+own-private);
+                         [] = public-only; [...] = team-scoped access.
             hop_count: Federation hop counter from the inbound
                 `X-Contextforge-UAID-Hop` header. Calls at or above
                 `settings.uaid_max_federation_hops` are rejected to break
                 UAID cross-gateway loops (A->B->A and self-referential
                 `endpoint_url`). Outbound calls stamp `hop_count + 1`.
+            bearer_token: Bearer token to forward for RBAC enforcement in cross-gateway calls.
+            content_type: Content-Type of the inbound request (for plugin context).
+            request_headers: Inbound request headers (for plugin context in PRE_INVOKE hook).
 
         Returns:
             Agent response.
@@ -1763,6 +2014,7 @@ class A2AAgentService(BaseService):
                     user_email=user_email,
                     token_teams=token_teams,
                     hop_count=hop_count,
+                    bearer_token=bearer_token,
                 )
 
             # Found locally - continue with normal invocation
@@ -1814,6 +2066,45 @@ class A2AAgentService(BaseService):
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
         agent_auth_query_params = agent.auth_query_params
+        agent_uaid = getattr(agent, "uaid", None)
+        agent_uaid_native_id = getattr(agent, "uaid_native_id", None)
+        agent_team_id = agent.team_id
+        agent_visibility = agent.visibility
+        agent_enabled = agent.enabled
+        agent_tags = getattr(agent, "tags", [])
+        agent_oauth_config = getattr(agent, "oauth_config", None)
+        agent_passthrough_headers = getattr(agent, "passthrough_headers", None)
+
+        # Filter request_headers to only whitelisted passthrough headers
+        # before they reach plugin hooks (prevents credential leak to plugins).
+        if request_headers and agent_passthrough_headers:
+            whitelist_lower = {h.lower() for h in agent_passthrough_headers}
+            request_headers = {k: v for k, v in request_headers.items() if k in whitelist_lower}
+        elif request_headers:
+            request_headers = {}  # No whitelist = no headers reach plugins
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Validate UAID endpoint domain before invocation
+        # ═══════════════════════════════════════════════════════════════════════════
+        # For locally-registered agents with UAID (cross-gateway capable agents),
+        # validate that the endpoint domain is in the allowlist BEFORE making the
+        # HTTP call. This prevents SSRF via locally-registered agents pointing to
+        # unauthorized external/internal endpoints.
+        #
+        # We validate BOTH uaid_native_id (the canonical endpoint from UAID) AND
+        # endpoint_url (the actual HTTP target). If they diverge (e.g., attacker
+        # updates endpoint_url after creation), both must be authorized.
+        if agent_uaid:
+            try:
+                if agent_uaid_native_id:
+                    _validate_uaid_endpoint_domain(agent_uaid_native_id, operation_context="invocation")
+                # Always validate the actual HTTP target (endpoint_url) for UAID agents
+                # to prevent endpoint_url divergence attacks
+                if agent_endpoint_url:
+                    _validate_uaid_endpoint_domain(agent_endpoint_url, operation_context="invocation")
+            except ValueError as e:
+                # Convert validation error to A2AAgentError for consistent error handling
+                raise A2AAgentError(f"Agent '{agent_name}' invocation blocked: {e}") from e
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -1853,6 +2144,80 @@ class A2AAgentService(BaseService):
             if agent_auth_type == "query_param" and agent_auth_query_params:
                 raise A2AAgentError(f"Failed to decrypt query_param authentication for agent '{agent_name}': {e}") from e
             raise A2AAgentError(f"Failed to prepare A2A invocation for agent '{agent_name}': {e}") from e
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 2b: Plugin context setup and PRE_INVOKE hook
+        # ═══════════════════════════════════════════════════════════════════════════
+        # Third-Party
+        from cpex.framework import (
+            AgentHookType,
+            AgentPreInvokePayload,
+            GlobalContext,
+            HttpHeaderPayload,
+            PluginViolationError,
+        )
+
+        # First-Party
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
+
+        agent_context_id = make_context_id(str(agent_team_id), agent_name) if agent_team_id else agent_id
+        plugin_manager = await self._get_plugin_manager(agent_context_id)
+        context_table: Dict[str, Any] = {}
+
+        # Build GlobalContext for plugin hooks
+        global_context = GlobalContext(
+            request_id=correlation_id or "",
+            server_id=agent_context_id if agent_team_id else agent_id,
+            tenant_id=agent_team_id if agent_team_id and isinstance(agent_team_id, str) else None,
+            user=user_email,
+        )
+
+        if plugin_manager:
+            try:
+                agent_metadata = PydanticA2AAgent(
+                    id=agent_id,
+                    name=agent_name,
+                    team_id=agent_team_id,
+                    visibility=agent_visibility,
+                    enabled=agent_enabled,
+                    tags=agent_tags or [],
+                    oauth_config=agent_oauth_config,
+                    passthrough_headers=agent_passthrough_headers,
+                    auth_type=agent_auth_type,
+                )
+                if content_type:
+                    agent_metadata.content_type = content_type
+                global_context.metadata[A2A_AGENT_METADATA] = agent_metadata
+            except Exception as e:
+                logger.warning("Failed to build A2A agent metadata for plugins: %s", e)
+
+        # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
+        if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
+            try:
+                pre_result, context_table = await plugin_manager.invoke_hook(
+                    AgentHookType.AGENT_PRE_INVOKE,
+                    payload=AgentPreInvokePayload(
+                        agent_id=agent_id,
+                        messages=[{"role": "user", "content": parameters}] if parameters else [],
+                        headers=HttpHeaderPayload(root=request_headers or {}),
+                        parameters=parameters if isinstance(parameters, dict) else {},
+                    ),
+                    global_context=global_context,
+                    local_contexts=context_table,
+                    violations_as_exceptions=True,
+                )
+                if pre_result.modified_payload:
+                    if pre_result.modified_payload.parameters is not None:
+                        parameters = pre_result.modified_payload.parameters
+                    if pre_result.modified_payload.headers is not None:
+                        prepared.headers.update(pre_result.modified_payload.headers.model_dump())
+            except PluginViolationError as e:
+                logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Plugin RBAC violation: {e}") from e
+            except Exception as e:
+                logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
+                raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
 
         span_attributes = {
             "a2a.agent.name": agent_name,
@@ -2073,7 +2438,35 @@ class A2AAgentService(BaseService):
 
             finally:
                 # ═══════════════════════════════════════════════════════════════════════════
-                # PHASE 3: Record metrics via buffered service (batches writes for performance)
+                # PHASE 3: Post-invoke plugin hook (non-blocking, errors do not fail request)
+                # ═══════════════════════════════════════════════════════════════════════════
+                if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
+                    try:
+                        # Third-Party
+                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+
+                        post_result, _ = await plugin_manager.invoke_hook(
+                            AgentHookType.AGENT_POST_INVOKE,
+                            payload=AgentPostInvokePayload(
+                                agent_id=agent_id,
+                                messages=[{"role": "assistant", "content": response}] if response and success else [],
+                                tool_calls=None,
+                            ),
+                            global_context=global_context,
+                            local_contexts=context_table,
+                            violations_as_exceptions=False,
+                        )
+                        if post_result and post_result.retry_delay_ms > 0:
+                            logger.info(
+                                "Plugin requested retry for A2A agent %s after %sms",
+                                agent_id,
+                                post_result.retry_delay_ms,
+                            )
+                    except Exception as e:
+                        logger.warning("Post-invoke plugin error for A2A agent %s: %s", agent_id, e)
+
+                # ═══════════════════════════════════════════════════════════════════════════
+                # PHASE 4: Record metrics via buffered service (batches writes for performance)
                 # ═══════════════════════════════════════════════════════════════════════════
                 end_time = datetime.now(timezone.utc)
                 response_time = (end_time - start_time).total_seconds()
@@ -2119,6 +2512,7 @@ class A2AAgentService(BaseService):
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,  # pylint: disable=unused-argument
         hop_count: int = 0,
+        bearer_token: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Invoke agent on remote gateway via UAID cross-gateway routing.
 
@@ -2133,6 +2527,7 @@ class A2AAgentService(BaseService):
                 `X-Contextforge-UAID-Hop` header). The outbound request
                 stamps `hop_count + 1` so the receiving gateway can
                 enforce `uaid_max_federation_hops`.
+            bearer_token: Bearer token to forward for RBAC enforcement on remote gateway
 
         Returns:
             Agent response from remote gateway
@@ -2153,17 +2548,18 @@ class A2AAgentService(BaseService):
             logger.info(f"Cross-gateway routing: {uaid!r} -> {protocol}://{endpoint}")
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY WARNING: Log authentication gap on first cross-gateway call
+            # SECURITY WARNING: Log cross-gateway authentication model on first call
             # ═══════════════════════════════════════════════════════════════════════════
             global _cross_gateway_auth_warning_logged  # pylint: disable=global-statement
             if not _cross_gateway_auth_warning_logged:
                 logger.warning(
                     "⚠️  SECURITY: First cross-gateway UAID call detected. "
-                    "Cross-gateway routing does NOT forward authentication credentials. "
-                    "Remote gateways receive unauthenticated requests. "
+                    "Cross-gateway routing forwards bearer tokens when available for RBAC enforcement on remote gateways. "
+                    "Both gateways must trust the same JWT issuer (shared JWT_SECRET_KEY or federated SSO). "
+                    "Calls without bearer tokens will be unauthenticated on the remote gateway. "
                     "Ensure target gateways enforce AUTH_REQUIRED=true and configure UAID_ALLOWED_DOMAINS "
                     "to restrict routing to trusted domains only. "
-                    "See documentation: .env.example lines 85-125 for security implications and mitigations."
+                    "See documentation: docs/security/uaid-cross-gateway-auth.md for security model details."
                 )
                 _cross_gateway_auth_warning_logged = True
 
@@ -2202,27 +2598,12 @@ class A2AAgentService(BaseService):
             except Exception as parse_error:
                 raise ValueError(f"Cross-gateway routing to {endpoint!r} rejected: invalid hostname format ({parse_error})")
 
-            # Security: Validate endpoint against domain allowlist
-            # Use proper subdomain matching: require exact match OR proper subdomain prefix
-            allowed_domains = getattr(settings, "uaid_allowed_domains", [])
-            if allowed_domains:
-                # Extract just the domain part (without port) for allowlist checking
-                # Use urlparse to handle URLs correctly (e.g., "https://example.com:8443" -> "example.com")
-                # If endpoint doesn't start with scheme, add https:// for parsing
-                url_to_parse = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
-                parsed = urlparse(url_to_parse)
-                endpoint_domain = parsed.hostname or endpoint.split(":")[0]
-
-                # Require exact match or proper subdomain (e.g., "sub.example.com" matches "example.com", but "evilexample.com" does not)
-                if not any(endpoint_domain == d or endpoint_domain.endswith(f".{d}") for d in allowed_domains):
-                    raise ValueError(f"Cross-gateway routing to {endpoint!r} not allowed. Endpoint domain {endpoint_domain!r} not in UAID_ALLOWED_DOMAINS.")
-            else:
-                # WARNING: Empty allowlist permits arbitrary cross-gateway routing
-                # This is unsafe in production - operators should configure UAID_ALLOWED_DOMAINS
-                logger.warning(
-                    f"UAID_ALLOWED_DOMAINS is empty - permitting cross-gateway routing to {endpoint!r} without domain validation. "
-                    "This is UNSAFE in production. Configure UAID_ALLOWED_DOMAINS to restrict routing to trusted domains only."
-                )
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Fail-closed domain allowlist enforcement
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Validate endpoint against UAID_ALLOWED_DOMAINS using centralized validation
+            # This enforces fail-closed security and respects UAID_ALLOW_ALL_DOMAINS bypass flag
+            _validate_uaid_endpoint_domain(endpoint, operation_context="cross-gateway routing")
 
             # Construct URL based on protocol (endpoint is now validated).
             # ContextForge-to-ContextForge federation: target the receiving
@@ -2233,17 +2614,28 @@ class A2AAgentService(BaseService):
             # malformed identifier containing `/`, `?`, or `#` cannot
             # smuggle extra path segments or query/fragment data. The
             # parser already validates structure; this is defence in depth.
+            #
+            # Use HTTP for localhost/127.0.0.1 endpoints (development/testing),
+            # HTTPS for all other endpoints (production security default).
+            # Extract host for scheme selection, handling bracketed IPv6
+            if endpoint.startswith("["):
+                scheme_host = endpoint.split("]:")[0] + "]" if "]:" in endpoint else endpoint
+            else:
+                scheme_host = endpoint.split(":")[0]
+            scheme = "http" if scheme_host in ("localhost", "127.0.0.1", "::1", "[::1]") else "https"
+
             if protocol == "a2a":
-                url = f"https://{endpoint}/a2a/{quote(uaid, safe='')}/invoke"
+                # Use the body-based /a2a/invoke endpoint to avoid path parameter issues with UAIDs containing forward slashes
+                url = f"{scheme}://{endpoint}/a2a/invoke"
             elif protocol == "mcp":
-                url = f"https://{endpoint}/mcp/tools/call"
+                url = f"{scheme}://{endpoint}/mcp/tools/call"
             else:
                 raise ValueError(f"Unsupported protocol in UAID: {protocol}")
 
-            # Prepare request payload — matches the receiving gateway's
-            # `/a2a/{agent_name}/invoke` body signature. The UAID is carried
-            # in the URL path; no need to duplicate it in the body.
+            # Prepare request payload — for A2A, pass agent_id in body instead of URL path
+            # to support UAIDs containing forward slashes (e.g., in nativeId component)
             request_data = {
+                "agent_id": uaid,
                 "parameters": parameters,
                 "interaction_type": interaction_type,
             }
@@ -2266,39 +2658,58 @@ class A2AAgentService(BaseService):
             uaid_utils.stamp_hop(headers, hop_count)
 
             # ═══════════════════════════════════════════════════════════════════════════
-            # SECURITY: Cross-gateway authentication is NOT implemented (as of v1.0)
-            #
-            # Current Behavior:
-            #   Cross-gateway HTTP calls (UAID-based routing) do NOT forward authentication
-            #   credentials. Remote gateways receive unauthenticated requests with no bearer
-            #   token or session context.
-            #
-            # Security Implications:
-            #   1. Remote Gateway MUST Authenticate: The target gateway MUST enforce its own
-            #      authentication layer (AUTH_REQUIRED=true). If disabled, public agents
-            #      are accessible without any authentication.
-            #
-            #   2. No Authorization Context: Remote gateway cannot enforce RBAC based on
-            #      originating user. All cross-gateway calls execute with target gateway's
-            #      public access level.
-            #
-            #   3. Trust Boundary: This gateway trusts the remote gateway's access control.
-            #      If remote gateway is compromised or misconfigured, this becomes a
-            #      security vector.
-            #
-            # Future Work (Roadmap):
-            #   - Bearer token forwarding (requires gateway-to-gateway trust establishment)
-            #   - Mutual TLS authentication (gateway certificates)
-            #   - Trusted gateway registry with signature verification
-            #   - Per-UAID access policies (allowlist/denylist)
-            #
-            # Current Mitigations:
-            #   - UAID_ALLOWED_DOMAINS: Restricts outbound calls to trusted domains
-            #   - Correlation ID logging: Enables cross-gateway request tracing
-            #   - Operator guidance: Documentation warns about unauthenticated cross-gateway calls
-            #
-            # Operators: Set UAID_ALLOWED_DOMAINS to a restrictive allowlist of trusted domains only.
+            # SECURITY: Bearer token forwarding for cross-gateway RBAC enforcement
             # ═══════════════════════════════════════════════════════════════════════════
+            # Forward JWT bearer tokens to remote gateway for RBAC enforcement.
+            # Local opaque tokens (cf_sess_*, cf_pat_*) are NOT forwarded because
+            # remote gateways cannot validate them.
+            # If no token is available, request proceeds without Authorization header
+            # (remote gateway's AUTH_REQUIRED setting determines whether to accept).
+            #
+            # Security Considerations:
+            #   1. Token Trust: Forwarding assumes mutual trust between gateways.
+            #      Only route to domains in UAID_ALLOWED_DOMAINS.
+            #
+            #   2. Token Validation: Remote gateway MUST validate token signature
+            #      using shared JWT_SECRET_KEY or via JWKS endpoint.
+            #
+            #   3. Audit Trail: X-Contextforge-Source-* headers enable tracing
+            #      cross-gateway call chains for security investigations.
+            #
+            #   4. Token Lifecycle: Forwarded token retains original expiry.
+            #      If token expires mid-flight, remote gateway should reject.
+            #
+            # Future Enhancements:
+            #   - Mutual TLS authentication (gateway certificates)
+            #   - Token exchange protocol (gateway-specific tokens)
+            #   - Trusted gateway registry with signature verification
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Only forward JWT-shaped tokens; reject local opaque tokens
+            if bearer_token and not _is_jwt_token(bearer_token):
+                logger.info(
+                    "Non-JWT token detected for cross-gateway call to %s. Not forwarding local opaque token. Remote gateway will receive unauthenticated request.",
+                    uaid,
+                )
+                bearer_token = None
+
+            if bearer_token and settings.uaid_forward_auth:
+                headers["Authorization"] = f"Bearer {bearer_token}"
+                # Add audit headers for tracing cross-gateway calls
+                gateway_id = getattr(settings, "gateway_id", "unknown")
+                headers["X-Contextforge-Source-Gateway"] = gateway_id
+                # Include user email for audit trail (never include token in non-auth headers)
+                if user_email:
+                    headers["X-Contextforge-Source-User"] = user_email
+            elif bearer_token and not settings.uaid_forward_auth:
+                logger.info(
+                    "UAID_FORWARD_AUTH disabled: not forwarding bearer token for cross-gateway call to %s. Remote gateway will receive unauthenticated request.",
+                    uaid,
+                )
+            else:
+                logger.warning(
+                    "Cross-gateway call without bearer token: %s. Remote gateway will receive unauthenticated request. RBAC enforcement depends on remote gateway's AUTH_REQUIRED setting.",
+                    uaid,
+                )
 
             # Add correlation ID for distributed tracing
             correlation_id = get_correlation_id()
@@ -2418,6 +2829,59 @@ class A2AAgentService(BaseService):
                 )
 
                 return response
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Authentication and authorization error handling
+            # ═══════════════════════════════════════════════════════════════════════════
+            # Provide clear diagnostics for authentication/authorization failures
+            # to help operators debug cross-gateway JWT trust issues.
+            if http_response.status_code == 401:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authentication failed: HTTP 401 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authentication failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthenticationError", "error_message": f"HTTP 401: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 401,
+                    },
+                )
+                raise A2AAgentError(
+                    "Cross-gateway routing failed: Remote gateway rejected authentication (HTTP 401). "
+                    "Ensure both gateways trust the same JWT signing key (JWT_SECRET_KEY) "
+                    "or configure JWKS endpoint for token validation."
+                )
+
+            if http_response.status_code == 403:
+                remote_body_snippet = http_response.text[:2048] if http_response.text else ""
+                logger.error("Cross-gateway authorization failed: HTTP 403 from endpoint=%r uaid=%r body=%r", endpoint, uaid, remote_body_snippet)
+                structured_logger.log(
+                    level="ERROR",
+                    message=f"Cross-gateway authorization failed: {uaid!r}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    duration_ms=call_duration_ms,
+                    error_details={"error_type": "CrossGatewayAuthorizationError", "error_message": f"HTTP 403: {remote_body_snippet}"},
+                    metadata={
+                        "event": "cross_gateway_call_failed",
+                        "uaid": uaid,
+                        "endpoint": endpoint,
+                        "status_code": 403,
+                    },
+                )
+                raise A2AAgentError(
+                    "Cross-gateway routing failed: Remote gateway rejected authorization (HTTP 403). Verify token has required team memberships or roles for the target agent/resource."
+                )
 
             # Capture the remote body for operator-side structured logging
             # (so failures can be diagnosed) but keep the body out of the
@@ -2736,7 +3200,7 @@ class A2AAgentService(BaseService):
             agent_id: Optional agent ID filter.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
-                None = admin bypass, [] = public-only.
+                None = admin bypass ONLY when user_email is also None; [] = public-only.
 
         Returns:
             Task data as a dict, or None if not found or not visible.
@@ -2746,7 +3210,7 @@ class A2AAgentService(BaseService):
             return None
         # Enforce agent visibility on the owning agent.
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         return self._task_to_wire(task)
 
@@ -2776,7 +3240,7 @@ class A2AAgentService(BaseService):
         if task is None:
             return None
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.id == task.a2a_agent_id).first()
-        if agent is not None and not await self._check_agent_access(db, agent, user_email, token_teams):
+        if agent is None or not await self._check_agent_access(db, agent, user_email, token_teams):
             return None
         if task.state in ("completed", "failed", "canceled"):
             return self._task_to_wire(task)
@@ -2830,7 +3294,7 @@ class A2AAgentService(BaseService):
             offset: Pagination offset.
             user_email: Caller's email for visibility scoping.
             token_teams: Caller's teams for visibility scoping.
-                None = admin bypass, [] = public-only.
+                None = admin bypass ONLY when user_email is also None; [] = public-only.
 
         Returns:
             List of task data dicts visible to the caller.
@@ -2842,8 +3306,9 @@ class A2AAgentService(BaseService):
             query = query.filter(A2ATask.state == state)
         # Filter to tasks owned by agents the caller can see.
         visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
-        if visible_agent_ids is not None:
-            query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
+        if not visible_agent_ids:
+            return []
+        query = query.filter(A2ATask.a2a_agent_id.in_(visible_agent_ids))
         query = query.order_by(desc(A2ATask.updated_at))
         query = query.limit(limit).offset(offset)
         return [self._task_to_wire(t) for t in query.all()]
@@ -3059,7 +3524,7 @@ class A2AAgentService(BaseService):
         Visibility scoping is pushed into SQL via ``_visible_agent_ids`` —
         the prior Python-side post-filter scanned every row regardless of
         access.  Admin bypass (``token_teams=None`` AND ``user_email=None``)
-        returns all configs.
+        returns public + team configs only (private excluded per PR #4341).
         """
         # First-Party
         from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
@@ -3071,13 +3536,9 @@ class A2AAgentService(BaseService):
             query = query.filter(A2APushNotificationConfig.task_id == task_id)
 
         visible_agent_ids = self._visible_agent_ids(db, user_email, token_teams)
-        if visible_agent_ids is not None:
-            # Non-admin caller: restrict to configs owned by visible agents.
-            # An empty visible set (e.g. public-only user with no public agents
-            # matching the filters) collapses to "no rows" without a scan.
-            if not visible_agent_ids:
-                return []
-            query = query.filter(A2APushNotificationConfig.a2a_agent_id.in_(visible_agent_ids))
+        if not visible_agent_ids:
+            return []
+        query = query.filter(A2APushNotificationConfig.a2a_agent_id.in_(visible_agent_ids))
 
         results: List[Dict[str, Any]] = []
         decrypt_failed_ids: List[str] = []

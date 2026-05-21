@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Performance tests for streamable HTTP replay optimization.
-
-Copyright 2025
+"""Location: ./tests/performance/test_streamablehttp_replay.py
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Performance tests for streamable HTTP replay optimization.
 These tests verify that the ring buffer optimization provides O(k) replay
 complexity instead of O(n) full deque scans.
 

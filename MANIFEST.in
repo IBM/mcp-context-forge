@@ -8,7 +8,9 @@ include README.md
 include plugins/README.md
 include pyproject.toml
 include gunicorn.config.py
+include Containerfile
 include Containerfile.lite
+include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
@@ -33,7 +35,6 @@ include *.js
 recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
-recursive-include plugin_templates *
 recursive-include mcpgateway/toolops *.md
 recursive-include mcpgateway *.proto
 
@@ -62,6 +63,8 @@ include .snyk
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 exclude mcpgateway/static/iframe-test-harness.html
+exclude mcpgateway/static/css/tailwind.min.css # Generated Tailwind CSS (built during development or container build)
+
 # Vite build artifacts (gitignored; regenerated per build with hashed filenames)
 exclude mcpgateway/static/bundle-*.js
 recursive-exclude mcpgateway/static/.vite *

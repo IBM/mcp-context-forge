@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/middleware/test_observability_middleware_transactions.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Unit tests for observability middleware transaction control.
 
@@ -353,12 +354,7 @@ def test_add_event_bug_fix():
         mock_session.commit.side_effect = SQLAlchemyError("commit failed")
         mock_factory.return_value = mock_session
 
-        event_id = service.add_event(
-            span_id="test",
-            name="test_event",
-            severity="info",
-            message="test"
-        )
+        event_id = service.add_event(span_id="test", name="test_event", severity="info", message="test")
 
         # Verify: Returns 0 on commit failure
         assert event_id == 0
@@ -385,11 +381,7 @@ def test_record_metric_returns_zero_on_failure():
         mock_session.commit.side_effect = SQLAlchemyError("commit failed")
         mock_factory.return_value = mock_session
 
-        metric_id = service.record_metric(
-            name="test.metric",
-            value=42.0,
-            metric_type="gauge"
-        )
+        metric_id = service.record_metric(name="test.metric", value=42.0, metric_type="gauge")
 
         # Verify: Returns 0 on commit failure
         assert metric_id == 0

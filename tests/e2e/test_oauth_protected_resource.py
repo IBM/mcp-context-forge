@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_oauth_protected_resource.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 End-to-end tests for virtual server well-known endpoints.
 

@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""OWASP A01:2021 – Broken Access Control direct Playwright tests.
+"""Location: ./tests/playwright/security/owasp/test_a01_broken_access_control.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OWASP A01:2021 – Broken Access Control direct Playwright tests.
 
 Covers attack patterns NOT already tested in sibling security test files:
 
@@ -235,7 +240,11 @@ class TestVerticalPrivilegeEscalation:
     def test_non_admin_cannot_create_user(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.post(
             "/admin/users",
-            data={"email": f"injected-{uuid.uuid4().hex[:8]}@example.com", "password": "Pass123!", "full_name": "Injected"},
+            data={
+                "email": f"injected-{uuid.uuid4().hex[:8]}@example.com",
+                "password": "TestP@ssw0rd!Test2026X",  # pragma: allowlist secret
+                "full_name": "Injected"
+            },
         )
         assert resp.status == 403, f"Non-admin should be denied user creation, got {resp.status}: {resp.text()}"
 

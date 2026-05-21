@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/integration/test_resource_plugin_integration.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -48,18 +48,13 @@ class TestResourcePluginIntegration:
                 from unittest.mock import AsyncMock
 
                 # First-Party
-                from mcpgateway.plugins.framework.models import PluginResult
+                from cpex.framework.models import PluginResult
 
                 mock_manager = MagicMock()
                 mock_manager._initialized = True
                 mock_manager.initialize = AsyncMock()
                 # Add default invoke_hook mock that returns success
-                mock_manager.invoke_hook = AsyncMock(
-                    return_value=(
-                        PluginResult(continue_processing=True, modified_payload=None),
-                        None  # contexts
-                    )
-                )
+                mock_manager.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, modified_payload=None), None))  # contexts
                 MockPluginManager.return_value = mock_manager
                 service = ResourceService()
                 service._plugin_manager = mock_manager
@@ -86,7 +81,6 @@ class TestResourcePluginIntegration:
         assert created.uri == "test://integration"
         assert created.name == "Integration Test Resource"
 
-
         # 2. Read the resource (should trigger plugins)
         content = await service.read_resource(
             test_db,
@@ -104,7 +98,6 @@ class TestResourcePluginIntegration:
         assert len(resources) == 1
         assert resources[0].uri == "test://integration"
 
-
         # 4. Update the resource
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
@@ -115,7 +108,6 @@ class TestResourcePluginIntegration:
         )
         updated = await service.update_resource(test_db, created.id, update_data)
         assert updated.name == "Updated Integration Resource"
-
 
         # 5. Delete the resource
         await service.delete_resource(test_db, created.id)
@@ -135,7 +127,7 @@ class TestResourcePluginIntegration:
             # Use real plugin manager but mock its initialization
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # First-Party
-                from mcpgateway.plugins.framework import (
+                from cpex.framework import (
                     ResourcePostFetchPayload,
                     ResourcePostFetchResult,
                     ResourcePreFetchResult,
@@ -156,13 +148,13 @@ class TestResourcePluginIntegration:
                     def has_hooks_for(self, hook_type) -> bool:
                         """Return True for resource hooks this mock handles."""
                         # First-Party
-                        from mcpgateway.plugins.framework import ResourceHookType
+                        from cpex.framework import ResourceHookType
 
                         return hook_type in (ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH)
 
                     async def invoke_hook(self, hook_type, payload, global_context, local_contexts=None, **kwargs):
                         # First-Party
-                        from mcpgateway.plugins.framework import ResourceHookType
+                        from cpex.framework import ResourceHookType
 
                         if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                             # Allow test:// protocol
@@ -176,7 +168,7 @@ class TestResourcePluginIntegration:
                                 )
                             else:
                                 # First-Party
-                                from mcpgateway.plugins.framework.models import PluginViolation
+                                from cpex.framework.models import PluginViolation
 
                                 raise PluginViolationError(
                                     message="Protocol not allowed",
@@ -218,7 +210,7 @@ class TestResourcePluginIntegration:
                         else:
                             # Other hook types - just return success
                             # First-Party
-                            from mcpgateway.plugins.framework.models import PluginResult
+                            from cpex.framework.models import PluginResult
 
                             return (PluginResult(continue_processing=True), None)
 
@@ -235,7 +227,6 @@ class TestResourcePluginIntegration:
 
                 create_response = await service.register_resource(test_db, resource_data)
 
-
                 # Read the resource - should be filtered
                 content = await service.read_resource(test_db, create_response.id)
                 assert "[REDACTED]" in content.text
@@ -244,7 +235,7 @@ class TestResourcePluginIntegration:
 
                 # Try to read a blocked protocol
                 # First-Party
-                from mcpgateway.plugins.framework import PluginViolationError
+                from cpex.framework import PluginViolationError
 
                 blocked_resource = ResourceCreate(
                     uri="file:///etc/passwd",
@@ -253,7 +244,6 @@ class TestResourcePluginIntegration:
                     mime_type="text/plain",
                 )
                 await service.register_resource(test_db, blocked_resource)
-
 
                 # Find the blocked resource by uri to get its id
                 blocked, _ = await service.list_resources(test_db)
@@ -274,8 +264,8 @@ class TestResourcePluginIntegration:
 
         # Track context flow
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.framework import ResourceHookType
+        from cpex.framework.models import PluginResult
+        from cpex.framework import ResourceHookType
 
         contexts_from_pre = {"plugin_data": "test_value", "validated": True}
 
@@ -363,7 +353,6 @@ class TestResourcePluginIntegration:
 
         # Deactivate the resource
         await service.set_resource_state(test_db, created.id, activate=False)
-
 
         # Try to read inactive resource
         # First-Party

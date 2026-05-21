@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Test-only helper that wires the framework's Redis shim to the real provider.
+"""Location: ./tests/utils/plugin_redis_helper.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
-Production sets up ``mcpgateway.plugins.framework._redis`` during FastAPI
+Test-only helper that wires the framework's Redis shim to the real provider.
+
+Production sets up ``mcpgateway.plugins._redis`` during FastAPI
 lifespan. Unit tests don't run lifespan, so without explicit wiring every
 ``_redis()`` call in the framework returns ``None`` and mocked Redis clients
 never get reached. This helper installs a dynamic provider that re-reads
@@ -18,7 +23,7 @@ Usage:
 
 from contextlib import contextmanager
 
-from mcpgateway.plugins.framework._redis import set_shared_redis_provider
+from mcpgateway.plugins._redis import set_shared_redis_provider
 
 
 async def _dynamic_get_redis_client():

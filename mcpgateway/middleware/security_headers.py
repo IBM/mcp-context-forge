@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/security_headers.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -8,11 +8,11 @@ Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
 XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
-
 """
 
 # Standard
 import re
+import secrets
 from typing import Any, Callable, Set
 
 # Third-Party
@@ -36,10 +36,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     - X-Frame-Options: Prevents clickjacking attacks
     - X-XSS-Protection: Disables legacy XSS protection (modern browsers use CSP)
     - Referrer-Policy: Controls referrer information sent with requests
-    - Content-Security-Policy: Prevents XSS and other code injection attacks
+    - Content-Security-Policy: Nonce-based CSP prevents XSS and code injection
     - Strict-Transport-Security: Forces HTTPS connections (when appropriate)
     - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private)
     - Vary: Authorization - Prevents cache key collisions on authenticated endpoints
+
+    CSP Implementation:
+    - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
+    - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
+    - script-src-attr: unsafe-inline for inline event handlers (transitional)
+    - script-src: unsafe-eval for Alpine.js compatibility (fallback for older browsers)
+    - style-src: retains unsafe-inline for Alpine.js dynamic inline styles
+    - Nonce stored in request.state.csp_nonce for template access
+    - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
 
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
@@ -55,16 +64,20 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         >>> middleware = SecurityHeadersMiddleware(None)
         >>> isinstance(middleware, SecurityHeadersMiddleware)
         True
-        >>> # Test CSP directive construction
+        >>> # Test CSP directive construction with nonce
+        >>> import secrets
+        >>> csp_nonce = secrets.token_urlsafe(16)
         >>> csp_directives = [
         ...     "default-src 'self'",
-        ...     "script-src 'self' 'unsafe-inline'",
-        ...     "style-src 'self' 'unsafe-inline'"
+        ...     f"script-src 'self' 'nonce-{csp_nonce}'",
+        ...     f"style-src 'self' 'nonce-{csp_nonce}'"
         ... ]
         >>> csp = "; ".join(csp_directives) + ";"
         >>> "default-src 'self'" in csp
         True
         >>> csp.endswith(";")
+        True
+        >>> "'nonce-" in csp
         True
         >>> # Test HSTS value construction
         >>> hsts_max_age = 31536000
@@ -199,10 +212,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> "strict-origin" in referrer_policy
             True
 
-            Test CSP directive construction:
+            Test CSP directive construction with nonce-based approach:
+            >>> import secrets
+            >>> csp_nonce = secrets.token_urlsafe(16)
             >>> csp_directives = [
             ...     "default-src 'self'",
-            ...     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com",
+            ...     f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
             ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
             ...     "img-src 'self' data: https:",
             ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
@@ -215,6 +230,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> "frame-ancestors 'self'" in csp_header
             True
             >>> csp_header.endswith(";")
+            True
+            >>> "'unsafe-inline'" not in csp_header or "style-src" in csp_header
+            True
+            >>> "'unsafe-eval'" not in csp_header
             True
 
             Test HSTS header construction:
@@ -328,6 +347,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> 'Vary' in resp.headers and 'Origin' in resp.headers['Vary']
             True
         """
+        # Generate CSP nonce BEFORE processing request so templates can access it
+        # This must happen before call_next() so request.state.csp_nonce is available during template rendering
+        csp_nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = csp_nonce
+
         response = await call_next(request)
 
         # Only apply security headers if enabled
@@ -354,37 +378,67 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-        # Content Security Policy
-        # This CSP is designed to work with the Admin UI while providing security
-        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
-        csp_directives = [
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
-            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
-            "img-src 'self' data: https:",
-            "font-src 'self' data: https://cdnjs.cloudflare.com",
-            "connect-src 'self' ws: wss: https:",
-        ]
+        # Content Security Policy with nonce-based approach (nonce already generated above)
 
-        # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
-        if x_frame is not None:
-            x_frame_upper = x_frame.upper()
+        # Determine the route-only path (strip root_path for path matching)
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
 
-            if x_frame_upper == "DENY":
-                frame_ancestors = "'none'"
-            elif x_frame_upper == "SAMEORIGIN":
-                frame_ancestors = "'self'"
-            elif x_frame_upper.startswith("ALLOW-FROM"):
-                allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
-                frame_ancestors = allowed_uri
-            elif x_frame_upper == "ALLOW-ALL":
-                frame_ancestors = "* file: http: https:"
-            else:
-                # Default to none for unknown values (matches DENY default)
-                frame_ancestors = "'none'"
+        # FastAPI's built-in /docs and /redoc pages use inline scripts without nonces
+        # to initialise SwaggerUIBundle.  Skipping CSP on these endpoints lets the
+        # documentation UI render while keeping strict CSP everywhere else.
+        skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
 
-            csp_directives.append(f"frame-ancestors {frame_ancestors}")
-        response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
+        # CSP directives with layered script security (CSP Level 3)
+        #
+        # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
+        #   This prevents XSS via injected <script> blocks while allowing legitimate
+        #   inline scripts that have the matching nonce attribute.
+        #
+        # script-src-attr: Controls inline event handlers (onclick, onsubmit, etc.).
+        #   'unsafe-inline' is retained here because converting 200+ inline event
+        #   handlers to external JS is a large refactoring tracked separately.
+        #   The XSS risk is mitigated: event handlers are server-rendered (not
+        #   user-generated) and <script> injection is blocked by script-src-elem.
+        #
+        # script-src: Fallback for older browsers and controls eval()/new Function().
+        #   'unsafe-eval' is required for Alpine.js standard build. The nonce-based
+        #   protection in script-src-elem is the primary defense for modern browsers.
+        #
+        # style-src: Retains 'unsafe-inline' for Alpine.js dynamic inline styles.
+        if not skip_csp_for_docs:
+            csp_directives = [
+                "default-src 'self'",
+                f"script-src-elem 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+                "script-src-attr 'unsafe-inline'",
+                "script-src 'self' 'unsafe-eval'",
+                "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+                "img-src 'self' data: https:",
+                "font-src 'self' data: https://cdnjs.cloudflare.com",
+                "connect-src 'self' ws: wss: https:",
+            ]
+
+            # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
+            if x_frame is not None:
+                x_frame_upper = x_frame.upper()
+
+                if x_frame_upper == "DENY":
+                    frame_ancestors = "'none'"
+                elif x_frame_upper == "SAMEORIGIN":
+                    frame_ancestors = "'self'"
+                elif x_frame_upper.startswith("ALLOW-FROM"):
+                    allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
+                    frame_ancestors = allowed_uri
+                elif x_frame_upper == "ALLOW-ALL":
+                    frame_ancestors = "* file: http: https:"
+                else:
+                    # Default to none for unknown values (matches DENY default)
+                    frame_ancestors = "'none'"
+
+                csp_directives.append(f"frame-ancestors {frame_ancestors}")
+            response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
 
         # HSTS for HTTPS connections (configurable)
         if settings.hsts_enabled and (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"):

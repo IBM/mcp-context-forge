@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Coverage tests for metrics recording exception handlers.
-
+"""Location: ./tests/unit/mcpgateway/services/test_metrics_exception_coverage.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Coverage tests for metrics recording exception handlers.
 This test file targets server-scoped metrics exception handling and
 server_id filtering paths in prompt_service, resource_service, and tool_service.
 """

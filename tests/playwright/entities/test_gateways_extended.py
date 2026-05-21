@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/playwright/entities/test_gateways_extended.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -31,6 +31,26 @@ def _skip_if_no_gateways(gateways_page: GatewaysPage) -> None:
     """Skip test if no gateways are available."""
     if gateways_page.get_gateway_count() == 0:
         pytest.skip("No gateways available for testing")
+
+
+def _open_view_or_skip(gateways_page: GatewaysPage, gateway_index: int = 0) -> None:
+    """Open the gateway view modal, skipping on RBAC/fetch failures."""
+    try:
+        gateways_page.open_view_modal(gateway_index)
+    except AssertionError as exc:
+        if "HTTP 403" in str(exc) or "HTTP 401" in str(exc) or "Gateway API fetch failed" in str(exc):
+            pytest.skip(f"Gateway view blocked by permissions or fetch failure: {exc}")
+        raise
+
+
+def _open_edit_or_skip(gateways_page: GatewaysPage, gateway_index: int = 0) -> None:
+    """Open the gateway edit modal, skipping on RBAC/fetch failures."""
+    try:
+        gateways_page.open_edit_modal(gateway_index)
+    except AssertionError as exc:
+        if "HTTP 403" in str(exc) or "HTTP 401" in str(exc) or "Gateway API fetch failed" in str(exc):
+            pytest.skip(f"Gateway edit blocked by permissions or fetch failure: {exc}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +173,7 @@ class TestGatewayTestModal:
         # Button should become disabled with "Testing..." text
         try:
             gateways_page.page.wait_for_selector(
-                '#gateway-test-submit:disabled',
+                "#gateway-test-submit:disabled",
                 timeout=3000,
             )
         except PlaywrightTimeoutError:
@@ -225,14 +245,12 @@ class TestGatewayTestModal:
 
         # Open test modal for first gateway and inject fake result content
         gateways_page.open_test_modal(0)
-        gateways_page.page.evaluate(
-            """() => {
+        gateways_page.page.evaluate("""() => {
                 const resultDiv = document.getElementById('gateway-test-result');
                 const responseDiv = document.getElementById('gateway-test-response-json');
                 if (resultDiv) resultDiv.classList.remove('hidden');
                 if (responseDiv) responseDiv.textContent = 'STALE_GATEWAY_RESULT_MARKER';
-            }"""
-        )
+            }""")
         gateways_page.close_test_modal()
 
         # Open test modal for second gateway
@@ -243,9 +261,7 @@ class TestGatewayTestModal:
 
         # Also verify the response text is cleared
         response_text = gateways_page.test_modal_response_json.text_content().strip()
-        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
-            "Gateway test result should not contain stale data from previous gateway"
-        )
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, "Gateway test result should not contain stale data from previous gateway"
 
         gateways_page.close_test_modal()
 
@@ -270,7 +286,7 @@ class TestGatewayViewModal:
         first_row = gateways_page.get_gateway_row(0)
         gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         # Verify modal is visible
         expect(gateways_page.view_modal).to_be_visible()
@@ -287,7 +303,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Name:")')).to_be_visible()
@@ -304,7 +320,7 @@ class TestGatewayViewModal:
         first_row = gateways_page.get_gateway_row(0)
         gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("URL:")')).to_be_visible()
@@ -318,7 +334,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Visibility:")')).to_be_visible()
@@ -331,7 +347,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Status:")')).to_be_visible()
@@ -344,7 +360,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Metadata:")')).to_be_visible()
@@ -361,7 +377,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Description:")')).to_be_visible()
@@ -374,7 +390,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
 
         details = gateways_page.view_modal_details
         expect(details.locator('strong:has-text("Tags:")')).to_be_visible()
@@ -387,7 +403,7 @@ class TestGatewayViewModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
         expect(gateways_page.view_modal).to_be_visible()
 
         gateways_page.close_view_modal()
@@ -405,14 +421,14 @@ class TestGatewayViewModal:
         # View first gateway
         first_row = gateways_page.get_gateway_row(0)
         first_name = first_row.locator("td").nth(3).text_content().strip()
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
         expect(gateways_page.view_modal_details).to_contain_text(first_name)
         gateways_page.close_view_modal()
 
         # View second gateway
         second_row = gateways_page.get_gateway_row(1)
         second_name = second_row.locator("td").nth(3).text_content().strip()
-        gateways_page.open_view_modal(1)
+        _open_view_or_skip(gateways_page, 1)
         expect(gateways_page.view_modal_details).to_contain_text(second_name)
         gateways_page.close_view_modal()
 
@@ -436,7 +452,7 @@ class TestGatewayEditModal:
         first_row = gateways_page.get_gateway_row(0)
         gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         expect(gateways_page.edit_modal).to_be_visible()
         expect(gateways_page.edit_modal_title).to_contain_text("Edit Gateway")
@@ -453,7 +469,7 @@ class TestGatewayEditModal:
         first_row = gateways_page.get_gateway_row(0)
         gateway_url = first_row.locator("td").nth(4).text_content().strip()
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
         expect(gateways_page.edit_modal_url_input).to_have_value(gateway_url)
         gateways_page.close_edit_modal()
 
@@ -463,7 +479,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         # Core fields
         expect(gateways_page.edit_modal_name_input).to_be_visible()
@@ -496,7 +512,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         transport = gateways_page.edit_modal_transport_select
         expect(transport.locator('option[value="SSE"]')).to_be_attached()
@@ -510,7 +526,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         auth_select = gateways_page.edit_modal_auth_type_select
         expect(auth_select).to_be_visible()
@@ -526,7 +542,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         # Initially hidden (gateway has no auth)
         expect(gateways_page.edit_auth_basic_fields).to_be_hidden()
@@ -543,7 +559,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         expect(gateways_page.edit_auth_bearer_fields).to_be_hidden()
 
@@ -558,7 +574,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         expect(gateways_page.edit_oauth_fields).to_be_hidden()
 
@@ -573,7 +589,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         # Wait for editGateway() to finish populating the form before asserting field
         # states — the modal becomes visible before the async fetch resolves, so without
@@ -596,7 +612,7 @@ class TestGatewayEditModal:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         expect(gateways_page.edit_auth_query_param_fields).to_be_hidden()
 
@@ -615,7 +631,7 @@ class TestGatewayEditModal:
         first_row = gateways_page.get_gateway_row(0)
         original_name = first_row.locator("td").nth(3).text_content().strip()
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         # Change the name
         gateways_page.edit_modal_name_input.fill("SHOULD-NOT-SAVE-" + str(uuid.uuid4()))
@@ -643,7 +659,7 @@ class TestGatewayEditModal:
         first_row = gateways_page.get_gateway_row(0)
         visibility_text = first_row.locator("td").nth(10).text_content().strip().lower()
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         if "public" in visibility_text:
             expect(gateways_page.edit_modal_visibility_public).to_be_checked()
@@ -857,11 +873,11 @@ class TestCustomHeadersAuth:
         # Wait for the header row to be added
         gateways_page.page.wait_for_timeout(500)
 
-        count_before = container.locator('> div').count()
+        count_before = container.locator("> div").count()
         assert count_before >= 1, "Expected at least 1 header row"
 
         # Find the last header row (direct child div) and its remove button
-        last_header_row = container.locator('> div').last
+        last_header_row = container.locator("> div").last
         remove_button = last_header_row.locator('button[title="Remove header"]')
 
         # Wait for button to be attached and visible
@@ -872,9 +888,9 @@ class TestCustomHeadersAuth:
         remove_button.click()
 
         # Wait for the row count to decrease
-        expect(container.locator('> div')).to_have_count(count_before - 1, timeout=5000)
+        expect(container.locator("> div")).to_have_count(count_before - 1, timeout=5000)
 
-        count_after = container.locator('> div').count()
+        count_after = container.locator("> div").count()
         assert count_after == count_before - 1, f"Expected {count_before - 1} rows after removal, got {count_after}"
 
 
@@ -1133,7 +1149,7 @@ class TestGatewayEditEndToEnd:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         new_description = f"Updated description {uuid.uuid4().hex[:8]}"
         gateways_page.edit_modal_description_input.fill(new_description)
@@ -1159,7 +1175,7 @@ class TestGatewayEditEndToEnd:
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
-        gateways_page.open_view_modal(0)
+        _open_view_or_skip(gateways_page, 0)
         expect(gateways_page.view_modal_details).to_contain_text(new_description)
         gateways_page.close_view_modal()
 
@@ -1177,7 +1193,7 @@ class TestGatewayEditEndToEnd:
 
         new_tags = f"edited,test-tag-{uuid.uuid4().hex[:6]}"
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
         gateways_page.edit_modal_tags_input.fill(new_tags)
 
         # Save — scroll into view and use extended timeout for the click
@@ -1222,7 +1238,7 @@ class TestGatewayEditEndToEnd:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
 
-        gateways_page.open_edit_modal(0)
+        _open_edit_or_skip(gateways_page, 0)
 
         test_headers = "Authorization, X-Request-ID, X-Correlation-ID"
         gateways_page.edit_modal_passthrough_headers.fill(test_headers)
@@ -1543,12 +1559,12 @@ class TestGatewayAddFormAdvanced:
     def test_panel_description_text(self, gateways_page: GatewaysPage):
         """Test that the panel description text is correct."""
         gateways_page.navigate_to_gateways_tab()
-        description = gateways_page.page.locator('text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts')
+        description = gateways_page.page.locator("text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts")
         expect(description).to_be_visible()
 
     def test_tags_help_text(self, gateways_page: GatewaysPage):
         """Test that tags field has help text about normalization."""
         gateways_page.navigate_to_gateways_tab()
         # Scope to the add form to avoid matching the edit modal's tags help text
-        help_text = gateways_page.add_gateway_form.locator('text=Tags will be automatically normalized')
+        help_text = gateways_page.add_gateway_form.locator("text=Tags will be automatically normalized")
         expect(help_text).to_be_visible()

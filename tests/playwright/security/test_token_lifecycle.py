@@ -2,7 +2,12 @@
 # Copyright (c) 2025 ContextForge Contributors.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Token Lifecycle E2E Tests.
+"""Location: ./tests/playwright/security/test_token_lifecycle.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Token Lifecycle E2E Tests.
 
 Tests API token create/read/update/revoke operations through the /tokens REST API.
 """
@@ -144,9 +149,7 @@ class TestTokenRevokeUI:
             # Verify the revoke button is actually visible in the UI
             # (prevents the revoke_token() fallback API path from masking UI bugs)
             revoke_btn = tokens_page.get_token_revoke_btn(token_name)
-            assert revoke_btn.count() > 0 and revoke_btn.first.is_visible(), (
-                "Revoke button must be visible for an active token"
-            )
+            assert revoke_btn.count() > 0 and revoke_btn.first.is_visible(), "Revoke button must be visible for an active token"
 
             # Click revoke via UI button directly — bypasses the fallback path
             with tokens_page.page.expect_response(
@@ -157,10 +160,7 @@ class TestTokenRevokeUI:
                 revoke_btn.first.click()
 
             response = response_info.value
-            assert response.status in (200, 204), (
-                f"Revoke should succeed (got {response.status}). "
-                "If 404, the button may still be using the broken hx-delete path."
-            )
+            assert response.status in (200, 204), f"Revoke should succeed (got {response.status}). " "If 404, the button may still be using the broken hx-delete path."
         finally:
             # Cleanup: ensure token is revoked even if UI test fails
             try:

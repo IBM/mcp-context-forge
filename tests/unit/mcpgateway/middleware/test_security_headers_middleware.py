@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the security headers middleware."""
+"""Location: ./tests/unit/mcpgateway/middleware/test_security_headers_middleware.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the security headers middleware.
+"""
 
 from unittest.mock import patch
 
@@ -300,5 +306,28 @@ async def test_unknown_x_frame_options():
         response = await middleware.dispatch(_make_request(), _call_next)
         csp = response.headers.get("Content-Security-Policy", "")
         assert "frame-ancestors 'none'" in csp
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_root_path_is_stripped_from_path_for_csp_skip_check():
+    mock, settings = _mock_settings()
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/app/docs",
+                "root_path": "/app",
+                "scheme": "https",
+                "headers": [],
+            }
+        )
+
+        response = await middleware.dispatch(request, _call_next)
+
+        assert response.status_code == 200
     finally:
         mock.stop()

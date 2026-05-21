@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/external_clamav/test_clamav_remote.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
@@ -9,7 +9,7 @@ Tests for ClamAVRemotePlugin (direct import, eicar_only mode).
 
 import pytest
 
-from mcpgateway.plugins.framework import (
+from cpex.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
@@ -21,7 +21,6 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 
 from plugins.external.clamav_server.clamav_plugin import ClamAVRemotePlugin
-
 
 EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
@@ -78,7 +77,7 @@ async def test_non_blocking_mode_reports_metadata(tmp_path):
 @pytest.mark.asyncio
 async def test_prompt_post_fetch_blocks_on_eicar_text():
     plugin = _mk_plugin(True)
-    from mcpgateway.plugins.framework import PromptPosthookPayload
+    from cpex.framework import PromptPosthookPayload
 
     pr = PromptResult(
         messages=[
@@ -98,7 +97,7 @@ async def test_prompt_post_fetch_blocks_on_eicar_text():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_blocks_on_eicar_string():
     plugin = _mk_plugin(True)
-    from mcpgateway.plugins.framework import ToolPostInvokePayload
+    from cpex.framework import ToolPostInvokePayload
 
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     payload = ToolPostInvokePayload(name="t", result={"text": EICAR})
@@ -119,7 +118,7 @@ async def test_health_stats_counters():
     await plugin.resource_post_fetch(payload_r, ctx)
 
     # 2) prompt_post_fetch with EICAR -> attempted +1, infected +1 (total attempted=2, infected=2)
-    from mcpgateway.plugins.framework import PromptPosthookPayload
+    from cpex.framework import PromptPosthookPayload
 
     pr = PromptResult(
         messages=[
@@ -133,7 +132,7 @@ async def test_health_stats_counters():
     await plugin.prompt_post_fetch(payload_p, ctx)
 
     # 3) tool_post_invoke with one EICAR and one clean string -> attempted +2, infected +1
-    from mcpgateway.plugins.framework import ToolPostInvokePayload
+    from cpex.framework import ToolPostInvokePayload
 
     payload_t = ToolPostInvokePayload(name="t", result={"a": EICAR, "b": "clean"})
     await plugin.tool_post_invoke(payload_t, ctx)
