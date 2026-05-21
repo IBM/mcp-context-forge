@@ -15506,7 +15506,7 @@ async def admin_get_agent(
 
     Args:
         agent_id: Agent ID.
-        request: FastAPI request object.
+        request: FastAPI request object (required for token team extraction via request.state.token_teams).
         db: Database session.
         user: Authenticated user.
 
@@ -15540,10 +15540,10 @@ async def admin_get_agent(
 @admin_router.get("/a2a", response_model=PaginatedResponse)
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_list_a2a_agents(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -15558,7 +15558,7 @@ async def admin_list_a2a_agents(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive agents in the results.
-        request (Request): FastAPI request object.
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
 
