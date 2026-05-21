@@ -202,7 +202,14 @@ def _popup_notification_script(nonce: str, payload: dict) -> str:
     Returns:
         HTML ``<script>`` tag string safe for embedding in an HTML body.
     """
-    safe_payload = json.dumps(payload).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    safe_payload = (
+        json.dumps(payload)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")  # U+2028 LINE SEPARATOR
+        .replace("\u2029", "\\u2029")  # U+2029 PARAGRAPH SEPARATOR
+    )
     safe_nonce = escape(nonce, quote=True)
     # targetOrigin is "*" rather than window.location.origin because in production
     # the API server and the React app may run on different origins (e.g.
@@ -211,15 +218,7 @@ def _popup_notification_script(nonce: str, payload: dict) -> str:
     # reduced targetOrigin restriction by validating event.source === authWindow
     # (the exact popup reference), so only the window that initiated the flow can
     # act on the result.
-    return (
-        f'<script nonce="{safe_nonce}">'
-        "(function(){"
-        "if(window.opener&&!window.opener.closed){"
-        f"window.opener.postMessage({safe_payload},'*');"
-        "window.close();"
-        "}})()"
-        "</script>"
-    )
+    return f'<script nonce="{safe_nonce}">' "(function(){" "if(window.opener&&!window.opener.closed){" f"window.opener.postMessage({safe_payload},'*');" "window.close();" "}})()" "</script>"
 
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
@@ -403,7 +402,10 @@ async def initiate_oauth_flow(
     request: Request,
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-    popup: bool = Query(default=False, description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page"),
+    popup: bool = Query(
+        default=False,
+        description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page",
+    ),
 ) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
@@ -618,7 +620,9 @@ async def oauth_callback(
                 return HTMLResponse(
                     content=(
                         "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."})
+                        + _popup_notification_script(
+                            csp_nonce, {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."}
+                        )
                         + "</body></html>"
                     ),
                     status_code=400,
@@ -645,7 +649,9 @@ async def oauth_callback(
                 return HTMLResponse(
                     content=(
                         "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                        + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."})
+                        + _popup_notification_script(
+                            csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}
+                        )
                         + "</body></html>"
                     ),
                     status_code=400,
@@ -924,7 +930,9 @@ async def oauth_callback(
             return HTMLResponse(
                 content=(
                     "<!DOCTYPE html><html><head><title>OAuth Authorization Failed</title></head><body>"
-                    + _popup_notification_script(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."})
+                    + _popup_notification_script(
+                        csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}
+                    )
                     + "</body></html>"
                 ),
                 status_code=500,
