@@ -84,8 +84,8 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_generic_scope="openid profile email",
         sso_generic_groups_claim="groups",
         sso_generic_admin_groups=[],
-        sso_generic_role_mappings={},
-        sso_generic_default_role=None,
+        sso_generic_role_mappings={"cf-platform-admin": "platform_admin", "cf-dev": "developer"},
+        sso_generic_default_role="platform_viewer",
         sso_generic_sync_roles_on_login=True,
         sso_trusted_domains=["example.com"],
         sso_auto_create_users=True,
@@ -121,6 +121,108 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
 
     keycloak_provider = next(provider for provider in providers if provider["id"] == "keycloak")
     assert keycloak_provider["jwks_uri"] == "https://keycloak.example.com/jwks"
+
+    # Generic OIDC provider_metadata must be populated (gap 1 fix)
+    generic_provider = next(provider for provider in providers if provider["id"] == "authentik")
+    assert "provider_metadata" in generic_provider, "Generic OIDC provider must include provider_metadata"
+    generic_meta = generic_provider["provider_metadata"]
+    assert generic_meta["groups_claim"] == "groups"
+    assert generic_meta["role_mappings"] == {"cf-platform-admin": "platform_admin", "cf-dev": "developer"}
+    assert generic_meta["default_role"] == "platform_viewer"
+
+
+def test_get_predefined_sso_providers_generic_oidc_provider_metadata(monkeypatch):
+    """Generic OIDC bootstrap populates provider_metadata with group/role config (gap 1 fix).
+
+    Verifies that groups_claim, role_mappings, and default_role are written into
+    provider_metadata so that _map_groups_to_roles() does not exit early.
+    """
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_google_enabled=False,
+        sso_ibm_verify_enabled=False,
+        sso_okta_enabled=False,
+        sso_entra_enabled=False,
+        sso_keycloak_enabled=False,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="authentik",
+        sso_generic_display_name="Authentik",
+        sso_generic_client_id="authentik-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://authentik.example.com/application/o/authorize/",
+        sso_generic_token_url="https://authentik.example.com/application/o/token/",
+        sso_generic_userinfo_url="https://authentik.example.com/application/o/userinfo/",
+        sso_generic_issuer="https://authentik.example.com/application/o/myapp/",
+        sso_generic_jwks_uri="https://authentik.example.com/application/o/myapp/jwks/",
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={"cf-platform-admin": "platform_admin"},
+        sso_generic_default_role="platform_viewer",
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+
+    providers = get_predefined_sso_providers()
+    assert len(providers) == 1
+    provider = providers[0]
+
+    assert provider["id"] == "authentik"
+    assert "provider_metadata" in provider
+
+    meta = provider["provider_metadata"]
+    assert meta["groups_claim"] == "groups"
+    assert meta["role_mappings"] == {"cf-platform-admin": "platform_admin"}
+    assert meta["default_role"] == "platform_viewer"
+    # jwks_uri should be hoisted to top-level too
+    assert provider.get("jwks_uri") == "https://authentik.example.com/application/o/myapp/jwks/"
+
+
+def test_get_predefined_sso_providers_generic_oidc_empty_role_mappings(monkeypatch):
+    """Generic OIDC bootstrap writes provider_metadata even when role_mappings is empty."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_google_enabled=False,
+        sso_ibm_verify_enabled=False,
+        sso_okta_enabled=False,
+        sso_entra_enabled=False,
+        sso_keycloak_enabled=False,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="auth0",
+        sso_generic_display_name=None,
+        sso_generic_client_id="auth0-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://example.auth0.com/authorize",
+        sso_generic_token_url="https://example.auth0.com/oauth/token",
+        sso_generic_userinfo_url="https://example.auth0.com/userinfo",
+        sso_generic_issuer="https://example.auth0.com/",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+
+    providers = get_predefined_sso_providers()
+    provider = providers[0]
+
+    assert "provider_metadata" in provider
+    meta = provider["provider_metadata"]
+    assert meta["role_mappings"] == {}
+    assert meta["default_role"] is None
 
 
 def test_get_predefined_sso_providers_adfs_enabled(monkeypatch):

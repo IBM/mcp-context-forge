@@ -576,6 +576,10 @@ class Settings(BaseSettings):
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
 
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for generic OIDC groups (e.g. 'groups', 'roles')")
+    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin (CSV/JSON)")
+    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map generic OIDC groups to ContextForge roles (JSON: {group_name: role_name})")
+    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for generic OIDC users without a matching group mapping (None = no role assigned)")
 
     sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
     sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
@@ -2521,6 +2525,16 @@ class Settings(BaseSettings):
     redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout in seconds")
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
+
+    # Redis TLS Configuration
+    # Local dev:  leave redis_ssl=False and use a plain redis:// URL (default behaviour, no certs needed).
+    # Production: set REDIS_SSL=true and change REDIS_URL to rediss://<host>:6380/0, then supply
+    #             cert paths via REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE.
+    redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)")
 
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
