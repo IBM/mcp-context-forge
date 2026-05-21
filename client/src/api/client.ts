@@ -103,7 +103,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   };
 
   if (method !== "GET" && authenticated) {
-    const csrfToken = getCookie("csrf_token");
+    const csrfToken = getCookie("mcpgateway_csrf_token");
     if (csrfToken) {
       headers["X-CSRF-Token"] = csrfToken;
     }
