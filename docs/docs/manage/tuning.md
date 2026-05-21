@@ -699,7 +699,7 @@ Each network connection requires a file descriptor. Containers default to 1024 s
 |-----------|---------------------|-----------|
 | **PgBouncer** | `65536` | `MAX_CLIENT_CONN + MAX_DB_CONNECTIONS + overhead` |
 | **PostgreSQL** | `8192` | `max_connections + internal FDs` |
-| **Redis** | `65536` | `maxclients + overhead` |
+| **Redis** | `65536` | `maxclients (30000) + overhead` |
 | **Gateway** | `65536` | `HTTP connections + DB connections + MCP sessions` |
 | **Nginx** | `65535` | `worker_connections × workers` |
 

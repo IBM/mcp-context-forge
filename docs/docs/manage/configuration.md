@@ -962,6 +962,19 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |
 
+!!! warning "Redis Server Capacity"
+    `REDIS_MAX_CONNECTIONS` is the **client-side** pool size per worker. The total connections to Redis must not exceed the server-side `maxclients` limit.
+    
+    **Formula:** `replicas × workers × REDIS_MAX_CONNECTIONS < maxclients`
+    
+    **Example:** 10 replicas × 24 workers × 50 pool = 12,000 connections (within 30,000 maxclients limit)
+    
+    If you scale replicas or increase workers, ensure Redis `maxclients` is configured accordingly:
+    - docker-compose: Set via `--maxclients` argument
+    - Helm: Set `redis.maxclients` in values.yaml
+    
+    See [Scaling Guide](scale.md#redis-connection-capacity) for details.
+    
 !!! tip "Cache Backend Selection"
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
 

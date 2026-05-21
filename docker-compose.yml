@@ -276,7 +276,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
+      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 30000 maxclients)
       - REDIS_MAX_CONNECTIONS=100
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
@@ -1133,7 +1133,7 @@ services:
       - "--tcp-keepalive"
       - "300"
       - "--maxclients"
-      - "10000"
+      - "30000"
     ports:
       - "6379:6379"      # expose only if you want host access
     networks: [mcpnet]

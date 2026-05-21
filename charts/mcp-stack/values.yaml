@@ -1319,6 +1319,11 @@ redis:
     annotations: {}              # Optional annotations for backup tools
       # backup.velero.io/backup-volumes: "redis-data"
       # backup.policy/schedule: "daily"
+    
+  # ─── Redis server configuration ───
+  maxclients: 30000             # Maximum client connections
+                                # Formula: replicas × workers × REDIS_MAX_CONNECTIONS × 1.2
+                                # Example: 10 × 24 × 100 × 1.2 = 28,800 → 30,000
 
 ########################################################################
 # PGADMIN - Web UI for Postgres
