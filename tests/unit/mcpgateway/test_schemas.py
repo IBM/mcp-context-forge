@@ -1634,6 +1634,7 @@ class TestTitleSchemas:
             jsonpathFilter="",
             auth={"type": "none"},
             enabled=True,
+            deprecated=False,
             reachable=True,
             gatewayId="gw-1",
             gatewaySlug="gw-1-slug",
