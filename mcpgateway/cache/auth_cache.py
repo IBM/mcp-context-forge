@@ -916,8 +916,6 @@ class AuthCache:
                 if data is not None:
                     self._hit_count += 1
                     self._redis_hit_count += 1
-                    # Third-Party
-                    import orjson  # pylint: disable=import-outside-toplevel
 
                     team_dicts = orjson.loads(data)
 
@@ -955,9 +953,6 @@ class AuthCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
-
                 redis_key = self._get_redis_key("team_objs", cache_key)
                 await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_dicts))
             except Exception as e:
