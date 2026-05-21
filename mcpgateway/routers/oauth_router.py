@@ -260,7 +260,7 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
             return email.strip().lower()
     if isinstance(current_user, dict):
         email = get_user_email(current_user)
-        if isinstance(email, str) and email.strip() and email != "unknown":
+        if isinstance(email, str) and email.strip():
             return email.strip().lower()
     return None
 
@@ -301,7 +301,7 @@ async def _enforce_gateway_access(
         HTTPException: If authentication is missing or access is not permitted.
     """
     requester_email = _extract_user_email(current_user)
-    if not requester_email:
+    if not requester_email or requester_email == "unknown":
         raise HTTPException(status_code=401, detail="User authentication required")
 
     requester_is_admin = _extract_is_admin(current_user)
