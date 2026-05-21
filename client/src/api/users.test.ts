@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { usersApi } from "../users";
-import { api } from "../client";
-import type { CreateUserRequest, User, UsersResponse } from "../../types/user";
+import { usersApi } from "./users";
+import { api } from "./client";
+import type { CreateUserRequest, User, UsersResponse } from "../types/user";
 
-vi.mock("../client", () => ({
+vi.mock("./client", () => ({
   api: {
     get: vi.fn(),
     post: vi.fn(),
@@ -20,8 +20,7 @@ describe("usersApi", () => {
     it("should fetch users without params", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: undefined,
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
 
@@ -34,87 +33,63 @@ describe("usersApi", () => {
     it("should fetch users with cursor", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: "next123",
-        has_more: true,
+        nextCursor: "next123",
+
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
 
       await usersApi.list({ cursor: "cursor123" });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?cursor=cursor123",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?cursor=cursor123", undefined, undefined);
     });
 
     it("should fetch users with limit", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: undefined,
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
 
       await usersApi.list({ limit: 50 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=50",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=50", undefined, undefined);
     });
 
     it("should clamp limit to max 100", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: undefined,
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
 
       await usersApi.list({ limit: 200 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=100",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=100", undefined, undefined);
     });
 
     it("should clamp limit to min 1", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: undefined,
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
 
       await usersApi.list({ limit: -5 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=1",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=1", undefined, undefined);
     });
 
     it("should pass abort signal", async () => {
       const mockResponse: UsersResponse = {
         users: [],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: undefined,
       };
       vi.mocked(api.get).mockResolvedValue(mockResponse);
       const controller = new AbortController();
 
       await usersApi.list({ signal: controller.signal });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users",
-        undefined,
-        controller.signal
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users", undefined, controller.signal);
     });
   });
 
@@ -125,6 +100,10 @@ describe("usersApi", () => {
         full_name: "Test User",
         is_admin: false,
         is_active: true,
+        auth_provider: "local",
+        email_verified: false,
+        failed_login_attempts: 0,
+        is_locked: false,
         password_change_required: false,
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-01T00:00:00Z",
@@ -142,22 +121,29 @@ describe("usersApi", () => {
 
       const result = await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        email: "test@example.com",
-        full_name: "Test User",
-        is_admin: false,
-        is_active: true,
-        password_change_required: false,
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          email: "test@example.com",
+          full_name: "Test User",
+          is_admin: false,
+          is_active: true,
+          password_change_required: false,
+        }),
+      );
       expect(result).toEqual(mockUser);
     });
 
     it("should sanitize email with whitespace", async () => {
       const mockUser: User = {
         email: "test@example.com",
-        full_name: null,
+        full_name: undefined,
         is_admin: false,
         is_active: true,
+        auth_provider: "local",
+        email_verified: false,
+        failed_login_attempts: 0,
+        is_locked: false,
         password_change_required: false,
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-01T00:00:00Z",
@@ -171,9 +157,12 @@ describe("usersApi", () => {
 
       await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        email: "test@example.com",
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          email: "test@example.com",
+        }),
+      );
     });
 
     it("should reject invalid email format", async () => {
@@ -219,9 +208,13 @@ describe("usersApi", () => {
     it("should apply default values for optional fields", async () => {
       const mockUser: User = {
         email: "test@example.com",
-        full_name: null,
+        full_name: undefined,
         is_admin: false,
         is_active: true,
+        auth_provider: "local",
+        email_verified: false,
+        failed_login_attempts: 0,
+        is_locked: false,
         password_change_required: false,
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-01T00:00:00Z",
@@ -235,11 +228,14 @@ describe("usersApi", () => {
 
       await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        is_admin: false,
-        is_active: true,
-        password_change_required: false,
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          is_admin: false,
+          is_active: true,
+          password_change_required: false,
+        }),
+      );
     });
   });
 
@@ -250,6 +246,10 @@ describe("usersApi", () => {
         full_name: "Test User",
         is_admin: false,
         is_active: true,
+        auth_provider: "local",
+        email_verified: false,
+        failed_login_attempts: 0,
+        is_locked: false,
         password_change_required: false,
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-01T00:00:00Z",
@@ -268,6 +268,10 @@ describe("usersApi", () => {
         full_name: "Test User",
         is_admin: false,
         is_active: true,
+        auth_provider: "local",
+        email_verified: false,
+        failed_login_attempts: 0,
+        is_locked: false,
         password_change_required: false,
         created_at: "2024-01-01T00:00:00Z",
         updated_at: "2024-01-01T00:00:00Z",

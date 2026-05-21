@@ -13,18 +13,17 @@ const createUserFormObjectSchema = (intl: ReturnType<typeof useIntl>) =>
     email: z
       .string()
       .transform((val) => sanitizeString(val, VALIDATION.MAX_EMAIL_LENGTH))
-      .pipe(
-        z
-          .string()
-          .email(intl.formatMessage({ id: "users.form.error.emailInvalid" })),
-      ),
+      .pipe(z.string().email(intl.formatMessage({ id: "users.form.error.emailInvalid" }))),
     password: z
       .string()
       .transform((val) => sanitizePassword(val, VALIDATION.MAX_PASSWORD_LENGTH))
       .pipe(
         z
           .string()
-          .min(VALIDATION.MIN_PASSWORD_LENGTH, intl.formatMessage({ id: "users.form.error.passwordMinLength" })),
+          .min(
+            VALIDATION.MIN_PASSWORD_LENGTH,
+            intl.formatMessage({ id: "users.form.error.passwordMinLength" }),
+          ),
       ),
     confirmPassword: z.string(),
     fullName: z
@@ -203,7 +202,16 @@ export function useUserForm(): UseUserFormReturn {
       }
       return false;
     }
-  }, [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema]);
+  }, [
+    email,
+    password,
+    confirmPassword,
+    fullName,
+    isAdmin,
+    isActive,
+    passwordChangeRequired,
+    userFormSchema,
+  ]);
 
   const resetForm = useCallback(() => {
     setEmail(initialState.email);

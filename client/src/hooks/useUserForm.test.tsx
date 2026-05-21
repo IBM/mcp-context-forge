@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, act, waitFor } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { IntlProvider } from "react-intl";
 import { useUserForm } from "./useUserForm";
 import * as useQueryModule from "@/hooks/useQuery";
@@ -33,7 +33,7 @@ describe("useUserForm", () => {
       error: null,
       isLoading: false,
       execute: mockExecute,
-      reset: vi.fn(),
+      refetch: vi.fn(),
     });
   });
 
@@ -554,7 +554,7 @@ describe("useUserForm", () => {
       });
 
       expect(result.current.errors.submit).toBe(
-        "email: Invalid email format; password: Password too weak"
+        "email: Invalid email format; password: Password too weak",
       );
     });
 

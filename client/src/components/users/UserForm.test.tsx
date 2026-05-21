@@ -47,7 +47,7 @@ const defaultFormState = {
   resetForm: vi.fn(),
   validateForm: vi.fn(),
   validateField: vi.fn(),
-  handleSubmit: vi.fn(),
+  handleSubmit: vi.fn(async () => {}),
   getFormData: vi.fn(),
 };
 
@@ -65,10 +65,7 @@ describe("UserForm", () => {
 
   describe("visibility", () => {
     it("should not render when isOpen is false", () => {
-      const { container } = render(
-        <UserForm isOpen={false} onToggle={vi.fn()} />,
-        { wrapper }
-      );
+      const { container } = render(<UserForm isOpen={false} onToggle={vi.fn()} />, { wrapper });
 
       expect(container.firstChild).toBeNull();
     });
@@ -273,7 +270,7 @@ describe("UserForm", () => {
 
   describe("form submission", () => {
     it("should call handleSubmit when form is submitted", async () => {
-      const handleSubmit = vi.fn((event, callback) => {
+      const handleSubmit = vi.fn(async (event, callback) => {
         event.preventDefault();
         callback?.();
       });
@@ -295,7 +292,7 @@ describe("UserForm", () => {
     });
 
     it("should call onSuccess callback when provided", async () => {
-      const handleSubmit = vi.fn((event, callback) => {
+      const handleSubmit = vi.fn(async (event, callback) => {
         event.preventDefault();
         callback?.();
       });
@@ -317,7 +314,7 @@ describe("UserForm", () => {
     });
 
     it("should call onToggle when no onSuccess callback provided", async () => {
-      const handleSubmit = vi.fn((event, callback) => {
+      const handleSubmit = vi.fn(async (event, callback) => {
         event.preventDefault();
         callback?.();
       });
