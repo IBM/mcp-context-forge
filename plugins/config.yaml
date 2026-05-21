@@ -16,6 +16,51 @@ plugin_settings:
   include_user_info: false
 
 plugins:
+  # API Connect FAM - integrates with IBM API Connect Federated API Management
+  - name: "APIConnectFAM"
+    kind: "plugins.apiconnect_fam.apiconnect_fam.APIConnectFAMPlugin"
+    description: "Integrates with IBM API Connect Federated API Management - syncs servers, tools, and metrics"
+    version: "1.0.0"
+    author: "Shankar N"
+    hooks: []  # No hooks, uses background task
+    tags: ["fam", "sync", "monitoring"]
+    mode: "permissive"
+    priority: 1000
+    conditions: []
+    config:
+      interval_seconds: 60  # Sync/log every 60 seconds
+      log_details: true     # Include detailed server information
+      
+      # FAM sync configuration (disabled by default)
+      fam_enabled: true
+      fam_base_url: "http://sample.com"
+      fam_runtime_id: "0f8320a0-6a63-45b5-8217-a7488f150980"  # REQUIRED: Runtime ID from FAM registration
+      fam_username: "your-username"  # FAM username for Basic Authentication
+      fam_password: "your-password"    # FAM password for Basic Authentication
+      fam_timeout: 30
+      fam_verify_ssl: false  # Set to false for self-signed certificates
+      
+      # Runtime metadata (for reference only, not used after initial registration)
+      fam_runtime_name: "ContextForge Gateway"
+      fam_runtime_description: "ContextForge MCP Gateway Runtime"
+      fam_runtime_type: "MCP_CONTEXT_FORGE"  # WEBMETHODS_GATEWAY, APIGEE, KONG, AWS_API_GATEWAY, AZURE_API_MANAGEMENT
+      fam_runtime_deployment_type: "ON_PREMISE"  # ON_PREMISE, CLOUD, HYBRID
+      fam_runtime_region: "us-east-1"  # Optional: Region identifier
+      fam_runtime_location: "US East"  # Optional: Location description
+      fam_runtime_host: "contextforge-gateway"  # Optional: Host identifier
+      fam_runtime_tags: ["contextforge", "mcp", "gateway"]  # Optional: Runtime tags
+      fam_runtime_capacity_value: "100"  # Capacity value
+      fam_runtime_capacity_unit: "per minute"  # Capacity unit
+      fam_runtime_heartbeat_interval_seconds: 60  # Heartbeat interval in seconds (converted to ms for FAM, also used for activity interval)
+      
+      # Asset sync configuration (servers and tools)
+      fam_asset_sync_enabled: true # Enable asset (servers/tools) synchronization to FAM
+      fam_asset_sync_interval: 60   # Sync assets every 60 seconds
+      
+      # Metrics sync configuration (disabled by default)
+      metrics_sync_enabled: true  # Enable metrics synchronization to FAM
+      metrics_sync_interval: 300   # Sync metrics every 5 minutes (300 seconds)
+
   # Span Attribute Customizer - customize OpenTelemetry span attributes
   - name: "SpanAttributeCustomizer"
     kind: "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin"
