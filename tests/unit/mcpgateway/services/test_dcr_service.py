@@ -396,6 +396,10 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_does_not_follow_redirects_rfc8414(self):
         """RFC 8414 discovery must not follow redirects (SSRF protection)."""
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
         dcr_service = DcrService()
 
         mock_response = MagicMock()
