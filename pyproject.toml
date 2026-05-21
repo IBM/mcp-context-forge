@@ -113,7 +113,7 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.13.4",
     "argparse-manpage>=4.7",
-    "authlib>=1.7.0", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
+    "authlib>=1.7.1", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
     "bump2version>=1.0.1",
