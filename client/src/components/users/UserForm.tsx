@@ -37,10 +37,6 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
 
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
-  const handleCancel = () => {
-    onToggle();
-  };
-
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     handleSubmit(event, () => {
       if (onSuccess) {
@@ -266,7 +262,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => handleCancel()}
+                  onClick={onToggle}
                   className="h-10 rounded-md px-3 text-sm font-medium text-neutral-700 hover:bg-neutral-100 hover:text-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
                 >
                   {intl.formatMessage({ id: "users.form.button.cancel" })}

@@ -255,15 +255,22 @@ export function useUserForm(): UseUserFormReturn {
   );
 
   const isValid = useMemo(() => {
-    if (!email.trim() || !password.trim() || !confirmPassword.trim()) return false;
-    if (password !== confirmPassword) return false;
-    // Basic email format check
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) return false;
-    // Password length check
-    if (password.length < VALIDATION.MIN_PASSWORD_LENGTH) return false;
-    return true;
-  }, [email, password, confirmPassword]);
+    try {
+      const formData = {
+        email,
+        password,
+        confirmPassword,
+        fullName,
+        isAdmin,
+        isActive,
+        passwordChangeRequired,
+      };
+      userFormSchema.parse(formData);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema]);
 
   return {
     // State
