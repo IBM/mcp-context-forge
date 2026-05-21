@@ -376,3 +376,6 @@ tests/jmeter/results/*/
 
 # OCP deployment secrets (never commit)
 *-secrets.yaml
+
+# Git worktrees
+.worktrees/

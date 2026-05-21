@@ -5,8 +5,11 @@
 // per-section data from HTML data-* attributes in init().
 //
 // Extra query params (search terms, filters) that vary per-section are
-// registered via tojson-escaped <script> blocks in pagination_controls.html
-// and stored here under the section's table_name key.
+// serialised by the backend into the `data-extra-params` JSON attribute on
+// the pagination_controls.html root element, and read back here in init().
+// AppState.paginationQuerySetters[tableName] is also honoured as an
+// additional, programmatic hook for params that can only be computed at
+// runtime (e.g. live form values).
 // ===================================================================
 
 import { AppState } from "./appState";
@@ -27,6 +30,7 @@ export function paginationData() {
     baseUrl: "",
     indicator: "#loading",
     pageItems: null,
+    extraParams: {},
     _loading: false,
 
     // Alpine lifecycle hook — called automatically when the component mounts.
@@ -45,6 +49,23 @@ export function paginationData() {
       this.tableName = el.dataset.tableName || "";
       this.baseUrl = el.dataset.baseUrl || "";
       this.indicator = el.dataset.hxIndicator || "#loading";
+
+      // Decode the server-rendered extra query params (search term `q`,
+      // `tags`, `gateway_id`, etc.). Failure to parse must not break
+      // pagination — we just fall back to no extra params.
+      this.extraParams = {};
+      const rawExtra = el.dataset.extraParams;
+      if (rawExtra) {
+        try {
+          const parsed = JSON.parse(rawExtra);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            this.extraParams = parsed;
+          }
+        } catch (_e) {
+          // Malformed JSON — ignore and fall back to no extra params.
+          this.extraParams = {};
+        }
+      }
 
       // Honour namespaced URL param for page size (bookmarked / shared URLs).
       if (this.tableName) {
@@ -111,10 +132,35 @@ export function paginationData() {
       if (!document.querySelector(this.targetSelector)) return;
 
       this._loading = true;
-      const unlock = () => { this._loading = false; };
-      document.addEventListener("htmx:afterSettle",   unlock, { once: true });
-      document.addEventListener("htmx:responseError", unlock, { once: true });
-      document.addEventListener("htmx:sendError",     unlock, { once: true });
+
+      // Register a single unlock that fires on whichever htmx event arrives
+      // first (success or any failure mode). Using AbortController to clean
+      // up the sibling listeners keeps the document free of leaked
+      // {once:true} handlers when only one of them ever fires.
+      //
+      // Listeners are scoped to the swap target element (not document) so
+      // that unrelated htmx swaps on the page don't prematurely unlock this
+      // component's _loading guard. htmx events bubble, so target-scoped
+      // listeners catch events from swaps directed at that element.
+      //
+      // `htmx:swapError` MUST be in this list — without it, a swap failure
+      // (e.g. session expiry returning a full HTML login page that htmx
+      // can't merge into the fragment target) would leave `_loading=true`
+      // permanently and silently freeze pagination until page reload.
+      const unlockController =
+        typeof AbortController !== "undefined" ? new AbortController() : null;
+      const unlock = () => {
+        this._loading = false;
+        if (unlockController) unlockController.abort();
+      };
+      const listenerOpts = unlockController
+        ? { once: true, signal: unlockController.signal }
+        : { once: true };
+      const listenTarget = document.querySelector(this.targetSelector) || document;
+      listenTarget.addEventListener("htmx:afterSettle",   unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:responseError", unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:sendError",     unlock, listenerOpts);
+      listenTarget.addEventListener("htmx:swapError",     unlock, listenerOpts);
 
       const url = new URL(this.baseUrl, window.location.origin);
       url.searchParams.set("page", page);
@@ -142,18 +188,33 @@ export function paginationData() {
         url.searchParams.set("include_inactive", includeInactive.toString());
       }
 
-      // Apply extra query params registered by the template's per-instance
-      // <script> block (AppState.paginationQuerySetters[tableName]).
-      // Each pagination_controls.html include that has query_params renders
-      // a tojson-escaped setter function under its table_name key.
+      // Apply server-rendered extra query params (search `q`, `tags`,
+      // `gateway_id`, etc.) decoded from data-extra-params in init().
+      // `include_inactive` is owned by the checkbox path above, so we skip
+      // it here even when the backend echoes it into query_params.
+      if (this.extraParams && typeof this.extraParams === "object") {
+        Object.entries(this.extraParams).forEach(([k, v]) => {
+          if (k === "include_inactive") return;
+          if (v === null || v === undefined) return;
+          url.searchParams.set(k, String(v));
+        });
+      }
+
+      // Apply extra query params registered programmatically by templates
+      // (AppState.paginationQuerySetters[tableName]). This runs after the
+      // declarative `data-extra-params` block so JS-only params can
+      // override the server snapshot when needed.
       const setter = AppState.paginationQuerySetters[this.tableName];
       if (setter) setter(url);
 
-      // Preserve team_id filter from the current URL.
-      const currentUrlParams = new URLSearchParams(window.location.search);
-      const teamIdFromUrl = currentUrlParams.get("team_id");
-      if (teamIdFromUrl) {
-        url.searchParams.set("team_id", teamIdFromUrl);
+      // Preserve team_id filter from the current URL when the server
+      // snapshot doesn't already include one.
+      if (!url.searchParams.has("team_id")) {
+        const currentUrlParams = new URLSearchParams(window.location.search);
+        const teamIdFromUrl = currentUrlParams.get("team_id");
+        if (teamIdFromUrl) {
+          url.searchParams.set("team_id", teamIdFromUrl);
+        }
       }
 
       this.updateBrowserUrl(page, includeInactive);
