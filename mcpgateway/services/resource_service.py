@@ -2400,7 +2400,10 @@ class ResourceService(BaseService):
                     user_id = None
                     if user is not None:
                         if isinstance(user, dict) and "email" in user:
-                            user_id = user.get("email")
+                            # First-Party
+                            from mcpgateway.auth_context import get_user_email
+
+                            user_id = get_user_email(user)
                         elif isinstance(user, str):
                             user_id = user
                         else:

@@ -1385,8 +1385,10 @@ class TestOAuthAccessHelpers:
 
         gateway = SimpleNamespace(visibility="public", owner_email=None, team_id=None)
 
+        # Test with a user object that has neither email nor sub claim
+        # get_user_email will return "unknown" which should be rejected
         with pytest.raises(HTTPException) as exc_info:
-            await _enforce_gateway_access("gateway123", gateway, {"is_admin": False}, mock_db, request=None)
+            await _enforce_gateway_access("gateway123", gateway, {}, mock_db, request=None)
 
         assert exc_info.value.status_code == 401
 
