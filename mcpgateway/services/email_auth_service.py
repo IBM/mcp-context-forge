@@ -1287,6 +1287,7 @@ class EmailAuthService:
             raise PasswordValidationError(str(e)) from e
         except Exception as e:
             # Fail closed: if history check fails, reject the password change
+            logger.error("Password history check failed unexpectedly: %s", e)
             raise PasswordValidationError("Unable to verify password history. Please try again.") from e
 
         success = False

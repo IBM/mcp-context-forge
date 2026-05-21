@@ -477,7 +477,13 @@ class PasswordPolicyService:
 
         Returns:
             dict: Password requirements with descriptions
+
+        Raises:
+            TypeError: If is_privileged is not a boolean
         """
+        if not isinstance(is_privileged, bool):
+            raise TypeError(f"is_privileged must be bool, got {type(is_privileged).__name__}")
+
         min_length = getattr(settings, "password_min_length_user", 12)
         if is_privileged:
             min_length = getattr(settings, "password_min_length_privileged", 22)
