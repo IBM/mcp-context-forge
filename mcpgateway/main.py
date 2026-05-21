@@ -4919,6 +4919,24 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+_SENSITIVE_REQUEST_HEADER_PATTERNS = (
+    re.compile(r"^authorization$", re.IGNORECASE),
+    re.compile(r"^proxy-authorization$", re.IGNORECASE),
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^host$", re.IGNORECASE),
+)
+
+
+def _filter_sensitive_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Strip sensitive/credential headers from a dict before passing to plugins."""
+    return {k: v for k, v in headers.items() if not any(p.match(k) for p in _SENSITIVE_REQUEST_HEADER_PATTERNS)}
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -4998,6 +5016,11 @@ async def invoke_a2a_agent(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
         return await a2a_service.invoke_agent(
             db,
             agent_name,
@@ -5008,6 +5031,8 @@ async def invoke_a2a_agent(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -5083,6 +5108,11 @@ async def invoke_a2a_agent_by_id(
             logger.info("Non-JWT token detected, not forwarding for cross-gateway auth")
             bearer_token = None
 
+        # Extract inbound request metadata for plugin context
+        # Strip sensitive/credential headers before passing to plugins.
+        content_type = request.headers.get("content-type")
+        request_headers = _filter_sensitive_headers({k.lower(): v for k, v in request.headers.items()})
+
         return await a2a_service.invoke_agent(
             db,
             agent_name=None,  # Not using name lookup
@@ -5094,6 +5124,8 @@ async def invoke_a2a_agent_by_id(
             token_teams=token_teams,
             hop_count=hop_count,
             bearer_token=bearer_token,
+            content_type=content_type,
+            request_headers=request_headers,
         )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -11912,6 +11944,16 @@ try:
     logger.info("Tool plugin bindings router included")
 except ImportError as e:
     logger.error(f"Tool plugin bindings router not available: {e}")
+
+# A2A agent plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.a2a_agent_plugin_bindings import router as a2a_agent_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(a2a_agent_plugin_bindings_router)
+    logger.info("A2A agent plugin bindings router included")
+except ImportError as e:
+    logger.error(f"A2A agent plugin bindings router not available: {e}")
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):

@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/routers/tool_plugin_bindings.py
+"""Location: ./mcpgateway/routers/a2a_agent_plugin_bindings.py
 Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhumohan Jaishankar
 
-Tool Plugin Bindings Router.
-Provides endpoints for configuring per-tool per-tenant plugin policies.
+A2A Agent Plugin Bindings Router.
+Provides endpoints for configuring per-agent per-tenant plugin policies for A2A agents.
 
 Endpoints:
-    POST   /v1/tools/plugin_bindings                              — Create or update bindings (upsert)
-    GET    /v1/tools/plugin_bindings                              — List all bindings
-    GET    /v1/tools/plugin_bindings/{team_id}                    — List bindings for a specific team
-    DELETE /v1/tools/plugin_bindings?binding_reference_id={ref}   — Delete all bindings by external reference ID
-    DELETE /v1/tools/plugin_bindings/{id}                         — Delete a binding by UUID
+    POST   /v1/a2a-agents/plugin-bindings                              — Create or update a binding (upsert)
+    GET    /v1/a2a-agents/plugin-bindings                              — List all bindings
+    GET    /v1/a2a-agents/plugin-bindings/{team_id}                    — List bindings for a specific team
+    DELETE /v1/a2a-agents/plugin-bindings?binding_reference_id={ref}   — Delete all bindings by external reference ID
+    DELETE /v1/a2a-agents/plugin-bindings/{id}                         — Delete a binding by UUID
 """
 
 # Standard
@@ -27,16 +27,16 @@ from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.plugins import get_plugin_manager_factory, publish_binding_change, publish_team_binding_change, reload_plugin_context
 from mcpgateway.plugins.gateway_plugin_manager import CONTEXT_ID_SEPARATOR, make_context_id
-from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
+from mcpgateway.schemas import A2AAgentPluginBindingListResponse, A2AAgentPluginBindingRequest, A2AAgentPluginBindingResponse
+from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginBindingForbiddenError, A2AAgentPluginBindingNotFoundError, A2AAgentPluginBindingService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingForbiddenError, ToolPluginBindingNotFoundError, ToolPluginBindingService
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
+router = APIRouter(prefix="/v1/a2a-agents/plugin-bindings", tags=["A2A Agent Plugin Bindings"])
 
-_service = ToolPluginBindingService()
+_service = A2AAgentPluginBindingService()
 
 
 def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
@@ -47,22 +47,18 @@ def _allowed_teams_from_ctx(ctx: Dict[str, Any]) -> Optional[set[str]]:
     """
     is_admin: bool = ctx.get("is_admin", False)
     token_teams = ctx.get("token_teams")
-    # Admin bypass: full bypass unless the token is explicitly scoped to teams.
-    if is_admin and not token_teams:
-        return None
-    return set(token_teams or [])
+    return None if (is_admin and token_teams is None) else set(token_teams or [])
 
 
-async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -> None:
+async def _invalidate_and_broadcast(bindings: List[A2AAgentPluginBindingResponse]) -> None:
     """Evict local caches and broadcast pub/sub frames for a batch of bindings.
 
-    Wildcard bindings (``tool_name == "*"``) affect every cached context for
+    Wildcard bindings (``agent_name == "*"``) affect every cached context for
     the team, so they go through the team-wide channel; specific bindings only
-    evict the one context. Factory may be ``None`` on nodes where opportunistic
-    init failed — we still publish so healthy peers converge.
+    evict the one context.
     """
-    wildcard_teams = {b.team_id for b in bindings if b.tool_name == "*"}
-    specific_ctx_ids = {make_context_id(b.team_id, b.tool_name) for b in bindings if b.tool_name != "*"}
+    wildcard_teams = {b.team_id for b in bindings if b.agent_name == "*"}
+    specific_ctx_ids = {make_context_id(b.team_id, b.agent_name) for b in bindings if b.agent_name != "*"}
 
     for ctx_id in specific_ctx_ids:
         await reload_plugin_context(ctx_id)
@@ -78,39 +74,39 @@ async def _invalidate_and_broadcast(bindings: List[ToolPluginBindingResponse]) -
 
 
 # ---------------------------------------------------------------------------
-# POST — upsert bindings
+# POST — upsert binding
 # ---------------------------------------------------------------------------
 
 
-@router.post("/", response_model=ToolPluginBindingListResponse, status_code=status.HTTP_200_OK)
+@router.post("/", response_model=A2AAgentPluginBindingResponse, status_code=status.HTTP_200_OK)
 @require_permission("tools.manage_plugins")
-async def upsert_tool_plugin_bindings(
-    request: ToolPluginBindingRequest,
+async def upsert_a2a_agent_plugin_binding(
+    request: A2AAgentPluginBindingRequest,
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-) -> ToolPluginBindingListResponse:
-    """Create or update tool plugin bindings.
+    team_id: str = Query(..., min_length=1, description="Team ID to create the binding for"),
+) -> A2AAgentPluginBindingResponse:
+    """Create or update an A2A agent plugin binding.
 
-    Each (team_id, tool_name, plugin_id) triple is upserted:
+    Each (team_id, agent_name, plugin_id) triple is upserted:
     - Existing rows are updated in place (id and created_* fields preserved).
     - New rows are inserted.
 
-    Multiple teams and multiple tools per policy can be configured in a single request.
-
     Args:
-        request: Validated binding payload keyed by team_id.
+        request: Validated binding payload.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        team_id: Team ID to create the binding for (required query parameter).
 
     Returns:
-        ToolPluginBindingListResponse: All created/updated bindings.
+        A2AAgentPluginBindingResponse: The created or updated binding.
 
     Raises:
         HTTPException: 400 if the request payload is invalid, 403 if the caller lacks permission.
 
     Examples:
         >>> import asyncio
-        >>> asyncio.iscoroutinefunction(upsert_tool_plugin_bindings)
+        >>> asyncio.iscoroutinefunction(upsert_a2a_agent_plugin_binding)
         True
     """
     try:
@@ -118,23 +114,28 @@ async def upsert_tool_plugin_bindings(
         allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
         user_teams: set = set() if allowed_teams is None else allowed_teams
 
-        if allowed_teams is not None:
-            unauthorized = [tid for tid in request.teams if tid not in user_teams]
-            if unauthorized:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Not authorized to configure bindings for team(s): {', '.join(unauthorized)}",
-                )
+        if allowed_teams is not None and team_id not in user_teams:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Not authorized to configure bindings for team: {team_id}",
+            )
 
-        bindings = _service.upsert_bindings(db, request, caller_email=caller_email)
-        # Commit before invalidating cache so the new session opened by reload
-        # reads committed data. The get_db() cleanup commit is then a safe no-op.
+        binding = _service.upsert_binding(
+            db=db,
+            team_id=team_id,
+            agent_name=request.agent_name,
+            plugin_id=request.plugin_id,
+            mode=request.mode,
+            priority=request.priority,
+            config=request.config,
+            on_error=request.on_error,
+            caller_email=caller_email,
+        )
         db.commit()
-
-        await _invalidate_and_broadcast(bindings)
-        return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+        await _invalidate_and_broadcast([binding])
+        return binding
     except ValueError as exc:
-        logger.error("Failed to upsert tool plugin bindings: %s", exc)
+        logger.error("Failed to upsert A2A agent plugin binding: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
@@ -143,30 +144,36 @@ async def upsert_tool_plugin_bindings(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/", response_model=ToolPluginBindingListResponse)
+@router.get("/", response_model=A2AAgentPluginBindingListResponse)
 @require_permission("tools.read")
-async def list_tool_plugin_bindings(
+async def list_a2a_agent_plugin_bindings(
     binding_reference_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of results"),
+    offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-) -> ToolPluginBindingListResponse:
-    """List all tool plugin bindings across all teams.
+) -> A2AAgentPluginBindingListResponse:
+    """List all A2A agent plugin bindings across all teams.
 
     Args:
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        limit: Maximum number of results to return.
+        offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
     Returns:
-        ToolPluginBindingListResponse: All bindings.
+        A2AAgentPluginBindingListResponse: Paginated bindings.
 
     Examples:
         >>> import asyncio
-        >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings)
+        >>> asyncio.iscoroutinefunction(list_a2a_agent_plugin_bindings)
         True
     """
-    bindings = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id)
-    return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+    limit_val = limit if isinstance(limit, int) else 100
+    offset_val = offset if isinstance(offset, int) else 0
+    bindings, total = _service.list_bindings(db, team_id=None, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
 # ---------------------------------------------------------------------------
@@ -174,32 +181,38 @@ async def list_tool_plugin_bindings(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/{team_id}", response_model=ToolPluginBindingListResponse)
+@router.get("/{team_id}", response_model=A2AAgentPluginBindingListResponse)
 @require_permission("tools.read")
-async def list_tool_plugin_bindings_for_team(
+async def list_a2a_agent_plugin_bindings_for_team(
     team_id: str,
     binding_reference_id: Optional[str] = None,
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Maximum number of results"),
+    offset: Optional[int] = Query(None, ge=0, description="Number of results to skip"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-) -> ToolPluginBindingListResponse:
-    """List all tool plugin bindings for a specific team.
+) -> A2AAgentPluginBindingListResponse:
+    """List all A2A agent plugin bindings for a specific team.
 
     Args:
         team_id: Team identifier to filter by.
         binding_reference_id: Optional filter — return only bindings with this reference ID.
+        limit: Maximum number of results to return.
+        offset: Number of results to skip.
         current_user_ctx: Authenticated user context.
         db: Database session.
 
     Returns:
-        ToolPluginBindingListResponse: Bindings for the specified team.
+        A2AAgentPluginBindingListResponse: Bindings for the specified team.
 
     Examples:
         >>> import asyncio
-        >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
+        >>> asyncio.iscoroutinefunction(list_a2a_agent_plugin_bindings_for_team)
         True
     """
-    bindings = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id)
-    return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+    limit_val = limit if isinstance(limit, int) else 100
+    offset_val = offset if isinstance(offset, int) else 0
+    bindings, total = _service.list_bindings(db, team_id=team_id, binding_reference_id=binding_reference_id, limit=limit_val, offset=offset_val)
+    return A2AAgentPluginBindingListResponse(bindings=bindings, total=total)
 
 
 # ---------------------------------------------------------------------------
@@ -207,13 +220,13 @@ async def list_tool_plugin_bindings_for_team(
 # ---------------------------------------------------------------------------
 
 
-@router.delete("/", response_model=ToolPluginBindingListResponse, status_code=status.HTTP_200_OK)
+@router.delete("/", response_model=A2AAgentPluginBindingListResponse, status_code=status.HTTP_200_OK)
 @require_permission("tools.manage_plugins")
-async def delete_tool_plugin_bindings_by_reference(
+async def delete_a2a_agent_plugin_bindings_by_reference(
     binding_reference_id: str = Query(..., min_length=1, description="External reference ID whose bindings to delete"),
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-) -> ToolPluginBindingListResponse:
+) -> A2AAgentPluginBindingListResponse:
     """Delete all bindings associated with an external reference ID.
 
     Intended for use by external systems that need to remove all ContextForge
@@ -231,18 +244,18 @@ async def delete_tool_plugin_bindings_by_reference(
         db: Database session.
 
     Returns:
-        ToolPluginBindingListResponse: All deleted binding records.
+        A2AAgentPluginBindingListResponse: All deleted binding records.
 
     Examples:
         >>> import asyncio
-        >>> asyncio.iscoroutinefunction(delete_tool_plugin_bindings_by_reference)
+        >>> asyncio.iscoroutinefunction(delete_a2a_agent_plugin_bindings_by_reference)
         True
     """
     allowed_teams = _allowed_teams_from_ctx(current_user_ctx)
-    deleted: List[ToolPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id, allowed_teams=allowed_teams)
+    deleted: List[A2AAgentPluginBindingResponse] = _service.delete_bindings_by_reference(db, binding_reference_id, allowed_teams=allowed_teams)
     db.commit()
     await _invalidate_and_broadcast(deleted)
-    return ToolPluginBindingListResponse(bindings=deleted, total=len(deleted))
+    return A2AAgentPluginBindingListResponse(bindings=deleted, total=len(deleted))
 
 
 # ---------------------------------------------------------------------------
@@ -250,14 +263,14 @@ async def delete_tool_plugin_bindings_by_reference(
 # ---------------------------------------------------------------------------
 
 
-@router.delete("/{binding_id}", response_model=ToolPluginBindingResponse, status_code=status.HTTP_200_OK)
+@router.delete("/{binding_id}", response_model=A2AAgentPluginBindingResponse, status_code=status.HTTP_200_OK)
 @require_permission("tools.manage_plugins")
-async def delete_tool_plugin_binding(
+async def delete_a2a_agent_plugin_binding(
     binding_id: str,
     current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
-) -> ToolPluginBindingResponse:
-    """Delete a tool plugin binding by its unique ID.
+) -> A2AAgentPluginBindingResponse:
+    """Delete an A2A agent plugin binding by its unique ID.
 
     Returns the full details of the deleted binding so callers can
     confirm exactly what was removed without a prior GET.
@@ -268,7 +281,7 @@ async def delete_tool_plugin_binding(
         db: Database session.
 
     Returns:
-        ToolPluginBindingResponse: The deleted binding record.
+        A2AAgentPluginBindingResponse: The deleted binding record.
 
     Raises:
         HTTPException: 403 if the caller is not a member of the binding's team.
@@ -276,7 +289,7 @@ async def delete_tool_plugin_binding(
 
     Examples:
         >>> import asyncio
-        >>> asyncio.iscoroutinefunction(delete_tool_plugin_binding)
+        >>> asyncio.iscoroutinefunction(delete_a2a_agent_plugin_binding)
         True
     """
     try:
@@ -285,7 +298,7 @@ async def delete_tool_plugin_binding(
         db.commit()
         await _invalidate_and_broadcast([deleted])
         return deleted
-    except ToolPluginBindingNotFoundError as exc:
+    except A2AAgentPluginBindingNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    except ToolPluginBindingForbiddenError as exc:
+    except A2AAgentPluginBindingForbiddenError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc

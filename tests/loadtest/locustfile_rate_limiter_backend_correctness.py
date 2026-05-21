@@ -35,7 +35,7 @@ Usage
 Environment Variables
 ---------------------
     MCP_SERVER_ID:       Virtual server UUID  (auto-detected if empty)
-    JWT_SECRET_KEY:      JWT signing secret   (default: my-test-key-but-now-longer-than-32-bytes)
+    JWT_SECRET_KEY:      JWT signing secret   (REQUIRED — load test raises RuntimeError if unset)
     JWT_ALGORITHM:       JWT algorithm        (default: HS256)
     JWT_AUDIENCE:        JWT audience         (default: mcpgateway-api)
     JWT_ISSUER:          JWT issuer           (default: mcpgateway)
@@ -93,12 +93,23 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _ENV.get(key) or default
 
 
-JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
+JWT_SECRET_KEY = _cfg("JWT_SECRET_KEY", "")
+if not JWT_SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY env var (or .env entry) is required for this load test — "
+        "set it to the same value the gateway is signing with. A hard-coded "
+        "fallback would silently let any reader forge admin tokens (PR #4635 S1)."
+    )
 JWT_ALGORITHM = _cfg("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _cfg("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
 ADMIN_EMAIL = _cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
+
+# Canonical MCP protocol version — matches tests/helpers/mcp_session.py and
+# tests/loadtest/locustfile_echo_delay.py. Kept inline so the locustfile
+# stays runnable as a standalone script (no PYTHONPATH gymnastics needed).
+MCP_PROTOCOL_VERSION = "2025-11-25"
 
 # Rate limit as configured in plugins/config.yaml — only used for the banner.
 RL_LIMIT_PER_MIN = int(_cfg("RL_LIMIT_PER_MIN", "30"))
@@ -186,19 +197,64 @@ def _auto_detect(host: str) -> None:
             logger.warning("Server auto-detect failed: %s", exc)
 
     if _server_id:
+        # The gateway's session-aware MCP transport requires an `Mcp-Session-Id`
+        # header on every non-initialize POST to /servers/<id>/mcp. Run the
+        # initialize handshake here so the auto-detect tools/list call (and any
+        # downstream call that re-uses this code path) carries a valid session.
+        sse_headers = {
+            **headers,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        sid: str | None = None
         try:
-            payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
-            resp = requests.post(
+            init_resp = requests.post(
                 f"{host}/servers/{_server_id}/mcp",
-                json=payload,
-                headers={**headers, "Content-Type": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "init",
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "rate-limiter-loadtest-detect", "version": "0"},
+                    },
+                },
+                headers=sse_headers,
                 timeout=10,
             )
-            if resp.status_code == 200:
-                result = resp.json().get("result", {})
-                _tool_names = [t["name"] for t in result.get("tools", [])]
+            if init_resp.status_code == 200:
+                sid = init_resp.headers.get("mcp-session-id")
         except Exception as exc:
-            logger.warning("Tool auto-detect failed: %s", exc)
+            logger.warning("MCP initialize for tool auto-detect failed: %s", exc)
+
+        if sid:
+            # Complete the MCP handshake before any non-initialize calls so
+            # the gateway treats the session as fully initialized (matches
+            # what the integration tests do via tests/helpers/mcp_session.py).
+            try:
+                requests.post(
+                    f"{host}/servers/{_server_id}/mcp",
+                    json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    headers={**sse_headers, "Mcp-Session-Id": sid},
+                    timeout=5,
+                )
+            except Exception as exc:
+                logger.warning("MCP notifications/initialized for tool auto-detect failed: %s", exc)
+
+            try:
+                payload = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
+                resp = requests.post(
+                    f"{host}/servers/{_server_id}/mcp",
+                    json=payload,
+                    headers={**sse_headers, "Mcp-Session-Id": sid},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    result = resp.json().get("result", {})
+                    _tool_names = [t["name"] for t in result.get("tools", [])]
+            except Exception as exc:
+                logger.warning("Tool auto-detect failed: %s", exc)
 
     logger.info("Rate limiter test: server=%s  tools=%s", _server_id, _tool_names)
 
@@ -399,7 +455,7 @@ class RateLimitedUser(FastHttpUser):
         result = self._mcp_post(
             "initialize",
             {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "locust-rate-limiter-test", "version": "1.0.0"},
             },
