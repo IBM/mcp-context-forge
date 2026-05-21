@@ -999,6 +999,7 @@ class Settings(BaseSettings):
     password_policy_enabled: bool = Field(default=True, description="Enable password complexity validation for new/changed passwords")
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
+    password_error_message_max_length: int = Field(default=200, description="Maximum length for password validation error messages in URL redirects (prevents URL overflow)")
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=60, description="Account lockout duration in minutes")

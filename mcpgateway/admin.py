@@ -4926,9 +4926,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            # Encode error message in URL for display to user
-            error_msg = urllib.parse.quote(str(e))
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg}", status_code=303)
+            # Encode error message in URL for display to user (truncate to prevent URL length issues)
+            error_msg = str(e)
+            max_length = settings.password_error_message_max_length
+            if len(error_msg) > max_length:
+                error_msg = error_msg[: max_length - 3] + "..."
+            error_msg_encoded = urllib.parse.quote(error_msg)
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg_encoded}", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
