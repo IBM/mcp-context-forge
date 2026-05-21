@@ -111,6 +111,7 @@ MOCK_TOOL_READ = {
     "createdAt": "2023-01-01T00:00:00+00:00",
     "updatedAt": "2023-01-01T00:00:00+00:00",
     "enabled": True,
+    "deprecated": False,
     "reachable": True,
     "gatewayId": "gateway-1",
     "executionCount": 5,

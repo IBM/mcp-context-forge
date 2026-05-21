@@ -438,6 +438,7 @@ def mock_tool(mock_gateway):
     tool.visibility = "public"  # Use public for tests that don't test authorization
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
+    tool.deprecated = False
     tool.reachable = True
     tool.auth_type = None
     tool.auth_username = None
@@ -703,6 +704,7 @@ class TestToolService:
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 enabled=True,
+                deprecated=False,
                 reachable=True,
                 gateway_id=None,
                 execution_count=0,
@@ -1115,6 +1117,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1310,6 +1313,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=False,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1466,6 +1470,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1605,6 +1610,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=False,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1762,6 +1768,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -1834,6 +1841,7 @@ class TestToolService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             enabled=True,
+            deprecated=False,
             reachable=True,
             gateway_id=None,
             execution_count=0,
@@ -2691,6 +2699,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
@@ -2798,6 +2807,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -2880,6 +2890,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -2953,6 +2964,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3052,6 +3064,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3156,6 +3169,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3252,6 +3266,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/mcp",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value="Bearer abc123",
@@ -3335,6 +3350,7 @@ class TestToolService:
             slug="test-gateway",
             url="http://fake-mcp:8080/sse",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",  # attribute your error complained about
             auth_value="Bearer abc123",
@@ -7482,6 +7498,7 @@ class TestToolServiceHelpers:
             gateway_id=None,
             grpc_service_id=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             tags=None,
             team_id="team-1",
@@ -7506,6 +7523,7 @@ class TestToolServiceHelpers:
             ca_certificate=None,
             ca_certificate_sig=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id="team-1",
             owner_email="owner@example.com",
@@ -8618,6 +8636,7 @@ class TestInvokeToolDirectProxyViaHeader:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="direct_proxy",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value={"Authorization": "Bearer remote-token"},
@@ -8643,6 +8662,7 @@ class TestInvokeToolDirectProxyViaHeader:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="cache",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type=None,
             auth_value=None,
@@ -8783,6 +8803,7 @@ class TestRustMcpExecutionPlan:
             url="http://remote-mcp:8080/mcp",
             gateway_mode="direct_proxy",
             enabled=True,
+            deprecated=False,
             reachable=True,
             auth_type="bearer",
             auth_value={"Authorization": "Bearer remote-token"},
@@ -8818,6 +8839,7 @@ class TestRustMcpExecutionPlan:
             "name": "tool-one",
             "original_name": "tool-one",
             "enabled": True,
+            "deprecated": False,
             "reachable": True,
             "integration_type": "MCP",
             "request_type": "streamablehttp",
@@ -9219,6 +9241,7 @@ class TestRustMcpExecutionPlan:
         cache = self._cache_mock(None)
         candidate_a = SimpleNamespace(
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-a",
@@ -9227,6 +9250,7 @@ class TestRustMcpExecutionPlan:
         )
         candidate_b = SimpleNamespace(
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-b",
@@ -9263,6 +9287,7 @@ class TestRustMcpExecutionPlan:
         candidate_team = SimpleNamespace(
             id="tool-team",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="team",
             team_id="team-a",
@@ -9272,6 +9297,7 @@ class TestRustMcpExecutionPlan:
         candidate_public = SimpleNamespace(
             id="tool-public",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9429,6 +9455,7 @@ class TestRustMcpExecutionPlan:
             oauth_config={"grant_type": "client_credentials"},
             ca_certificate=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id=None,
             owner_email=None,
@@ -9443,6 +9470,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -9504,6 +9532,7 @@ class TestRustMcpExecutionPlan:
             oauth_config=None,
             ca_certificate=None,
             enabled=True,
+            deprecated=False,
             reachable=True,
             team_id=None,
             owner_email=None,
@@ -9518,6 +9547,7 @@ class TestRustMcpExecutionPlan:
             description="tool-one",
             original_description="tool-one",
             enabled=True,
+            deprecated=False,
             reachable=True,
             visibility="public",
             team_id=None,
@@ -10543,6 +10573,7 @@ class TestGrpcToolInvocation:
         tool.custom_name_slug = "test-svc-dostuff"
         tool.display_name = "Test Svc Dostuff"
         tool.enabled = True
+        tool.deprecated = False
         tool.reachable = True
         tool.tags = []
         tool.team_id = None

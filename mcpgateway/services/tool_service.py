@@ -1058,6 +1058,7 @@ class ToolService(BaseService):
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
             "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
+            "deprecated": bool(tool.deprecated),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
             "team_id": tool.team_id,
@@ -4504,6 +4505,12 @@ class ToolService(BaseService):
             if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
                 # Don't reveal tool existence - return generic "not found"
                 raise ToolNotFoundError(f"Tool not found: {name}")
+
+            # Check deprecated status after RBAC to avoid leaking tool existence
+            if tool_payload.get("deprecated") is True:
+                # Cache the deprecated status to avoid repeated DB queries
+                await tool_lookup_cache.set_negative(name, "deprecated")
+                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
