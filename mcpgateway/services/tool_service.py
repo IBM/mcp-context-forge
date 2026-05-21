@@ -4478,9 +4478,6 @@ class ToolService(BaseService):
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
 
-            if tool.deprecated:
-                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
-
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
@@ -4496,8 +4493,6 @@ class ToolService(BaseService):
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-        if tool_payload.get("deprecated") is True:
-            raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
         if tool_payload.get("reachable") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
 
@@ -4509,6 +4504,12 @@ class ToolService(BaseService):
             if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
                 # Don't reveal tool existence - return generic "not found"
                 raise ToolNotFoundError(f"Tool not found: {name}")
+
+            # Check deprecated status after RBAC to avoid leaking tool existence
+            if tool_payload.get("deprecated") is True:
+                # Cache the deprecated status to avoid repeated DB queries
+                await tool_lookup_cache.set_negative(name, "deprecated")
+                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided

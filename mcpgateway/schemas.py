@@ -1598,6 +1598,7 @@ class ToolRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     enabled: bool
+    deprecated: bool
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")

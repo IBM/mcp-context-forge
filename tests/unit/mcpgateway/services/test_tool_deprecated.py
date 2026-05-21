@@ -114,6 +114,7 @@ class TestToolDeprecation:
             mock_cache = MagicMock()
             mock_cache.enabled = True
             mock_cache.get = AsyncMock(return_value={"status": "active", "tool": tool_payload, "gateway": None})
+            mock_cache.set_negative = AsyncMock()
             mock_cache_getter.return_value = mock_cache
 
             with pytest.raises(ToolInvocationError) as exc_info:

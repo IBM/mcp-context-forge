@@ -189,6 +189,7 @@ MOCK_TOOL = ToolRead(
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
     enabled=True,
+    deprecated=False,
     reachable=True,
     gateway_id=None,
     execution_count=0,
