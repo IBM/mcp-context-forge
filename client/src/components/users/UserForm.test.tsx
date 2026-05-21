@@ -65,10 +65,7 @@ describe("UserForm", () => {
 
   describe("visibility", () => {
     it("should not render when isOpen is false", () => {
-      const { container } = render(
-        <UserForm isOpen={false} onToggle={vi.fn()} />,
-        { wrapper }
-      );
+      const { container } = render(<UserForm isOpen={false} onToggle={vi.fn()} />, { wrapper });
 
       expect(container.firstChild).toBeNull();
     });

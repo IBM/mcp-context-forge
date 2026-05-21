@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { usersApi } from "../users";
-import { api } from "../client";
+import { usersApi } from "./users";
+import { api } from "./client";
 import type { CreateUserRequest, User, UsersResponse } from "../../types/user";
 
 vi.mock("../client", () => ({
@@ -41,11 +41,7 @@ describe("usersApi", () => {
 
       await usersApi.list({ cursor: "cursor123" });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?cursor=cursor123",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?cursor=cursor123", undefined, undefined);
     });
 
     it("should fetch users with limit", async () => {
@@ -58,11 +54,7 @@ describe("usersApi", () => {
 
       await usersApi.list({ limit: 50 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=50",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=50", undefined, undefined);
     });
 
     it("should clamp limit to max 100", async () => {
@@ -75,11 +67,7 @@ describe("usersApi", () => {
 
       await usersApi.list({ limit: 200 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=100",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=100", undefined, undefined);
     });
 
     it("should clamp limit to min 1", async () => {
@@ -92,11 +80,7 @@ describe("usersApi", () => {
 
       await usersApi.list({ limit: -5 });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users?limit=1",
-        undefined,
-        undefined
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users?limit=1", undefined, undefined);
     });
 
     it("should pass abort signal", async () => {
@@ -110,11 +94,7 @@ describe("usersApi", () => {
 
       await usersApi.list({ signal: controller.signal });
 
-      expect(api.get).toHaveBeenCalledWith(
-        "/admin/users",
-        undefined,
-        controller.signal
-      );
+      expect(api.get).toHaveBeenCalledWith("/admin/users", undefined, controller.signal);
     });
   });
 
@@ -142,13 +122,16 @@ describe("usersApi", () => {
 
       const result = await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        email: "test@example.com",
-        full_name: "Test User",
-        is_admin: false,
-        is_active: true,
-        password_change_required: false,
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          email: "test@example.com",
+          full_name: "Test User",
+          is_admin: false,
+          is_active: true,
+          password_change_required: false,
+        }),
+      );
       expect(result).toEqual(mockUser);
     });
 
@@ -171,9 +154,12 @@ describe("usersApi", () => {
 
       await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        email: "test@example.com",
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          email: "test@example.com",
+        }),
+      );
     });
 
     it("should reject invalid email format", async () => {
@@ -235,11 +221,14 @@ describe("usersApi", () => {
 
       await usersApi.create(data);
 
-      expect(api.post).toHaveBeenCalledWith("/admin/users", expect.objectContaining({
-        is_admin: false,
-        is_active: true,
-        password_change_required: false,
-      }));
+      expect(api.post).toHaveBeenCalledWith(
+        "/admin/users",
+        expect.objectContaining({
+          is_admin: false,
+          is_active: true,
+          password_change_required: false,
+        }),
+      );
     });
   });
 

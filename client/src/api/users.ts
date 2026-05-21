@@ -21,7 +21,8 @@ function validateEmail(email: string): string {
   }
 
   // Strict email validation: alphanumeric + allowed special chars, no scripts
-  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  const emailRegex =
+    /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
   if (!emailRegex.test(email)) {
     throw new Error("Invalid email format");
   }
@@ -38,7 +39,9 @@ function sanitizeCreateUserRequest(data: CreateUserRequest): CreateUserRequest {
   return {
     email: validateEmail(sanitizeString(data.email, VALIDATION.MAX_EMAIL_LENGTH)),
     password: sanitizePassword(data.password, VALIDATION.MAX_PASSWORD_LENGTH), // pragma: allowlist secret
-    full_name: data.full_name ? sanitizeString(data.full_name, VALIDATION.MAX_NAME_LENGTH) : undefined,
+    full_name: data.full_name
+      ? sanitizeString(data.full_name, VALIDATION.MAX_NAME_LENGTH)
+      : undefined,
     is_admin: data.is_admin ?? false,
     is_active: data.is_active ?? true,
     password_change_required: data.password_change_required ?? false,

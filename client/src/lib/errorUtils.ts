@@ -18,7 +18,7 @@ interface ApiError {
 
 /**
  * Parses API error response into a user-friendly message
- * 
+ *
  * @param error - The error object from API call
  * @param fallbackMessage - Default message if parsing fails
  * @returns Formatted error message
