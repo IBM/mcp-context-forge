@@ -7775,7 +7775,8 @@ async def admin_create_user(
         if password:
             is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
-                error_html = f'<div class="text-red-500"><strong>Password validation failed:</strong><br/>{html.escape(error_msg)}</div>'
+                # Use data-error-message attribute for reliable error extraction (not CSS class scraping)
+                error_html = f'<div class="text-red-500" data-error-message="{html.escape(error_msg)}"><strong>Password validation failed:</strong><br/>{html.escape(error_msg)}</div>'
                 return HTMLResponse(content=error_html, status_code=400)
 
         # First-Party
