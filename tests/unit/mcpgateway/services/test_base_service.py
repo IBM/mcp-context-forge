@@ -277,7 +277,7 @@ class TestApplyAccessControl:
             assert result == "filtered"
 
     @pytest.mark.asyncio
-    async def test_admin_with_empty_token_teams_public_only_no_owner_access(self, service, mock_db):
+    async def test_admin_public_only_token_respects_layer1_scoping(self, service, mock_db):
         """Admin user with token_teams=[] (explicit public-only API token) should NOT see another user's private rows.
 
         PR #4788 review comment: API tokens with teams: [] are deliberately limited and should
