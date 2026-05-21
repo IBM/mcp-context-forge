@@ -12122,12 +12122,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               if (event.detail.xhr && event.detail.xhr.responseText) {
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = event.detail.xhr.responseText;
-                const errorDiv = tempDiv.querySelector('.text-red-500, [class*="red-500"]');
+                // Use data-error-message attribute for reliable extraction (not fragile CSS class selectors)
+                const errorDiv = tempDiv.querySelector('[data-error-message]');
                 if (errorDiv) {
-                  errorMsg = errorDiv.textContent.trim();
+                  // Extract from data attribute (backend provides HTML-escaped content)
+                  errorMsg = errorDiv.getAttribute('data-error-message') || errorDiv.textContent.trim();
                 }
               }
-              messagesDiv.innerHTML = `<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ ${errorMsg}</div>`;
+              // Defense-in-depth: Create error div safely using textContent
+              // Backend already escapes via html.escape(), but this prevents XSS if error flow changes
+              const errorContainer = document.createElement('div');
+              errorContainer.className = 'bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200';
+              errorContainer.textContent = `❌ ${errorMsg}`;
+              messagesDiv.innerHTML = '';
+              messagesDiv.appendChild(errorContainer);
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             }
           });
