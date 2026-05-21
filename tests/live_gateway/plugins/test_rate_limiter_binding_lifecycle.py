@@ -423,8 +423,11 @@ def _psql_get_binding_config(binding_reference_id: str) -> dict | None:
     return json.loads(out)
 
 
-def _redis_rl_keys() -> list[tuple[str, str, str]]:
-    """Return rate-limiter keys currently in Redis as ``(key, value, ttl)`` tuples.
+def _redis_rl_keys(team_id: str) -> list[tuple[str, str, str]]:
+    """Return rate-limiter keys for ``team_id`` as ``(key, value, ttl)`` tuples.
+
+    Scans only ``rl:{team_id}:*`` so cross-team and cross-test contamination
+    can't satisfy a per-test "this dimension key exists" assertion.
 
     Default container name matches ``docker compose up`` from the repo root
     (project name = ``mcp-context-forge``). Override via REDIS_CONTAINER_NAME
@@ -432,14 +435,15 @@ def _redis_rl_keys() -> list[tuple[str, str, str]]:
 
     Raises a ``pytest.skip`` (via the exception path) when the Redis
     container is unreachable. The empty-list sentinel is reserved for
-    "container is reachable, no rl:* keys present" — otherwise a docker
-    outage would surface as a misleading "counter is missing" assertion
-    failure instead of a test-infra problem.
+    "container is reachable, no rl:{team_id}:* keys present" — otherwise a
+    docker outage would surface as a misleading "counter is missing"
+    assertion failure instead of a test-infra problem.
     """
     container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
+    pattern = f"rl:{team_id}:*"
     try:
         keys_out = subprocess.run(
-            ["docker", "exec", container, "redis-cli", "--scan", "--pattern", "rl:*"],
+            ["docker", "exec", container, "redis-cli", "--scan", "--pattern", pattern],
             capture_output=True, text=True, timeout=10, check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
@@ -591,7 +595,7 @@ def _isolate_rate_limiter_redis_state_between_binding_tests():
     fixture setup — silently no-oping the cleanup would let stale
     ``rl:*`` keys from earlier runs leak into the test and surface as
     false-positive enforcement signals. Matches the same fail-loud
-    pattern used in ``_redis_rl_keys()``.
+    pattern used in ``_redis_rl_keys(team_id)``.
     """
     container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
 
@@ -884,7 +888,7 @@ class TestRateLimiterBindingApiEnforcesLimits:
         # has a counter key in Redis. The values themselves don't directly
         # distinguish 7-vs-30 (amplification dominates), but the *presence* of
         # all three dimension keys confirms multi-dim is engaged.
-        rl_keys_now = _redis_rl_keys()
+        rl_keys_now = _redis_rl_keys(team_id)
         key_strs = [k for (k, _, _) in rl_keys_now]
         user_keys = [k for k in key_strs if ":user:" in k]
         tenant_keys = [k for k in key_strs if ":tenant:" in k]
@@ -1104,7 +1108,7 @@ class TestRateLimiterBindingModeAndLifecycle:
         )
 
         # ---- Phase 5: inspect Redis -----------------------------------------
-        rl_keys = _redis_rl_keys()
+        rl_keys = _redis_rl_keys(team_id)
         key_strs = [k for (k, _, _) in rl_keys]
         user_keys = [k for k in key_strs if ":user:" in k]
         tenant_keys = [k for k in key_strs if ":tenant:" in k]
@@ -1374,7 +1378,7 @@ class TestRateLimiterBindingModeAndLifecycle:
         )
 
         # ---- Phase 5: inspect Redis -----------------------------------------
-        rl_keys = _redis_rl_keys()
+        rl_keys = _redis_rl_keys(team_id)
         key_strs = [k for (k, _, _) in rl_keys]
         user_keys = [k for k in key_strs if ":user:" in k]
         tenant_keys = [k for k in key_strs if ":tenant:" in k]
