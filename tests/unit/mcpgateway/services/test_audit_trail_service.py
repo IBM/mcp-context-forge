@@ -329,15 +329,14 @@ def test_log_action_identity_context_exception_is_swallowed(monkeypatch):
     mock_var = MagicMock()
     mock_var.get.side_effect = RuntimeError("context var unavailable")
 
-    with pytest.MonkeyPatch().context() as mp:
-        mp.setattr("mcpgateway.transports.context.user_identity_var", mock_var)
-        service = svc.AuditTrailService()
-        result = service.log_action(
-            action="CREATE",
-            resource_type="tool",
-            resource_id="tool-1",
-            user_id="user-1",
-        )
+    monkeypatch.setattr("mcpgateway.transports.context.user_identity_var", mock_var)
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
 
     assert result is not None
     assert dummy_session.committed is True
