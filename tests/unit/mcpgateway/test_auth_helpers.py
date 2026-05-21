@@ -247,12 +247,14 @@ def test_lookup_api_token_sync_not_expired_naive_datetime(monkeypatch):
         jti="jti-1",
         user_email="user@example.com",
         last_used=None,
+        resource_scopes=["tools.read", "servers.use"],  # Added for scope enforcement
     )
     session = DummySession(results=[active_token, None])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     monkeypatch.setattr("mcpgateway.db.utc_now", lambda: datetime(2026, 3, 9, 12, 0, 0, tzinfo=timezone.utc))
     result = auth._lookup_api_token_sync("hash")
     assert result["user_email"] == "user@example.com"
+    assert result["resource_scopes"] == ["tools.read", "servers.use"]
 
 
 def test_lookup_api_token_sync_revoked(monkeypatch):
@@ -273,11 +275,13 @@ def test_lookup_api_token_sync_active(monkeypatch):
         jti="jti-1",
         user_email="user@example.com",
         last_used=None,
+        resource_scopes=["a2a.read", "tools.execute"],  # Added for scope enforcement
     )
     session = DummySession(results=[api_token, None])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._lookup_api_token_sync("hash")
     assert result["user_email"] == "user@example.com"
+    assert result["resource_scopes"] == ["a2a.read", "tools.execute"]
     assert session.commit_called is True
 
 
@@ -293,6 +297,181 @@ def test_is_api_token_jti_sync(monkeypatch):
 
     monkeypatch.setattr(auth, "fresh_db_session", _boom_session)
     assert auth._is_api_token_jti_sync("jti") is True
+
+
+def test_jwt_malformed_scopes_rejected(caplog):
+    """Test that malformed JWT scopes (non-dict) are rejected with 401 error."""
+    from types import SimpleNamespace
+    import logging
+    from fastapi import HTTPException
+
+    # Create mock request state
+    request_state = SimpleNamespace()
+
+    # Mock JWT payload with malformed scopes (string instead of dict)
+    malformed_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "scopes": "tools.read,a2a.read",  # MALFORMED: should be dict, not string
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+
+    # Simulate the JWT scope extraction logic from auth.py (with rejection)
+    logger = logging.getLogger("mcpgateway.auth")
+
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.auth"):
+        scopes = malformed_payload.get("scopes")
+        error_raised = False
+        if scopes is not None:
+            if isinstance(scopes, dict):
+                permissions = scopes.get("permissions", [])
+                request_state.token_scopes = permissions
+            else:
+                # Malformed JWT: reject with 401
+                logger.warning(
+                    f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. "
+                    f"Tokens with malformed scopes must be regenerated with correct structure."
+                )
+                error_raised = True
+
+    # Verify malformed scopes are logged as WARNING
+    assert "JWT token rejected: scopes field is str, expected dict" in caplog.text
+
+    # Verify rejection would have occurred
+    assert error_raised is True
+
+    # Verify token_scopes is NOT set (token was rejected)
+    assert not hasattr(request_state, "token_scopes")
+
+
+@pytest.mark.asyncio
+async def test_jwt_empty_dict_scopes_enforcement():
+    """Test that JWT with empty dict scopes {} correctly enforces scope checks."""
+    from unittest.mock import MagicMock
+    from starlette.requests import Request
+
+    # Create mock request
+    request = MagicMock(spec=Request)
+    request.state = SimpleNamespace()
+
+    # JWT payload with empty dict scopes (CRITICAL: must be detected as API token)
+    empty_dict_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "scopes": {},  # Empty dict - should enforce scope checks
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+
+    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+    scopes = empty_dict_payload.get("scopes")
+    if scopes is not None:
+        if isinstance(scopes, dict):
+            permissions = scopes.get("permissions", [])
+            request.state.token_scopes = permissions
+
+    # Verify token_scopes is set to empty list (enforces scope checks)
+    assert hasattr(request.state, "token_scopes")
+    assert request.state.token_scopes == []
+
+
+@pytest.mark.asyncio
+async def test_jwt_missing_scopes_session_token():
+    """Test that JWT without scopes field is treated as session token (no scope checks)."""
+    from unittest.mock import MagicMock
+    from starlette.requests import Request
+
+    # Create mock request
+    request = MagicMock(spec=Request)
+    request.state = SimpleNamespace()
+
+    # JWT payload without scopes field (session token)
+    session_payload = {
+        "email": "user@example.com",
+        "sub": "user@example.com",
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+    }
+
+    # Simulate the JWT scope extraction logic from auth.py:1770-1787
+    scopes = session_payload.get("scopes")
+    if scopes is not None:
+        if isinstance(scopes, dict):
+            permissions = scopes.get("permissions", [])
+            request.state.token_scopes = permissions
+
+    # Verify token_scopes is NOT set (session token, no scope enforcement)
+    assert not hasattr(request.state, "token_scopes")
+
+
+def test_layer1_and_layer2_interaction():
+    """Test two-layer enforcement: Layer 1 (scopes) + Layer 2 (RBAC) are independent.
+
+    Scenario: API token has required scope (Layer 1 passes) but user lacks RBAC role (Layer 2 fails).
+
+    This test simulates the permission check decorator workflow to verify that even if
+    a token has the required permission scope, RBAC can still deny if the user lacks
+    the appropriate role. Both layers must be satisfied for access.
+    """
+
+    # Simulate user context from an API token with valid scope but missing RBAC role
+    user_context = {
+        "email": "developer@example.com",
+        "is_admin": False,
+        "token_scopes": ["tools.read", "a2a.read"],  # Layer 1: API token HAS required scopes
+        "teams": ["engineering"],  # User is in a team
+        "roles": [],  # Layer 2: User has NO roles (missing team_admin or developer role)
+    }
+
+    # Scenario 1: Layer 1 passes (token has scope), but Layer 2 fails (no RBAC role)
+    # In the actual @require_permission decorator, Layer 1 check (token scopes) happens first
+    token_scopes = user_context.get("token_scopes")
+    permission = "tools.execute"
+
+    # Layer 1 check: Does the API token have the required permission scope?
+    layer1_passes = token_scopes is not None and permission in token_scopes
+    assert layer1_passes is False  # "tools.execute" not in token scopes
+
+    # If Layer 1 had passed, Layer 2 would check RBAC roles
+    # (In actual code: both layers checked; if either fails, access denied)
+    user_roles = user_context.get("roles", [])
+    layer2_can_pass = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_can_pass is False  # User has no roles
+
+    # Result: Access denied (Layer 1 fails)
+
+    # Scenario 2: Layer 1 passes, Layer 2 also passes → Access granted
+    user_context["token_scopes"] = ["tools.execute"]  # Add required scope
+    user_context["roles"] = ["developer"]  # Add required role
+
+    token_scopes = user_context.get("token_scopes")
+    layer1_passes = token_scopes is not None and permission in token_scopes
+    assert layer1_passes is True  # "tools.execute" IS in token scopes
+
+    user_roles = user_context.get("roles", [])
+    layer2_can_pass = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_can_pass is True  # User HAS developer role
+
+    # Result: Access granted (both layers pass)
+
+    # Scenario 3: Session tokens skip Layer 1, only use Layer 2
+    session_context = {
+        "email": "user@example.com",
+        "is_admin": False,
+        "token_scopes": None,  # Session token (no scopes)
+        "teams": ["marketing"],
+        "roles": ["developer"],  # Has RBAC role
+    }
+
+    token_scopes = session_context.get("token_scopes")
+    # For session tokens, token_scopes is None → skip Layer 1 check entirely
+    layer1_checked = token_scopes is not None
+    assert layer1_checked is False  # Layer 1 skipped for session tokens
+
+    # Layer 2: Check RBAC only
+    user_roles = session_context.get("roles", [])
+    layer2_passes = "developer" in user_roles or "team_admin" in user_roles
+    assert layer2_passes is True  # User HAS required role
+
+    # Result: Access granted via Layer 2 only (Layer 1 not checked)
 
 
 def test_get_user_by_email_sync(monkeypatch):

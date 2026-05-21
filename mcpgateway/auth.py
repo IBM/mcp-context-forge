@@ -713,6 +713,7 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return {
             "user_email": api_token.user_email,
             "jti": api_token.jti,
+            "resource_scopes": api_token.resource_scopes or [],
         }
 
 
@@ -1766,6 +1767,35 @@ async def get_current_user(
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
+            # Extract and store token scopes for permission checking (JWT tokens)
+            # This mirrors the database API token behavior at line 1821
+            #
+            # NAMING NOTE: JWT tokens use nested "scopes.permissions" structure (OAuth 2.0 standard)
+            # while database API tokens use "resource_scopes" field (database schema naming).
+            # Both converge to unified "token_scopes" in request.state for consistent enforcement.
+            # See docs/security/TOKEN_SCOPE_NAMING.md for full rationale.
+            #
+            # SECURITY DESIGN: Two-layer model with intentional token-type differentiation
+            # - Session tokens (no scopes field): Use RBAC only (Layer 2)
+            #   Session tokens are tied to users with roles; RBAC controls permissions.
+            # - API tokens (scopes field present): Use scopes + RBAC (Layer 1 + Layer 2)
+            #   API tokens are standalone credentials; scopes enforce least-privilege.
+            #
+            # SECURITY: Must set token_scopes even for empty dict/list to enforce scope checks.
+            # - scopes dict present (even if {}): API token, enforce scope check
+            # - scopes missing/None: Session token, skip scope check (token_scopes stays None)
+            scopes = payload.get("scopes")
+            if scopes is not None:
+                if isinstance(scopes, dict):
+                    permissions = scopes.get("permissions", [])
+                    # Set token_scopes for ANY API token with scopes field, even if empty
+                    # Empty dict {} or empty list [] means "no permissions granted" → deny all
+                    request.state.token_scopes = permissions
+                else:
+                    # Malformed JWT: scopes field exists but is not a dict
+                    # Reject malformed tokens to enforce fail-closed security model
+                    logger.warning(f"JWT token rejected: scopes field is {type(scopes).__name__}, expected dict. " f"Tokens with malformed scopes must be regenerated with correct structure.")
+                    raise HTTPException(status_code=401, detail="Invalid token: malformed scopes field")
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -1809,6 +1839,12 @@ async def get_current_user(
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]
+                    # Store token scopes for permission checking (Database API tokens)
+                    # NAMING NOTE: Database API tokens use "resource_scopes" field (database schema naming)
+                    # while JWT tokens use nested "scopes.permissions" (OAuth 2.0 standard).
+                    # Both converge to unified "token_scopes" in request.state for consistent enforcement.
+                    # See docs/security/TOKEN_SCOPE_NAMING.md and JWT path at line 1770.
+                    request.state.token_scopes = api_token_info.get("resource_scopes", [])
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
