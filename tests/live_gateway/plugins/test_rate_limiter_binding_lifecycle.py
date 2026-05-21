@@ -769,12 +769,15 @@ class TestRateLimiterBindingApiEnforcesLimits:
         burst_size = 5
 
         # Single MCP session for the full burst — keeps tenant_id resolution stable.
-        session_id = _mcp_initialize_session(server_id, _fresh_headers())
+        # Reuse one auth header for the handshake + every burst call instead of
+        # paying for two `/auth/login` round-trips per test.
+        base_headers = _fresh_headers()
+        session_id = _mcp_initialize_session(server_id, base_headers)
         assert session_id is not None, (
             "MCP initialize handshake failed — can't drive the burst without a session id"
         )
         call_headers = {
-            **_fresh_headers(),
+            **base_headers,
             "Accept": "application/json, text/event-stream",
             "Mcp-Session-Id": session_id,
         }
@@ -965,12 +968,15 @@ class TestRateLimiterBindingModeAndLifecycle:
 
         def _paced_burst(phase_label: str) -> dict:
             """Run a paced burst over a fresh MCP session; tally outcomes."""
-            session_id = _mcp_initialize_session(server_id, _fresh_headers())
+            # Reuse one auth header for the handshake + every burst call instead of
+            # paying for two `/auth/login` round-trips per burst.
+            base_headers = _fresh_headers()
+            session_id = _mcp_initialize_session(server_id, base_headers)
             assert session_id is not None, (
                 f"{phase_label}: MCP initialize failed — can't drive the burst"
             )
             call_headers = {
-                **_fresh_headers(),
+                **base_headers,
                 "Accept": "application/json, text/event-stream",
                 "Mcp-Session-Id": session_id,
             }
@@ -1272,12 +1278,15 @@ class TestRateLimiterBindingModeAndLifecycle:
         # ---- Phase 4: paced burst with per-call observation ----------------
         burst_size = 5
 
-        session_id = _mcp_initialize_session(server_id, _fresh_headers())
+        # Reuse one auth header for the handshake + every burst call instead of
+        # paying for two `/auth/login` round-trips per test.
+        base_headers = _fresh_headers()
+        session_id = _mcp_initialize_session(server_id, base_headers)
         assert session_id is not None, (
             "MCP initialize handshake failed — can't drive the burst without a session id"
         )
         call_headers = {
-            **_fresh_headers(),
+            **base_headers,
             "Accept": "application/json, text/event-stream",
             "Mcp-Session-Id": session_id,
         }
