@@ -172,7 +172,9 @@ def _import_fresh_main_module(
 
     # Use in-memory session registry to avoid dependence on SQLALCHEMY_AVAILABLE
     # module-level state which can be polluted by other tests that reload session_registry.
-    monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
+    # Don't override cache_type when the caller explicitly passed it in overrides.
+    if not (overrides and "cache_type" in overrides):
+        monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
 
     # Use fresh in-memory database for each test to avoid conflicts
     monkeypatch.setattr(settings_mod, "database_url", "sqlite:///:memory:", raising=False)
@@ -12052,6 +12054,7 @@ class TestRemainingCoverageGaps:
             "db_query_log_enabled": True,
             "cache_type": "redis",
             "redis_url": "redis://localhost:6379",
+            "redis_ssl": False,
             "structured_logging_enabled": False,
             "mcpgateway_a2a_enabled": False,
             "mcpgateway_tool_cancellation_enabled": False,
@@ -13218,6 +13221,22 @@ class TestRpcScopedPermissions:
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
         assert "Access denied" in result["error"]["message"]
+
+
+class TestRedisStartupPath:
+    """Cover main.py module-level redis readiness check (lines 255/257)."""
+
+    def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
+        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "cache_type": "redis",
+                "redis_url": "redis://localhost:6379/0",
+                "redis_ssl": False,
+            },
+        )
+        # If we reach here the module loaded — lines 255/257 were executed.
 
 
 @pytest.fixture

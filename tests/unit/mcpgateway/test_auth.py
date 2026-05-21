@@ -1007,6 +1007,7 @@ class TestGetSyncRedisClient:
             with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
 
                 result = auth._get_sync_redis_client()
 
@@ -1039,6 +1040,7 @@ class TestGetSyncRedisClient:
             with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
 
                 result = auth._get_sync_redis_client()
 
@@ -1072,6 +1074,7 @@ class TestGetSyncRedisClient:
             with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
 
                 result = auth._get_sync_redis_client()
 
@@ -1118,6 +1121,7 @@ class TestGetSyncRedisClient:
             with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
 
                 # Call from multiple threads simultaneously
                 results = []
@@ -1161,6 +1165,7 @@ class TestGetSyncRedisClient:
             with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
 
                 # First call: should attempt connection and fail
                 result1 = auth._get_sync_redis_client()
@@ -1183,6 +1188,121 @@ class TestGetSyncRedisClient:
                 result3 = auth._get_sync_redis_client()
                 assert result3 is None
                 mock_redis_module.from_url.assert_called_once()
+        finally:
+            auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
+
+    def test_get_sync_redis_client_applies_ssl_kwargs_when_redis_ssl_enabled(self):
+        """Test that SSL kwargs from _build_ssl_kwargs are passed to redis.from_url when REDIS_SSL=true."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
+        auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            ssl_kwargs = {"ssl_ca_certs": "/path/to/ca.pem"}
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.utils.redis_client._build_ssl_kwargs", return_value=ssl_kwargs) as mock_build,
+                patch.dict(sys.modules, {"redis": mock_redis_module}),
+            ):
+                mock_settings.redis_url = "rediss://localhost:6380/0"
+                mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = True
+
+                result = auth._get_sync_redis_client()
+
+            assert result is mock_redis_client
+            mock_build.assert_called_once()
+            call_kwargs = mock_redis_module.from_url.call_args[1]
+            assert call_kwargs.get("ssl_ca_certs") == "/path/to/ca.pem"
+        finally:
+            auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
+
+    def test_get_sync_redis_client_ssl_misconfiguration_returns_none_no_backoff(self):
+        """Test that a ValueError from _build_ssl_kwargs sets client=None without starting backoff timer."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
+        auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
+
+        try:
+            mock_redis_module = MagicMock()
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.utils.redis_client._build_ssl_kwargs", side_effect=ValueError("cert not found")),
+                patch.dict(sys.modules, {"redis": mock_redis_module}),
+            ):
+                mock_settings.redis_url = "rediss://localhost:6380/0"
+                mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = True
+
+                result = auth._get_sync_redis_client()
+
+            assert result is None
+            assert auth._SYNC_REDIS_CLIENT is None
+            # Config errors must NOT start the backoff timer — they are not transient
+            assert auth._SYNC_REDIS_FAILURE_TIME is None
+            mock_redis_module.from_url.assert_not_called()
+        finally:
+            auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
+
+    def test_get_sync_redis_client_warns_on_rediss_url_without_ssl_flag(self, caplog):
+        """Test that a warning is logged when rediss:// URL is used but REDIS_SSL=false."""
+        # Standard
+        import logging
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
+        auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            with (
+                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.utils.redis_client._build_ssl_kwargs", return_value={}),
+                patch.dict(sys.modules, {"redis": mock_redis_module}),
+                caplog.at_level(logging.WARNING, logger="mcpgateway.auth"),
+            ):
+                mock_settings.redis_url = "rediss://localhost:6380/0"
+                mock_settings.cache_type = "redis"
+                mock_settings.redis_ssl = False
+
+                auth._get_sync_redis_client()
+
+            assert any("REDIS_SSL=false" in m for m in caplog.messages)
         finally:
             auth._SYNC_REDIS_CLIENT = original_client
             auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
