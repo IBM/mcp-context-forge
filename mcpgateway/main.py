@@ -11710,7 +11710,7 @@ async def export_selective_configuration(
         if hasattr(user, "email"):
             username = getattr(user, "email", None)
         elif isinstance(user, dict):
-            username = user.get("email")
+            username = get_user_email(user)
 
         # Get root path for URL construction - prefer configured APP_ROOT_PATH
         root_path = settings.app_root_path

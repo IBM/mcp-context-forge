@@ -14479,7 +14479,7 @@ async def admin_list_tags(
     LOGGER.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        user_email = get_user_email(user) if user else None
+        user_email = get_user_email(user)
         token_teams = user.get("token_teams") if isinstance(user, dict) else None
         is_admin = bool(user.get("is_admin")) if isinstance(user, dict) else False
 
