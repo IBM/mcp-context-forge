@@ -9,6 +9,8 @@ import {
   Settings,
   Shapes,
   Unplug,
+  User,
+  Users,
   Wrench,
 } from "lucide-react";
 import { useIntl } from "react-intl";
@@ -55,6 +57,11 @@ const COMPONENTS_NAV_ITEMS: NavItem[] = [
 const ECOSYSTEM_NAV_ITEMS: NavItem[] = [
   { labelKey: "navigation.serverCatalog", path: "/app/server-catalog", icon: Shapes },
   { labelKey: "navigation.plugins", path: "/app/plugins", icon: Blocks },
+];
+
+const ADMINISTRATION_NAV_ITEMS: NavItem[] = [
+  { labelKey: "navigation.users", path: "/app/users", icon: User },
+  { labelKey: "navigation.teams", path: "/app/teams", icon: Users },
 ];
 
 const FOOTER_NAV_ITEM: NavItem = {
@@ -110,7 +117,9 @@ export function AppSidebar() {
 
         {/* Components Section */}
         <SidebarGroup>
-          <SidebarGroupLabel>Components</SidebarGroupLabel>
+          <SidebarGroupLabel>
+            {intl.formatMessage({ id: "navigation.components" })}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderNavItems(COMPONENTS_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
@@ -118,9 +127,21 @@ export function AppSidebar() {
 
         {/* Ecosystem Section */}
         <SidebarGroup>
-          <SidebarGroupLabel>Ecosystem</SidebarGroupLabel>
+          <SidebarGroupLabel>
+            {intl.formatMessage({ id: "navigation.ecosystem" })}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>{renderNavItems(ECOSYSTEM_NAV_ITEMS)}</SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/* Administration Section */}
+        <SidebarGroup>
+          <SidebarGroupLabel>
+            {intl.formatMessage({ id: "navigation.administration" })}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>{renderNavItems(ADMINISTRATION_NAV_ITEMS)}</SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
