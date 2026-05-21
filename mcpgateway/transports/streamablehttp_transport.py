@@ -3797,7 +3797,27 @@ class SessionManagerWrapper:
         await self.stack.aclose()
 
     @staticmethod
-    async def _validate_server_id(match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
+    async def _read_request_body(receive: Receive) -> bytes | None:
+        """Read request body from ASGI receive callable.
+
+        Args:
+            receive: ASGI receive callable.
+
+        Returns:
+            Request body bytes, or None if client disconnected.
+        """
+        body_parts = []
+        while True:
+            message = await receive()
+            if message["type"] == "http.request":
+                body_parts.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                return None
+        return b"".join(body_parts)
+
+    async def _validate_server_id(self, match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
         """Validate and resolve the server_id from the request path.
 
         Args:
@@ -3865,16 +3885,22 @@ class SessionManagerWrapper:
         """
         # GET /mcp: server→client stream per MCP Streamable HTTP spec
         # Short-circuit rejections for disabled features or missing session
-        if not settings.use_stateful_sessions or not settings.mcp_get_stream_enabled or mcp_session_id == "not-provided":
-            if not settings.use_stateful_sessions:
-                detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
-                reject_outcome = "stateful_disabled"
-            elif not settings.mcp_get_stream_enabled:
-                detail = "GET /mcp stream disabled by operator (MCP_GET_STREAM_ENABLED=False)."
-                reject_outcome = "feature_disabled"
-            else:
-                detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
-                reject_outcome = "no_session_id"
+        # Determine rejection reason if any condition fails
+        if not settings.use_stateful_sessions:
+            detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
+            reject_outcome = "stateful_disabled"
+        elif not settings.mcp_get_stream_enabled:
+            detail = "GET /mcp stream disabled by operator (MCP_GET_STREAM_ENABLED=False)."
+            reject_outcome = "feature_disabled"
+        elif mcp_session_id == "not-provided":
+            detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+            reject_outcome = "no_session_id"
+        else:
+            # All conditions passed, no rejection
+            detail = None
+            reject_outcome = None
+
+        if reject_outcome:
             transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
             if reject_outcome == "stateful_disabled":
                 logger.warning("Rejecting GET %s with 405 — stateful sessions disabled", path)
@@ -3959,22 +3985,16 @@ class SessionManagerWrapper:
 
         # Only route POST requests with JSON-RPC body to /rpc
         if method != "POST":
-            logger.debug("[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
-            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
-            await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
+            logger.warning("[HTTP_AFFINITY_FORWARDED] Unexpected non-POST method forwarded internally: %s", method)
+            await send({"type": "http.response.start", "status": 405, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","error":{"code":-32600,"message":"Method not allowed"}}'})
             return True
 
         # Read request body
-        body_parts = []
-        while True:
-            message = await receive()
-            if message["type"] == "http.request":
-                body_parts.append(message.get("body", b""))
-                if not message.get("more_body", False):
-                    break
-            elif message["type"] == "http.disconnect":
-                return True
-        body = b"".join(body_parts)
+        body = await self._read_request_body(receive)
+        if body is None:
+            # Client disconnected
+            return True
 
         if not body:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
@@ -3982,8 +4002,14 @@ class SessionManagerWrapper:
             await send({"type": "http.response.body", "body": b""})
             return True
 
-        json_body = orjson.loads(body)
-        rpc_method = json_body.get("method", "")
+        try:
+            json_body = orjson.loads(body)
+            rpc_method = json_body.get("method", "")
+        except Exception as e:
+            logger.error("[HTTP_AFFINITY_FORWARDED] Malformed JSON body: %s", e)
+            await send({"type": "http.response.start", "status": 400, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}'})
+            return True
         logger.debug("[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: %s", rpc_method)
 
         session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
@@ -4089,16 +4115,10 @@ class SessionManagerWrapper:
                 # Forward to owner worker
                 logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
 
-                body_parts = []
-                while True:
-                    message = await receive()
-                    if message["type"] == "http.request":
-                        body_parts.append(message.get("body", b""))
-                        if not message.get("more_body", False):
-                            break
-                    elif message["type"] == "http.disconnect":
-                        return True
-                body = b"".join(body_parts)
+                body = await self._read_request_body(receive)
+                if body is None:
+                    # Client disconnected
+                    return True
 
                 response = await pool.forward_to_owner(
                     owner_worker_id=owner,
@@ -4137,6 +4157,10 @@ class SessionManagerWrapper:
                 # Route local POST to /rpc
                 return await self._handle_local_affinity_post(scope, receive, send, mcp_session_id, headers, match, user_context)
 
+            # Intentional fall-through: owner is this worker but method is not POST
+            if owner == WORKER_ID:
+                logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Owner is us but method is %s, falling through to SDK", WORKER_ID, mcp_session_id[:8], method)
+
         except RuntimeError:
             pass
         except Exception as e:
@@ -4164,16 +4188,10 @@ class SessionManagerWrapper:
 
         logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
 
-        body_parts = []
-        while True:
-            message = await receive()
-            if message["type"] == "http.request":
-                body_parts.append(message.get("body", b""))
-                if not message.get("more_body", False):
-                    break
-            elif message["type"] == "http.disconnect":
-                return True
-        body = b"".join(body_parts)
+        body = await self._read_request_body(receive)
+        if body is None:
+            # Client disconnected
+            return True
 
         if not body:
             logger.debug("[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
