@@ -3797,7 +3797,27 @@ class SessionManagerWrapper:
         await self.stack.aclose()
 
     @staticmethod
-    async def _validate_server_id(match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
+    async def _read_request_body(receive: Receive) -> bytes | None:
+        """Read request body from ASGI receive callable.
+
+        Args:
+            receive: ASGI receive callable.
+
+        Returns:
+            Request body bytes, or None if client disconnected.
+        """
+        body_parts = []
+        while True:
+            message = await receive()
+            if message["type"] == "http.request":
+                body_parts.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                return None
+        return b"".join(body_parts)
+
+    async def _validate_server_id(self, match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
         """Validate and resolve the server_id from the request path.
 
         Args:
@@ -3848,42 +3868,420 @@ class SessionManagerWrapper:
 
         return None  # Legitimate unscoped /mcp path
 
-    async def handle_streamable_http(  # noqa: PLR0911,PLR0912,PLR0915 — pylint: disable=too-many-return-statements,too-many-branches,too-many-statements,too-many-locals
-        self, scope: Scope, receive: Receive, send: Send
-    ) -> None:
+    async def _handle_get_request(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        mcp_session_id: str,
+        headers: dict[str, str],
+        path: str,
+        user_context: dict[str, Any],
+    ) -> bool:
+        """Handle GET requests for server-to-client SSE streams.
+
+        Returns:
+            True if request was handled, False to fall through to SDK.
         """
-        Forwards an incoming ASGI request to the streamable HTTP session manager.
+        # GET /mcp: server→client stream per MCP Streamable HTTP spec
+        # Short-circuit rejections for disabled features or missing session
+        # Determine rejection reason if any condition fails
+        if not settings.use_stateful_sessions:
+            detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
+            reject_outcome = "stateful_disabled"
+        elif not settings.mcp_get_stream_enabled:
+            detail = "GET /mcp stream disabled by operator (MCP_GET_STREAM_ENABLED=False)."
+            reject_outcome = "feature_disabled"
+        elif mcp_session_id == "not-provided":
+            detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
+            reject_outcome = "no_session_id"
+        else:
+            # All conditions passed, no rejection
+            detail = None
+            reject_outcome = None
 
-        Args:
-            scope (Scope): ASGI scope object containing connection information.
-            receive (Receive): ASGI receive callable.
-            send (Send): ASGI send callable.
+        if reject_outcome:
+            transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
+            if reject_outcome == "stateful_disabled":
+                logger.warning("Rejecting GET %s with 405 — stateful sessions disabled", path)
+            elif reject_outcome == "feature_disabled":
+                logger.warning("Rejecting GET %s with 405 — GET stream feature disabled (mcp_get_stream_enabled=False)", path)
+            else:
+                logger.debug("Rejecting GET %s with 405 — no session id presented", path)
+            response = ORJSONResponse(
+                {"detail": detail},
+                status_code=405,
+                headers={"Allow": "POST, DELETE"},
+            )
+            await response(scope, receive, send)
+            return True
 
-        Raises:
-            Exception: Any exception raised during request handling is logged.
+        # Validate session ownership before opening SSE channel
+        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+            mcp_session_id=mcp_session_id,
+            user_context=user_context,
+            rpc_method=None,
+        )
+        if not session_allowed:
+            transport_get_rejected_counter.labels(outcome="session_denied").inc()
+            logger.warning(
+                "Rejecting GET %s with %s — session ownership check failed for %s",
+                path,
+                deny_status,
+                mcp_session_id,
+            )
+            response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+            await response(scope, receive, send)
+            return True
 
-        Logs any exceptions that occur during request handling.
+        await _handle_get_stream(
+            scope=scope,
+            receive=receive,
+            send=send,
+            mcp_session_id=mcp_session_id,
+            last_event_id=headers.get("last-event-id"),
+            accept=headers.get("accept", ""),
+        )
+        return True
 
-        Examples:
-            >>> # Test handle_streamable_http method exists
-            >>> wrapper = SessionManagerWrapper()
-            >>> hasattr(wrapper, 'handle_streamable_http')
-            True
-            >>> callable(wrapper.handle_streamable_http)
-            True
+    async def _handle_delete_request(
+        self,
+        send: Send,
+        mcp_session_id: str,
+        user_context: dict[str, Any],
+    ) -> bool:
+        """Handle DELETE requests for explicit session teardown.
 
-            >>> # Test method signature
-            >>> import inspect
-            >>> sig = inspect.signature(wrapper.handle_streamable_http)
-            >>> list(sig.parameters.keys())
-            ['scope', 'receive', 'send']
+        Returns:
+            True if request was handled, False to fall through to SDK.
         """
+        if not settings.use_stateful_sessions or mcp_session_id == "not-provided":
+            return False
 
-        path = scope["modified_path"]
-        # Uses precompiled regex for server ID extraction
+        status_code, payload = await _close_streamable_http_session(
+            mcp_session_id=mcp_session_id,
+            user_context=user_context,
+        )
+        await _send_streamable_http_json_response(send, status_code=status_code, payload=payload)
+        return True
+
+    async def _handle_affinity_forwarded_request(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        method: str,
+        mcp_session_id: str,
+        headers: dict[str, str],
+        match: Optional[Any],
+        user_context: dict[str, Any],
+    ) -> bool:
+        """Handle requests forwarded from another worker.
+
+        Returns:
+            True if request was handled, False to fall through to SDK.
+        """
+        logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
+
+        # Only route POST requests with JSON-RPC body to /rpc
+        if method != "POST":
+            logger.warning("[HTTP_AFFINITY_FORWARDED] Unexpected non-POST method forwarded internally: %s", method)
+            await send({"type": "http.response.start", "status": 405, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","error":{"code":-32600,"message":"Method not allowed"}}'})
+            return True
+
+        # Read request body
+        body = await self._read_request_body(receive)
+        if body is None:
+            # Client disconnected
+            return True
+
+        if not body:
+            logger.debug("[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return True
+
+        try:
+            json_body = orjson.loads(body)
+            rpc_method = json_body.get("method", "")
+        except Exception as e:
+            logger.error("[HTTP_AFFINITY_FORWARDED] Malformed JSON body: %s", e)
+            await send({"type": "http.response.start", "status": 400, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}'})
+            return True
+        logger.debug("[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: %s", rpc_method)
+
+        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+            mcp_session_id=mcp_session_id,
+            user_context=user_context,
+            rpc_method=rpc_method,
+        )
+        if not session_allowed:
+            response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+            await response(scope, receive, send)
+            return True
+
+        # Notifications don't need /rpc routing
+        if rpc_method.startswith("notifications/"):
+            logger.debug("[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return True
+
+        # Inject server_id from URL path into params for /rpc routing
+        if match:
+            server_id = match.group("server_id")
+            if not isinstance(json_body.get("params"), dict):
+                json_body["params"] = {}
+            json_body["params"]["server_id"] = server_id
+            body = orjson.dumps(json_body)
+            logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
+
+        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
+            rpc_headers = {
+                "content-type": "application/json",
+                "x-mcp-session-id": mcp_session_id,
+                "x-forwarded-internally": "true",
+            }
+            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+            if _gw_auth_lower in headers:
+                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+            # First-Party
+            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+            response = await client.post(
+                f"{internal_loopback_base_url()}/rpc",
+                content=body,
+                headers=rpc_headers,
+                timeout=30.0,
+            )
+
+            response_headers = [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(response.content)).encode()),
+            ]
+            if mcp_session_id != "not-provided":
+                response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": response.status_code,
+                    "headers": response_headers,
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": response.content,
+                }
+            )
+            logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+            return True
+
+    async def _handle_affinity_routing(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        method: str,
+        mcp_session_id: str,
+        headers: dict[str, str],
+        path: str,
+        query_string: str,
+        match: Optional[Any],
+        user_context: dict[str, Any],
+    ) -> bool:
+        """Handle session affinity routing to owner worker.
+
+        Returns:
+            True if request was handled, False to fall through to SDK.
+        """
+        if not settings.mcpgateway_session_affinity_enabled or not settings.use_stateful_sessions or mcp_session_id == "not-provided":
+            return False
+
+        try:
+            # First-Party
+            from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+
+            pool = get_session_affinity()
+            owner = await pool.get_session_owner(mcp_session_id)
+            logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+
+            if owner and owner != WORKER_ID:
+                # Forward to owner worker
+                logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+
+                body = await self._read_request_body(receive)
+                if body is None:
+                    # Client disconnected
+                    return True
+
+                response = await pool.forward_to_owner(
+                    owner_worker_id=owner,
+                    mcp_session_id=mcp_session_id,
+                    method=method,
+                    path=path,
+                    headers=headers,
+                    body=body,
+                    query_string=query_string,
+                )
+
+                if response:
+                    response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
+                    response_headers.append((b"content-length", str(len(response["body"])).encode()))
+
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": response["status"],
+                            "headers": response_headers,
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": response["body"],
+                        }
+                    )
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                    return True
+
+                logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                return False
+
+            if owner == WORKER_ID and method == "POST":
+                # Route local POST to /rpc
+                return await self._handle_local_affinity_post(scope, receive, send, mcp_session_id, headers, match, user_context)
+
+            # Intentional fall-through: owner is this worker but method is not POST
+            if owner == WORKER_ID:
+                logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Owner is us but method is %s, falling through to SDK", WORKER_ID, mcp_session_id[:8], method)
+
+        except RuntimeError:
+            pass
+        except Exception as e:
+            logger.debug("Session affinity check failed, proceeding locally: %s", e)
+
+        return False
+
+    async def _handle_local_affinity_post(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        mcp_session_id: str,
+        headers: dict[str, str],
+        match: Optional[Any],
+        user_context: dict[str, Any],
+    ) -> bool:
+        """Handle POST requests for sessions owned by this worker.
+
+        Returns:
+            True if request was handled, False to fall through to SDK.
+        """
+        # First-Party
+        from mcpgateway.services.session_affinity import WORKER_ID  # pylint: disable=import-outside-toplevel
+
+        logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+
+        body = await self._read_request_body(receive)
+        if body is None:
+            # Client disconnected
+            return True
+
+        if not body:
+            logger.debug("[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return True
+
+        try:
+            json_body = orjson.loads(body)
+            rpc_method = json_body.get("method", "")
+            logger.debug("[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: %s", rpc_method)
+
+            session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+                mcp_session_id=mcp_session_id,
+                user_context=user_context,
+                rpc_method=rpc_method,
+            )
+            if not session_allowed:
+                response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
+                await response(scope, receive, send)
+                return True
+
+            if rpc_method.startswith("notifications/"):
+                logger.debug("[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
+                await send({"type": "http.response.start", "status": 202, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+                return True
+
+            if match:
+                server_id = match.group("server_id")
+                if not isinstance(json_body.get("params"), dict):
+                    json_body["params"] = {}
+                json_body["params"]["server_id"] = server_id
+                body = orjson.dumps(json_body)
+                logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
+
+            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
+                rpc_headers = {
+                    "content-type": "application/json",
+                    "x-mcp-session-id": mcp_session_id,
+                    "x-forwarded-internally": "true",
+                }
+                _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                if _gw_auth_lower in headers:
+                    rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                # First-Party
+                from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+                response = await client.post(
+                    f"{internal_loopback_base_url()}/rpc",
+                    content=body,
+                    headers=rpc_headers,
+                    timeout=30.0,
+                )
+
+                response_headers = [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(response.content)).encode()),
+                    (b"mcp-session-id", mcp_session_id.encode()),
+                ]
+
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
+                    }
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.content,
+                    }
+                )
+                logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
+                return True
+        except Exception as e:
+            logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
+            return False
+
+    def _parse_request_metadata(self, scope: Scope) -> tuple[str, Any, dict[str, str], str, str, str, bool]:
+        """Parse request metadata from ASGI scope.
+
+        Returns:
+            Tuple of (path, match, headers, mcp_session_id, method, query_string, is_internally_forwarded)
+        """
+        path: str = scope["modified_path"]
         match = _SERVER_ID_RE.search(path)
-
-        # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
         raw_headers = scope.get("headers") or []
         headers: dict[str, str] = {}
         for item in raw_headers:
@@ -3892,29 +4290,13 @@ class SessionManagerWrapper:
             k, v = item
             if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
                 continue
-            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
             headers[k.decode("latin-1").lower()] = v.decode("latin-1")
 
-        # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
         if mcp_session_id != "not-provided":
             set_trace_session_id(mcp_session_id)
-        method = scope.get("method", "UNKNOWN")
-        query_string = scope.get("query_string", b"").decode("utf-8")
-        logger.debug("[STATEFUL] Streamable HTTP %s %s | MCP-Session-Id: %s | Query: %s | Stateful: %s", method, path, mcp_session_id, query_string, settings.use_stateful_sessions)
 
-        # Note: mcp-session-id from client is used for gateway-internal session affinity
-        # routing (stored in request_headers_var), but is NOT renamed or forwarded to
-        # upstream servers - it's a gateway-side concept, not an end-to-end semantic header
-
-        # Multi-worker session affinity: check if we should forward to another worker
-        # This must happen BEFORE the SDK's session manager handles the request
-        # Only trust x-forwarded-internally from loopback to prevent external spoofing
-        _client = scope.get("client")
-        _client_host = _client[0] if _client else None
-        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
-        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
-
+        # Validate session ID format if affinity is enabled
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
             try:
                 # First-Party
@@ -3924,23 +4306,37 @@ class SessionManagerWrapper:
                     logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
                     mcp_session_id = "not-provided"
             except Exception as exc:
-                # A real failure here (pool import broken, DB/Redis timeout in
-                # a future validator) would otherwise be silently rendered as
-                # the #4205 405 with no log line. Warn at least once per
-                # request so ops can correlate a 405 storm with the root
-                # cause; we still fall through to treat the session as
-                # unprovided (the safe behaviour) rather than 5xx'ing.
-                logger.warning(
-                    "Session id validation failed; treating request as session-less: %s",
-                    exc,
-                )
+                logger.warning("Session id validation failed; treating request as session-less: %s", exc)
                 mcp_session_id = "not-provided"
 
-        # Log session manager ID for debugging
+        method = scope.get("method", "UNKNOWN")
+        query_string = scope.get("query_string", b"").decode("utf-8")
+
+        _client = scope.get("client")
+        _client_host = _client[0] if _client else None
+        _from_loopback = _client_host in ("127.0.0.1", "::1") if _client_host else False
+        is_internally_forwarded = _from_loopback and headers.get("x-forwarded-internally") == "true"
+
+        logger.debug("[STATEFUL] Streamable HTTP %s %s | MCP-Session-Id: %s | Query: %s | Stateful: %s", method, path, mcp_session_id, query_string, settings.use_stateful_sessions)
         logger.debug("[SESSION_MGR_DEBUG] Manager ID: %s", id(self.session_manager))
 
-        # Enforce server access parity for server-scoped Streamable HTTP MCP routes.
-        # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
+        return path, match, headers, mcp_session_id, method, query_string, is_internally_forwarded
+
+    async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Forwards an incoming ASGI request to the streamable HTTP session manager.
+
+        Args:
+            scope: ASGI scope object containing connection information.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Raises:
+            Exception: Any exception raised during request handling is logged.
+        """
+        # Parse request metadata
+        path, match, headers, mcp_session_id, method, query_string, is_internally_forwarded = self._parse_request_metadata(scope)
+
+        # RBAC enforcement for server-scoped routes
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
             _server_id = match.group("server_id")
@@ -3957,411 +4353,70 @@ class SessionManagerWrapper:
                 await response(scope, receive, send)
                 return
 
-        # SECURITY: Validate server existence early — before affinity routing
-        # can shortcut to /rpc, which checks token scoping but not server
-        # existence.  Without this, nonexistent server IDs that reach the
-        # affinity branches would bypass the 404 and get empty-scoped results.
+        # Validate server existence early
         validated = await self._validate_server_id(match, path, scope, receive, send)
         if validated is _REJECT:
             return
 
-        # GET /mcp: server→client stream per MCP Streamable HTTP spec
-        # ("Listening for messages from the server"). Three short-circuit
-        # rejections live here, then the spec-conformant SSE handler takes
-        # over (ADR-052).
-        #
-        # Rejections preserved from the #4205 era:
-        #   * stateful sessions disabled globally → 405
-        #     (no event-store infrastructure to anchor a stream against)
-        #   * no Mcp-Session-Id → 405
-        #     (the spec requires a session for the GET stream)
-        # Plus one operator kill switch:
-        #   * mcp_get_stream_enabled=False → 405 (deliberate disable)
-        #
-        # All emit `Allow: POST, DELETE` so the client knows the resource is
-        # real. Placed after server-id validation and RBAC so bogus server
-        # IDs still 404 and unauthorized callers still 403 before we
-        # advertise the endpoint.
-        if method == "GET" and (not settings.use_stateful_sessions or not settings.mcp_get_stream_enabled or mcp_session_id == "not-provided"):
-            if not settings.use_stateful_sessions:
-                detail = "Stateful sessions disabled on this gateway; passive SSE stream is not available."
-                reject_outcome = "stateful_disabled"
-            elif not settings.mcp_get_stream_enabled:
-                detail = "GET /mcp stream disabled by operator (MCP_GET_STREAM_ENABLED=False)."
-                reject_outcome = "feature_disabled"
-            else:
-                detail = "Passive SSE stream requires an Mcp-Session-Id from a prior initialize."
-                reject_outcome = "no_session_id"
-            transport_get_rejected_counter.labels(outcome=reject_outcome).inc()
-            # Log level split by reason: stateful-disabled and feature-disabled
-            # are operator-facing config conditions (warn); missing session id
-            # is routine probing from strict MCP clients before `initialize`
-            # and would flood info-level logs (debug).
-            if reject_outcome == "stateful_disabled":
-                logger.warning("Rejecting GET %s with 405 — stateful sessions disabled", path)
-            elif reject_outcome == "feature_disabled":
-                logger.warning("Rejecting GET %s with 405 — GET stream feature disabled (mcp_get_stream_enabled=False)", path)
-            else:
-                logger.debug("Rejecting GET %s with 405 — no session id presented", path)
-            response = ORJSONResponse(
-                {"detail": detail},
-                status_code=405,
-                headers={"Allow": "POST, DELETE"},
-            )
-            await response(scope, receive, send)
-            return
-
-        # GET /mcp with a valid session — spec-conformant SSE stream.
+        # Dispatch by HTTP method
         if method == "GET":
-            # Gate on session ownership before opening the SSE channel.
-            # Without this, any authenticated caller who knows another
-            # user's Mcp-Session-Id can subscribe to that session's
-            # server-initiated traffic (notifications, sampling, progress
-            # events) — and can also pin the rightful owner out of the
-            # single-listener slot until TTL expiry. Mirrors the gate
-            # that POST and DELETE already apply downstream.
-            session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-                mcp_session_id=mcp_session_id,
-                user_context=user_context,
-                rpc_method=None,
-            )
-            if not session_allowed:
-                transport_get_rejected_counter.labels(outcome="session_denied").inc()
-                logger.warning(
-                    "Rejecting GET %s with %s — session ownership check failed for %s",
-                    path,
-                    deny_status,
-                    mcp_session_id,
-                )
-                response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
-                await response(scope, receive, send)
+            handled = await self._handle_get_request(scope, receive, send, mcp_session_id, headers, path, user_context)
+            if handled:
                 return
-            await _handle_get_stream(
-                scope=scope,
-                receive=receive,
-                send=send,
-                mcp_session_id=mcp_session_id,
-                last_event_id=headers.get("last-event-id"),
-                accept=headers.get("accept", ""),
-            )
-            return
 
-        # Deterministic stateful lifecycle close:
-        # When a valid MCP session ID is provided for DELETE, perform explicit
-        # ownership-checked teardown instead of relying on SDK manager behavior.
-        if method == "DELETE" and settings.use_stateful_sessions and mcp_session_id != "not-provided":
-            status_code, payload = await _close_streamable_http_session(
-                mcp_session_id=mcp_session_id,
-                user_context=user_context,
-            )
-            await _send_streamable_http_json_response(send, status_code=status_code, payload=payload)
-            return
+        if method == "DELETE":
+            handled = await self._handle_delete_request(send, mcp_session_id, user_context)
+            if handled:
+                return
 
+        # Handle affinity-forwarded requests
         if is_internally_forwarded:
-            logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
-
-            # Only route POST requests with JSON-RPC body to /rpc
-            # DELETE and other methods should return success (session cleanup is local)
-            if method != "POST":
-                logger.debug("[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
-                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
-                await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
-                return
-
-            # For POST requests, bypass SDK session manager and use /rpc directly
-            # This avoids SDK's session cleanup issues while maintaining stateful upstream connections
             try:
-                # Read request body
-                body_parts = []
-                while True:
-                    message = await receive()
-                    if message["type"] == "http.request":
-                        body_parts.append(message.get("body", b""))
-                        if not message.get("more_body", False):
-                            break
-                    elif message["type"] == "http.disconnect":
-                        return
-                body = b"".join(body_parts)
-
-                if not body:
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
-                    await send({"type": "http.response.start", "status": 202, "headers": []})
-                    await send({"type": "http.response.body", "body": b""})
-                    return
-
-                json_body = orjson.loads(body)
-                rpc_method = json_body.get("method", "")
-                logger.debug("[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: %s", rpc_method)
-
-                session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-                    mcp_session_id=mcp_session_id,
-                    user_context=user_context,
-                    rpc_method=rpc_method,
-                )
-                if not session_allowed:
-                    response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
-                    await response(scope, receive, send)
-                    return
-
-                # Notifications don't need /rpc routing - just acknowledge
-                if rpc_method.startswith("notifications/"):
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
-                    await send({"type": "http.response.start", "status": 202, "headers": []})
-                    await send({"type": "http.response.body", "body": b""})
-                    return
-
-                # Inject server_id from URL path into params for /rpc routing
-                if match:
-                    server_id = match.group("server_id")
-                    if not isinstance(json_body.get("params"), dict):
-                        json_body["params"] = {}
-                    json_body["params"]["server_id"] = server_id
-                    # Re-serialize body with injected server_id
-                    body = orjson.dumps(json_body)
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
-
-                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                    rpc_headers = {
-                        "content-type": "application/json",
-                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
-                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
-                    }
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                    # Forward passthrough headers for upstream MCP servers (see #3640).
-                    # First-Party
-                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                    response = await client.post(
-                        f"{internal_loopback_base_url()}/rpc",
-                        content=body,
-                        headers=rpc_headers,
-                        timeout=30.0,
-                    )
-
-                    # Return response to client
-                    response_headers = [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(response.content)).encode()),
-                    ]
-                    if mcp_session_id != "not-provided":
-                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
-
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": response.status_code,
-                            "headers": response_headers,
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": response.content,
-                        }
-                    )
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                handled = await self._handle_affinity_forwarded_request(scope, receive, send, method, mcp_session_id, headers, match, user_context)
+                if handled:
                     return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
-                # Fall through to SDK handling as fallback
 
-        if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions and mcp_session_id != "not-provided" and not is_internally_forwarded:
-            try:
-                # First-Party - lazy import to avoid circular dependencies
-                # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+        # Handle affinity routing to owner worker
+        if not is_internally_forwarded:
+            handled = await self._handle_affinity_routing(scope, receive, send, method, mcp_session_id, headers, path, query_string, match, user_context)
+            if handled:
+                return
 
-                pool = get_session_affinity()
-                owner = await pool.get_session_owner(mcp_session_id)
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+        # SDK fallthrough: handle POST requests and other cases
+        await self._handle_sdk_fallthrough(scope, receive, send, method, mcp_session_id, headers, path, validated, user_context, is_internally_forwarded)
 
-                if owner and owner != WORKER_ID:
-                    # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
-
-                    # Read request body
-                    body_parts = []
-                    while True:
-                        message = await receive()
-                        if message["type"] == "http.request":
-                            body_parts.append(message.get("body", b""))
-                            if not message.get("more_body", False):
-                                break
-                        elif message["type"] == "http.disconnect":
-                            return
-                    body = b"".join(body_parts)
-
-                    # Forward to owner worker
-                    response = await pool.forward_to_owner(
-                        owner_worker_id=owner,
-                        mcp_session_id=mcp_session_id,
-                        method=method,
-                        path=path,
-                        headers=headers,
-                        body=body,
-                        query_string=query_string,
-                    )
-
-                    if response:
-                        # Send forwarded response back to client
-                        response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
-                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
-
-                        await send(
-                            {
-                                "type": "http.response.start",
-                                "status": response["status"],
-                                "headers": response_headers,
-                            }
-                        )
-                        await send(
-                            {
-                                "type": "http.response.body",
-                                "body": response["body"],
-                            }
-                        )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
-                        return
-
-                    # Forwarding failed - fall through to local handling
-                    # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
-
-                elif owner == WORKER_ID and method == "POST":
-                    # We own this session - route POST requests to /rpc to avoid SDK session issues
-                    # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
-
-                    # Read request body
-                    body_parts = []
-                    while True:
-                        message = await receive()
-                        if message["type"] == "http.request":
-                            body_parts.append(message.get("body", b""))
-                            if not message.get("more_body", False):
-                                break
-                        elif message["type"] == "http.disconnect":
-                            return
-                    body = b"".join(body_parts)
-
-                    if not body:
-                        logger.debug("[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
-                        await send({"type": "http.response.start", "status": 202, "headers": []})
-                        await send({"type": "http.response.body", "body": b""})
-                        return
-
-                    # Parse JSON-RPC and route to /rpc
-                    try:
-                        json_body = orjson.loads(body)
-                        rpc_method = json_body.get("method", "")
-                        logger.debug("[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: %s", rpc_method)
-
-                        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-                            mcp_session_id=mcp_session_id,
-                            user_context=user_context,
-                            rpc_method=rpc_method,
-                        )
-                        if not session_allowed:
-                            response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
-                            await response(scope, receive, send)
-                            return
-
-                        # Notifications don't need /rpc routing
-                        if rpc_method.startswith("notifications/"):
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
-                            await send({"type": "http.response.start", "status": 202, "headers": []})
-                            await send({"type": "http.response.body", "body": b""})
-                            return
-
-                        # Inject server_id from URL path into params for /rpc routing
-                        if match:
-                            server_id = match.group("server_id")
-                            if not isinstance(json_body.get("params"), dict):
-                                json_body["params"] = {}
-                            json_body["params"]["server_id"] = server_id
-                            # Re-serialize body with injected server_id
-                            body = orjson.dumps(json_body)
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
-
-                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                            rpc_headers = {
-                                "content-type": "application/json",
-                                "x-mcp-session-id": mcp_session_id,
-                                "x-forwarded-internally": "true",
-                            }
-                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if _gw_auth_lower in headers:
-                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                            # Forward passthrough headers for upstream MCP servers (see #3640).
-                            # First-Party
-                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                            response = await client.post(
-                                f"{internal_loopback_base_url()}/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=30.0,
-                            )
-
-                            response_headers = [
-                                (b"content-type", b"application/json"),
-                                (b"content-length", str(len(response.content)).encode()),
-                                (b"mcp-session-id", mcp_session_id.encode()),
-                            ]
-
-                            await send(
-                                {
-                                    "type": "http.response.start",
-                                    "status": response.status_code,
-                                    "headers": response_headers,
-                                }
-                            )
-                            await send(
-                                {
-                                    "type": "http.response.body",
-                                    "body": response.content,
-                                }
-                            )
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
-                            return
-                    except Exception as e:
-                        logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
-                        # Fall through to SDK handling as fallback
-
-            except RuntimeError:
-                # Pool not initialized - proceed with local handling
-                pass
-            except Exception as e:
-                logger.debug("Session affinity check failed, proceeding locally: %s", e)
-
-        # Store headers in context for tool invocations
+    async def _handle_sdk_fallthrough(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        method: str,
+        mcp_session_id: str,
+        headers: dict[str, str],
+        path: str,
+        validated: Optional[str],
+        user_context: dict[str, Any],
+        is_internally_forwarded: bool,
+    ) -> None:
+        """Handle SDK fallthrough for requests not handled by specific handlers."""
+        # Store context for SDK
         request_headers_var.set(headers)
-
         server_id_var.set(validated)
 
-        # For session affinity: wrap send to capture session ID from response headers
-        # This allows us to register ownership for new sessions created by the SDK
+        scope[_MCPGATEWAY_CONTEXT_KEY] = {
+            "server_id": server_id_var.get(),
+            "request_headers": headers,
+            "user_context": user_context,
+        }
+
+        # Capture session ID from response headers
         captured_session_id: Optional[str] = None
 
         async def send_with_capture(message: Dict[str, Any]) -> None:
-            """Wrap ASGI send to capture session ID from response headers.
-
-            Args:
-                message: ASGI message dict.
-            """
             nonlocal captured_session_id
             if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
-                # Look for mcp-session-id in response headers
                 response_headers = message.get("headers", [])
                 for header_name, header_value in response_headers:
                     if isinstance(header_name, bytes):
@@ -4373,28 +4428,13 @@ class SessionManagerWrapper:
                         break
             await send(message)
 
-        # Propagate middleware-resolved context via ASGI scope so that MCP
-        # handlers can retrieve it even when ContextVars are lost (the SDK's
-        # task group was created at startup, so spawned handler tasks inherit
-        # the startup context rather than the per-request context).
-        scope[_MCPGATEWAY_CONTEXT_KEY] = {
-            "server_id": server_id_var.get(),
-            "request_headers": headers,
-            "user_context": user_context,
-        }
-
+        # Trace initialize requests
         buffered_request_body = bytearray()
         initialize_span_cm: Optional[ContextManager[Any]] = None
         initialize_span_stack: Optional[ExitStack] = None
         initialize_span_active = False
 
         async def receive_with_initialize_trace() -> Dict[str, Any]:
-            """Capture initialize requests so the public MCP handshake is traced.
-
-            Returns:
-                The next ASGI receive message, with initialize payloads recorded so
-                tracing can wrap the SDK-managed handshake path.
-            """
             nonlocal initialize_span_cm, initialize_span_stack, initialize_span_active
             message = await receive()
             if method == "POST" and not initialize_span_active and message.get("type") == "http.request":
@@ -4411,35 +4451,17 @@ class SessionManagerWrapper:
                         initialize_span_active = True
             return message
 
-        # ADR-052: server-initiated request response interception.
-        # When this session has any pending RequestResponder waiting for a
-        # downstream reply, peek at this POST body. If it's a JSON-RPC
-        # response whose id matches a pending entry, route it directly to
-        # NotificationService.complete_request and short-circuit the SDK.
-        # Otherwise replay the buffered body to the SDK transparently.
-        # Only triggered when there's at least one pending request — the
-        # common case (zero pending) takes the streaming-receive fast path.
+        # Server-initiated request response interception
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         if _notif_svc is not None:
-            # Authorize the caller against the session BEFORE touching the
-            # body or matching the held responder. Without this, an
-            # authenticated user who knows the victim's ``Mcp-Session-Id``
-            # plus a pending JSON-RPC ``id`` could POST a forged response
-            # here and ``complete_request`` would accept it (202) — the
-            # SDK's normal POST validation runs only when interception
-            # falls through, so the bypass would never reach it.
             session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
                 mcp_session_id=mcp_session_id,
                 user_context=user_context,
                 rpc_method=None,
             )
             if not session_allowed:
-                logger.warning(
-                    "POST %s denied by session-ownership check during interception (%s)",
-                    mcp_session_id,
-                    deny_status,
-                )
+                logger.warning("POST %s denied by session-ownership check during interception (%s)", mcp_session_id, deny_status)
                 response = ORJSONResponse({"detail": deny_detail}, status_code=deny_status)
                 await response(scope, receive, send)
                 return
@@ -4448,30 +4470,17 @@ class SessionManagerWrapper:
                 mcp_session_id=mcp_session_id,
                 notification_service=_notif_svc,
             )
-            outcome, receive = await _dispatch_peek_outcome(
-                peek,
-                receive,
-                send,
-                accepted_body=b"{}",
-                log_label="response interception",
-                log_context=mcp_session_id,
-            )
+            outcome, receive = await _dispatch_peek_outcome(peek, receive, send, accepted_body=b"{}", log_label="response interception", log_context=mcp_session_id)
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
-        # JSON-RPC method dispatch should still be able to report a true
-        # "method not found" error when a client probes an unknown method
-        # without a usable Streamable HTTP session. The SDK validates the
-        # missing Mcp-Session-Id before method dispatch and would otherwise
-        # collapse this case to -32600 "Missing session ID". Peek only small,
-        # single-message JSON-RPC requests; known methods and malformed/large
-        # bodies fall through to the SDK's normal transport/session checks.
+        # Unknown method peek for better error messages
         if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
             peek = await _drain_request_body(receive)
             if peek.disconnected:
                 logger.debug("POST %s aborted by client mid-body (unknown-method peek); not replaying", path)
                 return
-            if peek.body is None:  # type-narrow for mypy; invariant rules this out unless disconnected
+            if peek.body is None:
                 return
             if not peek.too_large:
                 try:
@@ -4484,51 +4493,15 @@ class SessionManagerWrapper:
                         await _send_streamable_http_json_response(
                             send,
                             status_code=200,
-                            payload={
-                                "jsonrpc": "2.0",
-                                "error": {"code": -32601, "message": f"Method not found: {rpc_method}"},
-                                "id": payload.get("id"),
-                            },
+                            payload={"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {rpc_method}"}, "id": payload.get("id")},
                         )
                         return
-            receive = _make_replay_receive(
-                peek.body,
-                receive,
-                replay_tail=peek.replay_tail,
-                replay_tail_more_body=peek.replay_tail_more_body,
-            )
+            receive = _make_replay_receive(peek.body, receive, replay_tail=peek.replay_tail, replay_tail_more_body=peek.replay_tail_more_body)
 
-        # Spec-mandated notification short-circuit. JSON-RPC 2.0 + MCP
-        # Streamable HTTP: a notification (a request without an ``id``) is
-        # fire-and-forget — the server MUST NOT respond to it, and the spec
-        # acknowledges receipt with 202 Accepted regardless of session state.
-        # The MCP SDK's ``_validate_session`` enforces session-id presence
-        # for *every* POST and 400s here, which violates the notification
-        # rule. We peek the body only when no session id was presented (the
-        # common notification case is the post-init `notifications/initialized`
-        # round trip) on an MCP path — POSTs with a session id keep the
-        # streaming-receive fast path; non-MCP paths are not ours to peek
-        # (and may legitimately have no body / non-JSON body). Single-message
-        # bodies only; batches fall through to the SDK in case it ever grows
-        # proper batch handling.
-        # Skip when the affinity-forwarded path has already consumed the
-        # receive (it reads the body itself for the /rpc forward and
-        # falls through to the SDK on failure). Re-reading would observe
-        # an http.disconnect from the now-exhausted original receive and
-        # short-circuit the SDK fallback that the trusted-internal flow
-        # depends on. Forwarded requests already carry an Mcp-Session-Id
-        # in production, but tests exercise the no-session forwarded path
-        # so the gate is needed.
+        # Notification short-circuit
         if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
             peek = await _maybe_short_circuit_notification(receive)
-            outcome, receive = await _dispatch_peek_outcome(
-                peek,
-                receive,
-                send,
-                accepted_body=b"",
-                log_label="notification short-circuit",
-                log_context=path,
-            )
+            outcome, receive = await _dispatch_peek_outcome(peek, receive, send, accepted_body=b"", log_label="notification short-circuit", log_context=path)
             if outcome is not _PeekDispatchOutcome.FALLTHROUGH:
                 return
 
@@ -4538,27 +4511,7 @@ class SessionManagerWrapper:
             await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
-            # Register ownership for the session we just handled
-            # This captures both existing sessions (mcp_session_id from request)
-            # and new sessions (captured_session_id from response)
-            logger.debug(
-                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s",
-                settings.mcpgateway_session_affinity_enabled,
-                settings.use_stateful_sessions,
-                captured_session_id,
-                mcp_session_id,
-            )
-            # Two distinct writes happen here:
-            #
-            #   * Claim the *logical owner* in the shared session registry.
-            #     This is what `_validate_streamable_session_access` reads on
-            #     subsequent POST/DELETE/GET requests, so it MUST fire whether
-            #     or not multi-worker affinity is enabled — single-node
-            #     deployments still need ownership recorded for the GET-stream
-            #     gate to recognise the legitimate owner.
-            #
-            #   * Register the *worker-affinity* mapping. This only matters
-            #     when multi-worker affinity is on and stays gated.
+            # Register session ownership
             session_to_register: Optional[str] = None
             requester_email = user_context.get("email") if isinstance(user_context, dict) else None
             if settings.use_stateful_sessions:
@@ -4567,50 +4520,24 @@ class SessionManagerWrapper:
                     if requester_email:
                         effective_owner = await _claim_streamable_session_owner(captured_session_id, requester_email)
                         if effective_owner and effective_owner != requester_email and not bool(user_context.get("is_admin", False)):
-                            logger.warning(
-                                "Session owner mismatch for %s... (requester=%s, owner=%s)",
-                                captured_session_id[:8],
-                                requester_email,
-                                effective_owner,
-                            )
+                            logger.warning("Session owner mismatch for %s... (requester=%s, owner=%s)", captured_session_id[:8], requester_email, effective_owner)
                 elif mcp_session_id != "not-provided":
-                    # Existing client-provided IDs may only refresh ownership
-                    # when they are already bound to the caller's principal.
-                    session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(
-                        mcp_session_id=mcp_session_id,
-                        user_context=user_context,
-                        rpc_method=None,
-                    )
+                    session_allowed, _deny_status, _deny_detail = await _validate_streamable_session_access(mcp_session_id=mcp_session_id, user_context=user_context, rpc_method=None)
                     if session_allowed:
                         session_to_register = mcp_session_id
 
-            logger.debug(
-                "[HTTP_AFFINITY_DEBUG] affinity_enabled=%s stateful=%s captured=%s mcp_session_id=%s session_to_register=%s",
-                settings.mcpgateway_session_affinity_enabled,
-                settings.use_stateful_sessions,
-                captured_session_id,
-                mcp_session_id,
-                session_to_register,
-            )
             if session_to_register and settings.mcpgateway_session_affinity_enabled:
                 try:
-                    # First-Party - lazy import to avoid circular dependencies
                     # First-Party
                     from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
-                    logger.debug(
-                        "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
-                        session_to_register[:8],
-                    )
+                    logger.debug("[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling", WORKER_ID, session_to_register[:8])
                 except Exception as e:
-                    logger.debug("[HTTP_AFFINITY_DEBUG] Exception during registration: %s", e)
                     logger.warning("Failed to register session ownership: %s", e)
 
         except anyio.ClosedResourceError:
-            # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
             span_exit_exc = (type(e), e, e.__traceback__)
