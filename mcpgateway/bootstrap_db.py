@@ -52,12 +52,17 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool, connect_args
+from mcpgateway.db import A2AAgent, connect_args, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
 _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
 _MIGRATION_LOCK_TIMEOUT = 300  # seconds to wait for lock (5 minutes for slow migrations)
+
+
+class _SchemaNotAtHeadError(RuntimeError):
+    """Raised when skip-migration mode detects schema is behind Alembic head."""
+
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -836,13 +841,12 @@ async def main() -> None:
                         "If running the migration container, set MCPGATEWAY_SKIP_MIGRATIONS=false "
                         "or unset it (default is false) so migrations run before gateway pods start."
                     )
-                    raise RuntimeError("Schema not at head; migrations required before startup")
+                    raise _SchemaNotAtHeadError("Schema not at head; migrations required before startup")
                 logger.info("MCPGATEWAY_SKIP_MIGRATIONS=true — schema already at head, skipping migration")
                 await _run_post_migration_bootstrap(conn)
                 conn.commit()
         except Exception as e:
-            if not isinstance(e, RuntimeError):
-                # RuntimeError already logged with full context above; only log unexpected failures here
+            if not isinstance(e, _SchemaNotAtHeadError):
                 logger.error(f"Bootstrap failed: {e}")
             raise
         finally:
