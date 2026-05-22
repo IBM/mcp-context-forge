@@ -940,15 +940,11 @@ def _build_canonical_metadata_url(canonical_url: str) -> str:
     Returns:
         Fully-qualified metadata URL string, or "" if construction fails.
     """
-    try:
-        parsed = urlparse(canonical_url)
-        if not parsed.scheme or not parsed.netloc:
-            return ""
-        well_known_path = f"/.well-known/oauth-protected-resource{parsed.path}"
-        return f"{parsed.scheme}://{parsed.netloc}{well_known_path}"
-    except Exception:
-        logger.warning("Failed to build canonical metadata URL from %s", canonical_url)
+    parsed = urlparse(canonical_url)
+    if not parsed.scheme or not parsed.netloc:
         return ""
+    well_known_path = f"/.well-known/oauth-protected-resource{parsed.path}"
+    return f"{parsed.scheme}://{parsed.netloc}{well_known_path}"
 
 
 def _is_valid_audience(value: Any) -> bool:
@@ -5446,11 +5442,7 @@ class _StreamableHttpAuthHandler:
                     "Server %s has no resource, canonical_url, or client_id " "configured and no canonical resource URL could be derived; " "rejecting OAuth token",
                     server_id_log,
                 )
-                cu = server.canonical_url if isinstance(server.canonical_url, str) else None
-                if cu:
-                    resource_meta_url = _build_canonical_metadata_url(cu)
-                else:
-                    resource_meta_url = _build_resource_metadata_url(self.scope, server_id)
+                resource_meta_url = _build_resource_metadata_url(self.scope, server_id)
                 www_auth = f'Bearer resource_metadata="{resource_meta_url}"' if resource_meta_url else "Bearer"
                 await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
                 return OAuthAuthResult.FAILED
