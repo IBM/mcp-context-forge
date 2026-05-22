@@ -14720,6 +14720,38 @@ async def test_change_password_required_handler_change_password_failures(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_change_password_required_handler_long_validation_error(monkeypatch, mock_db):
+    """Test that long PasswordValidationError messages are truncated (covers line 4945)."""
+    # First-Party
+    from mcpgateway.services.email_auth_service import PasswordValidationError
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "password_error_message_max_length", 50)  # Use short max for testing
+
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": "/root"}
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "weak", "confirm_password": "weak"})
+    request.cookies = {"jwt_token": "jwt"}
+    request.headers = {"User-Agent": "TestAgent"}
+
+    user = SimpleNamespace(email="user@example.com")
+    monkeypatch.setattr("mcpgateway.admin.get_current_user", AsyncMock(return_value=user))
+    monkeypatch.setattr("sqlalchemy.inspect", lambda _obj: SimpleNamespace(transient=False, detached=False))
+
+    # Create a very long error message that exceeds max_length
+    long_error_msg = "Password must contain at least 12 characters including uppercase, lowercase, numbers, and special characters. Your password is too weak and does not meet security requirements."
+    auth_service = MagicMock()
+    auth_service.change_password = AsyncMock(side_effect=PasswordValidationError(long_error_msg))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await change_password_required_handler(request, db=mock_db)
+    assert isinstance(response, RedirectResponse)
+    assert "error=weak_password" in response.headers["location"]
+    # Verify message was truncated (should end with "...")
+    assert "..." in response.headers["location"]
+
+
+@pytest.mark.asyncio
 async def test_change_password_required_handler_outer_exception(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
 
@@ -17592,6 +17624,27 @@ class TestAuthLogin:
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Change PW</html>")
+        result = await change_password_required_page(request)
+        assert isinstance(result, HTMLResponse)
+
+    @pytest.mark.asyncio
+    async def test_change_password_required_page_jwt_auth_failure(self, monkeypatch):
+        """Test that exception during JWT user extraction is caught and logged (covers lines 4782-4786)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_policy_enabled", True, raising=False)
+
+        # Mock get_current_user to raise an exception
+        monkeypatch.setattr("mcpgateway.admin.get_current_user", AsyncMock(side_effect=Exception("JWT decode failed")))
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.cookies = {"jwt_token": "invalid-token"}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Change PW</html>")
+
+        # Should not raise, should fall back to is_privileged=False
         result = await change_password_required_page(request)
         assert isinstance(result, HTMLResponse)
 

@@ -237,6 +237,9 @@
       }
     </script>
 
+    <!-- Password Validator (shared utility) -->
+    <script src="{{ root_path }}/static/js/password-validator.js" nonce="{{ csp_nonce(request) }}"></script>
+
     <!-- CodeMirror -->
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
@@ -6283,6 +6286,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     placeholder="Strong password"
                   />
                   <!-- Password policy guidance (visible below password field) -->
+                  {% if password_policy_enabled %}
                   <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md dark:bg-blue-900 dark:border-blue-800">
                     <div class="flex">
                       <div class="flex-shrink-0">
@@ -6293,83 +6297,51 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         <ul class="mt-2 space-y-1">
                           <li id="req-length" class="flex items-start">
                             <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            At least {{ password_min_length or 8 }} characters long
+                            {{ password_requirements.min_length_description }}
                           </li>
-                          {% if password_require_uppercase %}
-                          <li id="req-uppercase" class="flex items-start">
+                          <li class="flex items-start">
                             <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains uppercase letters (A-Z)
+                            {{ password_requirements.complexity_description }}
+                            <ul class="ml-6 mt-1 space-y-0.5">
+                              {% for char_type in password_requirements.complexity_types %}
+                              <li id="req-{{ char_type.name }}" class="flex items-start">
+                                <i class="fas fa-circle text-gray-400 mr-2"></i>
+                                {{ char_type.description }}
+                              </li>
+                              {% endfor %}
+                            </ul>
                           </li>
-                          {% endif %}
-                          {% if password_require_lowercase %}
-                          <li id="req-lowercase" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains lowercase letters (a-z)
-                          </li>
-                          {% endif %}
-                          {% if password_require_numbers %}
-                          <li id="req-numbers" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains numbers (0-9)
-                          </li>
-                          {% endif %}
-                          {% if password_require_special %}
-                          <li id="req-special" class="flex items-start">
-                            <i class="fas fa-circle text-gray-400 mr-2"></i>
-                            Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)
-                          </li>
-                          {% endif %}
                         </ul>
                       </div>
                     </div>
                   </div>
+                  {% endif %}
                 </div>
                 <script nonce="{{ csp_nonce(request) }}">
-                  // Validate the Create User password box and update requirement icons
+                  // Validate the Create User password box using shared PasswordValidator
                   (function(){
-                    const minLen = {{ password_min_length | tojson }} || 8;
-                    const REQ_UPPER = {{ password_require_uppercase | tojson }};
-                    const REQ_LOWER = {{ password_require_lowercase | tojson }};
-                    const REQ_NUMS = {{ password_require_numbers | tojson }};
-                    const REQ_SPEC = {{ password_require_special | tojson }};
+                    const passwordPolicy = {
+                      enabled: {{ password_policy_enabled | tojson }},
+                      requirements: {{ password_requirements | tojson }}
+                    };
 
-                    // Helper to update icons if element exists
-                    function updateRequirement(id, met) {
-                      const element = document.getElementById(id);
-                      if (!element) return;
-                      const icon = element.querySelector('i');
-                      if (!icon) return;
-                      if (met) {
-                        icon.className = 'fas fa-check-circle text-green-500 mr-2';
-                        element.classList.remove('text-blue-600');
-                        element.classList.add('text-green-600');
-                      } else {
-                        icon.className = 'fas fa-circle text-gray-400 mr-2';
-                        element.classList.remove('text-green-600');
-                        element.classList.add('text-blue-600');
-                      }
-                    }
                     window.validateNewUserPassword = function() {
+                      if (!passwordPolicy.enabled || !window.PasswordValidator) return;
+
                       const password = document.getElementById('new_user_password')?.value || '';
-                      // length
-                      const lengthMet = password.length >= minLen;
-                      const uppercaseMet = /[A-Z]/.test(password);
-                      const lowercaseMet = /[a-z]/.test(password);
-                      const numbersMet = /[0-9]/.test(password);
-                      const specialMet = /[!@#$%^&*()_+\-\[\]{};':"\\|,.<>\/?]/.test(password);
+                      const validation = window.PasswordValidator.validate(password, passwordPolicy.requirements);
 
-                      // Update indicators only if elements exist (they may be conditionally rendered)
-                      updateRequirement('req-length', lengthMet);
-                      if (REQ_UPPER) updateRequirement('req-uppercase', uppercaseMet);
-                      if (REQ_LOWER) updateRequirement('req-lowercase', lowercaseMet);
-                      if (REQ_NUMS) updateRequirement('req-numbers', numbersMet);
-                      if (REQ_SPEC) updateRequirement('req-special', specialMet);
+                      // Update requirement indicators
+                      window.PasswordValidator.updateRequirementUI('req-length', validation.details.length);
+                      window.PasswordValidator.updateRequirementUI('req-uppercase', validation.details.complexityDetails.uppercase);
+                      window.PasswordValidator.updateRequirementUI('req-lowercase', validation.details.complexityDetails.lowercase);
+                      window.PasswordValidator.updateRequirementUI('req-numbers', validation.details.complexityDetails.numbers);
+                      window.PasswordValidator.updateRequirementUI('req-special', validation.details.complexityDetails.special);
 
-                      // Determine whether submission is allowed
-                      const allRequirementsMet = lengthMet && (!REQ_UPPER || uppercaseMet) && (!REQ_LOWER || lowercaseMet) && (!REQ_NUMS || numbersMet) && (!REQ_SPEC || specialMet);
+                      // Enable/disable submit button based on validation
                       const submitBtn = document.getElementById('create_user_submit');
                       if (submitBtn) {
-                        submitBtn.disabled = !allRequirementsMet;
+                        submitBtn.disabled = !validation.isValid;
                         if (submitBtn.disabled) {
                           submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
                         } else {
@@ -12145,7 +12117,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               messagesDiv.innerHTML = '<div class="bg-green-50 border border-green-300 text-green-700 px-4 py-3 rounded dark:bg-green-800 dark:border-green-600 dark:text-green-200">✅ User created successfully!</div>';
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             } else {
-              messagesDiv.innerHTML = '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200">❌ Failed to create user. Please check your input.</div>';
+              // Extract error message from response body if available
+              let errorMsg = 'Failed to create user. Please check your input.';
+              if (event.detail.xhr && event.detail.xhr.responseText) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = event.detail.xhr.responseText;
+                // Use data-error-message attribute for reliable extraction (not fragile CSS class selectors)
+                const errorDiv = tempDiv.querySelector('[data-error-message]');
+                if (errorDiv) {
+                  // Extract from data attribute (backend provides HTML-escaped content)
+                  errorMsg = errorDiv.getAttribute('data-error-message') || errorDiv.textContent.trim();
+                }
+              }
+              // Defense-in-depth: Create error div safely using textContent
+              // Backend already escapes via html.escape(), but this prevents XSS if error flow changes
+              const errorContainer = document.createElement('div');
+              errorContainer.className = 'bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-800 dark:border-red-600 dark:text-red-200';
+              errorContainer.textContent = `❌ ${errorMsg}`;
+              messagesDiv.innerHTML = '';
+              messagesDiv.appendChild(errorContainer);
               setTimeout(() => { messagesDiv.innerHTML = ''; }, 5000);
             }
           });
