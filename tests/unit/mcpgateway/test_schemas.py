@@ -1740,3 +1740,30 @@ class TestCanonicalUrlValidation:
             s = ServerUpdate(canonical_url="https://gw.example.com/mcp",
                              oauth_enabled=True)
         assert s.canonical_url == "https://gw.example.com/mcp"
+
+    def test_https_production_rejects_http(self):
+        """Rejects HTTP URL in production environment."""
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            with patch.object(settings, "environment", "production"):
+                with pytest.raises(ValueError, match="HTTPS"):
+                    ServerCreate(
+                        name="srv", oauth_enabled=True,
+                        canonical_url="http://gw.example.com/mcp",
+                    )
+
+    def test_length_exceeds_limit(self):
+        """Rejects canonical URL exceeding 767 character limit."""
+        long_path = "/" + "x" * 767
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            with pytest.raises(ValueError, match="length"):
+                ServerCreate(
+                    name="srv", oauth_enabled=True,
+                    canonical_url=f"https://gw.example.com{long_path}",
+                )
+
+    def test_update_requires_oauth(self):
+        """Rejects canonical_url on ServerUpdate when oauth_enabled is False."""
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            with pytest.raises(ValueError, match="oauth_enabled"):
+                ServerUpdate(canonical_url="https://gw.example.com/mcp",
+                             oauth_enabled=False)
