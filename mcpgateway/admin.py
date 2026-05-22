@@ -15534,7 +15534,7 @@ async def admin_get_agent(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting agent {agent_id}: {e}")
-        raise e
+        raise
 
 
 @admin_router.get("/a2a", response_model=PaginatedResponse)

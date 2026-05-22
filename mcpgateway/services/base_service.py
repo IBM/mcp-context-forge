@@ -74,15 +74,16 @@ class BaseService(ABC):
         Handles the full access-control flow for list endpoints:
         1. Admin bypass: anonymous (user_email=None AND token_teams=None) sees
            public + team rows only. DB-resolved admin (email provided) sees
-           public + team rows + their OWN private rows, regardless of token_teams
-           value. No bypass shape exposes another user's private rows (PR #4341 /
+           public + team rows + their OWN private rows, except when token_teams=[],
+           where Layer 1 token scoping suppresses owner access even for admin users.
+           No bypass shape exposes another user's private rows (PR #4341 /
            issue #4323). The DB-resolved admin shape is detected via
            :func:`~mcpgateway.utils.admin_check.is_user_admin` — using the broader
            ``is_admin_bypass_granted`` here would risk re-introducing the leak this
            PR closes (see PR #4341 review B2/B5).
         2. Resolves effective teams from JWT token_teams or DB lookup.
         3. Suppresses owner matching for public-only tokens (token_teams=[]) for
-           non-admin users.
+           all users (Layer 1 token scoping).
         4. Delegates to _apply_visibility_filter for SQL WHERE construction.
 
         Args:
@@ -122,14 +123,10 @@ class BaseService(ABC):
                     )
                 )
 
-        # Team-scoped path: resolve effective teams and check admin status for
-        # session tokens (which arrive with token_teams as a list)
+        # Team-scoped path: resolve effective teams
         effective_teams: List[str] = []
-        user_is_admin = False
         if token_teams is not None:
             effective_teams = token_teams
-            # Check admin status for session tokens (which can be narrowed)
-            user_is_admin = user_email and is_user_admin(db, user_email)
         elif user_email:
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
@@ -138,7 +135,7 @@ class BaseService(ABC):
         # Public-only tokens (explicit token_teams=[]) must not get owner access,
         # even for admin users - this is Layer 1 token scoping, not RBAC.
         # Session-token admins with team scopes preserve owner access.
-        filter_email = None if (token_teams is not None and not token_teams) else user_email
+        filter_email = None if token_teams == [] else user_email
 
         return self._apply_visibility_filter(query, filter_email, effective_teams, team_id)
 
