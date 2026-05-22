@@ -56,6 +56,7 @@ Stored as JSON within the gateway record and assembled from Admin UI fields or A
 - **User Credentials**: Username and password (for password grant only).
 - **Scopes**: Array of requested scopes.
 - **Resource**: Optional resource parameter; derived from the gateway URL if omitted.
+- **Canonical URL**: Per virtual-server `canonical_url` that replaces the UUID-based RFC 9728 resource metadata URL. Must match `app_domain` and have a non-root path (e.g., `/mcp`). Global uniqueness enforced at the application layer. When set, the well-known metadata endpoint returns `canonical_url` as the `resource` field, and the token audience validator includes it as a valid audience.
 
 ### OAuth Tokens
 

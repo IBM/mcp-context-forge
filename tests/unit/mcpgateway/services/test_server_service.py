@@ -9,6 +9,7 @@ Tests for server service implementation.
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -3788,3 +3789,224 @@ class TestConvertServerToReadAssociatedToolIds:
             assert len(server_result.associated_prompts) == 1
             assert "prompt-1" in server_result.associated_prompts
             assert "prompt-2" not in server_result.associated_prompts
+
+
+def _make_server_read(**kwargs) -> ServerRead:
+    """Helper to build a ServerRead with minimal required fields."""
+    base = {
+        "id": "srv-id",
+        "name": "srv",
+        "description": "",
+        "icon": "",
+        "enabled": True,
+        "visibility": "public",
+        "owner_email": "",
+        "oauth_enabled": False,
+        "oauth_config": None,
+        "canonical_url": None,
+        "associated_tools": [],
+        "associated_resources": [],
+        "associated_prompts": [],
+        "associated_a2a_agents": [],
+        "tags": [],
+        "created_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        "updated_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+        "created_by": "",
+        "modified_by": "",
+        "version": 1,
+    }
+    base.update(kwargs)
+    return ServerRead(**base)
+
+
+class TestCanonicalUrl:
+    """Service-layer behavior for canonical_url on register and update."""
+
+    @pytest.mark.asyncio
+    async def test_register_duplicate_canonical_rejected(self, server_service, test_db):
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.add = Mock()
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+
+        existing_server = MagicMock()
+        existing_server.name = "canon-a"
+        existing_server.id = "server-1"
+
+        scalar_results = [None, existing_server]
+        scalar_index = 0
+
+        def scalar_one_or_none():
+            nonlocal scalar_index
+            val = scalar_results[scalar_index]
+            scalar_index += 1
+            return val
+
+        test_db.execute = Mock()
+        execute_result = Mock()
+        execute_result.scalar_one_or_none = scalar_one_or_none
+        test_db.execute.return_value = execute_result
+
+        server_create = ServerCreate(
+            name="canon-b",
+            oauth_enabled=True,
+            canonical_url="http://localhost/servers/my-srv/mcp",
+        )
+
+        with pytest.raises(ServerError) as exc:
+            await server_service.register_server(test_db, server_create, created_by="test@example.com")
+        assert "already in use" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_register_without_canonical_succeeds(self, server_service, test_db):
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.add = Mock()
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(return_value=_make_server_read(name="plain-srv"))
+
+        server_create = ServerCreate(name="plain-srv", oauth_enabled=True)
+        result = await server_service.register_server(test_db, server_create, created_by="test@example.com")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_update_set_canonical(self, server_service, mock_server, test_db):
+        mock_server.canonical_url = None
+        mock_server.owner_email = "test@example.com"
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        server_service.convert_server_to_read = Mock(return_value=_make_server_read(
+            id=mock_server.id, name=mock_server.name,
+            canonical_url="http://localhost/servers/my-srv/mcp",
+        ))
+
+        call_count = 0
+
+        def get_for_update_side_effect(db, model, entity_id=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_server
+            return None
+
+        server_update = ServerUpdate(
+            canonical_url="http://localhost/servers/my-srv/mcp",
+            oauth_enabled=True,
+        )
+
+        with patch("mcpgateway.services.server_service.get_for_update", side_effect=get_for_update_side_effect):
+            result = await server_service.update_server(
+                test_db, mock_server.id, server_update, "test@example.com",
+            )
+        assert result.canonical_url == "http://localhost/servers/my-srv/mcp"
+        assert mock_server.canonical_url == "http://localhost/servers/my-srv/mcp"
+
+    @pytest.mark.asyncio
+    async def test_update_clear_canonical(self, server_service, mock_server, test_db):
+        mock_server.canonical_url = "http://localhost/servers/srv/mcp"
+        mock_server.owner_email = "test@example.com"
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        server_service.convert_server_to_read = Mock(return_value=_make_server_read(
+            id=mock_server.id, name=mock_server.name, canonical_url=None,
+        ))
+
+        call_count = 0
+
+        def get_for_update_side_effect(db, model, entity_id=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_server
+            return None
+
+        server_update = ServerUpdate.model_validate({"canonical_url": None})
+        with patch("mcpgateway.services.server_service.get_for_update", side_effect=get_for_update_side_effect):
+            result = await server_service.update_server(
+                test_db, mock_server.id, server_update, "test@example.com",
+            )
+        assert result.canonical_url is None
+        assert mock_server.canonical_url is None
+
+    @pytest.mark.asyncio
+    async def test_update_canonical_duplicate_rejected(self, server_service, mock_server, test_db):
+        mock_server.canonical_url = None
+        mock_server.owner_email = "test@example.com"
+
+        other_server = MagicMock()
+        other_server.id = "other-id"
+        other_server.name = "other-server"
+
+        call_count = 0
+
+        def get_for_update_side_effect(db, model, entity_id=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_server
+            return other_server
+
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+
+        server_update = ServerUpdate(
+            canonical_url="http://localhost/servers/my-srv/mcp",
+            oauth_enabled=True,
+        )
+
+        with patch("mcpgateway.services.server_service.get_for_update", side_effect=get_for_update_side_effect):
+            with pytest.raises(ServerError, match="already in use"):
+                await server_service.update_server(
+                    test_db, mock_server.id, server_update, "test@example.com",
+                )
+
+    @pytest.mark.asyncio
+    async def test_update_ignores_canonical_not_provided(self, server_service, mock_server, test_db):
+        mock_server.canonical_url = "http://localhost/servers/srv/mcp"
+        mock_server.owner_email = "test@example.com"
+
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.rollback = Mock()
+        server_service.convert_server_to_read = Mock(return_value=_make_server_read(
+            id=mock_server.id, name=mock_server.name,
+            canonical_url="http://localhost/servers/srv/mcp",
+        ))
+
+        call_count = 0
+
+        def get_for_update_side_effect(db, model, entity_id=None, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return mock_server
+            return None
+
+        server_update = ServerUpdate(oauth_enabled=True)
+        with patch("mcpgateway.services.server_service.get_for_update", side_effect=get_for_update_side_effect):
+            result = await server_service.update_server(
+                test_db, mock_server.id, server_update, "test@example.com",
+            )
+        assert result.canonical_url == "http://localhost/servers/srv/mcp"
+        assert mock_server.canonical_url == "http://localhost/servers/srv/mcp"

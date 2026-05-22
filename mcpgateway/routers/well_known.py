@@ -19,11 +19,13 @@ from urllib.parse import urlparse, urlunparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
+from mcpgateway.db import Server as DbServer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
@@ -124,72 +126,87 @@ async def get_oauth_protected_resource_rfc9728(
     """
     RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint (path-based).
 
-    Per RFC 9728 Section 3.1, the well-known URI is constructed by:
-    1. Taking the resource URL: http://localhost:4444/servers/{UUID}/mcp
-    2. Removing trailing slash and inserting /.well-known/oauth-protected-resource/
-    3. Result: http://localhost:4444/.well-known/oauth-protected-resource/servers/{UUID}/mcp
+    Supports two path formats:
+    1. UUID-based:  servers/{uuid}/mcp  (existing, always works)
+    2. Canonical:   {canonical_path}    (new, requires canonical_url on server)
+
+    Per RFC 9728 Section 3.1, the well-known URI is constructed by inserting
+    /.well-known/oauth-protected-resource/ into the resource URL, so the
+    resource field in the response MUST match the URL from which metadata
+    was retrieved.
 
     This endpoint does not require authentication per RFC 9728 requirements.
 
     Args:
-        path: The resource path after oauth-protected-resource/ (e.g., "servers/{UUID}/mcp")
-        request: FastAPI request object for building resource URL
-        db: Database session dependency
+        path: The resource path after oauth-protected-resource/.
+        request: FastAPI request object for building resource URL.
+        db: Database session dependency.
 
     Returns:
-        JSONResponse with RFC 9728 Protected Resource Metadata:
-        {
-            "resource": "http://localhost:4444/servers/{UUID}/mcp",
-            "authorization_servers": ["https://auth.example.com"],
-            "bearer_methods_supported": ["header"],
-            "scopes_supported": ["read", "write"]
-        }
+        JSONResponse with RFC 9728 Protected Resource Metadata.
 
     Raises:
-        HTTPException: 404 if path format invalid, server not found, disabled,
-            non-public, OAuth not enabled, or not configured.
-
-    Examples:
-        >>> # Request OAuth metadata for a server
-        >>> # GET /.well-known/oauth-protected-resource/servers/abc123/mcp
-        >>> # Returns RFC 9728 compliant metadata
+        HTTPException: 404 if path format invalid or server not found.
     """
     if not settings.well_known_enabled:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # Parse path to extract server_id with validation
-    # Expected formats:
-    #   - "servers/{UUID}/mcp" (standard MCP endpoint)
-    #   - "servers/{UUID}" (fallback without /mcp suffix)
-    path_parts = path.strip("/").split("/")
-
-    # Validate path structure
-    if len(path_parts) < 2 or path_parts[0] != "servers":
-        # Sanitize untrusted path before logging to prevent log injection
-        logger.debug(f"Invalid RFC 9728 path format: {sanitize_for_log(path)}")
-        raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
-
-    server_id = path_parts[1]
-
-    # Validate server_id is a valid UUID (prevents path traversal and injection)
-    if not UUID_PATTERN.match(server_id):
-        # Sanitize untrusted server_id before logging to prevent log injection
-        logger.warning(f"Invalid server_id format (not a UUID): {sanitize_for_log(server_id)}")
-        raise HTTPException(status_code=404, detail="Invalid server_id format. Must be a valid UUID.")
-
-    # Reject paths with extra segments after /mcp (e.g., servers/uuid/mcp/extra)
-    if len(path_parts) > 3:
-        # Sanitize untrusted path before logging to prevent log injection
-        logger.warning(f"RFC 9728 path has unexpected segments: {sanitize_for_log(path)}")
-        raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
-
-    # Build resource URL with /mcp suffix per MCP specification
+    path = path.strip("/")
+    path_parts = path.split("/")
     base_url = get_base_url_with_protocol(request)
-    resource_url = f"{base_url}/servers/{server_id}/mcp"
+    server_id = None
+    resource_url = None
+
+    # ── Strategy 1: UUID-based path resolution ──
+    if len(path_parts) >= 2 and path_parts[0] == "servers":
+        candidate_id = path_parts[1]
+        if not UUID_PATTERN.match(candidate_id):
+            logger.warning(f"Invalid server_id format (not a UUID): {sanitize_for_log(candidate_id)}")
+            raise HTTPException(
+                status_code=404,
+                detail="Invalid server_id format. Must be a valid UUID.",
+            )
+        if len(path_parts) > 3:
+            raise HTTPException(
+                status_code=404,
+                detail="Invalid resource path format",
+            )
+        server_id = candidate_id
+        # Check if this server has a canonical_url set
+        server_obj = db.get(DbServer, server_id)
+        if server_obj and server_obj.canonical_url:
+            resource_url = server_obj.canonical_url
+        else:
+            resource_url = f"{base_url}/servers/{server_id}/mcp"
+
+    # ── Strategy 2: Canonical URL path resolution ──
+    if server_id is None:
+        normalized_path = path.rstrip("/")
+        reconstructed_url = f"{base_url}/{normalized_path}"
+        server = db.execute(
+            select(DbServer).where(
+                DbServer.canonical_url == reconstructed_url,
+                DbServer.enabled,
+                DbServer.oauth_enabled,
+            )
+        ).scalar_one_or_none()
+        if server:
+            server_id = server.id
+            resource_url = server.canonical_url
+
+    if server_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Invalid resource path format. " "Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp " "or a path matching a configured canonical_url",
+        )
 
     server_service = ServerService()
     try:
-        response_data = server_service.get_oauth_protected_resource_metadata(db=db, server_id=server_id, resource_base_url=resource_url)
+        response_data = server_service.get_oauth_protected_resource_metadata(
+            db=db,
+            server_id=server_id,
+            resource_base_url=resource_url,
+        )
     except ServerNotFoundError:
         raise HTTPException(status_code=404, detail="Server not found")
     except ServerError as e:
@@ -198,7 +215,12 @@ async def get_oauth_protected_resource_rfc9728(
     # Add cache headers per RFC 9728 recommendations
     headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
 
-    logger.debug(f"Served RFC 9728 OAuth metadata for server {server_id}")
+    logger.debug(
+        "Served RFC 9728 OAuth metadata for server %s (path: %s, resource: %s)",
+        server_id,
+        path,
+        resource_url,
+    )
     return JSONResponse(content=response_data, headers=headers)
 
 
