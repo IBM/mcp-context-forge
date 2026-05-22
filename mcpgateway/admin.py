@@ -4773,8 +4773,20 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = _resolve_root_path(request)
 
+    # Determine if this is a privileged account for password requirements
+    is_privileged = False
+    try:
+        jwt_token = request.cookies.get("jwt_token")
+        if jwt_token:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+            current_user = await get_current_user(credentials, request=request)
+            if current_user:
+                is_privileged = getattr(current_user, "is_admin", False)
+    except Exception as e:
+        LOGGER.warning(f"Failed to determine user admin status for password requirements: {e}")
+
     # Get actual password requirements from PasswordPolicyService
-    password_requirements = PasswordPolicyService.get_password_requirements(is_privileged=False)
+    password_requirements = PasswordPolicyService.get_password_requirements(is_privileged=is_privileged)
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -4925,7 +4937,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         except AuthenticationError:
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
-            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
+            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}", exc_info=True)
             # Encode error message in URL for display to user (truncate to prevent URL length issues)
             error_msg = str(e)
             max_length = settings.password_error_message_max_length

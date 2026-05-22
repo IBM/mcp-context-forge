@@ -3,7 +3,7 @@
  * Used across user creation and password change forms
  */
 
-window.PasswordValidator = {
+window.PasswordValidator = window.PasswordValidator || {
   /**
    * Check password complexity requirements (3 of 4 character types)
    * @param {string} password - The password to validate

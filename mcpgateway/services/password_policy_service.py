@@ -25,6 +25,7 @@ Examples:
 """
 
 # Standard
+import functools
 import logging
 import re
 import secrets
@@ -464,6 +465,7 @@ class PasswordPolicyService:
         }
 
     @staticmethod
+    @functools.lru_cache(maxsize=2)
     def get_password_requirements(is_privileged: bool = False) -> dict:
         """Get the actual password requirements for display to users.
 
@@ -471,6 +473,9 @@ class PasswordPolicyService:
         - Minimum length
         - Character type requirements (3 of 4: uppercase, lowercase, numbers, special)
         - Rules about sequential chars, common passwords, username reuse
+
+        This method is cached since settings don't change at runtime, avoiding
+        redundant dict construction across page loads.
 
         Args:
             is_privileged: Whether this is for a privileged account
