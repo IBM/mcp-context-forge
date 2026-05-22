@@ -514,6 +514,52 @@ class TestAgentsUI:
         protocol_value = agents_page.edit_uaid_protocol_select.input_value()
         assert protocol_value == "a2a"
 
+    def test_protocol_version_select_present(self, agents_page: AgentsPage):
+        """Test that the A2A protocol version select is present on the add form."""
+        agents_page.navigate_to_agents_tab()
+
+        expect(agents_page.protocol_version_select).to_be_visible()
+
+    def test_protocol_version_options_and_default(self, agents_page: AgentsPage):
+        """Test that the protocol version select exposes 1.0/0.3 with 1.0 as default."""
+        agents_page.navigate_to_agents_tab()
+
+        options = agents_page.protocol_version_select.locator("option")
+        option_values = [options.nth(i).get_attribute("value") for i in range(options.count())]
+
+        assert option_values == ["1.0", "0.3"], f"Unexpected protocol version options: {option_values}"
+
+        default_value = agents_page.protocol_version_select.input_value()
+        assert default_value == "1.0"
+
+    def test_edit_agent_protocol_version_prefilled(self, agents_page: AgentsPage):
+        """Test that the edit modal prefills the protocol version from the saved agent."""
+        agents_page.navigate_to_agents_tab()
+
+        agent_name = f"Test Agent Protocol {uuid.uuid4().hex[:8]}"
+
+        agents_page.fill_locator(agents_page.agent_name_input, agent_name)
+        agents_page.fill_locator(agents_page.agent_endpoint_url_input, "https://httpbin.org/get")
+        agents_page.agent_type_select.select_option("custom")
+        agents_page.protocol_version_select.select_option("0.3")
+
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST", timeout=10000) as response_info:
+            agents_page.submit_agent_form()
+
+        response = response_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent creation failed (HTTP {response.status})")
+
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.page.wait_for_timeout(1000)
+
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agent_visible(agent_name)
+        agents_page.open_edit_modal_by_name(agent_name)
+
+        expect(agents_page.edit_protocol_version_select).to_be_visible()
+        assert agents_page.edit_protocol_version_select.input_value() == "0.3"
+
     def test_edit_agent_with_uaid_fields_readonly(self, agents_page: AgentsPage):
         """Test that editing an agent with UAID shows read-only fields."""
         # Navigate to agents tab

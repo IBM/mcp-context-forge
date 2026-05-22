@@ -13069,6 +13069,92 @@ class TestAdminAdditionalCoverage:
         assert response.status_code == 200
         mock_service.register_agent.assert_called_once()
 
+    async def test_admin_add_a2a_agent_protocol_version_defaults_to_1_0(self, monkeypatch, mock_request, mock_db):
+        """Omitting protocol_version in the form should fall back to '1.0'."""
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+        mock_service = MagicMock()
+        mock_service.register_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            MagicMock(
+                return_value={
+                    "created_by": "user",
+                    "created_from_ip": "127.0.0.1",
+                    "created_via": "ui",
+                    "created_user_agent": "test",
+                    "import_batch_id": None,
+                    "federation_source": None,
+                }
+            ),
+        )
+
+        form_data = FakeForm({"name": "Agent Default", "endpoint_url": "http://example.com/agent"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 200
+        agent_data = mock_service.register_agent.call_args.args[1]
+        assert agent_data.protocol_version == "1.0"
+
+    async def test_admin_add_a2a_agent_protocol_version_legacy(self, monkeypatch, mock_request, mock_db):
+        """Submitting protocol_version='0.3' should propagate to A2AAgentCreate."""
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
+        mock_service = MagicMock()
+        mock_service.register_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            MagicMock(
+                return_value={
+                    "created_by": "user",
+                    "created_from_ip": "127.0.0.1",
+                    "created_via": "ui",
+                    "created_user_agent": "test",
+                    "import_batch_id": None,
+                    "federation_source": None,
+                }
+            ),
+        )
+
+        form_data = FakeForm({"name": "Agent Legacy", "endpoint_url": "http://example.com/agent", "protocol_version": "0.3"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 200
+        agent_data = mock_service.register_agent.call_args.args[1]
+        assert agent_data.protocol_version == "0.3"
+
+    async def test_admin_edit_a2a_agent_protocol_version_legacy(self, monkeypatch, mock_request, mock_db):
+        """Editing with protocol_version='0.3' should propagate to A2AAgentUpdate."""
+        mock_service = MagicMock()
+        mock_service.update_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+        )
+
+        form_data = FakeForm({"name": "Agent Updated", "endpoint_url": "http://example.com/agent", "protocol_version": "0.3"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        assert response.status_code == 200
+        agent_data = mock_service.update_agent.call_args.kwargs["agent_data"]
+        assert agent_data.protocol_version == "0.3"
+
     async def test_admin_edit_a2a_agent_success(self, monkeypatch, mock_request, mock_db):
         """Edit A2A agent successfully with oauth config."""
         mock_service = MagicMock()

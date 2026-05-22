@@ -358,6 +358,11 @@ export const editA2AAgent = async function (agentId) {
 
     console.log("Agent Type: ", agent.agentType);
 
+    const protocolVersionField = safeGetElement("a2a-protocol-version-edit");
+    if (protocolVersionField) {
+      protocolVersionField.value = agent.protocolVersion || "1.0";
+    }
+
     if (nameField && nameValidation.valid) {
       nameField.value = nameValidation.value;
     }
