@@ -313,7 +313,7 @@ def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappin
         >>> # Using NormalizedMappings for repeated lookups
         >>> nm = NormalizedMappings({"Authorization": "AUTH"})
         >>> extract_env_vars_from_headers({"authorization": "token"}, nm)
-        {'AUTH': 'token'}  # pragma: allowlist secret
+        {'AUTH': 'token'}
     """
     env_vars = {}
 

@@ -174,13 +174,13 @@ def mask_sensitive_data(data, max_depth: int = 10):
         The data structure with sensitive values masked
 
     Examples:
-        >>> mask_sensitive_data({"username": "john", "password": "secret123"})  # pragma: allowlist secret
+        >>> mask_sensitive_data({"username": "john", "password": "secret123"})
         {'username': 'john', 'password': '******'}
 
         >>> mask_sensitive_data({"user": {"name": "john", "token": "abc123"}})
         {'user': {'name': 'john', 'token': '******'}}
 
-        >>> mask_sensitive_data([{"apikey": "key1"}, {"data": "safe"}])  # pragma: allowlist secret
+        >>> mask_sensitive_data([{"apikey": "key1"}, {"data": "safe"}])
         [{'apikey': '******'}, {'data': 'safe'}]
 
         >>> mask_sensitive_data("plain string")
@@ -267,7 +267,7 @@ def mask_sensitive_headers(headers):
         {'Content-Type': 'application/json'}
 
         >>> mask_sensitive_headers({"apikey": "secret", "X-Custom": "value"})
-        {'apikey': '******', 'X-Custom': 'value'}  # pragma: allowlist secret
+        {'apikey': '******', 'X-Custom': 'value'}
 
         >>> result = mask_sensitive_headers({"Cookie": "jwt_token=abc; theme=dark"})
         >>> "******" in result["Cookie"]

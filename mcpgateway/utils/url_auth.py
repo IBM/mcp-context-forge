@@ -133,9 +133,9 @@ def sanitize_url_for_logging(
 
         >>> # Preserves IPv6 bracket formatting
         >>> sanitize_url_for_logging(
-        ...     "https://user:pass@[::1]:8080/path"  # pragma: allowlist secret
+        ...     "https://user:pass@[::1]:8080/path"
         ... )
-        'https://REDACTED:REDACTED@[::1]:8080/path'  # pragma: allowlist secret
+        'https://REDACTED:REDACTED@[::1]:8080/path'
     """
     parsed = urlparse(url)
 
