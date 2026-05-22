@@ -1,0 +1,119 @@
+# ===========================================================================
+# !! TEST FIXTURE ONLY — DO NOT USE IN PRODUCTION OR EXPOSE BEYOND LOCALHOST !!
+# ===========================================================================
+# AUTH_REQUIRED=false and the postgres password default (`reprosecret`) are
+# committed verbatim because integration tests need a deterministic
+# substrate without env-setup. Docker binds the published host ports
+# (54320 / 64320 / 4444) to 0.0.0.0 by default — on a machine with an
+# exposed external IP, that's a publicly reachable unauthenticated
+# gateway. Use the root docker-compose.yml for local development; this
+# fixture exists solely for the integration tests in
+# tests/integration/test_migrations_under_transaction_pool.py.
+#
+# Credentials use the same ``${POSTGRES_PASSWORD:-reprosecret}``  # pragma: allowlist secret
+# env-var-with-default pattern as the repository's root docker-compose.yml,
+# so a developer can override at compose-up time without editing the file.
+# ===========================================================================
+
+# Test fixture: minimal Postgres + transaction-pool PgBouncer + gateway stack
+# used by the integration tests in
+# tests/integration/test_migrations_under_transaction_pool.py to validate
+# Alembic bootstrap behavior under multi-replica startup.
+#
+# Intentionally excludes everything unrelated (redis, nginx, monitoring,
+# admin UI) so the failure modes the tests target are attributable.
+
+name: transaction-pool-fixture
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-reprosecret}  # pragma: allowlist secret
+      POSTGRES_DB: mcp
+    ports:
+      - "54320:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mcp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  pgbouncer:
+    # Substrate: edoburu/pgbouncer:latest — same image as the repository's
+    # root docker-compose.yml (and the docker-compose-debug.yml /
+    # -performance.yml / -verbose-logging.yml variants alongside it, plus
+    # the helm chart's pgbouncer.image.tag default in
+    # charts/mcp-stack/values.yaml).
+    # As of 2026-05-01, :latest resolved to PgBouncer 1.25.1 (verified via
+    # `docker run --rm --entrypoint pgbouncer edoburu/pgbouncer:latest
+    # --version`). Bump the date when re-verifying against a new pull.
+    #
+    # We deliberately track :latest on this fixture rather than pinning
+    # it in isolation: pinning only here would diverge from the substrate
+    # every other deployment of this project uses, which is a worse
+    # failure mode than the drift risk — tests would no longer exercise
+    # what users actually run.
+    #
+    # The orphaned-advisory-lock condition this fixture exists to
+    # reproduce is asserted *behaviorally* by the tests in
+    # test_migrations_under_transaction_pool.py — if an upstream republish
+    # ever changed pool_mode=transaction semantics, those tests would fail
+    # loudly rather than silently pass incorrectly.
+    image: edoburu/pgbouncer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-reprosecret}@postgres:5432/mcp  # pragma: allowlist secret
+      LISTEN_PORT: 6432
+      # The setting that makes this bug reproducible. In transaction pooling
+      # mode, PgBouncer hands the server backend to another client between
+      # transactions — so the session-scoped advisory lock Alembic acquires
+      # outlives the pooler "session" of the original caller.
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "200"
+      # Force multiplexing: keep server-side backends well below total client
+      # connections. With N replicas × M gunicorn workers competing, PgBouncer
+      # must hand the same server backend to multiple clients between
+      # transactions — which is how session-scoped advisory locks get orphaned.
+      # Production OCP/Helm deployments that hit this bug see the same ratio.
+      DEFAULT_POOL_SIZE: "2"
+      MIN_POOL_SIZE: "1"
+      AUTH_TYPE: scram-sha-256
+    ports:
+      - "64320:6432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      # Route gateway traffic through PgBouncer (transaction pool). This is
+      # the scenario documented in the issue.
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-reprosecret}@pgbouncer:6432/mcp  # pragma: allowlist secret
+      HOST: 0.0.0.0
+      PORT: "4444"
+      LOG_LEVEL: INFO
+      # Strip the gateway down to just the bootstrap path we care about.
+      AUTH_REQUIRED: "false"
+      MCPGATEWAY_UI_ENABLED: "false"
+      MCPGATEWAY_ADMIN_API_ENABLED: "false"
+      MCPGATEWAY_A2A_ENABLED: "false"
+      PLUGINS_ENABLED: "false"
+      CACHE_TYPE: none
+      FEDERATION_ENABLED: "false"
+      REDIS_URL: "redis://127.0.0.1:6379/0"
+      # Keep bootstrap quiet on the retry side so the hang is obvious.
+      DB_MAX_RETRIES: "10"
+      # Several workers per replica so total client connections comfortably
+      # exceed PgBouncer's DEFAULT_POOL_SIZE, forcing backend multiplexing.
+      GUNICORN_WORKERS: "4"

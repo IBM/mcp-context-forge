@@ -282,6 +282,48 @@ def test_api_key_property():
     assert settings.api_key == "u:p"
 
 
+# --------------------------------------------------------------------------- #
+#                MCPGATEWAY_SKIP_MIGRATIONS — settings field & env override    #
+# --------------------------------------------------------------------------- #
+def test_skip_migrations_defaults_to_false():
+    """Library default keeps the in-pod bootstrap path on so users running
+    the gateway image directly (no migration runner in front) still get a
+    populated schema. Helm chart and compose overlays ship with the env
+    set to True when they pair with a dedicated migration step.
+    """
+    dummy_env = {
+        "JWT_SECRET_KEY": "x" * 32,
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+    }
+    with patch.dict(os.environ, dummy_env, clear=True):
+        settings = Settings(_env_file=None)
+        assert settings.mcpgateway_skip_migrations is False
+
+
+def test_skip_migrations_env_true_flips_flag():
+    """MCPGATEWAY_SKIP_MIGRATIONS=true → in-pod bootstrap is suppressed."""
+    dummy_env = {
+        "JWT_SECRET_KEY": "x" * 32,
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "MCPGATEWAY_SKIP_MIGRATIONS": "true",
+    }
+    with patch.dict(os.environ, dummy_env, clear=True):
+        settings = Settings(_env_file=None)
+        assert settings.mcpgateway_skip_migrations is True
+
+
+def test_skip_migrations_env_false_keeps_flag_off():
+    """Explicit MCPGATEWAY_SKIP_MIGRATIONS=false matches the default."""
+    dummy_env = {
+        "JWT_SECRET_KEY": "x" * 32,
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "MCPGATEWAY_SKIP_MIGRATIONS": "false",
+    }
+    with patch.dict(os.environ, dummy_env, clear=True):
+        settings = Settings(_env_file=None)
+        assert settings.mcpgateway_skip_migrations is False
+
+
 def test_supports_transport_properties():
     s_all = Settings(transport_type="all")
     assert (s_all.supports_http, s_all.supports_websocket, s_all.supports_sse) == (True, True, True)
