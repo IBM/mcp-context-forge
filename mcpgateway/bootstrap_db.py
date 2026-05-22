@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool, connect_args
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -111,10 +111,9 @@ def make_alembic_cfg(database_url: str, *, configure_logger: bool = False) -> Co
         ``cfg.set_main_option(...)`` so configparser doesn't choke on
         URL-encoded passwords (e.g., ``%40`` for ``@``).
 
-    Both call sites had this block inlined; reviewer flagged the duplication.
     Keeping the helper public (no leading underscore) so it is intentional
-    shared API — anyone refactoring ``bootstrap_db.py`` can see at a glance
-    that external code depends on this name.
+    shared API — external code (``mcpgateway.utils.check_schema_at_head``)
+    depends on this name.
 
     Args:
         database_url: SQLAlchemy URL for the target database.
@@ -251,7 +250,10 @@ def advisory_lock(conn: Connection):
             yield
         finally:
             logger.info("Releasing Postgres advisory lock...")
-            conn.execute(text(f"SELECT pg_advisory_unlock({pg_lock_id})"))
+            try:
+                conn.execute(text(f"SELECT pg_advisory_unlock({pg_lock_id})"))
+            except Exception as unlock_exc:
+                logger.warning("Failed to release advisory lock (connection lost?): %s", unlock_exc)
 
     else:
         # Fallback for SQLite (single-host/container) or other DBs
@@ -806,13 +808,17 @@ async def main() -> None:
     lock and `alembic upgrade head` are skipped entirely.  Only the idempotent bootstrap
     helpers (admin user, roles, resource assignments) are re-run.
 
-    Args:
-        None
+    Behaviour is controlled by ``MCPGATEWAY_SKIP_MIGRATIONS``:
+    - ``false`` (default) — run full migration path.  Use for standalone deployments
+      and the dedicated migration container / Helm Job.
+    - ``true`` — skip ``alembic upgrade head`` and the advisory lock; run only the
+      idempotent bootstrap helpers.  Use for gateway pods when an external runner
+      (init container, Helm Job) has already migrated the schema.
 
     Raises:
         Exception: If migration or bootstrap fails
     """
-    engine = create_engine(settings.database_url)
+    engine = create_engine(settings.database_url, connect_args=connect_args)
     cfg = make_alembic_cfg(settings.database_url, configure_logger=True)
 
     # SQLite multi-replica guard: /tmp is per-container, so FileLock provides no
@@ -838,15 +844,21 @@ async def main() -> None:
     if settings.mcpgateway_skip_migrations:
         try:
             with engine.connect() as conn:
-                conn.commit()
+                conn.commit()  # defensive flush — connection should be fresh but ensures clean state
                 if not alembic_at_head(conn, cfg):
-                    logger.error("MCPGATEWAY_SKIP_MIGRATIONS=true but schema is not at head — run 'alembic upgrade head' before starting the application")
+                    logger.error(
+                        "MCPGATEWAY_SKIP_MIGRATIONS=true but schema is not at head. "
+                        "If running the migration container, set MCPGATEWAY_SKIP_MIGRATIONS=false "
+                        "or unset it (default is false) so migrations run before gateway pods start."
+                    )
                     raise RuntimeError("Schema not at head; migrations required before startup")
                 logger.info("MCPGATEWAY_SKIP_MIGRATIONS=true — schema already at head, skipping migration")
                 await _run_post_migration_bootstrap(conn)
                 conn.commit()
         except Exception as e:
-            logger.error(f"Bootstrap failed: {e}")
+            if not isinstance(e, RuntimeError):
+                # RuntimeError already logged with full context above; only log unexpected failures here
+                logger.error(f"Bootstrap failed: {e}")
             raise
         finally:
             engine.dispose()
@@ -867,6 +879,7 @@ async def main() -> None:
                 logger.info("Schema already at Alembic head; skipping migration lock")
                 await _run_post_migration_bootstrap(probe_conn)
                 probe_conn.commit()
+                logger.info("Database ready")
                 return
 
         # Slow path: acquire the migration advisory lock and run schema work.
