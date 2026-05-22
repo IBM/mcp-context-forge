@@ -705,7 +705,7 @@ async def test_get_gateway_models_success(monkeypatch: pytest.MonkeyPatch):
     import mcpgateway.db as db_module
     import mcpgateway.services.llm_provider_service as lps
 
-    monkeypatch.setattr(db_module, "SessionLocal", lambda: DummySession())
+    monkeypatch.setattr(db_module, "SessionLocal", DummySession)
     monkeypatch.setattr(lps, "LLMProviderService", DummyService)
 
     # Provide db in user context so RBAC wrapper doesn't open fresh_db_session
@@ -740,7 +740,7 @@ async def test_get_gateway_models_failure(monkeypatch: pytest.MonkeyPatch):
     import mcpgateway.db as db_module
     import mcpgateway.services.llm_provider_service as lps
 
-    monkeypatch.setattr(db_module, "SessionLocal", lambda: DummySession())
+    monkeypatch.setattr(db_module, "SessionLocal", DummySession)
     monkeypatch.setattr(lps, "LLMProviderService", DummyService)
 
     # Provide db in user context so RBAC wrapper doesn't open fresh_db_session
@@ -785,6 +785,19 @@ async def test_init_redis_client_returns_none(monkeypatch: pytest.MonkeyPatch):
     await llmchat_router.init_redis()
 
     assert llmchat_router.redis_client is None
+
+
+@pytest.mark.asyncio
+async def test_init_redis_not_configured(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """Test init_redis when Redis is not configured (covers line 86)."""
+    monkeypatch.setattr(llmchat_router.settings, "cache_type", "memory")
+    monkeypatch.setattr(llmchat_router.settings, "redis_url", None)
+    caplog.set_level("INFO")
+
+    await llmchat_router.init_redis()
+
+    assert llmchat_router.redis_client is None
+    assert "Redis not configured. Using in-memory session storage" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1016,6 +1029,80 @@ async def test_connect_init_generic_error(monkeypatch: pytest.MonkeyPatch):
 
     assert excinfo.value.status_code == 500
     assert "Service initialization failed" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_connect_import_error_with_llmchat_message(monkeypatch: pytest.MonkeyPatch):
+    """Test connect handles ImportError with 'LLM chat dependencies' message (covers lines 880-885)."""
+
+    class ImportErrorChatService:
+        def __init__(self, config, user_id=None, redis_client=None):
+            raise ImportError("LLM chat dependencies are missing")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", ImportErrorChatService)
+    delete_config = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_user_config", delete_config)
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"))
+    request = MagicMock()
+    request.headers = {}
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 503
+    assert "LLM Chat dependencies missing" in str(excinfo.value.detail)
+    assert "pip install '.[llmchat]'" in str(excinfo.value.detail)
+    delete_config.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_import_error_without_llmchat_message(monkeypatch: pytest.MonkeyPatch):
+    """Test connect handles generic ImportError (covers line 888)."""
+
+    class GenericImportErrorChatService:
+        def __init__(self, config, user_id=None, redis_client=None):
+            raise ImportError("Some other import error")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", GenericImportErrorChatService)
+    delete_config = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_user_config", delete_config)
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"))
+    request = MagicMock()
+    request.headers = {}
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 500
+    assert "Service initialization failed" in str(excinfo.value.detail)
+    delete_config.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_generic_exception_with_redis_keyword(monkeypatch: pytest.MonkeyPatch):
+    """Test connect handles generic exception with 'redis' keyword (covers lines 894-903)."""
+
+    class RedisErrorChatService:
+        def __init__(self, config, user_id=None, redis_client=None):
+            raise RuntimeError("Redis connection failed")
+
+    monkeypatch.setattr(llmchat_router, "MCPChatService", RedisErrorChatService)
+    delete_config = AsyncMock()
+    monkeypatch.setattr(llmchat_router, "delete_user_config", delete_config)
+
+    input_data = ConnectInput(user_id="user1", llm=LLMInput(model="gpt"))
+    request = MagicMock()
+    request.headers = {}
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llmchat_router.connect(input_data, request, user={"id": "user1", "email": "user1@test.com", "db": MagicMock()})
+
+    assert excinfo.value.status_code == 503
+    assert "Service initialization failed" in str(excinfo.value.detail)
+    assert "Redis connection failed" in str(excinfo.value.detail)
+    delete_config.assert_awaited_once()
 
 
 @pytest.mark.asyncio
