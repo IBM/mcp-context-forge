@@ -766,7 +766,12 @@ def _get_sync_redis_client():
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
-            log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+
+            # Log which Redis instance is being used (Issue #4751)
+            if config_settings.ratelimiter_redis_url:
+                log.getLogger(__name__).info(f"Rate limiter using dedicated Redis: {redis_url}")
+            else:
+                log.getLogger(__name__).debug(f"Rate limiter using main Redis: {redis_url}")
         except ValueError as e:
             log.getLogger(__name__).error(f"Sync Redis SSL misconfiguration — client not started: {e}")
             _SYNC_REDIS_CLIENT = None
