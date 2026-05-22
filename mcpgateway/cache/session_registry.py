@@ -63,6 +63,7 @@ import orjson
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
@@ -2326,9 +2327,6 @@ class SessionRegistry(SessionBackend):
                 # Pass downstream session id to /rpc for session affinity.
                 # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
                 if settings.mcpgateway_session_affinity_enabled:
-                    # First-Party
-                    from mcpgateway.auth_context import get_user_email
-
                     user_email = get_user_email(user) if user else None
                     await self._register_session_mapping(transport.session_id, message, user_email)
 

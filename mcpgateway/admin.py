@@ -1536,7 +1536,7 @@ def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     if isinstance(user, dict):
         # Try multiple possible ID fields in order of preference.
         # Email is the primary key in the model, so that's our mostly likely result.
-        return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
+        return user.get("id") or user.get("user_id") or get_user_email(user)
 
     return "unknown" if user is None else str(getattr(user, "id", user))
 
@@ -14809,7 +14809,7 @@ async def admin_list_tags(
     LOGGER.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        user_email = get_user_email(user)
+        user_email = user.get("email") if isinstance(user, dict) else None
         token_teams = user.get("token_teams") if isinstance(user, dict) else None
         is_admin = bool(user.get("is_admin")) if isinstance(user, dict) else False
 

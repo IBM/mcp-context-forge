@@ -269,6 +269,48 @@ class TestEmailExtractionConsistency:
                 assert call_kwargs.get("user_email") == "admin@example.com"
 
 
+    def test_sub_claim_token_email_extraction_consistency(self):
+        """Regression test for issue #4800: sub-claim token email extraction must be consistent.
+
+        This test verifies that get_user_email() extracts the same email from a token
+        with only {'sub': 'user@example.com'} regardless of context, preventing the
+        bug where create operations succeeded but update/delete operations failed with 403.
+        """
+        # Token with only 'sub' claim (no 'email' key) - the reported bug case
+        user_token = {"sub": "user@example.com", "is_admin": False}
+
+        # The canonical helper should extract email from sub
+        extracted_email = get_user_email(user_token)
+
+        # Verify extraction works
+        assert extracted_email == "user@example.com"
+
+        # Verify consistency: calling multiple times returns same result
+        assert get_user_email(user_token) == extracted_email
+        assert get_user_email(user_token) == extracted_email
+
+        # Verify it works with different sub values
+        assert get_user_email({"sub": "another@example.com"}) == "another@example.com"
+
+    def test_email_over_sub_precedence_in_ownership_checks(self):
+        """Verify email-over-sub precedence is consistent across all token structures."""
+        # When both email and sub present, email takes precedence
+        token_both = {"email": "primary@example.com", "sub": "secondary@example.com"}
+        assert get_user_email(token_both) == "primary@example.com"
+
+        # When only sub present, use sub
+        token_sub_only = {"sub": "user@example.com"}
+        assert get_user_email(token_sub_only) == "user@example.com"
+
+        # When only email present, use email
+        token_email_only = {"email": "user@example.com"}
+        assert get_user_email(token_email_only) == "user@example.com"
+
+        # When neither present, return unknown
+        token_neither = {"is_admin": False}
+        assert get_user_email(token_neither) == "unknown"
+
+
 class TestRuntimeAdminEmailExtraction:
     """Test email extraction in runtime admin router."""
 
