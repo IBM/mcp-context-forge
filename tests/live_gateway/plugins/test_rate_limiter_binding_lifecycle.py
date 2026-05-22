@@ -578,24 +578,63 @@ def cleanup_bindings():
         _delete_binding_by_reference(ref_id)
 
 
+# Reference-id prefixes this test file's tests create. Used by the autouse
+# fixture below to clean up leftover bindings from prior runs that crashed
+# before their own teardown could run.
+_TEST_BINDING_REF_PREFIXES = (
+    "rl-binding-inspect-",
+    "rl-binding-upsert-inspect-",
+    "rl-binding-delete-inspect-",
+)
+
+
+def _delete_leftover_test_bindings() -> None:
+    """List all bindings via the API; delete any matching this file's test
+    naming convention. Goes through the API DELETE so the gateway publishes
+    the cache-invalidation pub/sub — a direct DB DELETE would leave the
+    per-tenant plugin-manager caches stale and re-create the cross-test
+    pollution this is meant to prevent. Best-effort: any single failure is
+    swallowed so the fixture can still run.
+    """
+    try:
+        resp = requests.get(
+            f"{GATEWAY_URL}/v1/tools/plugin_bindings/",
+            headers=_fresh_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        return  # Gateway unreachable; the gateway-running skipif will fire on the test.
+    body = resp.json()
+    bindings = body.get("bindings", []) if isinstance(body, dict) else body
+    for binding in bindings:
+        ref = binding.get("bindingReferenceId") or ""
+        if any(ref.startswith(p) for p in _TEST_BINDING_REF_PREFIXES):
+            _delete_binding_by_reference(ref)
+
+
 @pytest.fixture(autouse=True)
-def _isolate_rate_limiter_redis_state_between_binding_tests():
-    """Clear Redis state that other test families may have left behind.
+def _isolate_state_before_each_binding_test():
+    """Clean cross-test state before each test runs. Three layers:
 
-    Specifically: the gateway-wide ``plugin:RateLimiterPlugin:mode`` key
-    set by ``tests/integration/test_rate_limiter_dynamic_behavior.py``'s
-    teardown. If left as ``"disabled"``, it overrides every binding's
-    ``mode: enforce`` at per-tenant manager build time (see
-    ``mcpgateway/plugins/gateway_plugin_manager.py::_apply_redis_mode_overrides``),
-    silently breaking these tests with no visible signal. Also wipe
-    leftover ``rl:*`` counters so per-call counter snapshots in the
-    inspectable tests start from zero rather than from a stale window.
+    1. Redis: drop ``plugin:RateLimiterPlugin:mode`` (set by
+       ``tests/integration/test_rate_limiter_dynamic_behavior.py``'s teardown;
+       if left as ``"disabled"`` it overrides every binding's ``mode: enforce``
+       at per-tenant manager build time, silently breaking these tests). Also
+       wipe leftover ``rl:*`` counters so per-call snapshots start from zero.
+    2. DB: delete any leftover ``rl-binding-*`` rows from prior runs that
+       crashed before their own ``cleanup_bindings`` teardown could run.
+       Goes through the API DELETE so the gateway publishes the
+       cache-invalidation pub/sub — a direct DB DELETE would leave the
+       per-tenant plugin-manager caches stale.
+    3. Plugin-manager caches: invalidated implicitly by step 2's pub/sub
+       fan-out (no direct API surface for these).
 
-    Raises ``pytest.skip`` if the Redis container is unreachable at
-    fixture setup — silently no-oping the cleanup would let stale
-    ``rl:*`` keys from earlier runs leak into the test and surface as
-    false-positive enforcement signals. Matches the same fail-loud
-    pattern used in ``_redis_rl_keys(team_id)``.
+    Raises ``pytest.skip`` if the Redis container is unreachable at fixture
+    setup — silently no-oping the cleanup would let stale ``rl:*`` keys
+    from earlier runs leak into the test and surface as false-positive
+    enforcement signals. Matches the same fail-loud pattern used in
+    ``_redis_rl_keys(team_id)``.
     """
     container = os.environ.get("REDIS_CONTAINER_NAME", "mcp-context-forge-redis-1")
 
@@ -613,14 +652,18 @@ def _isolate_rate_limiter_redis_state_between_binding_tests():
                 f"different container name."
             )
 
-    # Drop the gateway-wide mode override (the most common cross-test pollutant).
+    # 1. Drop the gateway-wide mode override (the most common cross-test pollutant).
     _docker_redis_cli("DEL", "plugin:RateLimiterPlugin:mode")
 
-    # Drop any leftover rl:* counters from prior runs.
+    # 2. Drop any leftover rl:* counters from prior runs.
     scan = _docker_redis_cli("--scan", "--pattern", "rl:*")
     if scan.returncode == 0:
         for key in (k.strip() for k in scan.stdout.splitlines() if k.strip()):
             _docker_redis_cli("DEL", key)
+
+    # 3. Delete leftover DB bindings from prior crashed runs (via API so
+    #    the gateway invalidates its per-tenant plugin-manager caches too).
+    _delete_leftover_test_bindings()
 
     yield
     # No teardown — the same logic at the start of the next test handles it.
