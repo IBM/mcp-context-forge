@@ -1,0 +1,55 @@
+suite: mcpgateway deployment
+templates:
+  - templates/deployment-mcpgateway.yaml
+tests:
+  - it: renders as a Deployment
+    asserts:
+      - isKind:
+          of: Deployment
+
+  - it: name uses release fullname
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+
+  - it: default replica count is 2
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  - it: replica count overrideable
+    set:
+      mcpContextForge.replicaCount: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: uses default image repository and tag
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "ghcr.io/ibm/mcp-context-forge:latest"
+
+  - it: container port matches containerPort value
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].ports[0].containerPort
+          value: 4444
+
+  - it: selector matches pod label
+    asserts:
+      - equal:
+          path: spec.selector.matchLabels.app
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+
+  - it: automountServiceAccountToken is false by default
+    asserts:
+      - equal:
+          path: spec.template.spec.automountServiceAccountToken
+          value: false

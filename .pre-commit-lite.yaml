@@ -144,8 +144,6 @@ repos:
         exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
-
-
   # -----------------------------------------------------------------------------
   # 🔤 Unicode Text Normalization (via texthooks)
   # -----------------------------------------------------------------------------

@@ -1,0 +1,46 @@
+suite: mcpgateway service
+templates:
+  - templates/service-mcp.yaml
+tests:
+  - it: renders as a Service
+    asserts:
+      - isKind:
+          of: Service
+
+  - it: name uses release fullname
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-mcp-stack-mcpgateway
+
+  - it: default type is ClusterIP
+    asserts:
+      - equal:
+          path: spec.type
+          value: ClusterIP
+
+  - it: service type overrideable
+    set:
+      mcpContextForge.service.type: NodePort
+    asserts:
+      - equal:
+          path: spec.type
+          value: NodePort
+
+  - it: default port is 80 targeting containerPort 4444
+    asserts:
+      - equal:
+          path: spec.ports[0].port
+          value: 80
+      - equal:
+          path: spec.ports[0].targetPort
+          value: 4444
+      - equal:
+          path: spec.ports[0].protocol
+          value: TCP
+
+  - it: selector targets mcpgateway pods
+    asserts:
+      - equal:
+          path: spec.selector.app
+          value: RELEASE-NAME-mcp-stack-mcpgateway
