@@ -4,7 +4,7 @@ export const handlers = [
   // Mock login endpoint
   http.post("*/app/auth/login", async ({ request }) => {
     const body = await request.json();
-    const { email, password } = body as { email: string; password: string };
+    const { email, password } = body as { email: string; password: string }; // pragma: allowlist secret
 
     // Simple mock validation
     if (
