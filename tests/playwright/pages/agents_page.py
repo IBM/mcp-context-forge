@@ -65,6 +65,11 @@ class AgentsPage(BasePage):
         return self.add_agent_form.locator("#a2a-agent-type")
 
     @property
+    def protocol_version_select(self) -> Locator:
+        """A2A protocol version select field (Add form)."""
+        return self.add_agent_form.locator("#a2a-protocol-version")
+
+    @property
     def auth_type_select(self) -> Locator:
         """Authentication type select field."""
         return self.add_agent_form.locator("#auth-type-a2a")
@@ -127,6 +132,11 @@ class AgentsPage(BasePage):
     def edit_modal(self) -> Locator:
         """Edit agent modal."""
         return self.page.locator("#a2a-edit-modal")
+
+    @property
+    def edit_protocol_version_select(self) -> Locator:
+        """A2A protocol version select field in edit modal."""
+        return self.edit_modal.locator("#a2a-protocol-version-edit")
 
     @property
     def edit_generate_uaid_checkbox(self) -> Locator:
