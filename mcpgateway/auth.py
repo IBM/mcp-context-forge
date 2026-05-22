@@ -1181,6 +1181,26 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
         ) from exc
 
 
+def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
+    """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
+
+    is_admin is derived from the token's own claim (default False) so that
+    the bootstrap path grants login access without unconditional admin elevation.
+    """
+    return EmailUser(
+        email=email,
+        password_hash="",  # nosec B106 - not used for JWT authentication
+        full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
+        is_admin=bool(payload.get("is_admin", False) or (payload.get("user") or {}).get("is_admin", False)),
+        is_active=True,
+        auth_provider="local",
+        password_change_required=False,
+        email_verified_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     request: Request = None,  # type: ignore[assignment]
@@ -1636,18 +1656,7 @@ async def get_current_user(
                             f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
-                        _batched_user = EmailUser(
-                            email=email,
-                            password_hash="",  # nosec B106
-                            full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                            is_admin=True,
-                            is_active=True,
-                            auth_provider="local",
-                            password_change_required=False,
-                            email_verified_at=datetime.now(timezone.utc),
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc),
-                        )
+                        _batched_user = _bootstrap_platform_admin_user(email=email, payload=payload)
                     else:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1866,18 +1875,7 @@ async def get_current_user(
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes
-            user = EmailUser(
-                email=email,
-                password_hash="",  # nosec B106 - Not used for JWT authentication
-                full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                is_admin=True,
-                is_active=True,
-                auth_provider="local",
-                password_change_required=False,
-                email_verified_at=datetime.now(timezone.utc),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
+            user = _bootstrap_platform_admin_user(email=email, payload=payload)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

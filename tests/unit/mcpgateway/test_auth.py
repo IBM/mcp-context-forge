@@ -148,6 +148,7 @@ class TestGetCurrentUser:
         request = SimpleNamespace(state=SimpleNamespace())
 
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)):
             with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
@@ -338,6 +339,7 @@ class TestGetCurrentUser:
 
         request = SimpleNamespace(state=SimpleNamespace())
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
@@ -374,6 +376,7 @@ class TestGetCurrentUser:
 
         # Enable auth cache
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
@@ -598,26 +601,27 @@ class TestGetCurrentUser:
                         await get_current_user(credentials=credentials)
 
                     assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-                    assert exc_info.value.detail == "User not found"
+                    assert exc_info.value.detail == "User not found in database"
 
     @pytest.mark.asyncio
     async def test_platform_admin_virtual_user_creation(self):
         """Test that platform admin gets a virtual user object if not in database."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
 
-        jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(), "is_admin": True}
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):  # User not in DB
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.config.settings.platform_admin_email", "admin@example.com"):
                         with patch("mcpgateway.config.settings.platform_admin_full_name", "Platform Administrator"):
-                            user = await get_current_user(credentials=credentials)
+                            with patch("mcpgateway.config.settings.require_user_in_db", False):
+                                user = await get_current_user(credentials=credentials)
 
-                            assert user.email == "admin@example.com"
-                            assert user.full_name == "Platform Administrator"
-                            assert user.is_admin is True
-                            assert user.is_active is True
+                                assert user.email == "admin@example.com"
+                                assert user.full_name == "Platform Administrator"
+                                assert user.is_admin is True
+                                assert user.is_active is True
 
     @pytest.mark.asyncio
     async def test_require_user_in_db_rejects_platform_admin(self):
@@ -2706,7 +2710,7 @@ class TestBatchedPathBranches:
     async def test_batch_platform_admin_bootstrap(self, monkeypatch):
         """Batched user not found → platform admin bootstrap (lines 864-882)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
-        payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
+        payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}, "is_admin": True}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
@@ -3839,6 +3843,7 @@ class TestSessionTokenBranches:
 
         clear_trace_context()
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "require_user_in_db", False)
 
         with (
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
