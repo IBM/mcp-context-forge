@@ -21,7 +21,7 @@ interface OAuth2AuthProps {
   storeTokens: boolean;
   autoRefresh: boolean;
   username: string;
-  password: string;
+  password: string; // pragma: allowlist secret
   onGrantTypeChange: (value: string) => void;
   onIssuerUrlChange: (value: string) => void;
   onRedirectUriChange: (value: string) => void;

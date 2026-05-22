@@ -26,7 +26,7 @@ const AUTH_TYPE_TO_API: Record<AuthType, string> = {
   basic: "basic",
   bearer: "bearer",
   custom: "authheaders",
-  oauth: "oauth",
+  oauth: "oauth", // pragma: allowlist secret
   query: "query_param",
 };
 
@@ -35,7 +35,7 @@ const AUTH_TYPE_FROM_API: Partial<Record<string, AuthType>> = {
   basic: "basic",
   bearer: "bearer",
   authheaders: "custom",
-  oauth: "oauth",
+  oauth: "oauth", // pragma: allowlist secret
   query_param: "query",
 };
 
@@ -51,7 +51,7 @@ const oauthConfigSchema = z.object({
   store_tokens: z.boolean().optional(),
   auto_refresh: z.boolean().optional(),
   username: z.string().optional(),
-  password: z.string().optional(),
+  password: z.string().optional(), // pragma: allowlist secret
 });
 
 // Zod schema for form validation with sanitization - matches API request body
@@ -93,7 +93,7 @@ const mcpServerFormObjectSchema = z.object({
     .string()
     .transform((val) => sanitizeString(val, 200))
     .optional(),
-  authPassword: z
+  authPassword: z // pragma: allowlist secret
     .string()
     .transform((val) => sanitizePassword(val, 1000))
     .optional(),
@@ -169,10 +169,10 @@ export interface UseMCPServerFormReturn {
   advancedOpen: boolean;
   visibility: string;
   authType: AuthType;
-  oneTimeAuth: boolean;
+  oneTimeAuth: boolean; // pragma: allowlist secret
   passthroughHeaders: string;
   authUsername: string;
-  authPassword: string;
+  authPassword: string; // pragma: allowlist secret
   authToken: string;
   caCertificate: string;
   // OAuth fields
@@ -189,7 +189,7 @@ export interface UseMCPServerFormReturn {
   oauthStoreTokens: boolean;
   oauthAutoRefresh: boolean;
   oauthUsername: string;
-  oauthPassword: string;
+  oauthPassword: string; // pragma: allowlist secret
   queryParamName: string;
   queryParamApiKey: string;
   errors: FormErrors;
@@ -204,17 +204,17 @@ export interface UseMCPServerFormReturn {
   setAdvancedOpen: (value: boolean | ((prev: boolean) => boolean)) => void;
   setVisibility: (value: string) => void;
   setAuthType: (value: AuthType) => void;
-  setOneTimeAuth: (value: boolean) => void;
+  setOneTimeAuth: (value: boolean) => void; // pragma: allowlist secret
   setPassthroughHeaders: (value: string) => void;
   setAuthUsername: (value: string) => void;
-  setAuthPassword: (value: string) => void;
+  setAuthPassword: (value: string) => void; // pragma: allowlist secret
   setAuthToken: (value: string) => void;
   setCaCertificate: (value: string) => void;
   // OAuth setters
   setBearerToken: (value: string) => void;
   setCustomHeaders: (headers: CustomHeader[]) => void;
   setOAuthClientId: (value: string) => void;
-  setOAuthClientSecret: (value: string) => void;
+  setOAuthClientSecret: (value: string) => void; // pragma: allowlist secret
   setOAuthTokenUrl: (value: string) => void;
   setOAuthGrantType: (value: string) => void;
   setOAuthIssuerUrl: (value: string) => void;
@@ -224,9 +224,9 @@ export interface UseMCPServerFormReturn {
   setOAuthStoreTokens: (checked: boolean) => void;
   setOAuthAutoRefresh: (checked: boolean) => void;
   setOAuthUsername: (value: string) => void;
-  setOAuthPassword: (value: string) => void;
+  setOAuthPassword: (value: string) => void; // pragma: allowlist secret
   setQueryParamName: (value: string) => void;
-  setQueryParamApiKey: (value: string) => void;
+  setQueryParamApiKey: (value: string) => void; // pragma: allowlist secret
 
   // Field-level validation
   validateField: (field: keyof FormErrors, value: string) => void;
@@ -249,13 +249,13 @@ const initialState = {
   oneTimeAuth: false,
   passthroughHeaders: "",
   authUsername: "",
-  authPassword: "",
+  authPassword: "", // pragma: allowlist secret
   authToken: "",
   caCertificate: "",
   bearerToken: "",
   customHeaders: [] as CustomHeader[],
   oauthClientId: "",
-  oauthClientSecret: "",
+  oauthClientSecret: "", // pragma: allowlist secret
   oauthTokenUrl: "",
   oauthGrantType: "client_credentials",
   oauthIssuerUrl: "",
@@ -265,9 +265,9 @@ const initialState = {
   oauthStoreTokens: true,
   oauthAutoRefresh: true,
   oauthUsername: "",
-  oauthPassword: "",
+  oauthPassword: "", // pragma: allowlist secret
   queryParamName: "",
-  queryParamApiKey: "",
+  queryParamApiKey: "", // pragma: allowlist secret
 };
 
 export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
@@ -452,7 +452,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           ...base,
           grant_type: "client_credentials",
           client_id: oauthClientId || undefined,
-          client_secret: oauthClientSecret || undefined,
+          client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
           token_url: oauthTokenUrl || undefined,
         };
       } else if (oauthGrantType === "authorization_code") {
@@ -460,7 +460,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           ...base,
           grant_type: "authorization_code",
           client_id: oauthClientId || undefined,
-          client_secret: oauthClientSecret || undefined,
+          client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
           token_url: oauthTokenUrl || undefined,
           authorization_url: oauthAuthorizationUrl || undefined,
           redirect_uri: oauthRedirectUri || undefined,
@@ -470,10 +470,10 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           ...base,
           grant_type: "password",
           client_id: oauthClientId || undefined,
-          client_secret: oauthClientSecret || undefined,
+          client_secret: oauthClientSecret || undefined, // pragma: allowlist secret
           token_url: oauthTokenUrl || undefined,
           username: oauthUsername || undefined,
-          password: oauthPassword || undefined,
+          password: oauthPassword || undefined, // pragma: allowlist secret
         };
       }
     }
@@ -486,7 +486,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       passthroughHeaders: headersArray.length > 0 ? headersArray : undefined,
       authType: AUTH_TYPE_TO_API[authType],
       authUsername: authType === "basic" ? authUsername || undefined : undefined,
-      authPassword: authType === "basic" ? authPassword || undefined : undefined,
+      authPassword: authType === "basic" ? authPassword || undefined : undefined, // pragma: allowlist secret
       authToken: authType === "bearer" ? bearerToken || undefined : undefined,
       auth_headers: (() => {
         if (authType !== "custom") return undefined;
@@ -497,7 +497,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       })(),
       auth_query_param_key: authType === "query" ? queryParamName || undefined : undefined,
       auth_query_param_value: authType === "query" ? queryParamApiKey || undefined : undefined,
-      oneTimeAuth: oneTimeAuth || undefined,
+      oneTimeAuth: oneTimeAuth || undefined, // pragma: allowlist secret
       visibility: (visibility as "public" | "private") || undefined,
       caCertificate: caCertificate || undefined,
       oauth_config: oauthConfig,
