@@ -99,32 +99,17 @@ def _schema_looks_current(inspector) -> bool:
 
 
 def make_alembic_cfg(database_url: str, *, configure_logger: bool = False) -> Config:
-    """Build an Alembic ``Config`` wired to ``database_url`` for this project.
+    """Build an Alembic Config wired to database_url.
 
-    Centralises two pieces of Alembic-config setup that must be identical
-    across every entry-point (``bootstrap_db.main()`` and the schema-at-head
-    startup probe in ``mcpgateway.utils.check_schema_at_head``):
-
-      * locating ``alembic.ini`` via ``importlib.resources`` so it works the
-        same way inside the Python wheel and inside the container image;
-      * doubling ``%`` characters in the URL before handing it to
-        ``cfg.set_main_option(...)`` so configparser doesn't choke on
-        URL-encoded passwords (e.g., ``%40`` for ``@``).
-
-    Keeping the helper public (no leading underscore) so it is intentional
-    shared API — external code (``mcpgateway.utils.check_schema_at_head``)
-    depends on this name.
+    Locates alembic.ini via importlib.resources and escapes ``%`` in the URL
+    to prevent configparser interpolation errors on URL-encoded passwords.
 
     Args:
         database_url: SQLAlchemy URL for the target database.
-        configure_logger: When True, set ``cfg.attributes["configure_logger"] = True``.
-            ``bootstrap_db.main()`` opts in (Alembic command-line UX);
-            the startup probe leaves it off (it should not emit Alembic
-            INFO logs on every K8s probe tick).
+        configure_logger: When True, enables Alembic logger output.
 
     Returns:
-        Configured ``alembic.config.Config`` ready for use with the Alembic
-        runtime API or command layer.
+        Configured alembic.config.Config.
     """
     ini_path = files("mcpgateway").joinpath("alembic.ini")
     cfg = Config(str(ini_path))
