@@ -17595,6 +17595,27 @@ class TestAuthLogin:
         result = await change_password_required_page(request)
         assert isinstance(result, HTMLResponse)
 
+    @pytest.mark.asyncio
+    async def test_change_password_required_page_jwt_auth_failure(self, monkeypatch):
+        """Test that exception during JWT user extraction is caught and logged (covers lines 4782-4786)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_ui_airgapped", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_policy_enabled", True, raising=False)
+
+        # Mock get_current_user to raise an exception
+        monkeypatch.setattr("mcpgateway.admin.get_current_user", AsyncMock(side_effect=Exception("JWT decode failed")))
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.cookies = {"jwt_token": "invalid-token"}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Change PW</html>")
+
+        # Should not raise, should fall back to is_privileged=False
+        result = await change_password_required_page(request)
+        assert isinstance(result, HTMLResponse)
+
 
 # ============================================================================ #
 #                 GROUP 3: Team Join Requests                                   #
