@@ -646,7 +646,7 @@ class LLMConfig(BaseModel):
         Examples:
             >>> # Automatically converts dict to appropriate config type
             >>> config_dict = {
-            ...     "api_key": "key",
+            ...     "api_key": "key",  # pragma: allowlist secret
             ...     "azure_endpoint": "https://example.com/",
             ...     "azure_deployment": "gpt-4"
             ... }

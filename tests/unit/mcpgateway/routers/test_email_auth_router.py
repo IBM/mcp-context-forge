@@ -615,7 +615,7 @@ async def test_admin_get_update_delete_user():
         auth_service.is_last_active_admin = AsyncMock(return_value=False)
         auth_service.delete_user = AsyncMock(return_value=None)
 
-        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)
+        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)  # pragma: allowlist secret
 
         response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert response.email == "user@example.com"

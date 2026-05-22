@@ -2690,7 +2690,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_inactive_user(self, monkeypatch):
         """Batched user is inactive → 401 (line 838)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         auth_ctx = {
@@ -2709,7 +2709,10 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_platform_admin_bootstrap(self, monkeypatch):
         """Batched user not found → platform admin bootstrap (lines 864-882)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
+
+    async def test_batch_platform_admin_required(self, monkeypatch):
+        """Batched user not found and platform admin required → 401 (line 884)."""
         payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}, "is_admin": True}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}
@@ -2727,7 +2730,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_user_not_found_not_admin(self, monkeypatch):
         """Batched user not found + not platform admin → 401 (lines 882-886)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "nobody@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}

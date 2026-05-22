@@ -20,7 +20,7 @@ class TestPostgreSQLSchemaConfiguration:
     def test_url_parsing_with_options(self):
         """Test that options parameter is correctly extracted from DATABASE_URL."""
         # Test URL with search_path option
-        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"
+        url_string = "postgresql://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway"  # pragma: allowlist secret
         url = make_url(url_string)
 
         # Verify options parameter is present
@@ -29,7 +29,7 @@ class TestPostgreSQLSchemaConfiguration:
 
     def test_url_parsing_without_options(self):
         """Test that URLs without options parameter work correctly."""
-        url_string = "postgresql://user:pass@host:5432/db"
+        url_string = "postgresql://user:pass@host:5432/db"  # pragma: allowlist secret
         url = make_url(url_string)
 
         # Verify no options parameter

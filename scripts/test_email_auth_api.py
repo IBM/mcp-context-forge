@@ -398,7 +398,7 @@ def test_admin_update_partial(ctx: TestContext):
         test("pcr preserved (False)", resp.body.get("password_change_required") is False)
 
     # Verify login still works (password not wiped by partial update)
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Login after partial update works", resp.status in (200, 403), f"status={resp.status}")
 
     # Update is_active only
@@ -510,7 +510,7 @@ def test_password_management(ctx: TestContext):
     test("Login with reset password works", resp.status in (200, 403), f"status={resp.status}")
 
     # Old password should not work
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Old password rejected after reset", resp.status == 401, f"status={resp.status}")
 
     # Password update with short password

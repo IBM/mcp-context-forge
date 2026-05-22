@@ -157,7 +157,7 @@ async def test_client_credentials_flow_success_json(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})  # pragma: allowlist secret
     assert result == "json-tok"
 
 
@@ -297,7 +297,7 @@ async def test_client_credentials_flow_decrypt_secret(oauth_manager):
         patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs,
         patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
     ):
-        mock_gs.return_value = MagicMock(auth_encryption_secret="key")
+        mock_gs.return_value = MagicMock(auth_encryption_secret="key")  # pragma: allowlist secret
         # Secret longer than 50 chars triggers decryption
         long_secret = "x" * 60
         result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": long_secret, "token_url": "https://auth/token"})
@@ -607,7 +607,7 @@ async def test_refresh_token_success(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})  # pragma: allowlist secret
     assert result["access_token"] == "new-tok"
 
 
@@ -653,7 +653,7 @@ async def test_refresh_token_form_encoded_response(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})  # pragma: allowlist secret
 
     assert result["access_token"] == "new-tok"
     assert result["refresh_token"] == "new-rt"
@@ -673,7 +673,7 @@ async def test_refresh_token_form_encoded_mixed_case_content_type(oauth_manager)
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})  # pragma: allowlist secret
 
     assert result["access_token"] == "new-tok"
     mock_response.json.assert_not_called()

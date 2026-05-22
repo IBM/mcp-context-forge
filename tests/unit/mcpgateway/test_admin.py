@@ -10949,7 +10949,7 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
     monkeypatch.setattr(
         "mcpgateway.admin.paginate_query",
         AsyncMock(
-            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1", name="Prompt 1")], "pagination": pagination, "links": None}
+            return_value={"data": [SimpleNamespace(id="550e8400e29b41d4a7164466554400d1", team_id="team-1", name="Prompt 1")], "pagination": pagination, "links": None}  # pragma: allowlist secret
         ),  # pragma: allowlist secret
     )
     setup_team_service(monkeypatch, ["team-1"])
@@ -11434,7 +11434,7 @@ async def test_admin_search_tools_empty_query(mock_db):
 async def test_admin_search_tools_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
     mock_db.execute.return_value.all.return_value = [
-        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")
+        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")  # pragma: allowlist secret
     ]  # pragma: allowlist secret
     result = await admin_search_tools(
         q="tool",
@@ -11844,7 +11844,7 @@ async def test_admin_search_tools_gateway_and_team_filters(monkeypatch, mock_db)
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [
-        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")
+        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")  # pragma: allowlist secret
     ]  # pragma: allowlist secret
     result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result["count"] == 1
@@ -12130,7 +12130,7 @@ async def test_admin_search_tools_supports_tags_without_query(monkeypatch, mock_
     setup_team_service(monkeypatch, [])
     monkeypatch.setattr("mcpgateway.admin._apply_tag_filter_groups", lambda query, *_args, **_kwargs: query)
     mock_db.execute.return_value.all.return_value = [
-        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")
+        SimpleNamespace(id="550e8400e29b41d4a7164466554400b1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")  # pragma: allowlist secret
     ]  # pragma: allowlist secret
 
     result = await admin_search_tools(
@@ -14785,7 +14785,7 @@ async def test_change_password_required_handler_long_validation_error(monkeypatc
 
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
-    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "weak", "confirm_password": "weak"})
+    request.form = AsyncMock(return_value={"current_password": "old", "new_password": "weak", "confirm_password": "weak"})  # pragma: allowlist secret
     request.cookies = {"jwt_token": "jwt"}
     request.headers = {"User-Agent": "TestAgent"}
 

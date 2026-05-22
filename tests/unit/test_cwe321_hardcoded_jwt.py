@@ -1,4 +1,5 @@
 """Tests for CWE-321 hardcoded JWT key fixes."""
+
 import logging
 import re
 import datetime
@@ -8,16 +9,16 @@ import pytest
 from pydantic import ValidationError
 from mcpgateway.config import SecurityConfigurationError, Settings
 
-
 WEAK_JWT_KEY = "my-test-key-but-now-longer-than-32-bytes"
 WEAK_ENC_KEY = "my-test-salt"
 STRONG_JWT_KEY = "x3Kp!mQ8rZvN2wLsA5dYfB7cEjGhTuIo"  # 32 chars, random
-STRONG_ENC_KEY = "F4nRqW9kMpXzD1sVbYcL6eHjOuAtG2wC"  # 32 chars, random
+STRONG_ENC_KEY = "F4nRqW9kMpXzD1sVbYcL6eHjOuAtG2wC"  # 32 chars, random  # pragma: allowlist secret
 
 
 def _make_settings(**kwargs):
     """Instantiate Settings with minimal required overrides."""
     from mcpgateway.config import Settings
+
     base = {
         "jwt_secret_key": STRONG_JWT_KEY,
         "auth_encryption_secret": STRONG_ENC_KEY,
@@ -81,9 +82,7 @@ class TestEnvExampleSanity:
 
     def test_jwt_secret_key_line_has_placeholder(self):
         content = ENV_EXAMPLE.read_text()
-        assert f"JWT_SECRET_KEY={PLACEHOLDER}" in content, (
-            f"Expected JWT_SECRET_KEY={PLACEHOLDER} in .env.example"
-        )
+        assert f"JWT_SECRET_KEY={PLACEHOLDER}" in content, f"Expected JWT_SECRET_KEY={PLACEHOLDER} in .env.example"
 
 
 class TestBootstrapIsAdmin:
@@ -127,16 +126,18 @@ class TestRemainingGaps:
 
     def test_jwt_secret_key_field_default_does_not_contain_my_test_key(self):
         import re
+
         src = (Path(__file__).parent.parent.parent / "mcpgateway" / "config.py").read_text()
         # my-test-key must not appear as a Field default — it may remain in WEAK_VALUES blocklist
-        bad = re.findall(r'Field\s*\(.*?my-test-key.*?\)', src)
+        bad = re.findall(r"Field\s*\(.*?my-test-key.*?\)", src)
         assert not bad, f"my-test-key literal still present as Field default: {bad}"
 
     def test_auth_encryption_secret_field_default_does_not_contain_my_test_salt(self):
         import re
+
         src = (Path(__file__).parent.parent.parent / "mcpgateway" / "config.py").read_text()
         # my-test-salt must not appear as a Field default — it may remain in WEAK_VALUES blocklist
-        bad = re.findall(r'Field\s*\(.*?my-test-salt.*?\)', src)
+        bad = re.findall(r"Field\s*\(.*?my-test-salt.*?\)", src)
         assert not bad, f"my-test-salt literal still present as Field default: {bad}"
 
     # --- Gap 2: __REPLACE_ME__ placeholder blocked in production ---
@@ -171,10 +172,7 @@ class TestRequireUserInDb:
     def test_default_require_user_in_db_is_true(self):
         """Default AppSettings must have require_user_in_db=True."""
         settings = _make_settings()
-        assert settings.require_user_in_db is True, (
-            "require_user_in_db must default to True. "
-            "Set REQUIRE_USER_IN_DB=false in .env for development."
-        )
+        assert settings.require_user_in_db is True, "require_user_in_db must default to True. " "Set REQUIRE_USER_IN_DB=false in .env for development."
 
     def test_env_example_require_user_in_db_is_commented_out(self):
         """
@@ -184,10 +182,7 @@ class TestRequireUserInDb:
         """
         content = ENV_EXAMPLE.read_text()
         active = re.compile(r"^\s*REQUIRE_USER_IN_DB\s*=\s*false\s*$", re.IGNORECASE | re.MULTILINE)
-        assert not active.search(content), (
-            ".env.example must not ship an active REQUIRE_USER_IN_DB=false line; "
-            "it must be commented out so developers explicitly opt in"
-        )
+        assert not active.search(content), ".env.example must not ship an active REQUIRE_USER_IN_DB=false line; " "it must be commented out so developers explicitly opt in"
 
 
 @pytest.mark.parametrize("weak", Settings.WEAK_VALUES)

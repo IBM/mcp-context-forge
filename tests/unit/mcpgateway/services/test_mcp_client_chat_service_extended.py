@@ -1421,7 +1421,7 @@ def test_gateway_provider_watsonx_completion(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -1445,7 +1445,8 @@ def test_gateway_provider_unsupported_type(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("some_unknown_provider")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
+    """GatewayProvider.get_model_name works before get_llm is called."""
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
@@ -1457,7 +1458,7 @@ def test_gateway_provider_cached_llm(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm1 = gateway.get_llm(model_type="chat")

@@ -293,7 +293,7 @@ def test_skip_migrations_defaults_to_false():
     """
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
     }
     with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(_env_file=None)
@@ -304,7 +304,7 @@ def test_skip_migrations_env_true_flips_flag():
     """MCPGATEWAY_SKIP_MIGRATIONS=true → in-pod bootstrap is suppressed."""
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
         "MCPGATEWAY_SKIP_MIGRATIONS": "true",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -316,7 +316,7 @@ def test_skip_migrations_env_false_keeps_flag_off():
     """Explicit MCPGATEWAY_SKIP_MIGRATIONS=false matches the default."""
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
         "MCPGATEWAY_SKIP_MIGRATIONS": "false",
     }
     with patch.dict(os.environ, dummy_env, clear=True):

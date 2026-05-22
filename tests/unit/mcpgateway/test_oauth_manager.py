@@ -1481,7 +1481,7 @@ class TestOAuthManager:
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist
             "token_url": "https://oauth.example.com/token",
         }
         _, mock_ssl_context, mock_client, _, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "mtls_token"})
@@ -1499,7 +1499,7 @@ class TestOAuthManager:
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         _, _, _, _, client_cert, _ = self._make_ca_cert_mocks()

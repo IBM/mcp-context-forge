@@ -749,7 +749,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_uuid('550E8400-E29B-41D4-A716-446655440000')
             '550e8400e29b41d4a716446655440000'
             >>> SecurityValidator.validate_uuid('550e8400e29b41d4a716446655440000')  # pragma: allowlist secret
-            '550e8400e29b41d4a716446655440000'
+            '550e8400e29b41d4a716446655440000'  # pragma: allowlist secret
 
             Test various invalid UUID formats (line 347-348):
 
