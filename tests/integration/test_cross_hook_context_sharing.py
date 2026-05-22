@@ -15,6 +15,9 @@ from pathlib import Path
 
 # Third-Party
 import pytest
+
+pytest.importorskip("cpex", reason="cpex plugin framework not installed")
+
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
