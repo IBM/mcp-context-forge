@@ -8583,6 +8583,13 @@ async def admin_tools_partial_html(
 
     # If render=controls, return only pagination controls
     if render == "controls":
+        # NOTE: hx_target/hx_swap must match what tools_partial.html sets when
+        # rendering the inline pagination_controls include — currently
+        # `#tools-table` with swap=outerHTML. Diverging here would cause
+        # subsequent pagination clicks (after a controls-only re-render) to
+        # swap into a target that the success-path doesn't own and trigger
+        # the same `o.querySelector` null-fragment crash that caused the
+        # `_loading` deadlock the rest of this PR fixes.
         return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
@@ -8590,8 +8597,10 @@ async def admin_tools_partial_html(
                 "request": request,
                 "pagination": pagination.model_dump(),
                 "base_url": base_url,
-                "hx_target": "#tools-table-body",
+                "hx_target": "#tools-table",
+                "hx_swap": "outerHTML",
                 "hx_indicator": "#tools-loading",
+                "table_name": "tools",
                 "query_params": query_params_dict,
                 "root_path": _resolve_root_path(request),
             },
