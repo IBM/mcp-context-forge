@@ -71,7 +71,7 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway
+      - DATABASE_URL=postgresql+psycopg://postgres:postgres@postgres:5432/mcpgateway  # pragma: allowlist secret
 {redis_url}
       - HOST=0.0.0.0
       - PORT=4444

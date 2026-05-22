@@ -28,12 +28,12 @@ Doctest examples
 >>> clear_jwt_caches()
 >>> jwt_util.settings.jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
 >>> jwt_util.settings.jwt_algorithm = 'HS256'
->>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='this-is-a-long-test-secret-key-32chars', algorithm='HS256')
+>>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='this-is-a-long-test-secret-key-32chars', algorithm='HS256')  # pragma: allowlist secret
 >>> import jwt
 >>> jwt.decode(token, 'this-is-a-long-test-secret-key-32chars', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'alice'
 True
 >>> import asyncio
->>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='this-is-a-long-test-secret-key-32chars', algorithm='HS256'))
+>>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='this-is-a-long-test-secret-key-32chars', algorithm='HS256'))  # pragma: allowlist secret
 >>> jwt.decode(t, 'this-is-a-long-test-secret-key-32chars', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
 True
 """

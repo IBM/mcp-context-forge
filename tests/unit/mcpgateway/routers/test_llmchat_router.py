@@ -129,7 +129,7 @@ async def test_set_get_delete_user_config_redis(monkeypatch: pytest.MonkeyPatch)
     config = llmchat_router.build_config(
         ConnectInput(
             user_id="u1",
-            llm=LLMInput(model="gpt", config={"api_key": "llm-secret"}),
+            llm=LLMInput(model="gpt", config={"api_key": "llm-secret"}),  # pragma: allowlist secret
             server=ServerInput(url="https://api.example.com/mcp", auth_token="server-secret"),
         )
     )

@@ -49,11 +49,11 @@ def test_redact_sensitive_fields_recurses_through_dicts_lists_and_tuples(monkeyp
     }
 
     assert redact_sensitive_fields(payload) == {
-        "password": "***",
+        "password": "***",  # pragma: allowlist secret
         "nested": [
             {"authorization": "***"},
             {"ok": "value"},
-            ({"api-key": "***"},),
+            ({"api-key": "***"},),  # pragma: allowlist secret
         ],
     }
 

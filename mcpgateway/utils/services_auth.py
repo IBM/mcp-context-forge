@@ -9,8 +9,8 @@ Doctest examples
 ----------------
 >>> import os
 >>> from mcpgateway.utils import services_auth
->>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'
->>> services_auth.settings.auth_encryption_secret = 'doctest-secret'
+>>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'  # pragma: allowlist secret
+>>> services_auth.settings.auth_encryption_secret = 'doctest-secret'  # pragma: allowlist secret
 >>> key = services_auth.get_key()
 >>> isinstance(key, bytes)
 True
@@ -86,8 +86,8 @@ def get_key() -> bytes:
     Doctest:
     >>> import os
     >>> from mcpgateway.utils import services_auth
-    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'
-    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'
+    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'  # pragma: allowlist secret
+    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'  # pragma: allowlist secret
     >>> key = services_auth.get_key()
     >>> isinstance(key, bytes)
     True
@@ -180,8 +180,8 @@ def encode_auth(auth_value: dict, *, secret: Optional[str] = None) -> Optional[s
     Doctest:
     >>> import os
     >>> from mcpgateway.utils import services_auth
-    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'
-    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'
+    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'  # pragma: allowlist secret
+    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'  # pragma: allowlist secret
     >>> token = services_auth.encode_auth({'user': 'alice'})
     >>> isinstance(token, str)
     True
@@ -214,8 +214,8 @@ def decode_auth(encoded_value: str, *, secret: Optional[str] = None) -> dict:
     Doctest:
     >>> import os
     >>> from mcpgateway.utils import services_auth
-    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'
-    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'
+    >>> os.environ['AUTH_ENCRYPTION_SECRET'] = 'doctest-secret'  # pragma: allowlist secret
+    >>> services_auth.settings.auth_encryption_secret = 'doctest-secret'  # pragma: allowlist secret
     >>> d = {'user': 'alice'}
     >>> token = services_auth.encode_auth(d)
     >>> services_auth.decode_auth(token) == d

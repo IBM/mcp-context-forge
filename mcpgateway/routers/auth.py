@@ -193,13 +193,13 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         Email format (recommended):
             {
               "email": "admin@example.com",
-              "password": "ChangeMe_12345678$"
+              "password": "ChangeMe_12345678$"  # pragma: allowlist secret
             }
 
         Username format (compatibility):
             {
               "username": "admin@example.com",
-              "password": "ChangeMe_12345678$"
+              "password": "ChangeMe_12345678$"  # pragma: allowlist secret
             }
     """
     auth_service = EmailAuthService(db)

@@ -61,26 +61,26 @@ class TestSupportBundleService:
         service = SupportBundleService()
 
         # Test PostgreSQL URL
-        url = "postgresql://user:password@localhost:5432/db"
+        url = "postgresql://user:password@localhost:5432/db"  # pragma: allowlist secret
         sanitized = service._sanitize_url(url)
         assert "password" not in sanitized
         assert "*****" in sanitized
         assert "user" in sanitized
 
         # Test Redis URL
-        url = "redis://admin:secret123@redis.example.com:6379/0"
+        url = "redis://admin:secret123@redis.example.com:6379/0"  # pragma: allowlist secret
         sanitized = service._sanitize_url(url)
         assert "secret123" not in sanitized
         assert "*****" in sanitized
 
         # Test driver-qualified PostgreSQL URL
-        url = "postgresql+psycopg://user:password@localhost:5432/db"
+        url = "postgresql+psycopg://user:password@localhost:5432/db"  # pragma: allowlist secret
         sanitized = service._sanitize_url(url)
         assert "password" not in sanitized
         assert "*****" in sanitized
 
         # Test legacy/stale MySQL URL (credentials must still be redacted)
-        url = "mysql+pymysql://admin:secret@db.host:3306/mydb"
+        url = "mysql+pymysql://admin:secret@db.host:3306/mydb"  # pragma: allowlist secret
         sanitized = service._sanitize_url(url)
         assert "secret" not in sanitized
         assert "*****" in sanitized
@@ -98,13 +98,13 @@ class TestSupportBundleService:
         service = SupportBundleService()
 
         # Test password redaction
-        line = 'password: "secret123"'
+        line = 'password: "secret123"'  # pragma: allowlist secret
         sanitized = service._sanitize_line(line)
         assert "secret123" not in sanitized
         assert "*****" in sanitized
 
         # Test token redaction
-        line = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        line = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # pragma: allowlist secret
         sanitized = service._sanitize_line(line)
         assert "eyJhbGci" not in sanitized or "*****" in sanitized
 
@@ -194,7 +194,7 @@ class TestSupportBundleService:
         service = SupportBundleService()
 
         def fake_dump(*, exclude=None):  # noqa: ARG001
-            return {"database_url": "postgresql://user:password@localhost:5432/db"}
+            return {"database_url": "postgresql://user:password@localhost:5432/db"}  # pragma: allowlist secret
 
         monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
 
@@ -208,7 +208,7 @@ class TestSupportBundleService:
         service = SupportBundleService()
 
         def fake_dump(*, exclude=None):  # noqa: ARG001
-            return {"redis_url": "redis://admin:secret123@redis.example.com:6379/0"}
+            return {"redis_url": "redis://admin:secret123@redis.example.com:6379/0"}  # pragma: allowlist secret
 
         monkeypatch.setattr("mcpgateway.services.support_bundle_service.settings.model_dump", fake_dump)
 
@@ -251,7 +251,7 @@ class TestSupportBundleService:
         log_file = "mcpgateway.log"
         log_path = tmp_path / log_file
         log_path.write_text(
-            'line0\nline1\nline2\npassword: "secret123"\n',
+            'line0\nline1\nline2\npassword: "secret123"\n',  # pragma: allowlist secret
             encoding="utf-8",
         )
 

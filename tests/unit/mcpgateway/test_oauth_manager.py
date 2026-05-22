@@ -67,7 +67,7 @@ class TestOAuthManager:
             "client_secret": "test_secret",
             "token_url": "https://keycloak.example.com/auth/realms/myrealm/protocol/openid-connect/token",
             "username": "systemadmin@system.com",
-            "password": "test_password",
+            "password": "test_password",  # pragma: allowlist secret
             "scopes": ["openid", "profile"],
         }
 
@@ -217,7 +217,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -278,7 +278,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -755,7 +755,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -840,7 +840,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -1072,7 +1072,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -1107,7 +1107,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -1275,7 +1275,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -1310,7 +1310,7 @@ class TestOAuthManager:
 
         with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_key"
+            mock_settings.auth_encryption_secret = "test_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.oauth_manager.get_encryption_service") as mock_get_encryption:
@@ -1481,7 +1481,7 @@ class TestOAuthManager:
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist
             "token_url": "https://oauth.example.com/token",
         }
         _, mock_ssl_context, mock_client, _, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "mtls_token"})
@@ -1499,7 +1499,7 @@ class TestOAuthManager:
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         _, _, _, _, client_cert, _ = self._make_ca_cert_mocks()
@@ -1515,7 +1515,7 @@ class TestOAuthManager:
         manager = OAuthManager()
         credentials = {
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
         }
         _, mock_ssl_context, mock_client, ca_cert, client_cert, client_key = self._make_ca_cert_mocks({"access_token": "refreshed_token", "refresh_token": "new_refresh_token"})
@@ -1537,7 +1537,7 @@ class TestTokenStorageService:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_secret_key"
+            mock_settings.auth_encryption_secret = "test_secret_key"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_get_enc:
@@ -1585,7 +1585,7 @@ class TestTokenStorageService:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_secret"
+            mock_settings.auth_encryption_secret = "test_secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_get_enc:
@@ -1686,7 +1686,7 @@ class TestTokenStorageService:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_secret"
+            mock_settings.auth_encryption_secret = "test_secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_get_enc:
@@ -1730,7 +1730,7 @@ class TestTokenStorageService:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_secret"
+            mock_settings.auth_encryption_secret = "test_secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_get_enc:
@@ -1787,7 +1787,7 @@ class TestTokenStorageService:
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test_secret"
+            mock_settings.auth_encryption_secret = "test_secret"  # pragma: allowlist secret
             mock_get_settings.return_value = mock_settings
 
             with patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_get_enc:
@@ -1923,7 +1923,9 @@ class TestTokenStorageService:
         mock_db = Mock()
 
         # Create a mock gateway with OAuth config
-        mock_gateway = Gateway(id="gateway123", name="Test Gateway", oauth_config={"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"})
+        mock_gateway = Gateway(
+            id="gateway123", name="Test Gateway", oauth_config={"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}  # pragma: allowlist secret
+        )  # pragma: allowlist secret
         mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
         mock_db.commit = Mock()
 
@@ -2005,7 +2007,9 @@ class TestTokenStorageService:
         mock_db.commit = Mock()
 
         # Create a mock gateway with OAuth config
-        mock_gateway = Gateway(id="gateway123", name="Test Gateway", oauth_config={"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"})
+        mock_gateway = Gateway(
+            id="gateway123", name="Test Gateway", oauth_config={"token_url": "https://oauth.example.com/token", "client_id": "test_client", "client_secret": "test_secret"}  # pragma: allowlist secret
+        )  # pragma: allowlist secret
         mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:

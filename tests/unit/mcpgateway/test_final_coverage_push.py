@@ -197,7 +197,9 @@ async def test_import_command_parameter_parsing():
         json.dump(test_data, f)
         temp_file = f.name
 
-    args = argparse.Namespace(input_file=temp_file, conflict_strategy="update", dry_run=True, rekey_secret="new-secret", include="tools:tool1,tool2;servers:server1", verbose=True)
+    args = argparse.Namespace(
+        input_file=temp_file, conflict_strategy="update", dry_run=True, rekey_secret="new-secret", include="tools:tool1,tool2;servers:server1", verbose=True  # pragma: allowlist secret
+    )  # pragma: allowlist secret
 
     # Mock the API call
     with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:

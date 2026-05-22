@@ -4003,7 +4003,7 @@ linting-helm-unittest:               ## 🧪  Helm template unit tests
 		export HELM_CONFIG_HOME='$(LINT_HELM_ROOT)/config'; \
 		mkdir -p '$(LINT_HELM_ROOT)/plugins' '$(LINT_HELM_ROOT)/data' '$(LINT_HELM_ROOT)/cache' '$(LINT_HELM_ROOT)/config'; \
 		if ! helm plugin list 2>/dev/null | grep -q '^unittest[[:space:]]'; then \
-			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
+			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
 		fi; \
 		helm unittest $(CHART_DIR)"
 
@@ -4764,6 +4764,7 @@ jsonlint:                         ## 📑 JSON validation (jq)
 tomllint: uv                      ## 📑 TOML validation (tomlcheck)
 	@echo '📑  tomllint (tomlcheck) ...'
 	@find . -type f -name '*.toml' \
+	  -not -path './.venv/*' \
 	  -not -path './.cache/*' \
 	  -not -path './mcp-servers/templates/*' \
 	  -print0 \

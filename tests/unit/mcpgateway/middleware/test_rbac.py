@@ -1394,7 +1394,7 @@ async def test_bearer_token_from_credentials():
     )
 
     mock_credentials = MagicMock()
-    mock_credentials.credentials = "valid-token"
+    mock_credentials.credentials = "valid-token"  # pragma: allowlist secret
 
     mock_user = MagicMock(email="api@test.com", full_name="API User", is_admin=False)
     with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
@@ -1481,7 +1481,7 @@ async def test_auth_failure_non_browser_401():
     mock_request.state = MagicMock()
 
     mock_credentials = MagicMock()
-    mock_credentials.credentials = "bad-token"
+    mock_credentials.credentials = "bad-token"  # pragma: allowlist secret
 
     with patch("mcpgateway.auth.validate_token_user", side_effect=Exception("Invalid token")):
         with pytest.raises(HTTPException) as exc:

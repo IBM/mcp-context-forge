@@ -16,7 +16,7 @@ from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
 revision: str = "b9e496e91e71"
-down_revision: Union[str, Sequence[str], None] = "a8f3b2c1d4e5"
+down_revision: Union[str, Sequence[str], None] = "a8f3b2c1d4e5"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

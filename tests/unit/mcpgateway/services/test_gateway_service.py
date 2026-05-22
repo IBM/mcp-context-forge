@@ -636,8 +636,8 @@ class TestGatewayService:
             oauth_config={
                 "grant_type": "password",
                 "client_id": "cid",
-                "client_secret": "super-secret",
-                "password": "p@ssw0rd",
+                "client_secret": "super-secret",  # pragma: allowlist secret
+                "password": "p@ssw0rd",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
                 "username": "svc-user",
             },
@@ -1525,7 +1525,9 @@ class TestGatewayService:
 
         # Mock settings for masked auth value
         with patch("mcpgateway.services.gateway_service.settings.masked_auth_value", "***MASKED***"):
-            gateway_update = GatewayUpdate(auth_type="bearer", auth_token="***MASKED***", auth_password="***MASKED***", auth_header_value="***MASKED***")  # This should not update the auth_value
+            gateway_update = GatewayUpdate(
+                auth_type="bearer", auth_token="***MASKED***", auth_password="***MASKED***", auth_header_value="***MASKED***"  # pragma: allowlist secret
+            )  # This should not update the auth_value  # pragma: allowlist secret
 
             mock_gateway_read = MagicMock()
             mock_gateway_read.masked.return_value = mock_gateway_read
@@ -2974,9 +2976,7 @@ class TestGatewayRefresh:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
                 result = await gateway_service.register_gateway(db, gateway_data, created_by="test@example.com")
 
-        assert result.skipped_tools == [
-            f"{long_name}: Tool name exceeds MCP spec limit of 128 characters (got 129)"
-        ]
+        assert result.skipped_tools == [f"{long_name}: Tool name exceeds MCP spec limit of 128 characters (got 129)"]
 
     def test_validate_tools_all_invalid(self, gateway_service):
         """Test failure when all tools are invalid."""
@@ -5182,12 +5182,12 @@ class TestSetGatewayState:
             team_id=None,
             slug="test",
             auth_type="query_param",
-            auth_query_params={"api_key": "encrypted_value"},
+            auth_query_params={"api_key": "encrypted_value"},  # pragma: allowlist secret
             version=1,
         )
         db = self._make_db_for_state(gw)
         # Mock decode_auth to return decrypted value
-        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda x: {"api_key": "secret123"})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], [], []))
         gateway_service._event_service = AsyncMock()
@@ -5670,7 +5670,7 @@ class TestCheckSingleGatewayHealth:
             transport="sse",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "encrypted_val"},
+            auth_query_params={"api_key": "encrypted_val"},  # pragma: allowlist secret
             ca_certificate=None,
             ca_certificate_sig=None,
             oauth_config=None,
@@ -6728,7 +6728,7 @@ class TestUpdateGatewayAdvanced:
                 "grant_type": "password",
                 "client_id": "cid",
                 "client_secret": "secret",
-                "password": "pw",
+                "password": "pw",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
             },
         )
@@ -7318,14 +7318,14 @@ class TestSetGatewayStateActivation:
         mock_gateway.enabled = False
         mock_gateway.reachable = False
         mock_gateway.auth_type = "query_param"
-        mock_gateway.auth_query_params = {"api_key": "encrypted_val"}
+        mock_gateway.auth_query_params = {"api_key": "encrypted_val"}  # pragma: allowlist secret
         mock_gateway.oauth_config = None
         mock_gateway.version = 1
         mock_gateway.tools = []
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
-        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"api_key": "raw_key"}))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"api_key": "raw_key"}))  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", MagicMock(return_value="http://example.com?api_key=raw_key"))
         monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
@@ -7344,7 +7344,7 @@ class TestSetGatewayStateActivation:
         mock_gateway.enabled = False
         mock_gateway.reachable = False
         mock_gateway.auth_type = "query_param"
-        mock_gateway.auth_query_params = {"api_key": "bad_encrypted"}
+        mock_gateway.auth_query_params = {"api_key": "bad_encrypted"}  # pragma: allowlist secret
         mock_gateway.oauth_config = None
         mock_gateway.version = 1
         mock_gateway.tools = []
@@ -7550,7 +7550,7 @@ class TestUpdateGatewayQueryParam:
         db.execute.return_value = _make_execute_result(scalar=mock_gateway)
         mock_gateway.auth_type = "query_param"
         mock_gateway.auth_value = None
-        mock_gateway.auth_query_params = {"api_key": "encrypted_val"}
+        mock_gateway.auth_query_params = {"api_key": "encrypted_val"}  # pragma: allowlist secret
         mock_gateway.version = 1
         mock_gateway.tags = []
 
@@ -7569,7 +7569,7 @@ class TestUpdateGatewayQueryParam:
         update_data.auth_query_param_value = None
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"api_key": "decrypted_val"}))
+        monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", MagicMock(return_value={"api_key": "decrypted_val"}))  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", MagicMock(return_value="http://new-example.com?api_key=decrypted_val"))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
@@ -7941,6 +7941,7 @@ class TestToolReachabilityRestoration:
 
         # Create a tool from the gateway (simulating successful fetch)
         from mcpgateway.schemas import ToolCreate
+
         fetched_tool = ToolCreate(
             name="test-tool",
             description="Test tool",
@@ -7950,12 +7951,7 @@ class TestToolReachabilityRestoration:
         )
 
         # Call _update_or_create_tools
-        tools_to_add = gateway_service._update_or_create_tools(
-            db=mock_db,
-            tools=[fetched_tool],
-            gateway=mock_gateway,
-            created_via="health_check"
-        )
+        tools_to_add = gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
         # Verify that the existing tool's reachable status was set to True
         assert mock_existing_tool.reachable is True, "Tool should be marked as reachable after successful fetch"
@@ -7978,6 +7974,7 @@ class TestToolReachabilityRestoration:
 
         # Create a tool schema
         from mcpgateway.schemas import ToolCreate
+
         tool = ToolCreate(
             name="new-tool",
             description="New test tool",
@@ -7987,12 +7984,7 @@ class TestToolReachabilityRestoration:
         )
 
         # Call _create_db_tool
-        db_tool = gateway_service._create_db_tool(
-            tool=tool,
-            gateway=mock_gateway,
-            created_by="system",
-            created_via="health_check"
-        )
+        db_tool = gateway_service._create_db_tool(tool=tool, gateway=mock_gateway, created_by="system", created_via="health_check")
 
         # Verify the new tool has reachable=True and enabled=True
         assert db_tool.reachable is True, "New tool should be created with reachable=True"
@@ -8041,6 +8033,7 @@ class TestToolReachabilityRestoration:
 
         # Create a tool from the gateway (simulating successful fetch)
         from mcpgateway.schemas import ToolCreate
+
         fetched_tool = ToolCreate(
             name="test-tool",
             description="Test tool",
@@ -8050,12 +8043,7 @@ class TestToolReachabilityRestoration:
         )
 
         # Call _update_or_create_tools
-        tools_to_add = gateway_service._update_or_create_tools(
-            db=mock_db,
-            tools=[fetched_tool],
-            gateway=mock_gateway,
-            created_via="health_check"
-        )
+        tools_to_add = gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
         # Verify that the tool remains reachable
         assert mock_existing_tool.reachable is True, "Tool should remain reachable"
@@ -8106,6 +8094,7 @@ class TestToolReachabilityRestoration:
 
         # Create a tool from the gateway (simulating successful fetch)
         from mcpgateway.schemas import ToolCreate
+
         fetched_tool = ToolCreate(
             name="test-tool",
             description="Test tool",
@@ -8115,12 +8104,7 @@ class TestToolReachabilityRestoration:
         )
 
         # Call _update_or_create_tools
-        gateway_service._update_or_create_tools(
-            db=mock_db,
-            tools=[fetched_tool],
-            gateway=mock_gateway,
-            created_via="health_check"
-        )
+        gateway_service._update_or_create_tools(db=mock_db, tools=[fetched_tool], gateway=mock_gateway, created_via="health_check")
 
         # Verify reachable was flipped True (gateway is up so the tool is reachable)
         assert mock_existing_tool.reachable is True, "Tool should be marked reachable on successful fetch"

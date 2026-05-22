@@ -96,6 +96,7 @@ dependencies = [
     "PyYAML>=6.0.3",
     "requests>=2.33.1", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
+    "redis>=7.4.0",
     "sqlalchemy>=2.0.49",
     "sse-starlette>=3.4.1",
     "starlette>=0.30.0,<1.0.0", # prometheus-fastapi-instrumentator 7.1.0 caps at <1.0.0
@@ -314,6 +315,7 @@ mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "cpex.tools.cli:main"
 cforge = "mcpgateway.tools.cli:main"
 init-secrets = "mcpgateway.scripts.init_secrets:main"
+mcpgateway-server = "mcpgateway.__main__:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
@@ -369,6 +371,18 @@ ignore = [
 line-length = 200
 target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | \.tox
+  | \.eggs
+  | build
+  | dist
+  | node_modules
+)/
+'''
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -933,3 +947,4 @@ omit-covered-files = false
 # --------------------------------------------------------------------
 [tool.bandit]
 # No global skips - use inline # nosec comments for specific false positives
+exclude_dirs = [".venv", "venv", "build", "dist", ".tox", ".eggs", "node_modules"]

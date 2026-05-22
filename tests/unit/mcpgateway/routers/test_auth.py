@@ -168,7 +168,7 @@ class TestLogin:
 
             mock_create_token.return_value = ("test_token", 3600)
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             response = await login(login_request, mock_request, mock_db)
 
@@ -189,7 +189,7 @@ class TestLogin:
             mock_service.authenticate_user = AsyncMock(return_value=None)
             mock_auth_service.return_value = mock_service
 
-            login_request = LoginRequest(email="test@example.com", password="wrongpass")
+            login_request = LoginRequest(email="test@example.com", password="wrongpass")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
@@ -199,7 +199,7 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_value_error(self, mock_request, mock_db):
         """Test login with missing email/username."""
-        login_request = LoginRequest(password="password123")
+        login_request = LoginRequest(password="password123")  # pragma: allowlist secret
 
         with pytest.raises(HTTPException) as exc_info:
             await login(login_request, mock_request, mock_db)
@@ -214,7 +214,7 @@ class TestLogin:
             mock_service.authenticate_user = AsyncMock(side_effect=Exception("Service error"))
             mock_auth_service.return_value = mock_service
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)
@@ -235,7 +235,7 @@ class TestLogin:
 
             mock_create_token.return_value = ("test_token", 3600)
 
-            login_request = LoginRequest(username="user@domain.com", password="password123")
+            login_request = LoginRequest(username="user@domain.com", password="password123")  # pragma: allowlist secret
 
             response = await login(login_request, mock_request, mock_db)
 
@@ -262,7 +262,7 @@ class TestLogin:
             mock_settings.csrf_secret_key = "secret"
             mock_settings.csrf_token_expiry = 60
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             response = await login(login_request, mock_request, mock_db)
 
@@ -326,7 +326,7 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_with_plain_username_fails(self, mock_request, mock_db):
         """Test login with plain username (no @) fails."""
-        login_request = LoginRequest(username="plainuser", password="password123")
+        login_request = LoginRequest(username="plainuser", password="password123")  # pragma: allowlist secret
 
         with pytest.raises(HTTPException) as exc_info:
             await login(login_request, mock_request, mock_db)
@@ -350,7 +350,7 @@ class TestLogin:
             mock_settings.sso_enabled = True
             mock_settings.sso_preserve_admin_auth = True
 
-            login_request = LoginRequest(email="test@example.com", password="password123")
+            login_request = LoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
             with pytest.raises(HTTPException) as exc_info:
                 await login(login_request, mock_request, mock_db)

@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-08T08:53:30.068603044Z"
+exclude-newer = "2026-05-09T15:34:16.33084Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -2938,6 +2938,7 @@ dependencies = [
     { name = "python-json-logger" },
     { name = "python-multipart" },
     { name = "pyyaml" },
+    { name = "redis" },
     { name = "requests" },
     { name = "requests-oauthlib" },
     { name = "sqlalchemy" },
@@ -3156,6 +3157,7 @@ requires-dist = [
     { name = "python-json-logger", specifier = ">=4.1.0" },
     { name = "python-multipart", specifier = ">=0.0.27" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "redis", specifier = ">=7.4.0" },
     { name = "redis", marker = "extra == 'redis-pure'", specifier = ">=7.4.0" },
     { name = "redis", extras = ["hiredis"], marker = "extra == 'redis'", specifier = ">=7.4.0" },
     { name = "requests", specifier = ">=2.33.1" },

@@ -77,7 +77,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_db = MagicMock()
 
         # Create login request
-        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService, patch("mcpgateway.routers.email_auth.settings") as mock_settings:
             mock_service = MockAuthService.return_value
@@ -118,7 +118,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_db = MagicMock()
 
         # Create login request
-        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             mock_service = MockAuthService.return_value
@@ -161,7 +161,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_db = MagicMock()
 
         # Create login request
-        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             mock_service = MockAuthService.return_value
@@ -203,7 +203,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_request.headers = {"User-Agent": "TestAgent/1.0"}
 
         mock_db = MagicMock()
-        login_request = EmailLoginRequest(email="test@example.com", password="password123")
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             mock_service = MockAuthService.return_value
@@ -363,7 +363,7 @@ async def test_register_disabled():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")
+    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")  # pragma: allowlist secret
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = False
@@ -385,7 +385,7 @@ async def test_register_success():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")
+    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")  # pragma: allowlist secret
 
     user = MagicMock(spec=EmailUser)
     user.email = "new@example.com"
@@ -419,7 +419,7 @@ async def test_register_validation_error():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = PublicRegistrationRequest(email="bad@example.com", password="password1234", full_name="Bad User")
+    registration = PublicRegistrationRequest(email="bad@example.com", password="password1234", full_name="Bad User")  # pragma: allowlist secret
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = True
@@ -442,7 +442,7 @@ async def test_register_user_exists_error():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = PublicRegistrationRequest(email="exists@example.com", password="password1234", full_name="User")
+    registration = PublicRegistrationRequest(email="exists@example.com", password="password1234", full_name="User")  # pragma: allowlist secret
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = True
@@ -465,7 +465,7 @@ async def test_change_password_success():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")  # pragma: allowlist secret
     current_user = MagicMock()
     current_user.email = "user@example.com"
 
@@ -487,7 +487,7 @@ async def test_change_password_auth_error():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")  # pragma: allowlist secret
     current_user = MagicMock()
     current_user.email = "user@example.com"
 
@@ -563,7 +563,7 @@ async def test_admin_create_user_default_password_enforcement():
     # First-Party
     from mcpgateway.routers import email_auth
 
-    user_request = AdminCreateUserRequest(email="new@example.com", password="defaultpass", full_name="New User", is_admin=False)
+    user_request = AdminCreateUserRequest(email="new@example.com", password="defaultpass", full_name="New User", is_admin=False)  # pragma: allowlist secret
     mock_db = MagicMock()
     user = MagicMock(spec=EmailUser)
     user.email = "new@example.com"
@@ -615,7 +615,7 @@ async def test_admin_get_update_delete_user():
         auth_service.is_last_active_admin = AsyncMock(return_value=False)
         auth_service.delete_user = AsyncMock(return_value=None)
 
-        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)
+        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)  # pragma: allowlist secret
 
         response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert response.email == "user@example.com"
@@ -630,13 +630,13 @@ async def test_admin_get_update_delete_user():
             is_active=None,
             email_verified=None,
             password_change_required=None,
-            password="newPassword123!",
+            password="newPassword123!",  # pragma: allowlist secret
             admin_origin_source="api",
         )
 
-        #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+        # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
         response_input = Response()
-        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated2", is_admin=True)
+        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated2", is_admin=True)  # pragma: allowlist secret
         response = await email_auth.update_user_deprecated("user@example.com", update_request, response_input, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         # Verify update_user was called with correct params
         auth_service.update_user.assert_called_with(
@@ -646,19 +646,19 @@ async def test_admin_get_update_delete_user():
             is_active=None,
             email_verified=None,
             password_change_required=None,
-            password="newPassword123!",
+            password="newPassword123!",  # pragma: allowlist secret
             admin_origin_source="api",
         )
         assert response_input.headers["deprecation"] == "@1775001599"
         assert response_input.headers["sunset"] == "Sun, 16 Aug 2026 23:59:59 GMT"
-        #----------->
+        # ----------->
 
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert delete_response.success is True
 
-        #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+        # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
         assert datetime.now(timezone.utc) < datetime(2026, 8, 16, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
-        #----------->
+        # ----------->
 
 
 @pytest.mark.asyncio
@@ -721,7 +721,7 @@ async def test_admin_update_user_invalid_password():
         # Service raises PasswordValidationError when password is too weak
         auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Password too weak"))
 
-        update_request = AdminUserUpdateRequest(password="thisisweak1234", is_admin=False)
+        update_request = AdminUserUpdateRequest(password="thisisweak1234", is_admin=False)  # pragma: allowlist secret
 
         with pytest.raises(email_auth.HTTPException) as excinfo:
             await email_auth.update_user(
@@ -1464,7 +1464,7 @@ class TestRegisterEdgeCases:
         request.client = MagicMock(host="127.0.0.1")
         request.headers = {"User-Agent": "Test"}
 
-        reg = PublicRegistrationRequest(email="new@example.com", password="weakpass1234", full_name="User")
+        reg = PublicRegistrationRequest(email="new@example.com", password="weakpass1234", full_name="User")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.settings") as mock_settings, patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
             mock_settings.public_registration_enabled = True
@@ -1485,7 +1485,7 @@ class TestRegisterEdgeCases:
         request.client = MagicMock(host="127.0.0.1")
         request.headers = {"User-Agent": "Test"}
 
-        reg = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="User")
+        reg = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="User")  # pragma: allowlist secret
 
         with patch("mcpgateway.routers.email_auth.settings") as mock_settings, patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
             mock_settings.public_registration_enabled = True
@@ -1510,7 +1510,7 @@ class TestChangePasswordEdgeCases:
         request.client = MagicMock(host="127.0.0.1")
         request.headers = {"User-Agent": "Test"}
 
-        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")  # pragma: allowlist secret
         current_user = MagicMock()
         current_user.email = "user@example.com"
 
@@ -1532,7 +1532,7 @@ class TestChangePasswordEdgeCases:
         request.client = MagicMock(host="127.0.0.1")
         request.headers = {"User-Agent": "Test"}
 
-        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")  # pragma: allowlist secret
         current_user = MagicMock()
         current_user.email = "user@example.com"
 
@@ -1554,7 +1554,7 @@ class TestChangePasswordEdgeCases:
         request.client = MagicMock(host="127.0.0.1")
         request.headers = {"User-Agent": "Test"}
 
-        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+        pwd_req = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")  # pragma: allowlist secret
         current_user = MagicMock()
         current_user.email = "user@example.com"
 
@@ -1658,7 +1658,7 @@ class TestAdminCreateUserEdgeCases:
         # First-Party
         from mcpgateway.routers import email_auth
 
-        user_request = AdminCreateUserRequest(email="new@example.com", password="unique_pass", full_name="User", is_admin=False)
+        user_request = AdminCreateUserRequest(email="new@example.com", password="unique_pass", full_name="User", is_admin=False)  # pragma: allowlist secret
         mock_db = MagicMock()
 
         user = MagicMock(spec=EmailUser)
@@ -1689,7 +1689,7 @@ class TestAdminCreateUserEdgeCases:
         # First-Party
         from mcpgateway.routers import email_auth
 
-        user_request = AdminCreateUserRequest(email="bad@example.com", password="pass12345678", full_name="User", is_admin=False)
+        user_request = AdminCreateUserRequest(email="bad@example.com", password="pass12345678", full_name="User", is_admin=False)  # pragma: allowlist secret
         mock_db = MagicMock()
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
@@ -1706,7 +1706,7 @@ class TestAdminCreateUserEdgeCases:
         # First-Party
         from mcpgateway.routers import email_auth
 
-        user_request = AdminCreateUserRequest(email="new@example.com", password="weakpass1234", full_name="User", is_admin=False)
+        user_request = AdminCreateUserRequest(email="new@example.com", password="weakpass1234", full_name="User", is_admin=False)  # pragma: allowlist secret
         mock_db = MagicMock()
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
@@ -1723,7 +1723,7 @@ class TestAdminCreateUserEdgeCases:
         # First-Party
         from mcpgateway.routers import email_auth
 
-        user_request = AdminCreateUserRequest(email="exists@example.com", password="pass1234", full_name="User", is_admin=False)
+        user_request = AdminCreateUserRequest(email="exists@example.com", password="pass1234", full_name="User", is_admin=False)  # pragma: allowlist secret
         mock_db = MagicMock()
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
@@ -1740,7 +1740,7 @@ class TestAdminCreateUserEdgeCases:
         # First-Party
         from mcpgateway.routers import email_auth
 
-        user_request = AdminCreateUserRequest(email="new@example.com", password="pass1234", full_name="User", is_admin=False)
+        user_request = AdminCreateUserRequest(email="new@example.com", password="pass1234", full_name="User", is_admin=False)  # pragma: allowlist secret
         mock_db = MagicMock()
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
@@ -1952,7 +1952,7 @@ async def test_complete_password_reset_success():
             MockSvc.return_value.reset_password_with_token = AsyncMock(return_value=True)
             response = await email_auth.complete_password_reset(
                 "token123",
-                ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),
+                ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),  # pragma: allowlist secret
                 mock_request,
                 db=mock_db,
             )
@@ -2077,7 +2077,7 @@ async def test_complete_password_reset_disabled_returns_403():
         with pytest.raises(email_auth.HTTPException) as exc:
             await email_auth.complete_password_reset(
                 "token123",
-                ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),
+                ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),  # pragma: allowlist secret
                 mock_request,
                 db=mock_db,
             )
@@ -2104,7 +2104,7 @@ async def test_complete_password_reset_expired_maps_to_410():
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.complete_password_reset(
                     "token123",
-                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),
+                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),  # pragma: allowlist secret
                     mock_request,
                     db=mock_db,
                 )
@@ -2131,7 +2131,7 @@ async def test_complete_password_reset_invalid_maps_to_400():
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.complete_password_reset(
                     "token123",
-                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),
+                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),  # pragma: allowlist secret
                     mock_request,
                     db=mock_db,
                 )
@@ -2158,7 +2158,7 @@ async def test_complete_password_reset_password_validation_maps_to_400():
             with pytest.raises(email_auth.HTTPException) as exc:
                 await email_auth.complete_password_reset(
                     "token123",
-                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),
+                    ResetPasswordRequest(new_password="NewPassword123!", confirm_password="NewPassword123!"),  # pragma: allowlist secret
                     mock_request,
                     db=mock_db,
                 )
@@ -2199,7 +2199,7 @@ async def test_admin_unlock_user_generic_error_maps_to_500():
 def test_reset_password_request_validation_error_on_mismatch():
     """ResetPasswordRequest rejects mismatched password confirmation."""
     with pytest.raises(Exception, match="Passwords do not match"):
-        ResetPasswordRequest(new_password="NewPassword123!", confirm_password="Different123!")
+        ResetPasswordRequest(new_password="NewPassword123!", confirm_password="Different123!")  # pragma: allowlist secret
 
 
 def test_emailuser_response_from_email_user_handles_non_int_failed_attempts():

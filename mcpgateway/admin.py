@@ -67,7 +67,7 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -163,6 +163,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
+from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
@@ -1370,9 +1371,6 @@ def validate_password_strength(password: str, email: str = "", is_admin: bool = 
     # If password policy is disabled, skip all validation
     if not getattr(settings, "password_policy_enabled", True):
         return True, ""
-
-    # First-Party
-    from mcpgateway.services.password_policy_service import PasswordPolicyError, PasswordPolicyService
 
     with SessionLocal() as db:
         policy = PasswordPolicyService(db)
@@ -3936,12 +3934,9 @@ async def admin_ui(
             "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
             "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             "user_permissions": user_permissions,
-            # Password policy flags for frontend templates
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            # Password policy - pass actual requirements dict for user creation
+            "password_requirements": PasswordPolicyService.get_password_requirements(is_privileged=False),
+            "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
@@ -4180,7 +4175,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> # Mock request with form data
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
-        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}
+        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}  # pragma: allowlist secret
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>>
         >>> mock_db = MagicMock()
@@ -4778,6 +4773,21 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = _resolve_root_path(request)
 
+    # Determine if this is a privileged account for password requirements
+    is_privileged = False
+    try:
+        jwt_token = request.cookies.get("jwt_token")
+        if jwt_token:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+            current_user = await get_current_user(credentials, request=request)
+            if current_user:
+                is_privileged = getattr(current_user, "is_admin", False)
+    except Exception as e:
+        LOGGER.warning(f"Failed to determine user admin status for password requirements: {e}")
+
+    # Get actual password requirements from PasswordPolicyService
+    password_requirements = PasswordPolicyService.get_password_requirements(is_privileged=is_privileged)
+
     response = request.app.state.templates.TemplateResponse(
         request,
         "change-password-required.html",
@@ -4786,11 +4796,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "root_path": root_path,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "password_policy_enabled": getattr(settings, "password_policy_enabled", True),
-            "password_min_length": getattr(settings, "password_min_length", 8),
-            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
-            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
-            "password_require_numbers": getattr(settings, "password_require_numbers", False),
-            "password_require_special": getattr(settings, "password_require_special", False),
+            "password_requirements": password_requirements,
             "sri_hashes": load_sri_hashes(),
         },
     )
@@ -4822,9 +4828,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
         >>> mock_form = {
-        ...     "current_password": "oldpass",
-        ...     "new_password": "newpass123",
-        ...     "confirm_password": "newpass123"
+        ...     "current_password": "oldpass",  # pragma: allowlist secret
+        ...     "new_password": "newpass123",  # pragma: allowlist secret
+        ...     "confirm_password": "newpass123"  # pragma: allowlist secret
         ... }
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>> mock_request.cookies = {"jwt_token": "test_token"}
@@ -4931,8 +4937,14 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         except AuthenticationError:
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
-            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}", exc_info=True)
+            # Encode error message in URL for display to user (truncate to prevent URL length issues)
+            error_msg = str(e)
+            max_length = settings.password_error_message_max_length
+            if len(error_msg) > max_length:
+                error_msg = error_msg[: max_length - 3] + "..."
+            error_msg_encoded = urllib.parse.quote(error_msg)
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password&details={error_msg_encoded}", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
@@ -7775,7 +7787,9 @@ async def admin_create_user(
         if password:
             is_valid, error_msg = validate_password_strength(password, email_val, is_admin_val)
             if not is_valid:
-                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
+                # Use data-error-message attribute for reliable error extraction (not CSS class scraping)
+                error_html = f'<div class="text-red-500" data-error-message="{html.escape(error_msg)}"><strong>Password validation failed:</strong><br/>{html.escape(error_msg)}</div>'
+                return HTMLResponse(content=error_html, status_code=400)
 
         # First-Party
 
@@ -8569,6 +8583,13 @@ async def admin_tools_partial_html(
 
     # If render=controls, return only pagination controls
     if render == "controls":
+        # NOTE: hx_target/hx_swap must match what tools_partial.html sets when
+        # rendering the inline pagination_controls include — currently
+        # `#tools-table` with swap=outerHTML. Diverging here would cause
+        # subsequent pagination clicks (after a controls-only re-render) to
+        # swap into a target that the success-path doesn't own and trigger
+        # the same `o.querySelector` null-fragment crash that caused the
+        # `_loading` deadlock the rest of this PR fixes.
         return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
@@ -8576,8 +8597,10 @@ async def admin_tools_partial_html(
                 "request": request,
                 "pagination": pagination.model_dump(),
                 "base_url": base_url,
-                "hx_target": "#tools-table-body",
+                "hx_target": "#tools-table",
+                "hx_swap": "outerHTML",
                 "hx_indicator": "#tools-loading",
+                "table_name": "tools",
                 "query_params": query_params_dict,
                 "root_path": _resolve_root_path(request),
             },
@@ -15379,7 +15402,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         "import_data": { ... },
         "conflict_strategy": "update",
         "dry_run": false,
-        "rekey_secret": "optional-new-secret",
+        "rekey_secret": "optional-new-secret",  # pragma: allowlist secret
         "selected_entities": { ... }
     }
     """
@@ -15475,6 +15498,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_get_agent(
     agent_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -15482,6 +15506,7 @@ async def admin_get_agent(
 
     Args:
         agent_id: Agent ID.
+        request: FastAPI request object (required for token team extraction via request.state.token_teams).
         db: Database session.
         user: Authenticated user.
 
@@ -15499,19 +15524,23 @@ async def admin_get_agent(
         'admin_get_agent'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
+    user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
+
     try:
-        agent = await a2a_service.get_agent(db, agent_id)
+        agent = await a2a_service.get_agent(db, agent_id, user_email=user_email, token_teams=token_teams)
         return agent.model_dump(by_alias=True)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting agent {agent_id}: {e}")
-        raise e
+        raise
 
 
 @admin_router.get("/a2a", response_model=PaginatedResponse)
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_list_a2a_agents(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -15529,6 +15558,7 @@ async def admin_list_a2a_agents(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive agents in the results.
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
 
@@ -15559,6 +15589,7 @@ async def admin_list_a2a_agents(
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
 
     # Call a2a_service.list_agents with page-based pagination
     paginated_result = await a2a_service.list_agents(
@@ -15567,6 +15598,7 @@ async def admin_list_a2a_agents(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
