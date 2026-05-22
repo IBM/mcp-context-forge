@@ -666,7 +666,7 @@ class EmailAuthService:
         Examples:
             # user = await service.create_user(
             #     email="new@example.com",
-            #     password="secure123",
+            #     password="secure123",  # pragma: allowlist secret
             #     full_name="New User",
             #     is_active=True,
             #     password_change_required=False

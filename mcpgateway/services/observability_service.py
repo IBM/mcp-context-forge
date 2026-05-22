@@ -117,7 +117,7 @@ def parse_traceparent(traceparent: str) -> Optional[Tuple[str, str, str]]:
 
     Examples:
         >>> parse_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")  # doctest: +SKIP
-        ('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', '01')
+        ('0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331', '01')  # pragma: allowlist secret
     """
     # W3C Trace Context format: 00-trace_id(32hex)-parent_id(16hex)-flags(2hex)
     # Uses precompiled regex for performance
@@ -182,7 +182,7 @@ def format_traceparent(trace_id: str, span_id: str, sampled: bool = True) -> str
         W3C traceparent header value
 
     Examples:
-        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")  # doctest: +SKIP
+        >>> format_traceparent("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331")   # pragma: allowlist secret  # doctest: +SKIP
         '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
     """
     flags = "01" if sampled else "00"

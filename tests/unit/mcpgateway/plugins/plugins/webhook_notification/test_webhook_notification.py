@@ -97,7 +97,7 @@ class TestWebhookNotificationPlugin:
         plugin = _create_plugin()
 
         payload = '{"test": "data"}'
-        secret = "test-secret"
+        secret = "test-secret"  # pragma: allowlist secret
         algorithm = "sha256"
 
         signature = plugin._create_hmac_signature(payload, secret, algorithm)
@@ -183,7 +183,7 @@ class TestWebhookNotificationPlugin:
                 {
                     "url": "https://hooks.example.com/webhook",
                     "events": ["tool_success"],
-                    "authentication": {"type": "api_key", "api_key": "test-api-key", "api_key_header": "X-API-Key"},
+                    "authentication": {"type": "api_key", "api_key": "test-api-key", "api_key_header": "X-API-Key"},  # pragma: allowlist secret
                     "retry_attempts": 1,
                     "enabled": True,
                 }

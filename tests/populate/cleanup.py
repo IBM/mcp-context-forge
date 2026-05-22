@@ -44,7 +44,7 @@ DELETION_ORDER = [
 ]
 
 # Teams and users require special handling (ownership, cascading deps)
-LOADTEST_PASSWORD = "LoadTest1234!"
+LOADTEST_PASSWORD = "LoadTest1234!"  # pragma: allowlist secret
 
 
 async def cleanup_entities(

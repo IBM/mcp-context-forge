@@ -60,7 +60,7 @@ class TestToolsTelemetryExporterPlugin:
                 {
                     "Authorization": "Bearer secret-token",
                     "Cookie": "jwt_token=abc123; theme=dark",
-                    "X-API-Key": "top-secret",
+                    "X-API-Key": "top-secret",  # pragma: allowlist secret
                     "X-Vault-Tokens": "vault-token",
                     "Content-Type": "application/json",
                     "X-Request-Id": "req-123",
@@ -141,7 +141,7 @@ class TestToolsTelemetryExporterPlugin:
         plugin = _create_plugin({"export_full_payload": True, "max_payload_bytes_size": 20})
         payload = ToolPostInvokePayload(
             name="test_tool",
-            result={"content": [{"type": "text", "text": "123456789012345678901234567890"}], "isError": False},
+            result={"content": [{"type": "text", "text": "123456789012345678901234567890"}], "isError": False},  # pragma: allowlist secret
         )
 
         await plugin.tool_post_invoke(payload, _create_context())

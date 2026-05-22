@@ -1,4 +1,5 @@
 """Tests for mcpgateway.__main__ startup entry point."""
+
 import importlib
 import os
 from unittest.mock import MagicMock, call, patch
@@ -20,13 +21,12 @@ class TestMainEntrypoint:
         def fake_uvicorn_run(*args, **kwargs):
             call_order.append("uvicorn")
 
-        monkeypatch.setattr(
-            "mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure
-        )
+        monkeypatch.setattr("mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure)
         monkeypatch.setattr("uvicorn.run", fake_uvicorn_run)
 
         # Import fresh (don't use cached module)
         import mcpgateway.__main__ as entrypoint
+
         importlib.reload(entrypoint)
         entrypoint.main()
 
@@ -36,17 +36,16 @@ class TestMainEntrypoint:
         """If secrets were generated, a message must be printed to stdout."""
 
         def fake_ensure(**kwargs):
-            return {"JWT_SECRET_KEY": "generated-abc", "AUTH_ENCRYPTION_SECRET": "generated-xyz"}
+            return {"JWT_SECRET_KEY": "generated-abc", "AUTH_ENCRYPTION_SECRET": "generated-xyz"}  # pragma: allowlist secret
 
         def fake_uvicorn_run(*args, **kwargs):
             pass
 
-        monkeypatch.setattr(
-            "mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure
-        )
+        monkeypatch.setattr("mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure)
         monkeypatch.setattr("uvicorn.run", fake_uvicorn_run)
 
         import mcpgateway.__main__ as entrypoint
+
         importlib.reload(entrypoint)
         entrypoint.main()
 
@@ -63,12 +62,11 @@ class TestMainEntrypoint:
         def fake_uvicorn_run(*args, **kwargs):
             pass
 
-        monkeypatch.setattr(
-            "mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure
-        )
+        monkeypatch.setattr("mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure)
         monkeypatch.setattr("uvicorn.run", fake_uvicorn_run)
 
         import mcpgateway.__main__ as entrypoint
+
         importlib.reload(entrypoint)
         entrypoint.main()
 
@@ -85,12 +83,11 @@ class TestMainEntrypoint:
         def fake_uvicorn_run(*args, **kwargs):
             uvicorn_calls.append((args, kwargs))
 
-        monkeypatch.setattr(
-            "mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure
-        )
+        monkeypatch.setattr("mcpgateway.scripts.init_secrets.ensure_env_file_secrets", fake_ensure)
         monkeypatch.setattr("uvicorn.run", fake_uvicorn_run)
 
         import mcpgateway.__main__ as entrypoint
+
         importlib.reload(entrypoint)
         entrypoint.main()
 

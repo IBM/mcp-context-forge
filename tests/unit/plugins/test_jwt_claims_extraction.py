@@ -150,7 +150,7 @@ class TestJwtClaimsExtractionPlugin:
     async def test_malformed_token_error_handling(self, plugin: JwtClaimsExtractionPlugin) -> None:
         """Test error handling with malformed token."""
         payload = HttpAuthResolveUserPayload(
-            credentials={"scheme": "Bearer", "credentials": "not-a-valid-jwt"},
+            credentials={"scheme": "Bearer", "credentials": "not-a-valid-jwt"},  # pragma: allowlist secret
             headers=HttpHeaderPayload(root={}),
         )
         ctx = _make_context("test-error")

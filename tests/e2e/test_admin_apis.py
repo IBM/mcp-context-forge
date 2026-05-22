@@ -57,7 +57,7 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 # -------------------------
 # Test Configuration
 # -------------------------
-TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 
 def create_test_jwt_token():
@@ -838,9 +838,7 @@ class TestAdminGatewayAPIs:
         # Configure allowlist and mock HTTP client
         with patch.object(settings, "gateway_test_allow_registered_only", False):
             with patch.object(settings, "gateway_test_allowed_hosts", ["api.example.com"]):
-                with patch("mcpgateway.common.validators.socket.getaddrinfo", return_value=[
-                    (2, 1, 6, "", ("93.184.216.34", 0))
-                ]):
+                with patch("mcpgateway.common.validators.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
                     with patch("mcpgateway.admin.ResilientHttpClient") as mock_client_class:
                         mock_client = MagicMock()
                         mock_response = MagicMock()

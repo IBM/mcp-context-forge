@@ -132,8 +132,8 @@ def test_formatter_includes_opentelemetry_trace_context(logger_with_formatter):
         assert "trace_flags" in log_record
 
         # Verify hex formatting
-        assert log_record["trace_id"] == "1234567890abcdef1234567890abcdef"
-        assert log_record["span_id"] == "1234567890abcdef"
+        assert log_record["trace_id"] == "1234567890abcdef1234567890abcdef"  # pragma: allowlist secret
+        assert log_record["span_id"] == "1234567890abcdef"  # pragma: allowlist secret
         assert log_record["trace_flags"] == "01"
 
 

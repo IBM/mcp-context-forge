@@ -275,7 +275,7 @@ class AzureOpenAIConfig(BaseModel):
 
     Examples:
         >>> config = AzureOpenAIConfig(
-        ...     api_key="your-api-key",
+        ...     api_key="your-api-key",  # pragma: allowlist secret
         ...     azure_endpoint="https://your-resource.openai.azure.com/",
         ...     azure_deployment="gpt-4",
         ...     temperature=0.7
@@ -299,7 +299,7 @@ class AzureOpenAIConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "api_key": "your-api-key",
+                "api_key": "your-api-key",  # pragma: allowlist secret
                 "azure_endpoint": "https://your-resource.openai.azure.com/",
                 "api_version": "2024-05-01-preview",
                 "azure_deployment": "gpt-4",
@@ -362,7 +362,7 @@ class OpenAIConfig(BaseModel):
 
     Examples:
         >>> config = OpenAIConfig(
-        ...     api_key="sk-...",
+        ...     api_key="sk-...",  # pragma: allowlist secret
         ...     model="gpt-4",
         ...     temperature=0.7
         ... )
@@ -382,7 +382,7 @@ class OpenAIConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "api_key": "sk-...",
+                "api_key": "sk-...",  # pragma: allowlist secret
                 "model": "gpt-4o-mini",
                 "temperature": 0.7,
             }
@@ -406,7 +406,7 @@ class AnthropicConfig(BaseModel):
 
     Examples:
         >>> config = AnthropicConfig(
-        ...     api_key="sk-ant-...",
+        ...     api_key="sk-ant-...",  # pragma: allowlist secret
         ...     model="claude-3-5-sonnet-20241022",
         ...     temperature=0.7
         ... )
@@ -424,7 +424,7 @@ class AnthropicConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "api_key": "sk-ant-...",
+                "api_key": "sk-ant-...",  # pragma: allowlist secret
                 "model": "claude-3-5-sonnet-20241022",
                 "temperature": 0.7,
                 "max_tokens": 4096,
@@ -499,7 +499,7 @@ class WatsonxConfig(BaseModel):
 
     Examples:
         >>> config = WatsonxConfig(
-        ...     api_key="your-api-key",
+        ...     api_key="your-api-key",  # pragma: allowlist secret
         ...     url="https://us-south.ml.cloud.ibm.com",
         ...     project_id="your-project-id",
         ...     model_id="ibm/granite-13b-chat-v2"
@@ -523,7 +523,7 @@ class WatsonxConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "api_key": "your-api-key",
+                "api_key": "your-api-key",  # pragma: allowlist secret
                 "url": "https://us-south.ml.cloud.ibm.com",
                 "project_id": "your-project-id",
                 "model_id": "ibm/granite-13b-chat-v2",
@@ -599,7 +599,7 @@ class LLMConfig(BaseModel):
         >>> config = LLMConfig(
         ...     provider="openai",
         ...     config=OpenAIConfig(
-        ...         api_key="sk-...",
+        ...         api_key="sk-...",  # pragma: allowlist secret
         ...         model="gpt-4"
         ...     )
         ... )
@@ -621,7 +621,7 @@ class LLMConfig(BaseModel):
         ...         url="https://us-south.ml.cloud.ibm.com",
         ...         model_id="ibm/granite-13b-instruct-v2",
         ...         project_id="YOUR_PROJECT_ID",
-        ...         api_key="YOUR_API")
+        ...         api_key="YOUR_API")  # pragma: allowlist secret
         ... )
         >>> config.provider
         'watsonx'
@@ -646,7 +646,7 @@ class LLMConfig(BaseModel):
         Examples:
             >>> # Automatically converts dict to appropriate config type
             >>> config_dict = {
-            ...     "api_key": "key",
+            ...     "api_key": "key",  # pragma: allowlist secret
             ...     "azure_endpoint": "https://example.com/",
             ...     "azure_deployment": "gpt-4"
             ... }
@@ -716,7 +716,12 @@ class MCPClientConfig(BaseModel):
                 "mcp_server": {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token"},  # nosec B105 - example placeholder
                 "llm": {
                     "provider": "azure_openai",
-                    "config": {"api_key": "your-key", "azure_endpoint": "https://your-resource.openai.azure.com/", "azure_deployment": "gpt-4", "api_version": "2024-05-01-preview"},
+                    "config": {
+                        "api_key": "your-key",  # pragma: allowlist secret
+                        "azure_endpoint": "https://your-resource.openai.azure.com/",
+                        "azure_deployment": "gpt-4",
+                        "api_version": "2024-05-01-preview",
+                    },  # pragma: allowlist secret
                 },
             }
         }
@@ -737,7 +742,7 @@ class AzureOpenAIProvider:
 
     Examples:
         >>> config = AzureOpenAIConfig(
-        ...     api_key="key",
+        ...     api_key="key",  # pragma: allowlist secret
         ...     azure_endpoint="https://example.openai.azure.com/",
         ...     azure_deployment="gpt-4"
         ... )
@@ -759,7 +764,7 @@ class AzureOpenAIProvider:
 
         Examples:
             >>> config = AzureOpenAIConfig(
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     azure_endpoint="https://example.openai.azure.com/",
             ...     azure_deployment="gpt-4"
             ... )
@@ -787,7 +792,7 @@ class AzureOpenAIProvider:
 
         Examples:
             >>> config = AzureOpenAIConfig(
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     azure_endpoint="https://example.openai.azure.com/",
             ...     azure_deployment="gpt-4"
             ... )
@@ -836,7 +841,7 @@ class AzureOpenAIProvider:
 
         Examples:
             >>> config = AzureOpenAIConfig(
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     azure_endpoint="https://example.openai.azure.com/",
             ...     azure_deployment="gpt-4",
             ...     model="gpt-4"
@@ -945,7 +950,7 @@ class OpenAIProvider:
 
     Examples:
         >>> config = OpenAIConfig(
-        ...     api_key="sk-...",
+        ...     api_key="sk-...",  # pragma: allowlist secret
         ...     model="gpt-4"
         ... )
         >>> provider = OpenAIProvider(config)
@@ -966,7 +971,7 @@ class OpenAIProvider:
 
         Examples:
             >>> config = OpenAIConfig(
-            ...     api_key="sk-...",
+            ...     api_key="sk-...",  # pragma: allowlist secret
             ...     model="gpt-4"
             ... )
             >>> provider = OpenAIProvider(config)
@@ -993,7 +998,7 @@ class OpenAIProvider:
 
         Examples:
             >>> config = OpenAIConfig(
-            ...     api_key="sk-...",
+            ...     api_key="sk-...",  # pragma: allowlist secret
             ...     model="gpt-4"
             ... )
             >>> provider = OpenAIProvider(config)
@@ -1038,7 +1043,7 @@ class OpenAIProvider:
 
         Examples:
             >>> config = OpenAIConfig(
-            ...     api_key="sk-...",
+            ...     api_key="sk-...",  # pragma: allowlist secret
             ...     model="gpt-4"
             ... )
             >>> provider = OpenAIProvider(config)
@@ -1059,7 +1064,7 @@ class AnthropicProvider:
 
     Examples:
         >>> config = AnthropicConfig(  # doctest: +SKIP
-        ...     api_key="sk-ant-...",
+        ...     api_key="sk-ant-...",  # pragma: allowlist secret
         ...     model="claude-3-5-sonnet-20241022"
         ... )
         >>> provider = AnthropicProvider(config)  # doctest: +SKIP
@@ -1082,7 +1087,7 @@ class AnthropicProvider:
 
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
-            ...     api_key="sk-ant-...",
+            ...     api_key="sk-ant-...",  # pragma: allowlist secret
             ...     model="claude-3-5-sonnet-20241022"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
@@ -1112,7 +1117,7 @@ class AnthropicProvider:
 
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
-            ...     api_key="sk-ant-...",
+            ...     api_key="sk-ant-...",  # pragma: allowlist secret
             ...     model="claude-3-5-sonnet-20241022"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
@@ -1154,7 +1159,7 @@ class AnthropicProvider:
 
         Examples:
             >>> config = AnthropicConfig(  # doctest: +SKIP
-            ...     api_key="sk-ant-...",
+            ...     api_key="sk-ant-...",  # pragma: allowlist secret
             ...     model="claude-3-5-sonnet-20241022"
             ... )
             >>> provider = AnthropicProvider(config)  # doctest: +SKIP
@@ -1303,7 +1308,7 @@ class WatsonxProvider:
 
     Examples:
         >>> config = WatsonxConfig(  # doctest: +SKIP
-        ...     api_key="key",
+        ...     api_key="key",  # pragma: allowlist secret
         ...     url="https://us-south.ml.cloud.ibm.com",
         ...     project_id="project-id",
         ...     model_id="ibm/granite-13b-chat-v2"
@@ -1328,7 +1333,7 @@ class WatsonxProvider:
 
         Examples:
             >>> config = WatsonxConfig(  # doctest: +SKIP
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
@@ -1359,7 +1364,7 @@ class WatsonxProvider:
 
         Examples:
             >>> config = WatsonxConfig(  # doctest: +SKIP
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
@@ -1414,7 +1419,7 @@ class WatsonxProvider:
 
         Examples:
             >>> config = WatsonxConfig(  # doctest: +SKIP
-            ...     api_key="key",
+            ...     api_key="key",  # pragma: allowlist secret
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
@@ -1793,7 +1798,7 @@ class LLMProviderFactory:
             >>> config = LLMConfig(
             ...     provider="azure_openai",
             ...     config=AzureOpenAIConfig(
-            ...         api_key="key",
+            ...         api_key="key",  # pragma: allowlist secret
             ...         azure_endpoint="https://example.com/",
             ...         azure_deployment="gpt-4"
             ...     )
@@ -1806,7 +1811,7 @@ class LLMProviderFactory:
             >>> config = LLMConfig(
             ...     provider="openai",
             ...     config=OpenAIConfig(
-            ...         api_key="sk-...",
+            ...         api_key="sk-...",  # pragma: allowlist secret
             ...         model="gpt-4"
             ...     )
             ... )

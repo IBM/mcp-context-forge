@@ -44,22 +44,22 @@ def setup_test_environment():
     """
     test_env = {
         # OpenAI
-        "OPENAI_API_KEY": "sk-test-key",
+        "OPENAI_API_KEY": "sk-test-key",  # pragma: allowlist secret
         "OPENAI_ORGANIZATION": "org-test",
         # Azure
-        "AZURE_OPENAI_API_KEY": "test-azure-key",
+        "AZURE_OPENAI_API_KEY": "test-azure-key",  # pragma: allowlist secret
         "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.com/",
         "AZURE_DEPLOYMENT_NAME": "test-deployment",
         # Anthropic
-        "ANTHROPIC_API_KEY": "sk-ant-test-key",
+        "ANTHROPIC_API_KEY": "sk-ant-test-key",  # pragma: allowlist secret
         # AWS Bedrock
         "AWS_ACCESS_KEY_ID": "AKIA-test-key",
-        "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+        "AWS_SECRET_ACCESS_KEY": "test-secret-key",  # pragma: allowlist secret
         "AWS_REGION": "us-east-1",
         # Google Gemini
-        "GOOGLE_API_KEY": "test-google-key",
+        "GOOGLE_API_KEY": "test-google-key",  # pragma: allowlist secret
         # IBM Watsonx.ai
-        "WATSONX_API_KEY": "test-watsonx-key",
+        "WATSONX_API_KEY": "test-watsonx-key",  # pragma: allowlist secret
         "WATSONX_PROJECT_ID": "test-project-id",
         "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
         # OLLAMA

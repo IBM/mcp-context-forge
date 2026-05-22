@@ -76,7 +76,7 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
 
 
 TEST_USER = "testuser"
-JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # Must match mcpgateway.config.Settings.jwt_secret_key
+JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # Must match mcpgateway.config.Settings.jwt_secret_key  # pragma: allowlist secret
 JWT_ALGORITHM = "HS256"  # Must match mcpgateway.config.Settings.jwt_algorithm
 
 # Ensure test tokens use a strong signing key to avoid weak-key warnings.
@@ -763,7 +763,7 @@ class TestToolAPIs:
     #         "description": "Get current weather data",
     #         "integrationType": "REST",
     #         "requestType": "GET",
-    #         "headers": {"X-API-Key": "demo-key"},
+    #         "headers": {"X-API-Key": "demo-key"},  # pragma: allowlist secret
     #         "inputSchema": {"type": "object", "properties": {"q": {"type": "string", "description": "City name"}, "units": {"type": "string", "enum": ["metric", "imperial"]}}, "required": ["q"]},
     #     }
 

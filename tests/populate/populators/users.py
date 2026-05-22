@@ -17,7 +17,7 @@ from .base import BasePopulator
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PASSWORD = "LoadTest1234!"
+DEFAULT_PASSWORD = "LoadTest1234!"  # pragma: allowlist secret
 
 
 class UserPopulator(BasePopulator):

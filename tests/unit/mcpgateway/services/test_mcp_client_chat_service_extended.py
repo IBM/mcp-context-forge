@@ -25,11 +25,11 @@ import mcpgateway.services.mcp_client_chat_service as svc
 def test_llmproviderfactory_valid_providers(monkeypatch):
     providers = {
         "azure_openai": svc.AzureOpenAIConfig(api_key="k", azure_endpoint="u", azure_deployment="m"),
-        "openai": svc.OpenAIConfig(api_key="sk", model="gpt-4"),
-        "anthropic": svc.AnthropicConfig(api_key="ant"),
+        "openai": svc.OpenAIConfig(api_key="sk", model="gpt-4"),  # pragma: allowlist secret
+        "anthropic": svc.AnthropicConfig(api_key="ant"),  # pragma: allowlist secret
         "aws_bedrock": svc.AWSBedrockConfig(model_id="m", region_name="us-east-1"),
         "ollama": svc.OllamaConfig(),
-        "watsonx": svc.WatsonxConfig(api_key="key", url="https://s", project_id="p"),
+        "watsonx": svc.WatsonxConfig(api_key="key", url="https://s", project_id="p"),  # pragma: allowlist secret
     }
     for provider, conf in providers.items():
         cfg = svc.LLMConfig(provider=provider, config=conf)
@@ -168,7 +168,7 @@ async def test_mcpchatservice_initialize_and_valid_chat(monkeypatch):
     monkeypatch.setattr(svc, "MultiServerMCPClient", MagicMock())
     chatcfg = svc.MCPClientConfig(
         mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"),
-        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")),  # pragma: allowlist secret
     )
     service = svc.MCPChatService(chatcfg, user_id="u1")
     monkeypatch.setattr(service, "initialize", AsyncMock(return_value=None))
@@ -263,7 +263,9 @@ async def test_chat_non_streaming_response(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chat_service_disconnect_cleanup(monkeypatch):
-    chatcfg = svc.MCPClientConfig(mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"), llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4")))
+    chatcfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://x", transport="sse"), llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="ak", model="gpt-4"))  # pragma: allowlist secret
+    )  # pragma: allowlist secret
     service = svc.MCPChatService(chatcfg)
     service._client = AsyncMock()
     service._client.disconnect = AsyncMock(return_value=None)
@@ -343,7 +345,7 @@ def _make_model_and_provider(provider_type, config=None, api_base=None, enabled=
         name="provider",
         enabled=enabled,
         provider_type=provider_type,
-        api_key="enc",
+        api_key="enc",  # pragma: allowlist secret
         api_base=api_base,
         default_temperature=0.4,
         config=config or {},
@@ -804,7 +806,7 @@ def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
 
 
 def test_openai_config_validation_defaults():
-    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-3.5")
+    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-3.5")  # pragma: allowlist secret
     assert cfg.temperature == 0.7
     assert cfg.max_retries == 2
     assert "gpt" in cfg.model
@@ -818,7 +820,7 @@ def test_awsbedrock_config_region_defaults():
 
 
 def test_anthropic_config_missing_model(monkeypatch):
-    cfg = svc.AnthropicConfig(api_key="ant-key")
+    cfg = svc.AnthropicConfig(api_key="ant-key")  # pragma: allowlist secret
     assert "claude" in cfg.model
     assert cfg.temperature <= 1.0
 
@@ -837,11 +839,11 @@ def test_provider_get_model_names(monkeypatch):
     monkeypatch.setattr(svc, "WatsonxLLM", MagicMock())
     provs = [
         svc.AzureOpenAIProvider(svc.AzureOpenAIConfig(api_key="k", azure_endpoint="u", azure_deployment="m")),
-        svc.OpenAIProvider(svc.OpenAIConfig(api_key="sk", model="gpt-4")),
+        svc.OpenAIProvider(svc.OpenAIConfig(api_key="sk", model="gpt-4")),  # pragma: allowlist secret
         svc.OllamaProvider(svc.OllamaConfig(model="llama2")),
-        svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant")),
+        svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant")),  # pragma: allowlist secret
         svc.AWSBedrockProvider(svc.AWSBedrockConfig(model_id="m", region_name="us-east-1")),
-        svc.WatsonxProvider(svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")),
+        svc.WatsonxProvider(svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")),  # pragma: allowlist secret
     ]
     for p in provs:
         name = p.get_model_name()
@@ -852,7 +854,7 @@ def test_provider_get_model_names(monkeypatch):
 def test_provider_fallbacks(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", MagicMock())
-    cfg = svc.AnthropicConfig(api_key="ant")
+    cfg = svc.AnthropicConfig(api_key="ant")  # pragma: allowlist secret
     prov = svc.AnthropicProvider(cfg)
     monkeypatch.setattr(prov, "get_llm", MagicMock(side_effect=ImportError("missing module")))
     with pytest.raises(ImportError):
@@ -1176,7 +1178,7 @@ def test_openai_provider_completion(monkeypatch):
             self.kw = kw
 
     monkeypatch.setattr(svc, "OpenAI", DummyLLM)
-    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4", base_url="https://custom", default_headers={"X-Custom": "val"})
+    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4", base_url="https://custom", default_headers={"X-Custom": "val"})  # pragma: allowlist secret
     provider = svc.OpenAIProvider(cfg)
     llm = provider.get_llm(model_type="completion")
     assert isinstance(llm, DummyLLM)
@@ -1187,7 +1189,7 @@ def test_openai_provider_completion(monkeypatch):
 def test_openai_provider_error(monkeypatch):
     """OpenAIProvider.get_llm raises on error."""
     monkeypatch.setattr(svc, "ChatOpenAI", MagicMock(side_effect=RuntimeError("err")))
-    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4")
+    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4")  # pragma: allowlist secret
     provider = svc.OpenAIProvider(cfg)
     with pytest.raises(RuntimeError, match="err"):
         provider.get_llm()
@@ -1203,7 +1205,7 @@ def test_anthropic_provider_completion(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
     monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
-    cfg = svc.AnthropicConfig(api_key="ant")
+    cfg = svc.AnthropicConfig(api_key="ant")  # pragma: allowlist secret
     provider = svc.AnthropicProvider(cfg)
     llm = provider.get_llm(model_type="completion")
     assert isinstance(llm, DummyLLM)
@@ -1217,7 +1219,7 @@ def test_anthropic_provider_not_available():
     try:
         m._ANTHROPIC_AVAILABLE = False
         with pytest.raises(ImportError, match="langchain-anthropic"):
-            svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant"))
+            svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant"))  # pragma: allowlist secret
     finally:
         m._ANTHROPIC_AVAILABLE = orig
 
@@ -1226,7 +1228,7 @@ def test_anthropic_provider_error(monkeypatch):
     """AnthropicProvider.get_llm raises on init error."""
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", MagicMock(side_effect=RuntimeError("auth fail")))
-    cfg = svc.AnthropicConfig(api_key="ant")
+    cfg = svc.AnthropicConfig(api_key="ant")  # pragma: allowlist secret
     provider = svc.AnthropicProvider(cfg)
     with pytest.raises(RuntimeError, match="auth fail"):
         provider.get_llm()
@@ -1290,7 +1292,7 @@ def test_watsonx_provider_chat(monkeypatch):
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
-    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")  # pragma: allowlist secret
     provider = svc.WatsonxProvider(cfg)
     llm = provider.get_llm(model_type="chat")
     assert isinstance(llm, DummyLLM)
@@ -1306,7 +1308,7 @@ def test_watsonx_provider_completion_with_params(monkeypatch):
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
-    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p", top_k=40, top_p=0.9)
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p", top_k=40, top_p=0.9)  # pragma: allowlist secret
     provider = svc.WatsonxProvider(cfg)
     llm = provider.get_llm(model_type="completion")
     assert isinstance(llm, DummyLLM)
@@ -1332,7 +1334,7 @@ def test_watsonx_provider_error(monkeypatch):
     """WatsonxProvider.get_llm raises on error."""
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatWatsonx", MagicMock(side_effect=RuntimeError("wx err")))
-    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")  # pragma: allowlist secret
     provider = svc.WatsonxProvider(cfg)
     with pytest.raises(RuntimeError, match="wx err"):
         provider.get_llm()
@@ -1419,7 +1421,7 @@ def test_gateway_provider_watsonx_completion(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="completion")
@@ -1443,7 +1445,8 @@ def test_gateway_provider_unsupported_type(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("some_unknown_provider")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
+    """GatewayProvider.get_model_name works before get_llm is called."""
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ValueError, match="Unsupported LLM provider"):
@@ -1455,7 +1458,7 @@ def test_gateway_provider_cached_llm(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm1 = gateway.get_llm(model_type="chat")
@@ -1475,7 +1478,7 @@ def test_gateway_provider_bedrock_not_available(monkeypatch):
     monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", False)
     model, provider = _make_model_and_provider("bedrock", config={"region": "us-east-1"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ImportError, match="langchain-aws"):
@@ -1490,7 +1493,7 @@ def test_gateway_provider_bedrock_credentials_forwarded(monkeypatch):
         config={"region": "ap-southeast-1", "access_key_id": "AKID", "secret_access_key": "SECRET", "session_token": "TOK"},
     )
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -1505,7 +1508,7 @@ def test_gateway_provider_bedrock_no_credentials(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("bedrock", config={"region": "us-west-2"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -1520,7 +1523,7 @@ def test_gateway_provider_bedrock_default_region(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("bedrock", config={})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -1535,7 +1538,7 @@ def test_gateway_provider_bedrock_profile_name(monkeypatch):
         config={"region": "us-east-1", "profile_name": "my-profile"},
     )
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -1549,7 +1552,7 @@ def test_gateway_provider_anthropic_not_available(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", False)
     model, provider = _make_model_and_provider("anthropic")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ImportError, match="langchain-anthropic"):
@@ -1562,7 +1565,7 @@ def test_gateway_provider_watsonx_not_available(monkeypatch):
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", False)
     model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     with pytest.raises(ImportError, match="langchain-ibm"):
@@ -1574,7 +1577,7 @@ def test_gateway_provider_openai_default_headers_from_config(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai", config={"default_headers": {"X-Api-Version": "v2"}}, api_base="https://api")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")
@@ -1598,7 +1601,7 @@ def test_gateway_provider_azure_completion_branch(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep", "api_version": "2024-01"}, api_base="https://azure")
     _patch_gateway_session(monkeypatch, model, provider)
-    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})  # pragma: allowlist secret
 
     gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
     llm = gateway.get_llm(model_type="chat")

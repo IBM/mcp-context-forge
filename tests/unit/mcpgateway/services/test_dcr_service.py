@@ -455,7 +455,7 @@ class TestRegisterClient:
 
         mock_registration_response = {
             "client_id": "dcr-generated-client-123",
-            "client_secret": "dcr-generated-secret-xyz",
+            "client_secret": "dcr-generated-secret-xyz",  # pragma: allowlist secret
             "client_id_issued_at": 1234567890,
             "redirect_uris": ["http://localhost:4444/oauth/callback"],
             "grant_types": ["authorization_code"],
@@ -701,7 +701,7 @@ class TestRegisterClient:
         dcr_service = DcrService()
 
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
-        mock_registration = {"client_id": "test-client-encrypt", "client_secret": "plaintext-secret", "redirect_uris": ["http://localhost:4444/callback"]}
+        mock_registration = {"client_id": "test-client-encrypt", "client_secret": "plaintext-secret", "redirect_uris": ["http://localhost:4444/callback"]}  # pragma: allowlist secret
 
         mock_response = MagicMock()
         mock_response.status_code = 201
@@ -836,7 +836,11 @@ class TestUpdateClientRegistration:
         test_db.add(client_record)
         test_db.commit()
 
-        mock_response = {"client_id": "test-client-update", "client_secret": "updated-secret", "redirect_uris": ["http://localhost:4444/callback", "http://localhost:4444/callback2"]}
+        mock_response = {
+            "client_id": "test-client-update",
+            "client_secret": "updated-secret",  # pragma: allowlist secret
+            "redirect_uris": ["http://localhost:4444/callback", "http://localhost:4444/callback2"],
+        }  # pragma: allowlist secret
 
         mock_response_obj = MagicMock()
         mock_response_obj.status_code = 200

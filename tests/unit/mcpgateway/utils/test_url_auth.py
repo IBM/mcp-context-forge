@@ -38,14 +38,14 @@ class TestApplyQueryParamAuth:
     def test_adds_single_query_param(self):
         """Add a single query parameter to URL without existing params."""
         url = "https://api.tavily.com/mcp"
-        params = {"tavilyApiKey": "secret123"}
+        params = {"tavilyApiKey": "secret123"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         assert result == "https://api.tavily.com/mcp?tavilyApiKey=secret123"
 
     def test_adds_multiple_query_params(self):
         """Add multiple query parameters to URL."""
         url = "https://api.example.com/mcp"
-        params = {"api_key": "key123", "token": "token456"}
+        params = {"api_key": "key123", "token": "token456"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         # Note: Order may vary in dict iteration
         assert "api_key=key123" in result
@@ -55,7 +55,7 @@ class TestApplyQueryParamAuth:
     def test_appends_to_existing_query_params(self):
         """Append auth params to URL that already has query parameters."""
         url = "https://api.example.com/search?q=test"
-        params = {"api_key": "abc123"}
+        params = {"api_key": "abc123"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         assert "q=test" in result
         assert "api_key=abc123" in result
@@ -63,7 +63,7 @@ class TestApplyQueryParamAuth:
     def test_overrides_existing_param(self):
         """Auth params override existing params with same name."""
         url = "https://api.example.com/mcp?api_key=old_value"
-        params = {"api_key": "new_value"}
+        params = {"api_key": "new_value"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         assert "api_key=new_value" in result
         assert "old_value" not in result
@@ -78,7 +78,7 @@ class TestApplyQueryParamAuth:
     def test_handles_special_characters_in_values(self):
         """URL-encode special characters in parameter values."""
         url = "https://api.example.com/mcp"
-        params = {"api_key": "key=with+special&chars"}
+        params = {"api_key": "key=with+special&chars"}  # pragma: allowlist secret
         result = apply_query_param_auth(url, params)
         # urllib.parse.urlencode handles encoding
         assert "api.example.com/mcp?" in result
@@ -147,13 +147,13 @@ class TestSanitizeUrlForLogging:
         assert "mykey" not in result
 
     def test_redacts_userinfo_in_netloc(self):
-        url = "https://user:pass@api.example.com/endpoint"
+        url = "https://user:pass@api.example.com/endpoint"  # pragma: allowlist secret
         result = sanitize_url_for_logging(url)
-        assert result == "https://REDACTED:REDACTED@api.example.com/endpoint"
+        assert result == "https://REDACTED:REDACTED@api.example.com/endpoint"  # pragma: allowlist secret
 
-        url_v6 = "https://user:pass@[::1]:8080/path"
+        url_v6 = "https://user:pass@[::1]:8080/path"  # pragma: allowlist secret
         result_v6 = sanitize_url_for_logging(url_v6)
-        assert result_v6 == "https://REDACTED:REDACTED@[::1]:8080/path"
+        assert result_v6 == "https://REDACTED:REDACTED@[::1]:8080/path"  # pragma: allowlist secret
 
 
 class TestStaticSensitiveParams:
@@ -213,7 +213,7 @@ class TestSanitizeExceptionMessage:
     def test_sanitizes_url_with_gateway_specific_param(self):
         """Sanitize URL with gateway-specific auth param."""
         msg = "Error connecting to https://api.tavily.com/mcp?tavilyApiKey=mykey123"
-        result = sanitize_exception_message(msg, {"tavilyApiKey": "mykey123"})
+        result = sanitize_exception_message(msg, {"tavilyApiKey": "mykey123"})  # pragma: allowlist secret
         assert "tavilyApiKey=REDACTED" in result
         assert "mykey123" not in result
 

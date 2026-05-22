@@ -85,7 +85,7 @@ def test_setup_metrics_enabled_postgresql():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgresql://user:pass@localhost/db"
+        mock_settings.database_url = "postgresql://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
@@ -102,7 +102,7 @@ def test_setup_metrics_enabled_postgresql_psycopg():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"
+        mock_settings.database_url = "postgresql+psycopg://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst
@@ -166,7 +166,7 @@ def test_setup_metrics_postgres_prefix():
         patch("mcpgateway.services.metrics.settings") as mock_settings,
         patch("mcpgateway.services.metrics.Instrumentator") as mock_inst_cls,
     ):
-        mock_settings.database_url = "postgres://user:pass@localhost/db"
+        mock_settings.database_url = "postgres://user:pass@localhost/db"  # pragma: allowlist secret
         mock_settings.METRICS_EXCLUDED_HANDLERS = ""
         inst = MagicMock()
         mock_inst_cls.return_value = inst

@@ -407,8 +407,8 @@ def test_trace_a2a_request_success_path(mock_session_factory):
 def test_parse_traceparent_valid():
     header = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
     trace_id, parent_id, flags = parse_traceparent(header)
-    assert trace_id == "0af7651916cd43dd8448eb211c80319c"
-    assert parent_id == "b7ad6b7169203331"
+    assert trace_id == "0af7651916cd43dd8448eb211c80319c"  # pragma: allowlist secret
+    assert parent_id == "b7ad6b7169203331"  # pragma: allowlist secret
     assert flags == "01"
 
 

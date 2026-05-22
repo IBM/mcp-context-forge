@@ -180,7 +180,7 @@ class TestGatewayServiceExtended:
         # First-Party
         from mcpgateway.utils.services_auth import encode_auth
 
-        original_headers = {"X-Api-Key": "secret123", "Authorization": "Bearer tok"}
+        original_headers = {"X-Api-Key": "secret123", "Authorization": "Bearer tok"}  # pragma: allowlist secret
         encoded = encode_auth(original_headers)
         assert isinstance(encoded, str), "encode_auth must return a string"
 

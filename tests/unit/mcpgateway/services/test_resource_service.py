@@ -915,7 +915,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=mock_resource.uri,
                 name=mock_resource.name,
                 description=mock_resource.description,
@@ -962,7 +962,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=mock_resource.uri,
                 name=mock_resource.name,
                 description=mock_resource.description,
@@ -1002,7 +1002,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id="39334ce0ed2644d79ede8913a66930c9",
+                id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
                 uri=mock_resource.uri,
                 name="Updated Name",
                 description="Updated description",
@@ -1209,7 +1209,7 @@ class TestResourceManagement:
         mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9")
+            await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9")  # pragma: allowlist secret
 
         assert "exists but is inactive" in str(exc_info.value)
 
@@ -1220,7 +1220,7 @@ class TestResourceManagement:
         mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.return_value = mock_scalar
 
-        result = await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9", include_inactive=True)
+        result = await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9", include_inactive=True)  # pragma: allowlist secret
 
         assert isinstance(result, ResourceRead)
         assert result.uri == mock_inactive_resource.uri
@@ -1884,7 +1884,7 @@ class TestResourceTemplates:
 
         # Binary MIME template
         template = MagicMock()
-        template.id = "39334ce0ed2644d79ede8913a66930c9"
+        template.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
         template.uri_template = "test://template/{id}"
         template.name = "binary_template"
         template.mime_type = "application/octet-stream"
@@ -2136,7 +2136,7 @@ class TestNotifications:
         """Test resource deleted notification."""
         resource_service._event_service.publish_event = AsyncMock()
 
-        resource_info = {"id": "39334ce0ed2644d79ede8913a66930c9", "uri": "test://resource", "name": "Test"}
+        resource_info = {"id": "39334ce0ed2644d79ede8913a66930c9", "uri": "test://resource", "name": "Test"}  # pragma: allowlist secret
         await resource_service._notify_resource_deleted(resource_info)
 
         resource_service._event_service.publish_event.assert_called_once()
@@ -2202,7 +2202,7 @@ class TestErrorHandling:
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.set_resource_state(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
+            await resource_service.set_resource_state(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)  # pragma: allowlist secret
 
         mock_db.rollback.assert_called_once()
 
@@ -2922,7 +2922,7 @@ class TestResourceServiceMetricsExtended:
         """Test getting top performing resources."""
         # Mock the combined query results (TopPerformerResult objects)
         mock_performer1 = MagicMock()
-        mock_performer1.id = "39334ce0ed2644d79ede8913a66930c9"
+        mock_performer1.id = "39334ce0ed2644d79ede8913a66930c9"  # pragma: allowlist secret
         mock_performer1.name = "resource1"
         mock_performer1.execution_count = 10
         mock_performer1.avg_response_time = 1.5
@@ -4115,7 +4115,7 @@ class TestInvokeResourceCoverage:
         resource = self._make_resource()
         gateway = self._make_gateway(transport="sse", auth_type="query_param")
         gateway.url = "http://gw.test"
-        gateway.auth_query_params = {"bad": "bad_enc", "api_key": "enc_val"}
+        gateway.auth_query_params = {"bad": "bad_enc", "api_key": "enc_val"}  # pragma: allowlist secret
 
         db = MagicMock()
         db.close = MagicMock()
@@ -4130,7 +4130,7 @@ class TestInvokeResourceCoverage:
         def decode_side_effect(v):
             if v == "bad_enc":
                 raise RuntimeError("decrypt fail")
-            return {"api_key": "secret123"}
+            return {"api_key": "secret123"}  # pragma: allowlist secret
 
         captured_sse_url: dict[str, str] = {}
 
@@ -4738,7 +4738,7 @@ class TestConvertResourceToReadMetrics:
         m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
         m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
         resource = SimpleNamespace(
-            id="39334ce0ed2644d79ede8913a66930c9",
+            id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
             uri="res://x",
             name="R",
             description="desc",
@@ -4784,7 +4784,7 @@ class TestConvertResourceToReadMetrics:
 
         now = datetime.now(timezone.utc)
         resource = SimpleNamespace(
-            id="39334ce0ed2644d79ede8913a66930c9",
+            id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
             uri="res://x",
             name="R",
             description="desc",
@@ -4828,7 +4828,7 @@ class TestConvertResourceToReadMetrics:
 
         now = datetime.now(timezone.utc)
         resource = SimpleNamespace(
-            id="39334ce0ed2644d79ede8913a66930c9",
+            id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
             uri="res://x",
             name="R",
             description="desc",

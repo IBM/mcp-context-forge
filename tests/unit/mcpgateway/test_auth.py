@@ -104,7 +104,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_valid_jwt_token_returns_user(self):
         """Test successful authentication with valid JWT token."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         # Mock JWT verification
         jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
@@ -132,7 +132,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_auth_method_set_on_cache_hit(self, monkeypatch):
         """Ensure auth_method is set when auth cache returns early."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         payload = {
             "sub": "test@example.com",
@@ -160,7 +160,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_auth_method_set_on_batched_query(self, monkeypatch):
         """Ensure auth_method is set when batched DB path returns early."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         payload = {
             "sub": "test@example.com",
@@ -188,7 +188,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_jwt_with_legacy_email_format(self):
         """Test JWT token with legacy 'email' field instead of 'sub'."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_jwt_token")  # pragma: allowlist secret
 
         # Mock JWT verification with legacy format
         jwt_payload = {"email": "legacy@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
@@ -214,7 +214,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_jwt_without_email_or_sub_raises_401(self):
         """Test JWT token without email or sub field raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_jwt")  # pragma: allowlist secret
 
         # Mock JWT verification without email/sub
         jwt_payload = {"exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
@@ -229,7 +229,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_revoked_jwt_token_raises_401(self):
         """Test that revoked JWT token raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="revoked_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="revoked_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_123", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -244,7 +244,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_token_revocation_check_failure_denies_access(self, caplog):
         """Test that token revocation check failure denies access (fail-secure)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -280,7 +280,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_expired_jwt_token_raises_401(self):
         """Test that expired JWT token raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="expired_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="expired_jwt")  # pragma: allowlist secret
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"))):
             with pytest.raises(HTTPException) as exc_info:
@@ -320,7 +320,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_session_token_with_single_team_narrows_via_resolve_session_teams(self, monkeypatch):
         """Session tokens with a JWT teams claim narrow DB teams via resolve_session_teams."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")  # pragma: allowlist secret
 
         # JWT carries one team; DB has two — intersection narrows to one
         jwt_payload = {
@@ -354,7 +354,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_session_token_with_multiple_teams_resolves_from_db(self, monkeypatch):
         """Test that session tokens with multiple teams resolve from DB (else branch of line 1056)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")  # pragma: allowlist secret
 
         # Session token with multiple teams
         jwt_payload = {
@@ -394,7 +394,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self):
         """Session tokens always resolve teams from DB even when a teams claim is present."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_with_teams")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_with_teams")  # pragma: allowlist secret
 
         # Session token with explicit single team claim — should still go to DB
         jwt_payload = {
@@ -428,7 +428,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_session_token_without_teams_claim_resolves_from_db(self):
         """Test that session tokens without 'teams' claim resolve teams from DB."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_no_teams")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_no_teams")  # pragma: allowlist secret
 
         # Session token WITHOUT teams claim
         jwt_payload = {
@@ -463,7 +463,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_session_token_with_null_teams_claim_uses_db_resolve(self):
         """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_null_teams")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_null_teams")  # pragma: allowlist secret
 
         # Session token with explicit null teams (admin bypass)
         jwt_payload = {
@@ -500,7 +500,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_api_token_always_uses_embedded_teams(self):
         """Test that API tokens always use embedded teams regardless of teams claim."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_jwt_token")  # pragma: allowlist secret
 
         # API token (not session)
         jwt_payload = {
@@ -564,7 +564,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_api_token_not_found_raises_401(self):
         """Test that non-existent API token raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="nonexistent_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="nonexistent_token")  # pragma: allowlist secret
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", return_value=None):
@@ -577,7 +577,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_api_token_database_error_raises_401(self):
         """Test that database error during API token lookup raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token_causing_db_error")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token_causing_db_error")  # pragma: allowlist secret
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("Invalid JWT"))):
             with patch("mcpgateway.auth._lookup_api_token_sync", side_effect=Exception("Database connection error")):
@@ -590,7 +590,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_user_not_found_raises_401(self):
         """Test that non-existent user raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "nonexistent@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -606,7 +606,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_platform_admin_virtual_user_creation(self):
         """Test that platform admin gets a virtual user object if not in database."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(), "is_admin": True}
 
@@ -626,7 +626,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_require_user_in_db_rejects_platform_admin(self):
         """Test that REQUIRE_USER_IN_DB=true rejects even platform admin when user not in DB."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -644,7 +644,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_require_user_in_db_allows_existing_user(self):
         """Test that REQUIRE_USER_IN_DB=true allows users that exist in the database."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "existing@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -671,7 +671,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_require_user_in_db_logs_rejection(self, caplog):
         """Test that REQUIRE_USER_IN_DB rejection is logged."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -689,7 +689,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_require_user_in_db_rejects_cached_user_not_in_db(self):
         """Test that REQUIRE_USER_IN_DB=true rejects cached users that no longer exist in DB."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "cached@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -716,7 +716,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_require_user_in_db_batched_path_rejects_missing_user(self):
         """Test that REQUIRE_USER_IN_DB=true rejects users via batched auth path."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -738,7 +738,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_inactive_user_raises_401(self):
         """Test that inactive user account raises 401."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "inactive@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -765,7 +765,7 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_logging_debug_messages(self, caplog, monkeypatch):
         """Test that appropriate debug messages are logged during authentication."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test_token_for_logging")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test_token_for_logging")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -828,7 +828,7 @@ class TestAuthHooksOptimization:
     @pytest.mark.asyncio
     async def test_invoke_hook_skipped_when_has_hooks_for_returns_false(self):
         """Test that invoke_hook is NOT called when has_hooks_for returns False."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -866,7 +866,7 @@ class TestAuthHooksOptimization:
     @pytest.mark.asyncio
     async def test_invoke_hook_called_when_has_hooks_for_returns_true(self):
         """Test that invoke_hook IS called when has_hooks_for returns True."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         # Mock plugin result that continues to standard auth
         # First-Party
@@ -913,7 +913,7 @@ class TestAuthHooksOptimization:
     @pytest.mark.asyncio
     async def test_standard_auth_fallback_when_no_plugin_manager(self):
         """Test that standard JWT auth works when plugin manager is None."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
 
         jwt_payload = {"sub": "test@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
@@ -1526,7 +1526,7 @@ class TestUpdateApiTokenLastUsed:
     @pytest.mark.asyncio
     async def test_api_token_last_used_updated_on_jwt_auth(self, monkeypatch):
         """Test that last_used is updated when API token is authenticated via JWT."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")  # pragma: allowlist secret
 
         jwt_payload = {
             "sub": "api@example.com",
@@ -1574,7 +1574,7 @@ class TestUpdateApiTokenLastUsed:
     @pytest.mark.asyncio
     async def test_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
         """Test that authentication continues even if last_used update fails (lines 711-712)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")  # pragma: allowlist secret
 
         jwt_payload = {
             "sub": "api@example.com",
@@ -1618,7 +1618,7 @@ class TestUpdateApiTokenLastUsed:
     @pytest.mark.asyncio
     async def test_api_token_jti_stored_in_request_state(self, monkeypatch):
         """Test that JTI is stored in request.state for middleware use."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")  # pragma: allowlist secret
 
         jwt_payload = {
             "sub": "test@example.com",
@@ -1662,7 +1662,7 @@ class TestUpdateApiTokenLastUsed:
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_updated(self, monkeypatch):
         """Test that last_used is updated for legacy API tokens (DB lookup path)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")  # pragma: allowlist secret
 
         # JWT payload without auth_provider (legacy format)
         jwt_payload = {
@@ -1709,7 +1709,7 @@ class TestUpdateApiTokenLastUsed:
     @pytest.mark.asyncio
     async def test_legacy_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
         """Test that authentication continues even if legacy token last_used update fails (lines 732-733)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")  # pragma: allowlist secret
 
         # JWT payload without auth_provider (legacy format)
         jwt_payload = {
@@ -2030,7 +2030,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.mark.asyncio
     async def test_api_token_auth_provider(self):
         """auth_provider == 'api_token' → request.state.auth_method = 'api_token' (lines 524-525)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "user": {"auth_provider": "api_token"},
@@ -2064,7 +2064,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.mark.asyncio
     async def test_legacy_api_token_jti_check(self):
         """No auth_provider + JTI → legacy DB check (lines 534-544)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "user": {},  # no auth_provider
@@ -2097,7 +2097,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.mark.asyncio
     async def test_legacy_non_api_token_jti(self):
         """No auth_provider + JTI not in api_tokens → jwt (lines 540-541)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "user": {},
@@ -2129,7 +2129,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.mark.asyncio
     async def test_no_auth_provider_no_jti(self):
         """No auth_provider and no JTI → default jwt (lines 542-544)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "user": {},
@@ -2166,7 +2166,7 @@ class TestPluginAuthHook:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(),
             client=SimpleNamespace(host="127.0.0.1", port=9999),
@@ -2217,7 +2217,7 @@ class TestPluginAuthHook:
         # First-Party
         from cpex.framework.errors import PluginViolationError
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="denied_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="denied_token")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -2235,7 +2235,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_generic_exception_falls_through(self):
         """Plugin hook raises generic exception → falls through to standard auth (lines 660-662)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -2292,7 +2292,7 @@ class TestPluginAuthHook:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(request_id="fallback-req-id"),
             client=None,
@@ -2335,7 +2335,7 @@ class TestPluginAuthHook:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
         # Request without request_id in state
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
@@ -2690,7 +2690,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_inactive_user(self, monkeypatch):
         """Batched user is inactive → 401 (line 838)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         auth_ctx = {
@@ -2709,6 +2709,10 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_platform_admin_bootstrap(self, monkeypatch):
         """Batched user not found → platform admin bootstrap (lines 864-882)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
+
+    async def test_batch_platform_admin_required(self, monkeypatch):
+        """Batched user not found and platform admin required → 401 (line 884)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}, "is_admin": True}
 
@@ -2727,7 +2731,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_user_not_found_not_admin(self, monkeypatch):
         """Batched user not found + not platform admin → 401 (lines 882-886)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "nobody@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}
@@ -2744,7 +2748,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_include_user_info(self, monkeypatch):
         """Batched path with include_user_info (line 889)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         auth_ctx = {
@@ -2772,7 +2776,7 @@ class TestBatchedPathBranches:
     @pytest.mark.asyncio
     async def test_batch_exception_falls_through(self, monkeypatch):
         """Batch query fails → falls through to individual queries (line 896)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {"sub": "user@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}}
 
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
@@ -2807,7 +2811,7 @@ class TestFallbackPathWithRequest:
     @pytest.mark.asyncio
     async def test_fallback_sets_teams_on_request(self):
         """Fallback path sets token_teams and team_id on request (lines 919-921)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "teams": ["team-1"],
@@ -2840,7 +2844,7 @@ class TestFallbackPathWithRequest:
     @pytest.mark.asyncio
     async def test_fallback_multi_team_api_token_does_not_set_single_team_id(self, monkeypatch):
         """Multi-team API tokens should not collapse to a single request.state.team_id."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "teams": ["team-1", "team-2"],
@@ -2881,7 +2885,7 @@ class TestApiTokenWithRequest:
     @pytest.mark.asyncio
     async def test_api_token_sets_auth_method_on_request(self):
         """API token sets auth_method='api_token' on request (line 960)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_value")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_value")  # pragma: allowlist secret
 
         mock_user = EmailUser(
             email="api@example.com",
@@ -3011,7 +3015,7 @@ class TestPluginAuthHookEdgeCases:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(plugin_global_context=MagicMock()),
             client=SimpleNamespace(host="127.0.0.1", port=9999),
@@ -3056,7 +3060,7 @@ class TestPluginAuthHookEdgeCases:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(),
             client=None,
@@ -3097,7 +3101,7 @@ class TestPluginAuthHookEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_http_exception_reraised(self):
         """Plugin invoke_hook raises HTTPException → re-raised (line 659)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -3119,7 +3123,7 @@ class TestCacheRequireUserInDbFound:
     @pytest.mark.asyncio
     async def test_cache_require_user_in_db_found(self, monkeypatch):
         """Cached user + require_user_in_db + DB has user → success (branch 756->767)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -3162,7 +3166,7 @@ class TestFallbackPathBatchDisabled:
     @pytest.mark.asyncio
     async def test_batch_disabled_falls_through_to_individual(self, monkeypatch):
         """Batch disabled → skip to individual queries (branch 781->899)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -3512,7 +3516,7 @@ class TestSessionTokenBranches:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
 
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(return_value=True)
@@ -3553,7 +3557,7 @@ class TestSessionTokenBranches:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -3596,7 +3600,7 @@ class TestSessionTokenBranches:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -3631,7 +3635,7 @@ class TestSessionTokenBranches:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -3676,7 +3680,7 @@ class TestSessionTokenBranches:
         # First-Party
         from cpex.framework import PluginResult
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")  # pragma: allowlist secret
         request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
 
         mock_pm = MagicMock()
@@ -3707,7 +3711,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_cache_session_token_falls_through_and_resolves_teams(self, monkeypatch):
         """Cache-hit session token with missing cached user falls through to DB path (line 889, 1084)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "token_use": "session",
@@ -3751,7 +3755,7 @@ class TestSessionTokenBranches:
     @pytest.mark.asyncio
     async def test_batched_session_token_admin_teams_none(self, monkeypatch):
         """Batched path session token where user is admin sets teams=None (lines 952-957)."""
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "admin@example.com",
             "jti": "jti-1",
@@ -3785,7 +3789,7 @@ class TestSessionTokenBranches:
         cache must receive the full batch_teams=["t1","t2"] so that other
         sessions for the same user can narrow independently.
         """
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")  # pragma: allowlist secret
         payload = {
             "sub": "user@example.com",
             "jti": "jti-1",
@@ -3827,7 +3831,7 @@ class TestSessionTokenBranches:
         # First-Party
         from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_name, get_trace_team_scope, get_trace_user_email
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
         payload = {
             "sub": "trace@example.com",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
@@ -3864,7 +3868,7 @@ class TestSessionTokenBranches:
         # First-Party
         from mcpgateway.utils.trace_context import clear_trace_context, get_trace_team_name, get_trace_team_scope, get_trace_user_email
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
         payload = {
             "sub": "trace@example.com",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
@@ -4071,7 +4075,7 @@ class TestTenantIdPropagation:
         # First-Party
         from cpex.framework import PluginResult  # noqa: PLC0415
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(team_id="team-acme"),  # no plugin_global_context set
             client=None,
@@ -4109,7 +4113,7 @@ class TestTenantIdPropagation:
         # First-Party
         from cpex.framework import PluginResult  # noqa: PLC0415
 
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
         request = SimpleNamespace(
             state=SimpleNamespace(team_id=None),  # no plugin_global_context set
             client=None,
@@ -4208,7 +4212,7 @@ class TestTenantIdPropagation:
         would silently stop working for cached auth requests.
         """
         with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
             payload = {
                 "sub": "test@example.com",
                 "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
@@ -4247,7 +4251,7 @@ class TestTenantIdPropagation:
         limiting would silently stop working for batched-auth requests.
         """
         with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
             payload = {
                 "sub": "test@example.com",
                 "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),

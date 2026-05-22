@@ -2972,7 +2972,7 @@ class TestCallA2AAgent:
         agent.protocol_version = "1.0"
         agent.auth_type = "query_param"
         agent.auth_value = None
-        agent.auth_query_params = {"api_key": "encrypted_value"}
+        agent.auth_query_params = {"api_key": "encrypted_value"}  # pragma: allowlist secret
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -2983,7 +2983,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real_key"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.example.com/?api_key=real_key"),
             patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.example.com/?api_key=***"),
         ):
@@ -3644,7 +3644,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),  # pragma: allowlist secret
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3669,7 +3669,7 @@ class TestCallA2AAgentCoverage:
 
     @pytest.mark.asyncio
     async def test_query_param_auth(self, tool_service):
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})  # pragma: allowlist secret
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {}
@@ -3678,7 +3678,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "real-key"}),  # pragma: allowlist secret
             patch("mcpgateway.services.a2a_protocol.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
             patch("mcpgateway.services.a2a_protocol.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
         ):
@@ -4062,7 +4062,7 @@ class TestConvertToolToReadMetrics:
         """convert_tool_to_read with include_metrics=True populates metrics."""
         now = datetime.now(timezone.utc)
         tool = SimpleNamespace(
-            id="abcdef1234567890abcdef1234567890",
+            id="abcdef1234567890abcdef1234567890",  # pragma: allowlist secret
             name="test_tool",
             original_name="test_tool",
             custom_name="test_tool",
@@ -4129,7 +4129,7 @@ class TestConvertToolToReadMetrics:
         """convert_tool_to_read with include_metrics=False gives None metrics."""
         now = datetime.now(timezone.utc)
         tool = SimpleNamespace(
-            id="abcdef1234567890abcdef1234567890",
+            id="abcdef1234567890abcdef1234567890",  # pragma: allowlist secret
             name="test_tool",
             original_name="test_tool",
             custom_name="test_tool",
@@ -7059,7 +7059,7 @@ class TestInvokeToolGatewayQueryParams:
     async def test_gateway_query_param_auth_decryption(self, tool_service):
         """Gateway query params are decrypted and applied to URL."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
-        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "encrypted_value"})
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "encrypted_value"})  # pragma: allowlist secret
         db = MagicMock()
 
         mock_response = MagicMock()
@@ -7077,7 +7077,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "secret123"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "secret123"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=secret123"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7101,7 +7101,7 @@ class TestInvokeToolGatewayQueryParams:
         mock_gateway.url = "http://gateway:9000"
         mock_gateway.auth_type = "query_param"
         mock_gateway.auth_value = None
-        mock_gateway.auth_query_params = {"api_key": "runtime_encrypted"}
+        mock_gateway.auth_query_params = {"api_key": "runtime_encrypted"}  # pragma: allowlist secret
         mock_gateway.oauth_config = None
         mock_gateway.ca_certificate = None
         mock_gateway.ca_certificate_sig = None
@@ -7149,7 +7149,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "runtime-secret"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=runtime-secret") as mock_apply,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7165,7 +7165,7 @@ class TestInvokeToolGatewayQueryParams:
             result = await tool_service.invoke_tool(db, "test_tool", {})
 
         assert result is not None
-        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "runtime-secret"})
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "runtime-secret"})  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_gateway_query_param_auth_hydrates_gateway_dict_from_db(self, tool_service):
@@ -7176,7 +7176,7 @@ class TestInvokeToolGatewayQueryParams:
 
         hydrated_gateway = SimpleNamespace(
             auth_value=None,
-            auth_query_params={"api_key": "hydrated_encrypted"},
+            auth_query_params={"api_key": "hydrated_encrypted"},  # pragma: allowlist secret
             oauth_config=None,
         )
         hydrated_tool = SimpleNamespace(
@@ -7201,7 +7201,7 @@ class TestInvokeToolGatewayQueryParams:
             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "hydrated-secret"}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "hydrated-secret"}),  # pragma: allowlist secret
             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=hydrated-secret") as mock_apply,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
         ):
@@ -7217,13 +7217,13 @@ class TestInvokeToolGatewayQueryParams:
             result = await tool_service.invoke_tool(db, "test_tool", {})
 
         assert result is not None
-        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "hydrated-secret"})
+        mock_apply.assert_called_once_with("http://gateway:9000", {"api_key": "hydrated-secret"})  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_gateway_query_param_decryption_failure(self, tool_service):
         """Failed decryption of query params is silently skipped."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
-        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "bad_encrypted"})
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "bad_encrypted"})  # pragma: allowlist secret
         db = MagicMock()
 
         mock_response = MagicMock()
@@ -8418,7 +8418,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),  # pragma: allowlist secret
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)

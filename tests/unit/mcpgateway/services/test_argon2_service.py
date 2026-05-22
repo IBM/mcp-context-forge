@@ -76,7 +76,7 @@ class TestArgon2PasswordService:
     def test_hash_password_success(self):
         """Test successful password hashing."""
         service = Argon2PasswordService()
-        password = "secure_password_123"
+        password = "secure_password_123"  # pragma: allowlist secret
 
         hash_value = service.hash_password(password)
 
@@ -141,7 +141,7 @@ class TestArgon2PasswordService:
     def test_verify_password_success(self):
         """Test successful password verification."""
         service = Argon2PasswordService()
-        password = "correct_password"
+        password = "correct_password"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         assert service.verify_password(password, hash_value) is True
@@ -149,7 +149,7 @@ class TestArgon2PasswordService:
     def test_verify_password_wrong_password(self):
         """Test verification with wrong password."""
         service = Argon2PasswordService()
-        password = "correct_password"
+        password = "correct_password"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         assert service.verify_password("wrong_password", hash_value) is False
@@ -227,7 +227,7 @@ class TestArgon2PasswordService:
     def test_verify_password_unicode(self):
         """Test verification with Unicode passwords."""
         service = Argon2PasswordService()
-        unicode_password = "пароль🔐密码"
+        unicode_password = "пароль🔐密码"  # pragma: allowlist secret
         hash_value = service.hash_password(unicode_password)
 
         assert service.verify_password(unicode_password, hash_value) is True
@@ -236,7 +236,7 @@ class TestArgon2PasswordService:
     def test_needs_rehash_false(self):
         """Test needs_rehash returns False for current parameters."""
         service = Argon2PasswordService(time_cost=3, memory_cost=65536, parallelism=1)
-        password = "test_password"
+        password = "test_password"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         assert service.needs_rehash(hash_value) is False
@@ -371,7 +371,7 @@ class TestModuleLevelFunctions:
 
     def test_hash_password_function(self):
         """Test module-level hash_password function."""
-        password = "test_password"
+        password = "test_password"  # pragma: allowlist secret
 
         hash_value = hash_password(password)
 
@@ -385,7 +385,7 @@ class TestModuleLevelFunctions:
 
     def test_verify_password_function(self):
         """Test module-level verify_password function."""
-        password = "test_password"
+        password = "test_password"  # pragma: allowlist secret
         hash_value = hash_password(password)
 
         assert verify_password(password, hash_value) is True
@@ -484,7 +484,7 @@ class TestSecurityEdgeCases:
     def test_case_sensitive_verification(self):
         """Test that password verification is case-sensitive."""
         service = Argon2PasswordService()
-        password = "PassWord123"
+        password = "PassWord123"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         assert service.verify_password(password, hash_value) is True
@@ -535,7 +535,7 @@ class TestPerformanceAndConcurrency:
     def test_hash_uniqueness_with_same_password(self):
         """Test that same password produces different hashes due to salt."""
         service = Argon2PasswordService()
-        password = "same_password"
+        password = "same_password"  # pragma: allowlist secret
 
         hashes = set()
         # Reduced from 10 to 5 iterations for faster test execution while maintaining coverage

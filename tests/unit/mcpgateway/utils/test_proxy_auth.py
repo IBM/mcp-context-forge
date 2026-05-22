@@ -20,7 +20,7 @@ import pytest
 # First-Party
 from mcpgateway.utils import verify_credentials as vc
 
-TEST_JWT_SECRET = "test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 
 class TestProxyAuthentication:

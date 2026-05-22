@@ -149,7 +149,7 @@ if __name__ == "__main__":
         headers = {
             "Authorization": "Bearer github-token-123",
             "X-Tenant-Id": "acme-corp",
-            "X-API-Key": "api-key-456",
+            "X-API-Key": "api-key-456",  # pragma: allowlist secret
         }
         mappings = {
             "Authorization": "GITHUB_TOKEN",
@@ -164,7 +164,7 @@ if __name__ == "__main__":
         expected = {
             "GITHUB_TOKEN": "Bearer github-token-123",
             "TENANT_ID": "acme-corp",
-            "API_KEY": "api-key-456",
+            "API_KEY": "api-key-456",  # pragma: allowlist secret
         }
         assert env_vars == expected
 
@@ -192,7 +192,7 @@ if __name__ == "__main__":
         headers = {
             "authorization": "Bearer github-token-123",  # lowercase
             "X-TENANT-ID": "acme-corp",  # uppercase
-            "x-api-key": "api-key-456",  # mixed case
+            "x-api-key": "api-key-456",  # mixed case  # pragma: allowlist secret
         }
         mappings = {
             "Authorization": "GITHUB_TOKEN",  # Proper case
@@ -207,7 +207,7 @@ if __name__ == "__main__":
         expected = {
             "GITHUB_TOKEN": "Bearer github-token-123",
             "TENANT_ID": "acme-corp",
-            "API_KEY": "api-key-456",
+            "API_KEY": "api-key-456",  # pragma: allowlist secret
         }
         assert env_vars == expected
 

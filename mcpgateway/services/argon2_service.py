@@ -47,7 +47,7 @@ class Argon2PasswordService:
 
     Examples:
         >>> service = Argon2PasswordService(time_cost=1, memory_cost=1024)  # Light params for testing
-        >>> password = "secure_password_123"
+        >>> password = "secure_password_123"  # pragma: allowlist secret
         >>> hash_value = service.hash_password(password)
         >>> service.verify_password(password, hash_value)
         True

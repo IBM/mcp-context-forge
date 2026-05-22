@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from mcpgateway.config import settings
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError
 
-TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 
 # --------------------------------------------------------------------------- #
@@ -838,13 +838,13 @@ class TestInternalMcpPluginExceptions:
     @pytest.fixture
     def mock_internal_auth(self):
         """Mock internal MCP authentication helpers."""
-        with patch("mcpgateway.main._build_internal_mcp_forwarded_user") as mock_user, patch(
-            "mcpgateway.main.get_internal_mcp_auth_context"
-        ) as mock_auth, patch("mcpgateway.main.get_rpc_filter_context") as mock_filter, patch(
-            "mcpgateway.main._ensure_rpc_permission", new=AsyncMock()
-        ) as mock_perm, patch(
-            "mcpgateway.main._enforce_internal_mcp_server_scope"
-        ) as mock_scope:
+        with (
+            patch("mcpgateway.main._build_internal_mcp_forwarded_user") as mock_user,
+            patch("mcpgateway.main.get_internal_mcp_auth_context") as mock_auth,
+            patch("mcpgateway.main.get_rpc_filter_context") as mock_filter,
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()) as mock_perm,
+            patch("mcpgateway.main._enforce_internal_mcp_server_scope") as mock_scope,
+        ):
             mock_user.return_value = MagicMock(email="test@example.com")
             mock_auth.return_value = {"is_authenticated": True}
             mock_filter.return_value = ("test@example.com", [], False)

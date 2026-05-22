@@ -809,31 +809,19 @@ class TestServerSchemas:
         tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
 
         # Test with None items in list
-        server_with_none = ServerCreate(
-            name="Test Server",
-            associated_tools=[tool_id1, None, tool_id2]
-        )
+        server_with_none = ServerCreate(name="Test Server", associated_tools=[tool_id1, None, tool_id2])
         assert server_with_none.associated_tools == [tool_id1, tool_id2]
 
         # Test with empty string items in list
-        server_with_empty_str = ServerCreate(
-            name="Test Server",
-            associated_tools=[tool_id1, "", tool_id2]
-        )
+        server_with_empty_str = ServerCreate(name="Test Server", associated_tools=[tool_id1, "", tool_id2])
         assert server_with_empty_str.associated_tools == [tool_id1, tool_id2]
 
         # Test with whitespace-only string items in list
-        server_with_whitespace = ServerCreate(
-            name="Test Server",
-            associated_tools=[tool_id1, "   ", tool_id2]
-        )
+        server_with_whitespace = ServerCreate(name="Test Server", associated_tools=[tool_id1, "   ", tool_id2])
         assert server_with_whitespace.associated_tools == [tool_id1, tool_id2]
 
         # Test with mixed empty items
-        server_with_mixed = ServerCreate(
-            name="Test Server",
-            associated_tools=[tool_id1, None, "", "  ", tool_id2]
-        )
+        server_with_mixed = ServerCreate(name="Test Server", associated_tools=[tool_id1, None, "", "  ", tool_id2])
         assert server_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
@@ -846,7 +834,7 @@ class TestServerSchemas:
             associated_tools=[tool_id1, None, ""],
             associated_resources=["", resource_id1, None],
             associated_prompts=[None, prompt_id1, "  "],
-            associated_a2a_agents=["  ", None, agent_id1]
+            associated_a2a_agents=["  ", None, agent_id1],
         )
         assert server_all_fields.associated_tools == [tool_id1]
         assert server_all_fields.associated_resources == [resource_id1]
@@ -860,45 +848,30 @@ class TestServerSchemas:
         """
         # Test with invalid UUID format (tool name instead of ID)
         with pytest.raises(ValueError) as exc_info:
-            ServerCreate(
-                name="Test Server",
-                associated_tools=["my-tool-name"]  # Not a valid UUID
-            )
+            ServerCreate(name="Test Server", associated_tools=["my-tool-name"])  # Not a valid UUID
         assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
         assert "associated_tools" in str(exc_info.value)
         assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
 
         # Test with invalid UUID in associated_resources
         with pytest.raises(ValueError) as exc_info:
-            ServerCreate(
-                name="Test Server",
-                associated_resources=["resource-name"]
-            )
+            ServerCreate(name="Test Server", associated_resources=["resource-name"])
         assert "Invalid ID format: 'resource-name'" in str(exc_info.value)
 
         # Test with invalid UUID in associated_prompts
         with pytest.raises(ValueError) as exc_info:
-            ServerCreate(
-                name="Test Server",
-                associated_prompts=["prompt-name"]
-            )
+            ServerCreate(name="Test Server", associated_prompts=["prompt-name"])
         assert "Invalid ID format: 'prompt-name'" in str(exc_info.value)
 
         # Test with invalid UUID in associated_a2a_agents
         with pytest.raises(ValueError) as exc_info:
-            ServerCreate(
-                name="Test Server",
-                associated_a2a_agents=["agent-name"]
-            )
+            ServerCreate(name="Test Server", associated_a2a_agents=["agent-name"])
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
         valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
         with pytest.raises(ValueError) as exc_info:
-            ServerCreate(
-                name="Test Server",
-                associated_tools=[valid_uuid, "invalid-tool"]
-            )
+            ServerCreate(name="Test Server", associated_tools=[valid_uuid, "invalid-tool"])
         assert "Invalid ID format: 'invalid-tool'" in str(exc_info.value)
 
     def test_server_update_with_empty_items_in_list(self):
@@ -912,27 +885,19 @@ class TestServerSchemas:
         tool_id2 = "550e8400e29b41d4a716446655440011"  # pragma: allowlist secret
 
         # Test with None items in list
-        update_with_none = ServerUpdate(
-            associated_tools=[tool_id1, None, tool_id2]
-        )
+        update_with_none = ServerUpdate(associated_tools=[tool_id1, None, tool_id2])
         assert update_with_none.associated_tools == [tool_id1, tool_id2]
 
         # Test with empty string items in list
-        update_with_empty_str = ServerUpdate(
-            associated_tools=[tool_id1, "", tool_id2]
-        )
+        update_with_empty_str = ServerUpdate(associated_tools=[tool_id1, "", tool_id2])
         assert update_with_empty_str.associated_tools == [tool_id1, tool_id2]
 
         # Test with whitespace-only string items in list
-        update_with_whitespace = ServerUpdate(
-            associated_tools=[tool_id1, "   ", tool_id2]
-        )
+        update_with_whitespace = ServerUpdate(associated_tools=[tool_id1, "   ", tool_id2])
         assert update_with_whitespace.associated_tools == [tool_id1, tool_id2]
 
         # Test with mixed empty items
-        update_with_mixed = ServerUpdate(
-            associated_tools=[tool_id1, None, "", "  ", tool_id2]
-        )
+        update_with_mixed = ServerUpdate(associated_tools=[tool_id1, None, "", "  ", tool_id2])
         assert update_with_mixed.associated_tools == [tool_id1, tool_id2]
 
         # Test with all fields having empty items
@@ -941,10 +906,7 @@ class TestServerSchemas:
         agent_id1 = "550e8400e29b41d4a716446655440015"  # pragma: allowlist secret
 
         update_all_fields = ServerUpdate(
-            associated_tools=[tool_id1, None, ""],
-            associated_resources=["", resource_id1, None],
-            associated_prompts=[None, prompt_id1, "  "],
-            associated_a2a_agents=["  ", None, agent_id1]
+            associated_tools=[tool_id1, None, ""], associated_resources=["", resource_id1, None], associated_prompts=[None, prompt_id1, "  "], associated_a2a_agents=["  ", None, agent_id1]
         )
         assert update_all_fields.associated_tools == [tool_id1]
         assert update_all_fields.associated_resources == [resource_id1]
@@ -958,40 +920,30 @@ class TestServerSchemas:
         """
         # Test with invalid UUID format (tool name instead of ID)
         with pytest.raises(ValueError) as exc_info:
-            ServerUpdate(
-                associated_tools=["my-tool-name"]  # Not a valid UUID
-            )
+            ServerUpdate(associated_tools=["my-tool-name"])  # Not a valid UUID
         assert "Invalid ID format: 'my-tool-name'" in str(exc_info.value)
         assert "associated_tools" in str(exc_info.value)
         assert "associated_tools must contain UUID values, not names" in str(exc_info.value)
 
         # Test with invalid UUID in associated_resources
         with pytest.raises(ValueError) as exc_info:
-            ServerUpdate(
-                associated_resources=["resource-name"]
-            )
+            ServerUpdate(associated_resources=["resource-name"])
         assert "Invalid ID format: 'resource-name'" in str(exc_info.value)
 
         # Test with invalid UUID in associated_prompts
         with pytest.raises(ValueError) as exc_info:
-            ServerUpdate(
-                associated_prompts=["prompt-name"]
-            )
+            ServerUpdate(associated_prompts=["prompt-name"])
         assert "Invalid ID format: 'prompt-name'" in str(exc_info.value)
 
         # Test with invalid UUID in associated_a2a_agents
         with pytest.raises(ValueError) as exc_info:
-            ServerUpdate(
-                associated_a2a_agents=["agent-name"]
-            )
+            ServerUpdate(associated_a2a_agents=["agent-name"])
         assert "Invalid ID format: 'agent-name'" in str(exc_info.value)
 
         # Test with mixed valid and invalid UUIDs
         valid_uuid = "550e8400e29b41d4a716446655440010"  # pragma: allowlist secret
         with pytest.raises(ValueError) as exc_info:
-            ServerUpdate(
-                associated_tools=[valid_uuid, "invalid-tool"]
-            )
+            ServerUpdate(associated_tools=[valid_uuid, "invalid-tool"])
         assert "Invalid ID format: 'invalid-tool'" in str(exc_info.value)
 
     def test_server_read(self):
@@ -1268,7 +1220,7 @@ class TestSchemaValidators:
         values = {
             "auth_type": "basic",
             "auth_username": "user",
-            "auth_password": "secret-password",
+            "auth_password": "secret-password",  # pragma: allowlist secret
             "auth_token": "secret-token",
             "auth_header_key": "X-API-Key",
             "auth_header_value": "secret-header",
@@ -1289,7 +1241,7 @@ class TestSchemaValidators:
         values = {
             "auth_type": "bearer",
             "auth_username": "user",
-            "auth_password": "secret-password",
+            "auth_password": "secret-password",  # pragma: allowlist secret
             "auth_token": "secret-token",
             "auth_header_key": "X-API-Key",
             "auth_header_value": "secret-header",

@@ -762,7 +762,7 @@ class TestHTTPEndpoints:
             dummy_request = DummyRequest()
 
             async def _run():
-                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")
+                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
                 first = await agen.__anext__()
                 second = await agen.__anext__()
@@ -793,7 +793,7 @@ class TestHTTPEndpoints:
                     return False
 
             async def _run():
-                response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")
+                response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")  # pragma: allowlist secret
                 agen = response.body_iterator
                 first = await agen.__anext__()
                 with pytest.raises(asyncio.CancelledError):

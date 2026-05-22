@@ -3777,7 +3777,7 @@ class AuthExtendedUser(BaseUser):
         """POST /auth/login - Test main login endpoint."""
         login_data = {
             "username": "admin@example.com",
-            "password": "admin",  # Default test password
+            "password": "admin",  # Default test password  # pragma: allowlist secret
         }
         with self.client.post(
             "/auth/login",
@@ -6620,7 +6620,7 @@ class LLMCRUDUser(BaseUser):
             "name": provider_name,
             "provider_type": "openai",
             "base_url": "http://localhost:1/v1",
-            "api_key": "test-key-loadtest",
+            "api_key": "test-key-loadtest",  # pragma: allowlist secret
         }
 
         with self.client.post(
@@ -6912,7 +6912,7 @@ class AuthEmailCRUDUser(BaseUser):
         email = f"loadtest-{uuid.uuid4().hex[:8]}@example.com"
         user_data = {
             "email": email,
-            "password": "LoadTest123!",
+            "password": "LoadTest123!",  # pragma: allowlist secret
             "full_name": "Load Test User",
             "is_active": True,
         }
@@ -6962,7 +6962,7 @@ class AuthEmailCRUDUser(BaseUser):
         """POST /auth/email/login - Email login."""
         with self.client.post(
             "/auth/email/login",
-            json={"email": "admin@example.com", "password": "changeme"},
+            json={"email": "admin@example.com", "password": "changeme"},  # pragma: allowlist secret
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/auth/email/login",
             catch_response=True,
@@ -6976,7 +6976,7 @@ class AuthEmailCRUDUser(BaseUser):
         email = f"loadtest-reg-{uuid.uuid4().hex[:8]}@example.com"
         with self.client.post(
             "/auth/email/register",
-            json={"email": email, "password": "LoadTest123!", "full_name": "Load Test"},
+            json={"email": email, "password": "LoadTest123!", "full_name": "Load Test"},  # pragma: allowlist secret
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/auth/email/register",
             catch_response=True,
@@ -7000,7 +7000,7 @@ class AuthEmailCRUDUser(BaseUser):
         """POST /auth/email/change-password - Change password."""
         with self.client.post(
             "/auth/email/change-password",
-            json={"current_password": "changeme", "new_password": "changeme"},
+            json={"current_password": "changeme", "new_password": "changeme"},  # pragma: allowlist secret
             headers={**self.auth_headers, "Content-Type": "application/json"},
             name="/auth/email/change-password",
             catch_response=True,

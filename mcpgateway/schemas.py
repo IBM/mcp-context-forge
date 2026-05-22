@@ -3719,7 +3719,7 @@ class GatewayRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = GatewayRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5446,7 +5446,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = A2AAgentRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = A2AAgentRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5795,7 +5795,7 @@ class EmailLoginRequest(BaseModel):
         password: User's password
 
     Examples:
-        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")
+        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")  # pragma: allowlist secret
         >>> request.email
         'user@example.com'
         >>> request.password
@@ -5822,7 +5822,7 @@ class PublicRegistrationRequest(BaseModel):
     Examples:
         >>> request = PublicRegistrationRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5852,7 +5852,7 @@ class AdminCreateUserRequest(BaseModel):
     Examples:
         >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5890,8 +5890,8 @@ class ChangePasswordRequest(BaseModel):
 
     Examples:
         >>> request = ChangePasswordRequest(
-        ...     old_password="old_secret",
-        ...     new_password="new_secure_password"
+        ...     old_password="old_secret",  # pragma: allowlist secret
+        ...     new_password="new_secure_password"  # pragma: allowlist secret
         ... )
         >>> request.old_password
         'old_secret'

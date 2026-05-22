@@ -553,7 +553,7 @@ class TestAdminCreatedUserEmailVerified:
             mock_user_instance.email_verified_at = None
             MockUser.return_value = mock_user_instance
 
-            result = await service.create_user(email="new@example.com", password="P@ssw0rd123", granted_by="admin@example.com")
+            result = await service.create_user(email="new@example.com", password="P@ssw0rd123", granted_by="admin@example.com")  # pragma: allowlist secret
 
         # email_verified_at should be set before db.add
         assert mock_user_instance.email_verified_at is not None
@@ -583,7 +583,7 @@ class TestAdminCreatedUserEmailVerified:
             mock_user_instance.email_verified_at = None
             MockUser.return_value = mock_user_instance
 
-            result = await service.create_user(email="self@example.com", password="P@ssw0rd123")
+            result = await service.create_user(email="self@example.com", password="P@ssw0rd123")  # pragma: allowlist secret
 
         # email_verified_at should remain None
         assert mock_user_instance.email_verified_at is None

@@ -19,7 +19,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "77243f5bfce5"
+revision: str = "77243f5bfce5"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "s3c4d5e6f7g8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

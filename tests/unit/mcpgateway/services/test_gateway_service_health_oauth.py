@@ -499,7 +499,7 @@ class TestCheckSingleGatewayHealthReal:
         gateway = self._make_gateway(
             transport="sse",
             auth_type="query_param",
-            auth_query_params={"api_key": "enc"},
+            auth_query_params={"api_key": "enc"},  # pragma: allowlist secret
         )
         gateway.ca_certificate = "dummy-cert"
         gateway.ca_certificate_sig = "dummy-sig"

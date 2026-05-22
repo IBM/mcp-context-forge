@@ -20,8 +20,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "f3a3a3d901b8"
-down_revision: Union[str, Sequence[str], None] = "aac21d6f9522"
+revision: str = "f3a3a3d901b8"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "aac21d6f9522"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

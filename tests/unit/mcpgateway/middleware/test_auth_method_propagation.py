@@ -55,7 +55,7 @@ async def test_auth_method_propagation_from_plugin():
     # Create mock credentials
     mock_credentials = HTTPAuthorizationCredentials(
         scheme="Bearer",
-        credentials="test-token-123",
+        credentials="test-token-123",  # pragma: allowlist secret
     )
 
     # Mock the plugin manager to return a successful auth with metadata

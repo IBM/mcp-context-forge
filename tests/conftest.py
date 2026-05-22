@@ -151,7 +151,7 @@ def resolve_test_db_url():
 
     if db == "postgres":
         # Matches GitHub Service container
-        return "postgresql://postgres:test@localhost:5432/test"
+        return "postgresql://postgres:test@localhost:5432/test"  # pragma: allowlist secret
 
     raise ValueError(f"Unsupported test DB type: {db}")
 
@@ -200,7 +200,7 @@ def test_settings():
     return Settings(
         database_url="sqlite:///:memory:",
         basic_auth_user="testuser",
-        basic_auth_password="testpass",
+        basic_auth_password="testpass",  # pragma: allowlist secret
         auth_required=False,
         mcp_client_auth_enabled=False,
     )

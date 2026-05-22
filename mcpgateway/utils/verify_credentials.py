@@ -43,7 +43,7 @@ Examples:
     >>> creds = HTTPBasicCredentials(username='user', password='pass')
     >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
     True
-    >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+    >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')  # pragma: allowlist secret
     >>> try:
     ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
     ... except Exception as e:
@@ -807,7 +807,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         >>> import asyncio
         >>> asyncio.run(vc.verify_basic_credentials(creds)) == 'user'
         True
-        >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')
+        >>> creds_bad = HTTPBasicCredentials(username='user', password='wrong')  # pragma: allowlist secret
         >>> try:
         ...     asyncio.run(vc.verify_basic_credentials(creds_bad))
         ... except Exception as e:

@@ -56,55 +56,25 @@ class TestResult:
     error: Optional[str] = None
 
 
-def generate_token(
-    email: str,
-    is_admin: bool,
-    teams: Optional[List[str]] = "OMIT",
-    secret: str = "my-test-key-but-now-longer-than-32-bytes"
-) -> str:
+def generate_token(email: str, is_admin: bool, teams: Optional[List[str]] = "OMIT", secret: str = "my-test-key-but-now-longer-than-32-bytes") -> str:
     """Generate a JWT token with specified claims."""
-    payload = {
-        "sub": email,
-        "is_admin": is_admin,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 3600,
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api"
-    }
+    payload = {"sub": email, "is_admin": is_admin, "iat": int(time.time()), "exp": int(time.time()) + 3600, "iss": "mcpgateway", "aud": "mcpgateway-api"}
     if teams != "OMIT":
         payload["teams"] = teams
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-async def test_with_http_rpc(
-    base_url: str,
-    token: str,
-    test_name: str,
-    expected_public: int,
-    expected_team: int
-) -> TestResult:
+async def test_with_http_rpc(base_url: str, token: str, test_name: str, expected_public: int, expected_team: int) -> TestResult:
     """Test via HTTP RPC endpoint."""
     import aiohttp
 
     try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {},
-            "id": 1
-        }
+        payload = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{base_url}/rpc",
-                headers=headers,
-                json=payload
-            ) as response:
+            async with session.post(f"{base_url}/rpc", headers=headers, json=payload) as response:
                 data = await response.json()
 
                 if "error" in data:
@@ -118,7 +88,7 @@ async def test_with_http_rpc(
                         actual_team=0,
                         tool_names=[],
                         passed=False,
-                        error=data["error"].get("message", str(data["error"]))
+                        error=data["error"].get("message", str(data["error"])),
                     )
 
                 tools = data.get("result", {}).get("tools", [])
@@ -139,7 +109,7 @@ async def test_with_http_rpc(
                     actual_public=actual_public,
                     actual_team=actual_team,
                     tool_names=tool_names,
-                    passed=passed
+                    passed=passed,
                 )
 
     except Exception as e:
@@ -153,7 +123,7 @@ async def test_with_http_rpc(
             actual_team=0,
             tool_names=[],
             passed=False,
-            error=str(e)
+            error=str(e),
         )
 
 
@@ -322,7 +292,7 @@ async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_
 
 async def main():
     base_url = "http://localhost:8080"
-    team_id = "12c794d92318414fbc6829bd455bee6d"  # Platform Administrator's Team
+    team_id = "12c794d92318414fbc6829bd455bee6d"  # Platform Administrator's Team  # pragma: allowlist secret
 
     # Run RPC tests
     all_passed = await run_tests(base_url, team_id)
@@ -345,7 +315,7 @@ async def main():
     t3 = await test_mcp_transport(f"{base_url}/mcp/", token, "Non-admin + team", 5)
 
     # Virtual server test
-    server_id = "9779b6698cbd4b4995ee04a4fab38737"
+    server_id = "9779b6698cbd4b4995ee04a4fab38737"  # pragma: allowlist secret
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
     t4 = await test_mcp_transport(f"{base_url}/servers/{server_id}/mcp/", token, "Virtual Server", 2)
 

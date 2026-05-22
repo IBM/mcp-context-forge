@@ -28,7 +28,7 @@ def mock_db():
 @pytest.fixture
 def service(mock_db):
     with patch("mcpgateway.services.token_storage_service.get_settings") as mock_settings, patch("mcpgateway.services.token_storage_service.get_encryption_service") as mock_enc:
-        mock_settings.return_value = MagicMock(auth_encryption_secret="test-salt")
+        mock_settings.return_value = MagicMock(auth_encryption_secret="test-salt")  # pragma: allowlist secret
         mock_enc_instance = MagicMock()
         mock_enc_instance.encrypt_secret_async = AsyncMock(return_value="encrypted_value")
         mock_enc_instance.decrypt_secret_async = AsyncMock(return_value="decrypted_value")
@@ -334,7 +334,7 @@ async def test_refresh_decrypt_refresh_token_fails(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_refresh_success(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "sec"}, url="https://gw.com")
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "sec"}, url="https://gw.com")  # pragma: allowlist secret
     mock_db.query.return_value.filter.return_value.first.return_value = gw
     mock_oauth_manager = MagicMock()
     mock_oauth_manager.refresh_token = AsyncMock(return_value={"access_token": "new_access", "refresh_token": "new_refresh", "expires_in": 3600})
@@ -542,7 +542,7 @@ async def test_refresh_derived_gateway_url_normalizes_to_empty_logs_warning(serv
 
 @pytest.mark.asyncio
 async def test_refresh_client_secret_decrypt_fails_uses_plaintext(service, mock_db):
-    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "maybe_plain"}, url="https://gw.com")
+    gw = MagicMock(oauth_config={"token_url": "https://token", "client_id": "cid", "client_secret": "maybe_plain"}, url="https://gw.com")  # pragma: allowlist secret
     mock_db.query.return_value.filter.return_value.first.return_value = gw
 
     call_count = 0

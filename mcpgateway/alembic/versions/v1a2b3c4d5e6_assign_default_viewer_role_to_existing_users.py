@@ -37,7 +37,7 @@ from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "v1a2b3c4d5e6"
-down_revision: Union[str, Sequence[str], None] = "04cda6733305"
+down_revision: Union[str, Sequence[str], None] = "04cda6733305"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

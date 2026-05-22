@@ -97,7 +97,7 @@ TENANT_IDS = [f"tenant-{i:03d}" for i in range(NUM_TENANTS)]
 
 # Virtual server ID — matches the fixed ID created by register_fast_test in docker-compose
 # Override via ECHO_DELAY_SERVER_ID to target a different virtual server
-FAST_TEST_SERVER_ID = _cfg("ECHO_DELAY_SERVER_ID", "b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8")
+FAST_TEST_SERVER_ID = _cfg("ECHO_DELAY_SERVER_ID", "b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8")  # pragma: allowlist secret
 
 # Direct URL to the fast_test_server REST API (bypasses gateway entirely).
 # Used as a baseline to isolate whether errors originate in the gateway or the backend.

@@ -59,7 +59,7 @@ def create_test_jwt_token():
     import datetime
     import jwt
 
-    test_secret = "integration-test-jwt-secret-key-with-minimum-32-bytes"
+    test_secret = "integration-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
     payload = {
         "sub": "admin@example.com",

@@ -395,7 +395,12 @@ class ContainerManager:
         logger.info(f"🐙 Starting compose stack for version {version}")
         logger.info(f"📄 Using compose file: {compose_file}")
 
-        env = {"IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}", "POSTGRES_PASSWORD": "test_migration_password_123", "POSTGRES_USER": "test_user", "POSTGRES_DB": "mcp_test"}
+        env = {
+            "IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}",
+            "POSTGRES_PASSWORD": "test_migration_password_123",  # pragma: allowlist secret
+            "POSTGRES_USER": "test_user",
+            "POSTGRES_DB": "mcp_test",
+        }  # pragma: allowlist secret
 
         logger.info(f"🔧 Environment variables: {env}")
 

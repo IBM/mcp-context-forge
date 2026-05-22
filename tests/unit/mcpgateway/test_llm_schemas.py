@@ -65,7 +65,7 @@ class TestLLMProviderSchemas:
             name="Full Provider",
             description="Test description",
             provider_type=LLMProviderTypeEnum.AZURE_OPENAI,
-            api_key="test-key",
+            api_key="test-key",  # pragma: allowlist secret
             api_base="https://api.example.com",
             api_version="2024-02-15",
             config={"custom": "value"},

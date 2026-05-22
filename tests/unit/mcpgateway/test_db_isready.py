@@ -69,7 +69,7 @@ class _DummyEngine:
 @pytest.mark.parametrize(
     "raw",
     [
-        "postgresql://alice:secret@db/mydb",
+        "postgresql://alice:secret@db/mydb",  # pragma: allowlist secret
         "error password=reallys3cret param=value",
     ],
 )
@@ -90,7 +90,7 @@ def test_sanitize_masks_sensitive_parts(raw):
     "url, expected",
     [
         ("sqlite:///:memory:", ":memory:"),  # SQLAlchemy represents memory DB with literal string
-        ("postgresql://u:p@db.example.com:5432/mcp", "db.example.com:5432/mcp"),
+        ("postgresql://u:p@db.example.com:5432/mcp", "db.example.com:5432/mcp"),  # pragma: allowlist secret
     ],
 )
 def test_format_target_variants(url, expected):
@@ -112,7 +112,7 @@ def test_wait_for_db_ready_success(monkeypatch):
     monkeypatch.setattr(db_isready.time, "sleep", lambda *_: None)
 
     db_isready.wait_for_db_ready(
-        database_url="postgresql://user:pw@localhost:5432/mcp",
+        database_url="postgresql://user:pw@localhost:5432/mcp",  # pragma: allowlist secret
         max_tries=3,
         interval=0.001,
         timeout=1,
@@ -131,7 +131,7 @@ def test_wait_for_db_ready_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(db_isready.time, "sleep", lambda *_: None)
 
     db_isready.wait_for_db_ready(
-        database_url="postgresql://u:p@db/mcp",
+        database_url="postgresql://u:p@db/mcp",  # pragma: allowlist secret
         max_tries=5,
         interval=0.0001,
         timeout=2,
@@ -191,7 +191,7 @@ def test_wait_for_db_ready_async_path(monkeypatch):
     monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
 
     db_isready.wait_for_db_ready(
-        database_url="postgresql://u:p@db/mcp",
+        database_url="postgresql://u:p@db/mcp",  # pragma: allowlist secret
         max_tries=2,
         interval=0.001,
         timeout=1,
@@ -208,7 +208,7 @@ def test_parse_cli_roundtrip(monkeypatch):
     argv = [
         "db_isready.py",
         "--database-url",
-        "postgresql://u:p@db/mcp",
+        "postgresql://u:p@db/mcp",  # pragma: allowlist secret
         "--max-tries",
         "7",
         "--interval",
@@ -221,7 +221,7 @@ def test_parse_cli_roundtrip(monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
 
     ns = db_isready._parse_cli()
-    assert ns.database_url == "postgresql://u:p@db/mcp"
+    assert ns.database_url == "postgresql://u:p@db/mcp"  # pragma: allowlist secret
     assert ns.max_tries == 7
     assert ns.interval == 0.5
     assert ns.timeout == 3

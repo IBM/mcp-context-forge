@@ -682,7 +682,7 @@ async def test_import_command_with_include_parameter():
         args.input_file = temp_file
         args.conflict_strategy = "rename"
         args.dry_run = False
-        args.rekey_secret = "new-secret"
+        args.rekey_secret = "new-secret"  # pragma: allowlist secret
         args.include = "tools:tool1,tool2;servers:server1"
         args.verbose = False
 

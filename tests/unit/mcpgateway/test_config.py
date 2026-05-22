@@ -185,7 +185,7 @@ def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path) -> None:
     assert s_sqlite.database_settings["connect_args"] == {"check_same_thread": False}
 
     # non-sqlite -> empty connect_args
-    s_pg = Settings(database_url="postgresql://u:p@db/test")
+    s_pg = Settings(database_url="postgresql://u:p@db/test")  # pragma: allowlist secret
     assert s_pg.database_settings["connect_args"] == {}
 
 
@@ -253,7 +253,7 @@ def test_get_settings_is_lru_cached(mock_settings):
 def test_settings_default_values():
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,  # required, at least 32 chars
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
         "APP_DOMAIN": "http://localhost",
     }
 
@@ -293,7 +293,7 @@ def test_skip_migrations_defaults_to_false():
     """
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
     }
     with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(_env_file=None)
@@ -304,7 +304,7 @@ def test_skip_migrations_env_true_flips_flag():
     """MCPGATEWAY_SKIP_MIGRATIONS=true → in-pod bootstrap is suppressed."""
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
         "MCPGATEWAY_SKIP_MIGRATIONS": "true",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -316,7 +316,7 @@ def test_skip_migrations_env_false_keeps_flag_off():
     """Explicit MCPGATEWAY_SKIP_MIGRATIONS=false matches the default."""
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,
-        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",  # pragma: allowlist secret
         "MCPGATEWAY_SKIP_MIGRATIONS": "false",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -679,7 +679,7 @@ def test_validate_secrets_direct_call_non_secretstr_value():
 # --------------------------------------------------------------------------- #
 def test_validate_admin_password_plain_string():
     """Plain string password should be wrapped as SecretStr."""
-    s = Settings(basic_auth_password="StrongP@ss1!", _env_file=None)
+    s = Settings(basic_auth_password="StrongP@ss1!", _env_file=None)  # pragma: allowlist secret
     assert isinstance(s.basic_auth_password, SecretStr)
     assert s.basic_auth_password.get_secret_value() == "StrongP@ss1!"
 
@@ -692,13 +692,13 @@ def test_validate_admin_password_short_warns():
 
 def test_validate_admin_password_high_complexity():
     """Complex password with 3+ categories passes without extra warning."""
-    s = Settings(basic_auth_password="Abc123!@#", _env_file=None)
+    s = Settings(basic_auth_password="Abc123!@#", _env_file=None)  # pragma: allowlist secret
     assert s.basic_auth_password.get_secret_value() == "Abc123!@#"
 
 
 def test_validate_admin_password_low_complexity():
     """Low complexity password triggers warning."""
-    s = Settings(basic_auth_password="alllower", _env_file=None)
+    s = Settings(basic_auth_password="alllower", _env_file=None)  # pragma: allowlist secret
     assert s.basic_auth_password.get_secret_value() == "alllower"
 
 
@@ -767,7 +767,7 @@ def test_validate_cors_origins_invalid_type_direct_call():
 # --------------------------------------------------------------------------- #
 def test_validate_database_url_weak_password_warns():
     """Database URL with weak password triggers warning."""
-    s = Settings(database_url="postgresql://admin:password123@localhost/db", _env_file=None)
+    s = Settings(database_url="postgresql://admin:password123@localhost/db", _env_file=None)  # pragma: allowlist secret
     assert "postgresql" in s.database_url
 
 
@@ -827,7 +827,7 @@ def test_get_security_warnings_clean():
         debug=False,
         dev_mode=False,
         basic_auth_user="custom_admin",
-        basic_auth_password="StrongP@ss1!XYZ",
+        basic_auth_password="StrongP@ss1!XYZ",  # pragma: allowlist secret
         allowed_origins={"https://example.com"},
         token_expiry=60,
         tool_rate_limit=100,
@@ -1197,7 +1197,7 @@ def test_ui_hide_header_items_admin_empty_default(monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_validate_database_non_sqlite():
     """Non-SQLite databases should skip directory creation."""
-    s = Settings(database_url="postgresql://u:p@host/db", _env_file=None)
+    s = Settings(database_url="postgresql://u:p@host/db", _env_file=None)  # pragma: allowlist secret
     s.validate_database()  # Should not raise or try to create dirs
 
 
@@ -1455,7 +1455,7 @@ def test_derive_ed25519_public_key():
 
 def test_derive_ed25519_invalid_key_warns():
     """Invalid PEM data should log warning but not raise."""
-    s = Settings(ed25519_private_key="not-a-valid-pem-key", _env_file=None)
+    s = Settings(ed25519_private_key="not-a-valid-pem-key", _env_file=None)  # pragma: allowlist secret
     assert s.ed25519_public_key is None
 
 
@@ -1588,6 +1588,8 @@ def test_oauth_manager_non_string_token_url_raises():
         import asyncio
 
         asyncio.run(manager._client_credentials_flow(credentials))
+
+
 # --------------------------------------------------------------------------- #
 #                    UAID Security Configuration                               #
 # --------------------------------------------------------------------------- #
@@ -1670,20 +1672,15 @@ def test_uaid_config_warns_on_contradictory_settings(caplog):
     import logging
 
     # Capture warnings from the config logger
-    with caplog.at_level(logging.WARNING, logger='mcpgateway.config'):
-        settings = Settings(
-            uaid_allow_all_domains=True,
-            uaid_allowed_domains=["example.com"],
-            _env_file=None
-        )
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+        settings = Settings(uaid_allow_all_domains=True, uaid_allowed_domains=["example.com"], _env_file=None)
 
     # Should create settings successfully but log warning
     assert settings.uaid_allow_all_domains is True
     assert settings.uaid_allowed_domains == ["example.com"]
 
     # Check warning was logged in config module
-    assert any("Configuration conflict" in record.message for record in caplog.records), \
-        f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
+    assert any("Configuration conflict" in record.message for record in caplog.records), f"Expected warning not found. Log records: {[r.message for r in caplog.records]}"
 
 
 def test_uaid_allowed_domains_rejects_ipv6_with_brackets():

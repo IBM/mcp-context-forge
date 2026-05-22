@@ -27,7 +27,7 @@ class TestArgon2AsyncWrappers:
 
         # Use light params for testing
         service = Argon2PasswordService(time_cost=1, memory_cost=1024)
-        password = "test_password_123"
+        password = "test_password_123"  # pragma: allowlist secret
 
         hash_value = await service.hash_password_async(password)
 
@@ -41,7 +41,7 @@ class TestArgon2AsyncWrappers:
         from mcpgateway.services.argon2_service import Argon2PasswordService
 
         service = Argon2PasswordService(time_cost=1, memory_cost=1024)
-        password = "test_password_123"
+        password = "test_password_123"  # pragma: allowlist secret
 
         # Hash with async
         async_hash = await service.hash_password_async(password)
@@ -57,7 +57,7 @@ class TestArgon2AsyncWrappers:
         from mcpgateway.services.argon2_service import Argon2PasswordService
 
         service = Argon2PasswordService(time_cost=1, memory_cost=1024)
-        password = "correct_password"
+        password = "correct_password"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         result = await service.verify_password_async(password, hash_value)
@@ -71,7 +71,7 @@ class TestArgon2AsyncWrappers:
         from mcpgateway.services.argon2_service import Argon2PasswordService
 
         service = Argon2PasswordService(time_cost=1, memory_cost=1024)
-        password = "correct_password"
+        password = "correct_password"  # pragma: allowlist secret
         hash_value = service.hash_password(password)
 
         result = await service.verify_password_async("wrong_password", hash_value)
@@ -95,7 +95,7 @@ class TestArgon2AsyncWrappers:
         # First-Party
         from mcpgateway.services.argon2_service import hash_password_async, verify_password_async
 
-        password = "module_level_test"
+        password = "module_level_test"  # pragma: allowlist secret
 
         hash_value = await hash_password_async(password)
 
@@ -109,7 +109,7 @@ class TestArgon2AsyncWrappers:
         from mcpgateway.services.argon2_service import Argon2PasswordService
 
         service = Argon2PasswordService(time_cost=1, memory_cost=1024)
-        password = "same_password"
+        password = "same_password"  # pragma: allowlist secret
 
         hash1 = await service.hash_password_async(password)
         hash2 = await service.hash_password_async(password)

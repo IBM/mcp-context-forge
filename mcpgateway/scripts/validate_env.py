@@ -103,13 +103,13 @@ def get_security_warnings(settings: Settings) -> list[str]:
         >>> any("low entropy" in w for w in warnings)
         True
 
-        >>> mock_settings.jwt_secret_key = SecretStr("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p")
+        >>> mock_settings.jwt_secret_key = SecretStr("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p")  # pragma: allowlist secret
         >>> mock_settings.auth_encryption_secret = SecretStr("my-test-salt")
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("AUTH_ENCRYPTION_SECRET: Default/weak secret" in w for w in warnings)
         True
 
-        >>> mock_settings.auth_encryption_secret = SecretStr("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p")
+        >>> mock_settings.auth_encryption_secret = SecretStr("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p")  # pragma: allowlist secret
         >>> mock_settings.app_domain = "invalid-url"
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("Should be a valid HTTP or HTTPS URL" in w for w in warnings)

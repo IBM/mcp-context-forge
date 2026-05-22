@@ -40,7 +40,7 @@ plugins:
       provider: "ibm_watson"
       fallback_provider: "ibm_granite"
       ibm_watson:
-        api_key: "test-watson-key"
+        api_key: "test-watson-key"  # pragma: allowlist secret
         url: "https://api.us-south.natural-language-understanding.watson.cloud.ibm.com"
         version: "2022-04-07"
       ibm_granite:
@@ -119,7 +119,7 @@ plugins:
     config:
       provider: "ibm_watson"
       ibm_watson:
-        api_key: "test-watson-key"
+        api_key: "test-watson-key"  # pragma: allowlist secret
         url: "https://test-watson-url"
       categories:
         hate:
@@ -185,7 +185,7 @@ plugins:
       provider: "ibm_watson"
       fallback_provider: "ibm_granite"
       ibm_watson:
-        api_key: "test-watson-key"
+        api_key: "test-watson-key"  # pragma: allowlist secret
         url: "https://test-watson-url"
       ibm_granite:
         ollama_url: "http://localhost:11434"
@@ -257,7 +257,7 @@ plugins:
     config:
       provider: "ibm_watson"
       ibm_watson:
-        api_key: "test-watson-key"
+        api_key: "test-watson-key"  # pragma: allowlist secret
         url: "https://test-watson-url"
       categories:
         profanity:
@@ -320,7 +320,7 @@ plugins:
     config:
       provider: "ibm_watson"
       ibm_watson:
-        api_key: "watson-key"
+        api_key: "watson-key"  # pragma: allowlist secret
         url: "https://watson-url"
       categories:
         hate:

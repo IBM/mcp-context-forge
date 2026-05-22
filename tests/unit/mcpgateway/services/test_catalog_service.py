@@ -575,7 +575,7 @@ async def test_get_catalog_servers_cache_store_exception(service):
 async def test_register_with_custom_auth_type(service):
     """Test registration with unrecognized auth type falls back to authheaders."""
     fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc", "auth_type": "Custom"}]}
-    req = CatalogServerRegisterRequest(server_id="1", name="srv", api_key="mykey", oauth_credentials=None)
+    req = CatalogServerRegisterRequest(server_id="1", name="srv", api_key="mykey", oauth_credentials=None)  # pragma: allowlist secret
     captured_data = {}
 
     async def mock_register(db, gateway, **kwargs):

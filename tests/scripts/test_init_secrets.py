@@ -184,6 +184,7 @@ class TestEnsureEnvFileSecrets:
 
     def test_merge_env_file_sets_permissions_0o600(self, tmp_path):
         import stat
+
         env = tmp_path / ".env"
         _merge_env_file(str(env), {"JWT_SECRET_KEY": "val"})
         assert stat.S_IMODE(env.stat().st_mode) == 0o600
@@ -195,10 +196,7 @@ class TestEnsureEnvFileSecrets:
 
         env = tmp_path / ".env"
         fake_fd = 99
-        with patch("os.open", return_value=fake_fd) as mock_open, \
-             patch("os.fchmod"), \
-             patch("os.fdopen", side_effect=OSError("fdopen failed")), \
-             patch("os.close") as mock_close:
+        with patch("os.open", return_value=fake_fd) as mock_open, patch("os.fchmod"), patch("os.fdopen", side_effect=OSError("fdopen failed")), patch("os.close") as mock_close:
             with pytest.raises(OSError, match="fdopen failed"):
                 _merge_env_file(str(env), {"JWT_SECRET_KEY": "val"})
             mock_close.assert_called_once_with(fake_fd)
@@ -220,6 +218,7 @@ class TestEnsureEnvFileSecrets:
 
     def test_ensure_patches_os_environ(self, tmp_path, monkeypatch):
         import os as _os
+
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
         monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
@@ -244,8 +243,8 @@ class TestEnsureEnvFileSecrets:
 
     def test_ensure_skips_strong_secrets(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
-        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"
-        env.write_text(f"JWT_SECRET_KEY={strong}\nAUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+        env.write_text(f"JWT_SECRET_KEY={strong}\nAUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")  # pragma: allowlist secret
         monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
         monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
         monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
@@ -257,8 +256,8 @@ class TestEnsureEnvFileSecrets:
     def test_ensure_respects_os_environ_override(self, tmp_path, monkeypatch):
         """os.environ takes priority over .env file — if strong in os.environ, skip."""
         env = tmp_path / ".env"
-        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
-        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")  # pragma: allowlist secret
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
         monkeypatch.setenv("JWT_SECRET_KEY", strong)
         monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", strong)
         monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
@@ -280,8 +279,7 @@ class TestEnsureEnvFileSecrets:
     def test_ensure_blocks_replace_me_placeholder(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
         env.write_text(
-            "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets\n"
-            "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets\n",
+            "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets\n" "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets\n",
             encoding="utf-8",
         )
         monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
@@ -332,7 +330,7 @@ class TestEnsureEnvFileSecrets:
 
     def test_ensure_regenerates_quoted_weak_value(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
-        env.write_text('JWT_SECRET_KEY="changeme"\nAUTH_ENCRYPTION_SECRET="changeme"\n', encoding="utf-8")
+        env.write_text('JWT_SECRET_KEY="changeme"\nAUTH_ENCRYPTION_SECRET="changeme"\n', encoding="utf-8")  # pragma: allowlist secret
         monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
         monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
         monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")

@@ -37,7 +37,7 @@ Examples:
     'access_token=******; user=john'
 
     Test mask_sensitive_headers with mixed headers:
-    >>> headers = {"Content-Type": "application/json", "secret": "mysecret"}
+    >>> headers = {"Content-Type": "application/json", "secret": "mysecret"}  # pragma: allowlist secret
     >>> result = mask_sensitive_headers(headers)
     >>> result["Content-Type"]
     'application/json'

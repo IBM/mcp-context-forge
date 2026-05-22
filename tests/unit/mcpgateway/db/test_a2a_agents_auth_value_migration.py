@@ -25,8 +25,8 @@ import pytest
 import sqlalchemy as sa
 
 MODULE_NAME = "mcpgateway.alembic.versions.a3c38b6c2437_fix_a2a_agents_auth_value"
-REVISION = "a3c38b6c2437"
-DOWN_REVISION = "e1f2a3b4c5d6"
+REVISION = "a3c38b6c2437"  # pragma: allowlist secret
+DOWN_REVISION = "e1f2a3b4c5d6"  # pragma: allowlist secret
 
 
 # ---------------------------------------------------------------------------

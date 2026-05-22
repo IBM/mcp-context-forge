@@ -154,7 +154,7 @@ class SupportBundleService:
 
         Examples:
             >>> service = SupportBundleService()
-            >>> service._sanitize_url("postgresql://user:password@localhost/db")
+            >>> service._sanitize_url("postgresql://user:password@localhost/db")  # pragma: allowlist secret
             'postgresql://user:*****@localhost/db'
             >>> service._sanitize_url("http://example.com")
             'http://example.com'

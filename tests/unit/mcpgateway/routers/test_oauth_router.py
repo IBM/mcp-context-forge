@@ -58,7 +58,7 @@ def mock_gateway():
     gateway.oauth_config = {
         "grant_type": "authorization_code",
         "client_id": "test_client",
-        "client_secret": "test_secret",
+        "client_secret": "test_secret",  # pragma: allowlist secret
         "authorization_url": "https://oauth.example.com/authorize",
         "token_url": "https://oauth.example.com/token",
         "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -370,7 +370,7 @@ class TestOAuthRouter:
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "authorization_url": "https://oauth.example.com/authorize",
             "token_url": "https://oauth.example.com/token",
             "redirect_uri": "https://gateway.example.com/oauth/callback",
@@ -2148,7 +2148,7 @@ class TestOAuthCallbackCSPCompliance:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret",  # pragma: allowlist secret
             "authorization_url": "https://oauth.example.com/authorize",
             "token_url": "https://oauth.example.com/token",
             "redirect_uri": "http://localhost:4444/oauth/callback",
@@ -2178,12 +2178,7 @@ class TestOAuthCallbackCSPCompliance:
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                 from mcpgateway.routers.oauth_router import oauth_callback
 
-                result = await oauth_callback(
-                    code="test-auth-code",
-                    state="test-state-token",
-                    request=mock_request,
-                    db=mock_db
-                )
+                result = await oauth_callback(code="test-auth-code", state="test-state-token", request=mock_request, db=mock_db)
 
         # Verify response is HTML
         assert isinstance(result, HTMLResponse)
@@ -2193,20 +2188,16 @@ class TestOAuthCallbackCSPCompliance:
         body = result.body.decode()
 
         # Critical assertion: Verify CSP nonce is present in script tag
-        assert '<script nonce="test-nonce-abc123xyz">' in body, \
-            "OAuth callback page must include CSP nonce in inline script tag"
+        assert '<script nonce="test-nonce-abc123xyz">' in body, "OAuth callback page must include CSP nonce in inline script tag"
 
         # Verify no inline onclick handlers (CSP violation)
-        assert 'onclick=' not in body, \
-            "OAuth callback page must not use inline onclick handlers (CSP violation)"
+        assert "onclick=" not in body, "OAuth callback page must not use inline onclick handlers (CSP violation)"
 
         # Verify addEventListener pattern is used instead
-        assert 'addEventListener' in body, \
-            "OAuth callback page must use addEventListener for CSP compliance"
+        assert "addEventListener" in body, "OAuth callback page must use addEventListener for CSP compliance"
 
         # Verify IIFE wrapper for proper scoping
-        assert '(function()' in body or '(function ()' in body, \
-            "OAuth callback page script should use IIFE for proper scoping"
+        assert "(function()" in body or "(function ()" in body, "OAuth callback page script should use IIFE for proper scoping"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_success_handles_missing_csp_nonce_gracefully(self, mock_db, mock_request):
@@ -2235,8 +2226,8 @@ class TestOAuthCallbackCSPCompliance:
 
         # Simulate missing CSP nonce (request.state.csp_nonce not set)
         # This tests the fallback behavior in get_csp_nonce_from_request
-        if hasattr(mock_request.state, 'csp_nonce'):
-            delattr(mock_request.state, 'csp_nonce')
+        if hasattr(mock_request.state, "csp_nonce"):
+            delattr(mock_request.state, "csp_nonce")
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -2247,12 +2238,7 @@ class TestOAuthCallbackCSPCompliance:
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                 from mcpgateway.routers.oauth_router import oauth_callback
 
-                result = await oauth_callback(
-                    code="test-auth-code",
-                    state="test-state-token",
-                    request=mock_request,
-                    db=mock_db
-                )
+                result = await oauth_callback(code="test-auth-code", state="test-state-token", request=mock_request, db=mock_db)
 
         # Verify response is still valid HTML
         assert isinstance(result, HTMLResponse)
@@ -2262,8 +2248,7 @@ class TestOAuthCallbackCSPCompliance:
 
         # When nonce is missing, get_csp_nonce_from_request returns empty string
         # The script tag should still be present but with empty nonce attribute
-        assert '<script nonce="">' in body, \
-            "OAuth callback should handle missing CSP nonce gracefully with empty nonce attribute"
+        assert '<script nonce="">' in body, "OAuth callback should handle missing CSP nonce gracefully with empty nonce attribute"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_error_pages_do_not_include_inline_scripts(self, mock_db, mock_request):
@@ -2271,35 +2256,22 @@ class TestOAuthCallbackCSPCompliance:
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Test error callback (provider returned error)
-        result = await oauth_callback(
-            code=None,
-            state="test-state",
-            error="access_denied",
-            error_description="User denied access",
-            request=mock_request,
-            db=mock_db
-        )
+        result = await oauth_callback(code=None, state="test-state", error="access_denied", error_description="User denied access", request=mock_request, db=mock_db)
 
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         body = result.body.decode()
 
         # Error pages should not have inline scripts
-        assert '<script' not in body, \
-            "OAuth error pages should not contain inline scripts"
+        assert "<script" not in body, "OAuth error pages should not contain inline scripts"
 
         # Test missing code error
-        result = await oauth_callback(
-            code=None,
-            state="test-state",
-            request=mock_request,
-            db=mock_db
-        )
+        result = await oauth_callback(code=None, state="test-state", request=mock_request, db=mock_db)
 
         assert isinstance(result, HTMLResponse)
         assert result.status_code == 400
         body = result.body.decode()
-        assert '<script' not in body
+        assert "<script" not in body
 
     @pytest.mark.asyncio
     async def test_oauth_callback_csp_nonce_uniqueness_per_request(self, mock_db):
@@ -2351,17 +2323,13 @@ class TestOAuthCallbackCSPCompliance:
                 with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
                     from mcpgateway.routers.oauth_router import oauth_callback
 
-                    result = await oauth_callback(
-                        code="test-auth-code",
-                        state="test-state-token",
-                        request=mock_request,
-                        db=mock_db
-                    )
+                    result = await oauth_callback(code="test-auth-code", state="test-state-token", request=mock_request, db=mock_db)
 
             body = result.body.decode()
 
             # Extract nonce from script tag
             import re
+
             nonce_match = re.search(r'<script nonce="([^"]+)">', body)
             assert nonce_match, f"Request {i}: CSP nonce not found in script tag"
 

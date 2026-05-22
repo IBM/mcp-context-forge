@@ -115,7 +115,7 @@ def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pyt
     provider_data = LLMProviderCreate(
         name="Provider",
         provider_type=LLMProviderType.OPENAI,
-        config={"api_key": "cfg-secret", "region": "us-east-1"},
+        config={"api_key": "cfg-secret", "region": "us-east-1"},  # pragma: allowlist secret
         enabled=True,
     )
 
@@ -272,7 +272,7 @@ def test_update_provider_preserves_masked_sensitive_config(service, db):
     service.get_provider = MagicMock(return_value=provider)
     db.execute.return_value = _mock_execute_scalar(None)
 
-    update = LLMProviderUpdate(config={"api_key": "*****", "region": "us-west-2"})
+    update = LLMProviderUpdate(config={"api_key": "*****", "region": "us-west-2"})  # pragma: allowlist secret
     updated = service.update_provider(db, "p1", update)
 
     assert updated.config["api_key"] == {"_mcpgateway_encrypted_value_v1": "encrypted-existing"}
@@ -542,7 +542,7 @@ def test_provider_config_recursive_list_and_non_dict_branches(monkeypatch: pytes
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.encode_auth", lambda data: f"enc:{data['data']}")
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"data": "clear-secret"})
 
-    protected = _protect_provider_config_fragment({"items": [{"api_key": "secret-1"}, {"region": "us-east-1"}]})
+    protected = _protect_provider_config_fragment({"items": [{"api_key": "secret-1"}, {"region": "us-east-1"}]})  # pragma: allowlist secret
     assert protected["items"][0]["api_key"] == {"_mcpgateway_encrypted_value_v1": "enc:secret-1"}
     assert protected["items"][1]["region"] == "us-east-1"
 
@@ -552,7 +552,7 @@ def test_provider_config_recursive_list_and_non_dict_branches(monkeypatch: pytes
     assert decrypted["items"][0]["api_key"] == "clear-secret"
     assert decrypt_provider_config_for_runtime(None) == {}
 
-    masked_list = _mask_provider_config_fragment([{"api_key": "clear-secret"}, {"region": "us-east-1"}])
+    masked_list = _mask_provider_config_fragment([{"api_key": "clear-secret"}, {"region": "us-east-1"}])  # pragma: allowlist secret
     assert masked_list[0]["api_key"] == settings.masked_auth_value
     assert masked_list[1]["region"] == "us-east-1"
 
@@ -770,13 +770,13 @@ async def test_check_provider_health_openai_api_key_unhealthy(service, db, monke
         id="p1",
         name="Provider",
         provider_type=LLMProviderType.OPENAI,
-        api_key="encoded",
+        api_key="encoded",  # pragma: allowlist secret
         api_base="http://api",
         health_status=None,
         last_health_check=None,
     )
     service.get_provider = MagicMock(return_value=provider)
-    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"api_key": "token"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"api_key": "token"})  # pragma: allowlist secret
 
     class DummyClient:
         async def get(self, url, headers=None, timeout=10.0):

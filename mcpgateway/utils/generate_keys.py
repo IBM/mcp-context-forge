@@ -47,7 +47,7 @@ def generate_ed25519_keypair(private_path: Path, public_path: Path) -> None:
         ...         priv.exists(),
         ...         pub.exists(),
         ...         "Ed25519 key pair generated" in buf.getvalue(),
-        ...         priv.read_text(encoding="utf-8").startswith("-----BEGIN PRIVATE KEY-----"),
+        ...         priv.read_text(encoding="utf-8").startswith("-----BEGIN PRIVATE KEY-----"),  # pragma: allowlist secret
         ...         pub.read_text(encoding="utf-8").startswith("-----BEGIN PUBLIC KEY-----"),
         ...     )
         (True, True, True, True, True)
@@ -86,7 +86,7 @@ def generate_ed25519_private_key() -> str:
     Examples:
         >>> from mcpgateway.utils.generate_keys import generate_ed25519_private_key
         >>> pem = generate_ed25519_private_key()
-        >>> pem.startswith("-----BEGIN PRIVATE KEY-----")
+        >>> pem.startswith("-----BEGIN PRIVATE KEY-----")  # pragma: allowlist secret
         True
         >>> pem.strip().endswith("-----END PRIVATE KEY-----")
         True

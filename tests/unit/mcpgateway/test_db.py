@@ -260,14 +260,14 @@ def test_tool_metrics_summary_detached():
 def test_build_engine_rejects_unsupported_backend(monkeypatch, unsupported_backend):
     """build_engine() raises ValueError for any backend other than postgresql/sqlite."""
     monkeypatch.setattr(db, "backend", unsupported_backend)
-    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")
+    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")  # pragma: allowlist secret
     with pytest.raises(ValueError, match="Unsupported database backend"):
         db.build_engine()
 
 
 def test_build_engine_null_pool_branch(monkeypatch):
     monkeypatch.setattr(db, "backend", "postgresql")
-    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")  # pragma: allowlist secret
     monkeypatch.setattr(db.settings, "db_pool_class", "null")
     monkeypatch.setattr(db, "connect_args", {})
 
@@ -279,7 +279,7 @@ def test_build_engine_null_pool_branch(monkeypatch):
 
 def test_build_engine_auto_pgbouncer_branch(monkeypatch):
     monkeypatch.setattr(db, "backend", "postgresql")
-    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@pgbouncer.example/db")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@pgbouncer.example/db")  # pragma: allowlist secret
     monkeypatch.setattr(db.settings, "db_pool_class", "auto")
     monkeypatch.setattr(db.settings, "db_pool_pre_ping", "auto")
     monkeypatch.setattr(db, "connect_args", {})
@@ -1071,7 +1071,6 @@ def test_get_db_closes_on_exception(monkeypatch):
     assert hasattr(dummy, "rolled_back")
 
 
-
 # --- Gateway event listener ---
 def test_update_tool_names_on_gateway_update(monkeypatch):
     class DummyGateway:
@@ -1710,7 +1709,7 @@ def test_set_prompt_name_and_slug_db_lookup_failure_falls_back_to_unprefixed(mon
 # --- build_engine additional branches ---
 def test_build_engine_queue_pool_pre_ping_true_logs_echo(monkeypatch, caplog):
     monkeypatch.setattr(db, "backend", "postgresql")
-    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")  # pragma: allowlist secret
     monkeypatch.setattr(db.settings, "db_pool_class", "queue")
     monkeypatch.setattr(db.settings, "db_pool_pre_ping", "true")
     monkeypatch.setattr(db.settings, "db_pool_size", 5)
@@ -1730,7 +1729,7 @@ def test_build_engine_queue_pool_pre_ping_true_logs_echo(monkeypatch, caplog):
 
 def test_build_engine_queue_pool_pre_ping_false(monkeypatch):
     monkeypatch.setattr(db, "backend", "postgresql")
-    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")  # pragma: allowlist secret
     monkeypatch.setattr(db.settings, "db_pool_class", "queue")
     monkeypatch.setattr(db.settings, "db_pool_pre_ping", "false")
     monkeypatch.setattr(db.settings, "db_pool_size", 1)
@@ -1746,7 +1745,7 @@ def test_build_engine_queue_pool_pre_ping_false(monkeypatch):
 
 def test_build_engine_queue_pool_pgbouncer_auto_pre_ping_logs_hint(monkeypatch, caplog):
     monkeypatch.setattr(db, "backend", "postgresql")
-    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@pgbouncer.example/db")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@pgbouncer.example/db")  # pragma: allowlist secret
     monkeypatch.setattr(db.settings, "db_pool_class", "queue")
     monkeypatch.setattr(db.settings, "db_pool_pre_ping", "auto")
     monkeypatch.setattr(db.settings, "db_pool_size", 1)
@@ -2404,7 +2403,7 @@ def test_db_module_connect_args_postgresql_options_and_prepare_threshold(monkeyp
     original_obs = db.settings.observability_enabled
 
     try:
-        monkeypatch.setattr(db.settings, "database_url", "postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway")
+        monkeypatch.setattr(db.settings, "database_url", "postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_path=mcp_gateway")  # pragma: allowlist secret
         monkeypatch.setattr(db.settings, "db_prepare_threshold", 123)
         monkeypatch.setattr(db.settings, "observability_enabled", False)
 

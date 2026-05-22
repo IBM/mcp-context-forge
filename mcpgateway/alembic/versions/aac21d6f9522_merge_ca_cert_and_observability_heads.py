@@ -15,7 +15,7 @@ Create Date: 2025-11-08 21:43:56.381588
 from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
-revision: str = "aac21d6f9522"
+revision: str = "aac21d6f9522"  # pragma: allowlist secret
 down_revision: Union[str, Sequence[str], None] = "f9101f3b00e3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

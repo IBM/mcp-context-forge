@@ -26,14 +26,14 @@ import pytest
 OBSERVABILITY_MIGRATIONS = [
     {
         "module": "mcpgateway.alembic.versions.a23a08d61eb0_add_observability_tables",
-        "revision": "a23a08d61eb0",
+        "revision": "a23a08d61eb0",  # pragma: allowlist secret
         "down_revision": "a706a3320c56",
         "description": "add_observability_tables",
     },
     {
         "module": "mcpgateway.alembic.versions.i3c4d5e6f7g8_add_observability_performance_indexes",
         "revision": "i3c4d5e6f7g8",
-        "down_revision": "a23a08d61eb0",
+        "down_revision": "a23a08d61eb0",  # pragma: allowlist secret
         "description": "add observability performance indexes",
     },
     {
@@ -123,7 +123,7 @@ class TestMigrationChain:
         revisions = {m["revision"]: m["down_revision"] for m in OBSERVABILITY_MIGRATIONS}
 
         # i3c4d5e6f7g8 should depend on a23a08d61eb0
-        assert revisions["i3c4d5e6f7g8"] == "a23a08d61eb0"
+        assert revisions["i3c4d5e6f7g8"] == "a23a08d61eb0"  # pragma: allowlist secret
 
         # j4d5e6f7g8h9 should depend on i3c4d5e6f7g8
         assert revisions["j4d5e6f7g8h9"] == "i3c4d5e6f7g8"

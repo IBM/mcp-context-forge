@@ -301,7 +301,7 @@ def test_admin_create(ctx: TestContext):
     email_all = test_email("all-fields")
     resp = ctx.create_user(
         email_all,
-        password="AllFields123!",
+        password="AllFields123!",  # pragma: allowlist secret
         full_name="All Fields",
         is_admin=True,
         is_active=False,
@@ -326,7 +326,7 @@ def test_admin_create(ctx: TestContext):
         "/auth/email/admin/users",
         {
             "email": email_short,
-            "password": "Short1!",
+            "password": "Short1!",  # pragma: allowlist secret
             "full_name": "Short PW",
         },
     )
@@ -398,7 +398,7 @@ def test_admin_update_partial(ctx: TestContext):
         test("pcr preserved (False)", resp.body.get("password_change_required") is False)
 
     # Verify login still works (password not wiped by partial update)
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Login after partial update works", resp.status in (200, 403), f"status={resp.status}")
 
     # Update is_active only
@@ -463,7 +463,7 @@ def test_admin_update_partial(ctx: TestContext):
         test("Multi: is_active updated", resp.body.get("is_active") is False)
         test("Multi: pcr updated", resp.body.get("password_change_required") is True)
 
-    #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+    # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
     # Tests to improve the coverage and maintain compatibility with PATCH endpoint
     resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name2"})
     test("Name-only update with PUT returns 200", resp.status == 200, f"status={resp.status}")
@@ -472,7 +472,7 @@ def test_admin_update_partial(ctx: TestContext):
         test("is_admin preserved (True)", resp.body.get("is_admin") is True)
         test("is_active preserved (False)", resp.body.get("is_active") is False)
         test("pcr preserved (True)", resp.body.get("password_change_required") is True)
-    #---------->
+    # ---------->
 
     # Update non-existent user
     resp = ctx.api("PATCH", "/auth/email/admin/users/nonexistent-xyz@example.com", {"full_name": "Ghost"})
@@ -491,7 +491,7 @@ def test_password_management(ctx: TestContext):
         "PATCH",
         f"/auth/email/admin/users/{email}",
         {
-            "password": "TempPass999!",
+            "password": "TempPass999!",  # pragma: allowlist secret
             "password_change_required": True,
         },
     )
@@ -500,26 +500,26 @@ def test_password_management(ctx: TestContext):
         test("pcr=True honored despite password change", resp.body.get("password_change_required") is True)
 
     # Admin resets password without explicit pcr (should auto-clear)
-    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "FinalPass999!"})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "FinalPass999!"})  # pragma: allowlist secret
     test("Password reset without pcr returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("pcr auto-cleared to False", resp.body.get("password_change_required") is False)
 
     # Verify new password works
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "FinalPass999!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "FinalPass999!"}, token="")  # pragma: allowlist secret
     test("Login with reset password works", resp.status in (200, 403), f"status={resp.status}")
 
     # Old password should not work
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Old password rejected after reset", resp.status == 401, f"status={resp.status}")
 
     # Password update with short password
-    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "Short!"})
+    resp = ctx.api("PATCH", f"/auth/email/admin/users/{email}", {"password": "Short!"})  # pragma: allowlist secret
     test("Short password in update returns 400/422", resp.status in (400, 422), f"status={resp.status}")
 
     # Change password via user endpoint (self-service)
     user_token = None
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "FinalPass999!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "FinalPass999!"}, token="")  # pragma: allowlist secret
     if resp.status == 200 and resp.body.get("access_token"):
         user_token = resp.body["access_token"]
 
@@ -527,15 +527,15 @@ def test_password_management(ctx: TestContext):
             "POST",
             "/auth/email/change-password",
             {
-                "old_password": "FinalPass999!",
-                "new_password": "ChangedPass999!",
+                "old_password": "FinalPass999!",  # pragma: allowlist secret
+                "new_password": "ChangedPass999!",  # pragma: allowlist secret
             },
             token=user_token,
         )
         test("Self-service password change returns 200", resp.status == 200, f"status={resp.status}")
 
         # Verify new password works
-        resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "ChangedPass999!"}, token="")
+        resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "ChangedPass999!"}, token="")  # pragma: allowlist secret
         test("Login with self-changed password works", resp.status in (200, 403), f"status={resp.status}")
     else:
         skip("Self-service password change", "could not obtain user token")
@@ -550,7 +550,7 @@ def test_login_flows(ctx: TestContext):
     email = test_email("login")
     ctx.create_user(email, full_name="Login User")
 
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Normal login returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Login returns access_token", "access_token" in resp.body)
@@ -559,23 +559,23 @@ def test_login_flows(ctx: TestContext):
         test("Login user has correct email", resp.body.get("user", {}).get("email") == email)
 
     # Wrong password
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "WrongPass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "WrongPass123!"}, token="")  # pragma: allowlist secret
     test("Wrong password returns 401", resp.status == 401, f"status={resp.status}")
 
     # Non-existent user login
-    resp = ctx.api("POST", "/auth/email/login", {"email": "nobody-xyz@example.com", "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": "nobody-xyz@example.com", "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Non-existent user login returns 401", resp.status == 401, f"status={resp.status}")
 
     # Inactive user cannot login
     email_inactive = test_email("login-inactive")
     ctx.create_user(email_inactive, is_active=False, full_name="Inactive Login")
-    resp = ctx.api("POST", "/auth/email/login", {"email": email_inactive, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email_inactive, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Inactive user login returns 401", resp.status == 401, f"status={resp.status}")
 
     # Password change required - login returns 403
     email_pcr = test_email("login-pcr")
     ctx.create_user(email_pcr, password_change_required=True, full_name="PCR Login")
-    resp = ctx.api("POST", "/auth/email/login", {"email": email_pcr, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email_pcr, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     test("Login with pcr returns 403", resp.status == 403, f"status={resp.status}")
     if resp.status == 403:
         test("403 includes password change message", "password" in resp.body.get("detail", "").lower())
@@ -589,7 +589,7 @@ def test_self_service(ctx: TestContext):
     ctx.create_user(email, full_name="Self Service User")
 
     # Get user token
-    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")
+    resp = ctx.api("POST", "/auth/email/login", {"email": email, "password": "SecurePass123!"}, token="")  # pragma: allowlist secret
     if resp.status != 200 or not resp.body.get("access_token"):
         skip("GET /me", "could not obtain user token")
         skip("GET /events", "could not obtain user token")
@@ -655,7 +655,7 @@ def test_public_registration(ctx: TestContext):
         "/auth/email/register",
         {
             "email": email,
-            "password": "SecurePass123!",
+            "password": "SecurePass123!",  # pragma: allowlist secret
             "full_name": "Public User",
             "is_admin": True,
             "is_active": False,
@@ -688,7 +688,7 @@ def test_public_registration(ctx: TestContext):
         "/auth/email/register",
         {
             "email": email2,
-            "password": "SecurePass123!",
+            "password": "SecurePass123!",  # pragma: allowlist secret
             "full_name": "Clean Public User",
         },
         token="",
@@ -738,7 +738,7 @@ def test_edge_cases(ctx: TestContext):
         "/auth/email/admin/users",
         {
             "email": email_toolong,
-            "password": "SecurePass123!",
+            "password": "SecurePass123!",  # pragma: allowlist secret
             "full_name": "A" * 256,
         },
     )
@@ -750,7 +750,7 @@ def test_edge_cases(ctx: TestContext):
         "/auth/email/admin/users",
         {
             "email": "not-an-email",
-            "password": "SecurePass123!",
+            "password": "SecurePass123!",  # pragma: allowlist secret
             "full_name": "Invalid Email",
         },
     )

@@ -96,7 +96,7 @@ async def test_url_block_on_malicious(tmp_path, monkeypatch):
     }
 
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     payload = ResourcePreFetchPayload(uri=url)
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
@@ -134,7 +134,7 @@ async def test_local_allow_and_deny_overrides():
     )
     plugin = VirusTotalURLCheckerPlugin(cfg)
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
     from cpex.framework import ToolPostInvokePayload
 
     payload = ToolPostInvokePayload(name="writer", result=f"See {url}")
@@ -181,7 +181,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     )
     plugin_allow = VirusTotalURLCheckerPlugin(cfg_allow)
     plugin_allow._client_factory = lambda c, h: _StubClient({})  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
     from cpex.framework import ToolPostInvokePayload
 
     payload = ToolPostInvokePayload(name="writer", result=f"visit {url}")
@@ -234,7 +234,7 @@ async def test_prompt_scan_blocks_on_url():
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=f"see {url}"))])
     from cpex.framework import PromptPosthookPayload
@@ -271,7 +271,7 @@ async def test_resource_scan_blocks_on_url():
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     from mcpgateway.common.models import ResourceContent
 
@@ -314,7 +314,7 @@ async def test_file_hash_lookup_blocks(tmp_path, monkeypatch):
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     uri = f"file://{p}"
     payload = ResourcePreFetchPayload(uri=uri)
@@ -361,7 +361,7 @@ async def test_unknown_file_then_upload_wait_allows_when_clean(tmp_path):
     }
 
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     uri = f"file://{p}"
     payload = ResourcePreFetchPayload(uri=uri)
@@ -400,7 +400,7 @@ async def test_tool_output_url_block_and_ratio():
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
-    os.environ["VT_API_KEY"] = "dummy"
+    os.environ["VT_API_KEY"] = "dummy"  # pragma: allowlist secret
 
     from cpex.framework import ToolPostInvokePayload
 

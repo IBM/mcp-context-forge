@@ -199,7 +199,7 @@ plugins:
           events: ["tool_success", "tool_error"]
           authentication:
             type: "api_key"
-            api_key: "monitor-key"
+            api_key: "monitor-key"  # pragma: allowlist secret
             api_key_header: "X-Monitor-Key"
           retry_attempts: 1
           enabled: true

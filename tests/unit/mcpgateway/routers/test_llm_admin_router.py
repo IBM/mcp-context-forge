@@ -547,7 +547,7 @@ async def test_fetch_provider_models_ollama_format(monkeypatch: pytest.MonkeyPat
 async def test_fetch_provider_models_with_api_key(monkeypatch: pytest.MonkeyPatch):
     provider = _provider()
     provider.api_base = "http://api"
-    provider.api_key = "encrypted_key"
+    provider.api_key = "encrypted_key"  # pragma: allowlist secret
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
     monkeypatch.setattr(
         llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}}
@@ -555,7 +555,7 @@ async def test_fetch_provider_models_with_api_key(monkeypatch: pytest.MonkeyPatc
 
     import mcpgateway.utils.services_auth as auth_module
 
-    monkeypatch.setattr(auth_module, "decode_auth", lambda *_a, **_k: {"api_key": "my-key"})
+    monkeypatch.setattr(auth_module, "decode_auth", lambda *_a, **_k: {"api_key": "my-key"})  # pragma: allowlist secret
 
     class DummyResponse:
         def raise_for_status(self):
