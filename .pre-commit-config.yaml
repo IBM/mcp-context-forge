@@ -92,7 +92,7 @@ repos:
         pass_filenames: false
         always_run: true
         files: ^mcpgateway/alembic/versions/.*\.py$
-        
+
       - id: forbid-content-reference
         name: ❌ Forbid :contentReference
         description: Prevents :contentReference patterns from being committed.
