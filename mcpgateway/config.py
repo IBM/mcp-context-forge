@@ -491,6 +491,14 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
     sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    sso_okta_auth_server: str = Field(
+        default="default",
+        description=(
+            "Okta authorization server ID. Use 'default' (current behavior) for the "
+            "built-in custom authorization server, 'org' for the Org Authorization "
+            "Server (no API Access Management required), or any custom server ID."
+        ),
+    )
     okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
@@ -2214,6 +2222,27 @@ class Settings(BaseSettings):
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for SSO_ISSUERS")
 
+    @field_validator("sso_okta_auth_server")
+    @classmethod
+    def validate_okta_auth_server(cls, v: str) -> str:
+        """Validate and normalize the Okta authorization server ID.
+
+        Args:
+            v: Raw authorization server ID from config.
+
+        Returns:
+            Normalized auth server ID, defaulting to 'default' on empty input.
+
+        Raises:
+            ValueError: If the value contains path separators (path traversal prevention).
+        """
+        if not v or not v.strip():
+            return "default"
+        cleaned = v.strip()
+        if "/" in cleaned or "\\" in cleaned:
+            raise ValueError("SSO_OKTA_AUTH_SERVER must not contain path separators")
+        return cleaned
+
     # Resources
     resource_cache_size: int = 1000
     resource_cache_ttl: int = 3600  # seconds
@@ -2534,7 +2563,9 @@ class Settings(BaseSettings):
     redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
     redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
     redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
-    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)")
+    redis_ssl_check_hostname: bool = Field(
+        default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)"
+    )
 
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
