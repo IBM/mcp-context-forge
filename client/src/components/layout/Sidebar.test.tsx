@@ -8,6 +8,7 @@ import { AppSidebar } from "./Sidebar";
 const mockNavigate = vi.fn();
 const mockUseRouter = vi.fn();
 const mockUseQuery = vi.fn();
+const mockUseAuthContext = vi.fn();
 
 vi.mock("@/router", async () => {
   const actual = await vi.importActual<typeof import("@/router")>("@/router");
@@ -19,6 +20,10 @@ vi.mock("@/router", async () => {
 
 vi.mock("@/hooks/useQuery", () => ({
   useQuery: () => mockUseQuery(),
+}));
+
+vi.mock("@/auth/AuthContext", () => ({
+  useAuthContext: () => mockUseAuthContext(),
 }));
 
 function renderSidebar() {
@@ -41,6 +46,21 @@ describe("AppSidebar", () => {
       error: null,
       execute: vi.fn(),
       refetch: vi.fn(),
+    });
+    mockUseAuthContext.mockReturnValue({
+      user: {
+        email: "admin@example.com",
+        full_name: "Admin User",
+        is_admin: true,
+        is_active: true,
+        auth_provider: "local",
+        email_verified: true,
+        password_change_required: false,
+      },
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
     });
   });
 
@@ -104,5 +124,49 @@ describe("AppSidebar", () => {
     renderSidebar();
 
     expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("data-active", "true");
+  });
+
+  it("shows Administration section for platform admin users", () => {
+    mockUseRouter.mockReturnValue({
+      path: "/app/",
+      params: {},
+      navigate: mockNavigate,
+    });
+
+    renderSidebar();
+
+    expect(screen.getByText("Administration")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Users" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Teams" })).toBeInTheDocument();
+  });
+
+  it("hides Administration section for non-admin users", () => {
+    mockUseAuthContext.mockReturnValue({
+      user: {
+        email: "user@example.com",
+        full_name: "Regular User",
+        is_admin: false,
+        is_active: true,
+        auth_provider: "local",
+        email_verified: true,
+        password_change_required: false,
+      },
+      isAuthenticated: true,
+      isLoading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    mockUseRouter.mockReturnValue({
+      path: "/app/",
+      params: {},
+      navigate: mockNavigate,
+    });
+
+    renderSidebar();
+
+    expect(screen.queryByText("Administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Teams" })).not.toBeInTheDocument();
   });
 });
