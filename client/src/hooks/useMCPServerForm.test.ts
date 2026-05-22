@@ -755,7 +755,7 @@ describe("useMCPServerForm", () => {
             url: "http://localhost:3000",
             authType: "basic",
             authUsername: "admin",
-            authPassword: "*****",
+            authPassword: "*****", // pragma: allowlist secret
           }),
         ),
       );

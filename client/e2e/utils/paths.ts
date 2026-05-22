@@ -9,7 +9,7 @@ export const APP = {
   ROOT: "/app/",
   LOGIN: "/app/login",
   FORGOT_PASSWORD: "/app/forgot-password",
-  CHANGE_PASSWORD: "/app/change-password",
+  CHANGE_PASSWORD: "/app/change-password", // pragma: allowlist secret
   GATEWAYS: "/app/gateways",
   SERVERS: "/app/servers",
   TOOLS: "/app/tools",

@@ -2,7 +2,7 @@ import { Input } from "@/components/ui/input";
 
 interface BasicAuthProps {
   username: string;
-  password: string;
+  password: string; // pragma: allowlist secret
   onUsernameChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
 }

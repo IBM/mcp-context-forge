@@ -23,5 +23,8 @@
   "navigation.performance": "Desempenho",
   "navigation.maintenance": "Manutenção",
   "navigation.settings": "Configurações",
-  "navigation.label": "Navegação"
+  "navigation.label": "Navegação",
+  "navigation.components": "Componentes",
+  "navigation.ecosystem": "Ecossistema",
+  "navigation.administration": "Administração"
 }
