@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from enum import Enum
 import re
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
 # Third-Party
@@ -926,6 +926,29 @@ def _build_resource_metadata_url(scope: Scope, server_id: str) -> str:
     if not base:
         return ""
     return f"{base}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
+
+
+def _build_canonical_metadata_url(canonical_url: str) -> str:
+    """Build RFC 9728 metadata URL from a canonical resource URL.
+
+    Canonical URL:  https://gw.example.com/mcp
+    Metadata URL:   https://gw.example.com/.well-known/oauth-protected-resource/mcp
+
+    Args:
+        canonical_url: The operator-configured canonical resource URL.
+
+    Returns:
+        Fully-qualified metadata URL string, or "" if construction fails.
+    """
+    try:
+        parsed = urlparse(canonical_url)
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+        well_known_path = f"/.well-known/oauth-protected-resource{parsed.path}"
+        return f"{parsed.scheme}://{parsed.netloc}{well_known_path}"
+    except Exception:
+        logger.warning("Failed to build canonical metadata URL from %s", canonical_url)
+        return ""
 
 
 def _is_valid_audience(value: Any) -> bool:
@@ -4888,7 +4911,18 @@ class _StreamableHttpAuthHandler:
             try:
                 await _check_server_oauth_enforcement(per_server_id, {"is_authenticated": False})
             except OAuthRequiredError:
-                resource_metadata = _build_resource_metadata_url(self.scope, per_server_id)
+                cu = None
+                try:
+                    async with get_db() as db_conn:
+                        srv = db_conn.execute(select(DbServer).where(DbServer.id == per_server_id)).scalar_one_or_none()
+                        if srv:
+                            cu = srv.canonical_url if isinstance(srv.canonical_url, str) else None
+                except Exception:
+                    logger.debug("Failed to retrieve server %s for canonical URL (falling back to UUID-based metadata)", per_server_id)
+                if cu:
+                    resource_metadata = _build_canonical_metadata_url(cu)
+                else:
+                    resource_metadata = _build_resource_metadata_url(self.scope, per_server_id)
                 www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
                 return await self._send_error(detail="This server requires OAuth authentication", headers={"WWW-Authenticate": www_auth})
             except OAuthEnforcementUnavailableError:
@@ -5376,11 +5410,12 @@ class _StreamableHttpAuthHandler:
         # 1. ``resource`` configured (operator-set or previously learned)
         #    → enforce it strictly.
         # 2. ``resource`` unset → fall back to a list of acceptable
-        #    audiences derived from operator config:
-        #      * the canonical RFC 8707/9728 resource URL, and
-        #      * the legacy ``client_id`` field (for IdPs like Authentik
-        #        that mint tokens with ``aud == client_id``).
-        #    PyJWT's "any element matches" semantics accept either.
+        #    audiences derived from operator config (in priority order):
+        #      a. ``server.canonical_url`` (operator-chosen stable URL)
+        #      b. the canonical RFC 8707/9728 resource URL (UUID-based)
+        #      c. the legacy ``client_id`` field (for IdPs like Authentik
+        #         that mint tokens with ``aud == client_id``).
+        #    PyJWT's "any element matches" semantics accept any of them.
         # 3. Neither configured → fail closed. Skipping audience entirely
         #    would let any token from an allowed issuer authenticate here,
         #    enabling cross-resource token confusion in shared-IdP
@@ -5391,19 +5426,32 @@ class _StreamableHttpAuthHandler:
             expected_audience = configured_resource
         else:
             fallback_audiences: list[str] = []
-            canonical_url = _build_server_resource_url(self.scope, server_id)
-            if canonical_url:
-                fallback_audiences.append(canonical_url)
+
+            # (a) operator-configured stable canonical URL
+            if server.canonical_url and isinstance(server.canonical_url, str):
+                fallback_audiences.append(server.canonical_url)
+
+            # (b) auto-derived UUID-based URL from settings.app_domain
+            auto_url = _build_server_resource_url(self.scope, server_id)
+            if auto_url:
+                fallback_audiences.append(auto_url)
+
+            # (c) legacy client_id for Authentik compatibility
             legacy_client_id = server.oauth_config.get("client_id")
             if isinstance(legacy_client_id, str) and legacy_client_id.strip():
                 fallback_audiences.append(legacy_client_id.strip())
+
             if not fallback_audiences:
                 logger.warning(
-                    "Server %s has no resource or client_id configured and no canonical resource URL could be derived; rejecting OAuth token",
+                    "Server %s has no resource, canonical_url, or client_id " "configured and no canonical resource URL could be derived; " "rejecting OAuth token",
                     server_id_log,
                 )
-                resource_metadata = _build_resource_metadata_url(self.scope, server_id)
-                www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+                cu = server.canonical_url if isinstance(server.canonical_url, str) else None
+                if cu:
+                    resource_meta_url = _build_canonical_metadata_url(cu)
+                else:
+                    resource_meta_url = _build_resource_metadata_url(self.scope, server_id)
+                www_auth = f'Bearer resource_metadata="{resource_meta_url}"' if resource_meta_url else "Bearer"
                 await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
                 return OAuthAuthResult.FAILED
             expected_audience = fallback_audiences[0] if len(fallback_audiences) == 1 else fallback_audiences
@@ -5411,8 +5459,12 @@ class _StreamableHttpAuthHandler:
         claims = await verify_oauth_access_token(token, authorization_servers, expected_audience=expected_audience)
 
         if claims is None:
-            resource_metadata = _build_resource_metadata_url(self.scope, server_id)
-            www_auth = f'Bearer resource_metadata="{resource_metadata}"' if resource_metadata else "Bearer"
+            cu = server.canonical_url if isinstance(server.canonical_url, str) else None
+            if cu:
+                resource_meta_url = _build_canonical_metadata_url(cu)
+            else:
+                resource_meta_url = _build_resource_metadata_url(self.scope, server_id)
+            www_auth = f'Bearer resource_metadata="{resource_meta_url}"' if resource_meta_url else "Bearer"
             await self._send_error(detail="Invalid OAuth access token", headers={"WWW-Authenticate": www_auth})
             return OAuthAuthResult.FAILED
 

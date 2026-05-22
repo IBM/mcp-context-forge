@@ -48,6 +48,7 @@ from mcpgateway.common.models import (
     ToolResult,
 )
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.config import settings
 from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
@@ -1660,3 +1661,82 @@ class TestTitleSchemas:
             ),
         )
         assert prompt_read.title == "Read Prompt Title"
+
+
+class TestCanonicalUrlValidation:
+    """Validate canonical_url field validators on ServerCreate and ServerUpdate."""
+
+    def test_valid_url(self):
+        """Accepts valid HTTPS URL with non-root path."""
+        data = {"name": "srv", "oauth_enabled": True,
+                "canonical_url": "https://gateway.example.com/mcp"}
+        with patch.object(settings, "app_domain", "https://gateway.example.com"):
+            s = ServerCreate(**data)
+        assert s.canonical_url == "https://gateway.example.com/mcp"
+
+    def test_trailing_slash_stripped(self):
+        """Strips trailing slash from URL."""
+        data = {"name": "srv", "oauth_enabled": True,
+                "canonical_url": "https://gw.example.com/mcp/"}
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            s = ServerCreate(**data)
+        assert s.canonical_url == "https://gw.example.com/mcp"
+
+    def test_no_scheme_rejected(self):
+        """Rejects URL without scheme."""
+        with pytest.raises(ValueError, match="absolute URL"):
+            with patch.object(settings, "app_domain", "https://gw.example.com"):
+                ServerCreate(name="srv", oauth_enabled=True,
+                             canonical_url="gw.example.com/mcp")
+
+    def test_no_path_rejected(self):
+        """Rejects URL with no path component."""
+        with pytest.raises(ValueError, match="non-root path"):
+            with patch.object(settings, "app_domain", "https://gw.example.com"):
+                ServerCreate(name="srv", oauth_enabled=True,
+                             canonical_url="https://gw.example.com")
+
+    def test_root_path_rejected(self):
+        """Rejects URL with root path only."""
+        with pytest.raises(ValueError, match="non-root path"):
+            with patch.object(settings, "app_domain", "https://gw.example.com"):
+                ServerCreate(name="srv", oauth_enabled=True,
+                             canonical_url="https://gw.example.com/")
+
+    def test_uuid_rejected(self):
+        """Rejects URL containing UUID pattern."""
+        with pytest.raises(ValueError, match="UUID"):
+            with patch.object(settings, "app_domain", "https://gw.example.com"):
+                ServerCreate(
+                    name="srv", oauth_enabled=True,
+                    canonical_url="https://gw.example.com/servers/550e8400e29b41d4a716446655440000/mcp",
+                )
+
+    def test_domain_mismatch_rejected(self):
+        """Rejects URL whose domain does not match app_domain."""
+        with patch.object(settings, "app_domain", "https://real.example.com"):
+            with pytest.raises(ValueError, match="domain"):
+                ServerCreate(
+                    name="srv", oauth_enabled=True,
+                    canonical_url="https://evil.com/mcp",
+                )
+
+    def test_requires_oauth(self):
+        """Rejects canonical_url when oauth_enabled is False."""
+        with pytest.raises(ValueError, match="oauth_enabled"):
+            with patch.object(settings, "app_domain", "https://gw.example.com"):
+                ServerCreate(name="srv", oauth_enabled=False,
+                             canonical_url="https://gw.example.com/mcp")
+
+    def test_update_accepts_none(self):
+        """None means don't change — valid for partial updates."""
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            s = ServerUpdate(canonical_url=None)
+        assert s.canonical_url is None
+
+    def test_update_accepts_url(self):
+        """Accepts valid canonical URL on ServerUpdate."""
+        with patch.object(settings, "app_domain", "https://gw.example.com"):
+            s = ServerUpdate(canonical_url="https://gw.example.com/mcp",
+                             oauth_enabled=True)
+        assert s.canonical_url == "https://gw.example.com/mcp"

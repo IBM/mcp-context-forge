@@ -104,6 +104,9 @@ class TestRFC9728CompliantEndpoint:
     def test_rfc9728_endpoint_invalid_path_format(self, app):
         """Test RFC 9728 endpoint rejects invalid path formats."""
         mock_db = MagicMock()
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_execute_result
 
         def override_get_db():
             yield mock_db
@@ -471,3 +474,129 @@ class TestRFC9728SecurityValidation:
             service.get_oauth_protected_resource_metadata(
                 db=mock_db, server_id="550e8400-e29b-41d4-a716-446655440000", resource_base_url="http://localhost:4444/servers/550e8400-e29b-41d4-a716-446655440000/mcp"
             )
+
+
+class TestCanonicalUrlWellKnown:
+    """Tests for canonical_url resolution in the well-known endpoint."""
+
+    def test_uuid_path_returns_canonical_resource_when_set(self, app):
+        """UUID path returns canonical_url as resource when server has it set."""
+        mock_db = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        server_id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_server = MagicMock()
+        mock_server.id = server_id
+        mock_server.canonical_url = "https://gw.example.com/servers/my-srv/mcp"
+        mock_db.get.return_value = mock_server
+
+        mock_service = MagicMock()
+        mock_service.get_oauth_protected_resource_metadata.return_value = {
+            "resource": "https://gw.example.com/servers/my-srv/mcp",
+            "authorization_servers": ["https://auth.example.com"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["read"],
+        }
+
+        client = TestClient(app)
+
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service):
+            response = client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["resource"] == "https://gw.example.com/servers/my-srv/mcp"
+
+        app.dependency_overrides.pop(get_db, None)
+
+    def test_uuid_path_returns_uuid_resource_when_no_canonical(self, app):
+        """UUID path returns auto-derived URL when canonical_url is not set."""
+        mock_db = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        server_id = "550e8400-e29b-41d4-a716-446655440000"
+        mock_server = MagicMock()
+        mock_server.id = server_id
+        mock_server.canonical_url = None
+        mock_db.get.return_value = mock_server
+
+        mock_service = MagicMock()
+        mock_service.get_oauth_protected_resource_metadata.return_value = {
+            "resource": f"http://testserver/servers/{server_id}/mcp",
+            "authorization_servers": ["https://auth.example.com"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["read"],
+        }
+
+        client = TestClient(app)
+
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service):
+            response = client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["resource"] == f"http://testserver/servers/{server_id}/mcp"
+
+        app.dependency_overrides.pop(get_db, None)
+
+    def test_canonical_path_resolves_to_metadata(self, app):
+        """Canonical URL path resolves to server metadata."""
+        mock_db = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        server_id = "550e8400-e29b-41d4-a716-446655440000"
+        canonical_url = "http://testserver/my-app/mcp"
+
+        mock_server = MagicMock()
+        mock_server.id = server_id
+        mock_server.canonical_url = canonical_url
+
+        mock_db.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=mock_server)
+        )
+
+        mock_service = MagicMock()
+        mock_service.get_oauth_protected_resource_metadata.return_value = {
+            "resource": canonical_url,
+            "authorization_servers": ["https://auth.example.com"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["read"],
+        }
+
+        client = TestClient(app)
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service):
+            response = client.get("/.well-known/oauth-protected-resource/my-app/mcp")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["resource"] == canonical_url
+
+        app.dependency_overrides.pop(get_db, None)
+
+    def test_canonical_path_returns_404_when_no_match(self, app):
+        """Canonical URL path returns 404 when no server matches."""
+        mock_db = MagicMock()
+
+        def override_get_db():
+            yield mock_db
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        mock_db.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=None)
+        )
+
+        client = TestClient(app)
+        response = client.get("/.well-known/oauth-protected-resource/nonexistent/path/mcp")
+        assert response.status_code == 404
+
+        app.dependency_overrides.pop(get_db, None)

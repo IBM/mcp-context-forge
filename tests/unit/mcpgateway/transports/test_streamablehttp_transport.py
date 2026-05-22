@@ -13951,6 +13951,45 @@ def test_build_resource_metadata_url_exception_returns_empty():
     assert url == ""
 
 
+class TestBuildCanonicalMetadataUrl:
+    """Verify _build_canonical_metadata_url helper function."""
+
+    def test_simple_path(self):
+        """Builds metadata URL from simple canonical URL."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/mcp")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/mcp"
+
+    def test_multi_segment_path(self):
+        """Builds metadata URL from multi-segment canonical URL."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/servers/my-srv/mcp")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/servers/my-srv/mcp"
+
+    def test_empty_string(self):
+        """Returns empty string for empty input."""
+        url = tr._build_canonical_metadata_url("")
+        assert url == ""
+
+    def test_no_scheme(self):
+        """Returns empty string for URL without scheme."""
+        url = tr._build_canonical_metadata_url("gw.example.com/mcp")
+        assert url == ""
+
+    def test_no_netloc(self):
+        """Returns empty string for URL without netloc."""
+        url = tr._build_canonical_metadata_url("https:///mcp")
+        assert url == ""
+
+    def test_trailing_slash(self):
+        """Handles canonical URL with trailing slash."""
+        url = tr._build_canonical_metadata_url("https://gw.example.com/mcp/")
+        assert url == "https://gw.example.com/.well-known/oauth-protected-resource/mcp/"
+
+    def test_http_scheme(self):
+        """Works with HTTP scheme."""
+        url = tr._build_canonical_metadata_url("http://internal.example.com/mcp")
+        assert url == "http://internal.example.com/.well-known/oauth-protected-resource/mcp"
+
+
 # ---------------------------------------------------------------------------
 # _check_streamable_permission: exception path
 # ---------------------------------------------------------------------------

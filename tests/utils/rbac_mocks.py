@@ -103,6 +103,8 @@ class MockPermissionService:
         team_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        token_teams: Optional[list] = None,
+        **kwargs: object,
     ) -> bool:
         """Mock permission check that returns configured result.
 
@@ -114,6 +116,8 @@ class MockPermissionService:
             team_id: Optional team context
             ip_address: Optional IP address
             user_agent: Optional user agent
+            token_teams: Optional token-scoped teams collection
+            **kwargs: Any additional keyword arguments (forward-compatible)
 
         Returns:
             bool: Permission result
@@ -122,11 +126,13 @@ class MockPermissionService:
             return True
         return self.custom_permissions.get(permission, False)
 
-    async def check_admin_permission(self, user_email: str) -> bool:
+    async def check_admin_permission(self, user_email: str, token_teams: Optional[list] = None, **kwargs: object) -> bool:
         """Mock admin permission check.
 
         Args:
             user_email: User email
+            token_teams: Optional token-scoped teams collection
+            **kwargs: Any additional keyword arguments (forward-compatible)
 
         Returns:
             bool: Admin permission result
