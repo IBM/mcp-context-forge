@@ -1967,6 +1967,9 @@ class Settings(BaseSettings):
     metrics_retention_days: int = Field(default=7, ge=1, le=365, description="Days to retain raw metrics before cleanup (fallback when rollup disabled)")
     metrics_cleanup_interval_hours: int = Field(default=1, ge=1, le=168, description="Hours between automatic cleanup runs")
     metrics_cleanup_batch_size: int = Field(default=10000, ge=100, le=100000, description="Batch size for metrics deletion (prevents long locks)")
+    metrics_cleanup_batch_sleep_ms: int = Field(
+        default=50, ge=0, le=5000, description="Milliseconds to sleep between batch DELETEs in cleanup (0 = no sleep). Use to reduce DB pressure during background cleanup."
+    )
 
     # Metrics Rollup Configuration (hourly aggregation for historical queries)
     metrics_rollup_enabled: bool = Field(default=True, description="Enable hourly metrics rollup for efficient historical queries")
