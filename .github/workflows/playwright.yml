@@ -38,6 +38,9 @@ jobs:
       # Disable forced password-change on bootstrap so Playwright tests can
       # access /admin/ without being redirected to /admin/change-password-required
       ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "false"
+      # Override .env.example placeholders — env vars take precedence over .env in pydantic-settings
+      JWT_SECRET_KEY: "ci-playwright-smoke-jwt-secret-not-for-production-use"  # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-playwright-smoke-auth-enc-secret-not-for-production"  # pragma: allowlist secret
 
     steps:
       - name: ⬇️ Checkout source
