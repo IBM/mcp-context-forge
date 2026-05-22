@@ -182,7 +182,7 @@ class TestPasswordPolicyService:
 
     def test_has_sequential_chars_numbers(self, policy_service):
         """Test sequential number detection."""
-        assert policy_service._has_sequential_chars("abc123def")
+        assert policy_service._has_sequential_chars("abc123def")  # pragma: allowlist secret
         assert policy_service._has_sequential_chars("test456word")
         assert not policy_service._has_sequential_chars("test135word")
 
@@ -387,7 +387,7 @@ class TestPasswordPolicyService:
             policy_service.validate_user_password(password_weak, email="user@example.com")
 
         # Test that password below minimum length fails
-        short_password = "Abc!1x"  # Only 6 chars
+        short_password = "Abc!1x"  # Only 6 chars  # pragma: allowlist secret
         with pytest.raises(PasswordPolicyError, match="12 characters"):
             policy_service.validate_user_password(short_password, email="user@example.com")
 

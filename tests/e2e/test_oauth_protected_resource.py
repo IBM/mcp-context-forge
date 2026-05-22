@@ -56,7 +56,7 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
 
 # Test Configuration
 TEST_USER = "testuser"
-TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
 # Ensure test tokens use a strong signing key to avoid weak-key warnings.
 if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):

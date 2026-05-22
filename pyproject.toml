@@ -371,6 +371,18 @@ ignore = [
 line-length = 200
 target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | \.tox
+  | \.eggs
+  | build
+  | dist
+  | node_modules
+)/
+'''
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
@@ -935,3 +947,4 @@ omit-covered-files = false
 # --------------------------------------------------------------------
 [tool.bandit]
 # No global skips - use inline # nosec comments for specific false positives
+exclude_dirs = [".venv", "venv", "build", "dist", ".tox", ".eggs", "node_modules"]

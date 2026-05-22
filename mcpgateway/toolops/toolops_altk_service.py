@@ -280,7 +280,7 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
 #     from mcpgateway.db import SessionLocal
 #     from mcpgateway.services.tool_service import ToolService
 
-#     tool_id = "69df98bcab6b4895a0345a20aeb038b2"
+#     tool_id = "69df98bcab6b4895a0345a20aeb038b2"  # pragma: allowlist secret
 #     tool_service = ToolService()
 #     db = SessionLocal()
 #     # tool_test_cases = asyncio.run(validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))

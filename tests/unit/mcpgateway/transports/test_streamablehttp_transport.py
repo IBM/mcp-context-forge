@@ -13169,7 +13169,7 @@ async def test_streamable_http_auth_rejects_unauthenticated_oauth_server(monkeyp
     # Verify WWW-Authenticate includes resource_metadata URL per RFC 9728
     www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
     assert "resource_metadata=" in www_auth
-    assert "abc123def" in www_auth
+    assert "abc123def" in www_auth  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -14306,7 +14306,7 @@ async def test_get_request_context_reads_scope_context(monkeypatch):
 
     injected_user_context = {"email": "pub@example.com", "teams": [], "is_authenticated": True, "is_admin": False}
     injected_headers = {"authorization": "Bearer tok123"}
-    injected_server_id = "abc123def456"
+    injected_server_id = "abc123def456"  # pragma: allowlist secret
 
     mock_scope = {
         _MCPGATEWAY_CONTEXT_KEY: {
@@ -14344,7 +14344,7 @@ async def test_get_request_context_scope_fallback_to_reauth(monkeypatch):
 
     token = server_id_var.set("default_server_id")
 
-    valid_hex_id = "abc123def456"
+    valid_hex_id = "abc123def456"  # pragma: allowlist secret
 
     mock_request = MagicMock()
     mock_request.scope = {}  # No _mcpgateway_context
@@ -16687,7 +16687,6 @@ async def test_post_notification_short_circuit_returns_202(monkeypatch):
     assert not sdk.called, "SDK must not be reached on a short-circuited notification"
     starts = [m for m in messages if m["type"] == "http.response.start"]
     assert starts and starts[0]["status"] == 202
-
 
 
 # ---------------------------------------------------------------------------

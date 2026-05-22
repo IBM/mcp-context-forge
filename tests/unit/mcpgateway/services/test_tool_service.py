@@ -517,9 +517,9 @@ class TestToolService:
         mock_tool.auth_type = "basic"
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
-        # mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
-        # mock_tool.auth_value = encode_auth({"user": "test_user", "password": "test_password"})
+        # password = "test_password"  # pragma: allowlist secret
+        # mock_tool.auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"  # pragma: allowlist secret
+        # mock_tool.auth_value = encode_auth({"user": "test_user", "password": "test_password"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "basic"
@@ -545,9 +545,9 @@ class TestToolService:
 
         mock_tool.auth_type = "authheaders"
         # Create auth_value with the following values
-        # {"test-api-key": "test-api-value"}
-        # mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"
-        mock_tool.auth_value = encode_auth({"test-api-key": "test-api-value"})
+        # {"test-api-key": "test-api-value"}  # pragma: allowlist secret
+        # mock_tool.auth_value = "8pvPTCegaDhrx0bmBf488YvGg9oSo4cJJX68WCTvxjMY-C2yko_QSPGVggjjNt59TPvlGLsotTZvAiewPRQ"  # pragma: allowlist secret
+        mock_tool.auth_value = encode_auth({"test-api-key": "test-api-value"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "authheaders"
@@ -563,7 +563,7 @@ class TestToolService:
     async def test_convert_tool_to_read_authheaders_multi(self, tool_service, mock_tool):
         """Check auth for authheaders with multiple headers returns all headers."""
         mock_tool.auth_type = "authheaders"
-        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})
+        mock_tool.auth_value = encode_auth({"X-API-Key": "secret1", "X-Custom": "secret2"})  # pragma: allowlist secret
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "authheaders"
@@ -1985,11 +1985,11 @@ class TestToolService:
         # Basic auth_value
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
+        # password = "test_password"  # pragma: allowlist secret
         creds = base64.b64encode(b"test_user:test_password").decode()
         auth_dict = {"Authorization": f"Basic {creds}"}
         basic_auth_value = encode_auth(auth_dict)
-        # basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"
+        # basic_auth_value = "FpZyxAu5PVpT0FN-gJ0JUmdovCMS0emkwW1Vb8HvkhjiBZhj1gDgDRF1wcWNrjTJSLtkz1rLzKibXrhk4GbxXnV6LV4lSw_JDYZ2sPNRy68j_UKOJnf_"  # pragma: allowlist secret
 
         # Create update request
         tool_update = ToolUpdate(auth=AuthenticationValues(auth_type="basic", auth_value=basic_auth_value))
@@ -2536,7 +2536,7 @@ class TestToolService:
         # Payload contains: path param (user_id), query param (api_key), and body params (title, content)
         payload = {
             "user_id": 456,  # Will be substituted into URL path
-            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param
+            "api_key": "secret123",  # Template in query string portion of URL; substituted then extracted as query param  # pragma: allowlist secret
             "title": "New Post",  # Will go to JSON body
             "content": "Hello World",  # Will go to JSON body
         }
@@ -3583,7 +3583,7 @@ class TestToolService:
         # Basic auth_value
         # Create auth_value with the following values
         # user = "test_user"
-        # password = "test_password"
+        # password = "test_password"  # pragma: allowlist secret
         basic_auth_value = encode_auth({"Authorization": "Basic " + base64.b64encode(b"test_user:test_password").decode()})
 
         # Configure tool as REST
@@ -4170,7 +4170,7 @@ class TestToolService:
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_type = "oauth"
-        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -4217,7 +4217,7 @@ class TestToolService:
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_type = "oauth"
-        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}
+        mock_tool.oauth_config = {"client_id": "test_id", "client_secret": "test_secret"}  # pragma: allowlist secret
 
         # Mock DB to return the tool and GlobalConfig
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
@@ -7604,7 +7604,7 @@ class TestToolServiceHelpers:
                 assert result["auth"]["token"] == settings.masked_auth_value
 
             headers_tool = make_tool("authheaders", "secret")
-            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):  # pragma: allowlist secret
                 result = service.convert_tool_to_read(headers_tool, include_metrics=False, include_auth=True)
                 assert result["auth"]["auth_type"] == "authheaders"
                 assert result["auth"]["auth_header_key"] == "X-Api-Key"
@@ -8096,7 +8096,7 @@ class TestConvertToolToReadHeaderMasking:
     @pytest.fixture
     def tool_with_headers(self, mock_tool):
         """A mock tool with sensitive headers set."""
-        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}
+        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}  # pragma: allowlist secret
         mock_tool.auth_type = None
         mock_tool.auth_value = None
         return mock_tool
@@ -9451,7 +9451,7 @@ class TestRustMcpExecutionPlan:
             capabilities={},
             auth_type="basic",
             auth_value={"Authorization": "Bearer live-token"},
-            auth_query_params={"api_key": "live-query"},
+            auth_query_params={"api_key": "live-query"},  # pragma: allowlist secret
             oauth_config={"grant_type": "client_credentials"},
             ca_certificate=None,
             enabled=True,
@@ -9599,7 +9599,7 @@ class TestRustMcpExecutionPlan:
         tool_auth_row = SimpleNamespace(
             gateway=SimpleNamespace(
                 auth_value={"Authorization": "Bearer hydrated-token"},
-                auth_query_params={"api_key": "hydrated"},
+                auth_query_params={"api_key": "hydrated"},  # pragma: allowlist secret
                 oauth_config={"grant_type": "client_credentials"},
             )
         )
@@ -10080,7 +10080,7 @@ class TestRustMcpExecutionPlan:
             modified = ToolPreInvokePayload(
                 name=payload.name,
                 args={"cleaned_arg": "value"},
-                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),
+                headers=HttpHeaderPayload({"x-injected-cred": "secret123"}),  # pragma: allowlist secret
             )
             return PluginResult(modified_payload=modified, continue_processing=True), {}
 

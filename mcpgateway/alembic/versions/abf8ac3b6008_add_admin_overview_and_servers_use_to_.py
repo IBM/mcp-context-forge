@@ -34,7 +34,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "abf8ac3b6008"
-down_revision: Union[str, Sequence[str], None] = "64acf94cb7f2"
+down_revision: Union[str, Sequence[str], None] = "64acf94cb7f2"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
