@@ -351,11 +351,26 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
-    is_admin_ui_request = "/admin" in referer
-    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
+
+    # Check if referer is from same origin (for admin UI and OAuth callback pages)
+    is_same_origin_referer = False
+    if referer:
+        try:
+            # Standard
+            from urllib.parse import urlparse
+
+            referer_parsed = urlparse(referer)
+            request_host = request.headers.get("host", "")
+            # Match if referer host matches request host and path contains /admin or /oauth/callback
+            if referer_parsed.netloc == request_host and ("/admin" in referer_parsed.path or "/oauth/callback" in referer_parsed.path):
+                is_same_origin_referer = True
+        except Exception:
+            pass  # Invalid referer URL, treat as not same-origin
+
+    is_browser_request = "text/html" in accept_header or is_htmx or is_same_origin_referer
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
+    # Cookies should only be used for browser/HTML requests (including admin UI and OAuth callback fetch calls)
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
