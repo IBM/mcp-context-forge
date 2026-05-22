@@ -608,6 +608,7 @@ class _LoopbackAllowlistCache:
     """
 
     def __init__(self, ttl_seconds: float = 60.0):
+        """Initialize the cache with a TTL and a lock."""
         self._cache: Optional[frozenset[str]] = None
         self._populated: bool = False
         self._expiry: float = 0

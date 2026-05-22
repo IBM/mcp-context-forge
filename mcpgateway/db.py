@@ -4626,6 +4626,13 @@ class Gateway(Base):
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[List[Dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
 
+    # Async lifecycle status fields
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='active')
+    status_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    registration_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Comprehensive metadata for audit tracking
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)

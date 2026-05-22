@@ -180,9 +180,12 @@ class TestGatewayServiceOwnership:
 
             await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="owner@example.com")
 
-            # Verify execute was called (for select and delete)
-            assert mock_db_session.execute.call_count >= 2
+            # ASYNC LIFECYCLE: delete_gateway marks status=deleting, worker handles cleanup
+            # Only 1 execute call (select), no DELETE statement
+            assert mock_db_session.execute.call_count == 1
             mock_db_session.commit.assert_called_once()
+            # Verify gateway marked for deletion
+            assert mock_gateway.status == "deleting"
 
     @pytest.mark.asyncio
     async def test_delete_gateway_non_owner_denied(self, gateway_service, mock_db_session):
@@ -455,6 +458,9 @@ class TestTeamAdminSpecialCase:
 
             await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="admin@example.com")
 
-            # Verify execute was called (for select and delete)
-            assert mock_db_session.execute.call_count >= 2
+            # ASYNC LIFECYCLE: delete_gateway marks status=deleting, worker handles cleanup
+            # Only 1 execute call (select), no DELETE statement
+            assert mock_db_session.execute.call_count == 1
             mock_db_session.commit.assert_called_once()
+            # Verify gateway marked for deletion
+            assert mock_gateway.status == "deleting"

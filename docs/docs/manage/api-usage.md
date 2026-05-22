@@ -298,8 +298,11 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways/$GATEWAY_ID | jq '.
 
 ### Register a New Gateway
 
+!!! note "Async Gateway Lifecycle"
+    Gateway create/update/delete operations return `202 Accepted` immediately and process work in background. See [Async Gateway Lifecycle](../architecture/async-gateway-lifecycle.md) for details.
+
 ```bash
-# Register an MCP server gateway
+# Register an MCP server gateway (returns 202 immediately)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -310,6 +313,41 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/gateways | jq '.'
 ```
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "url": "http://localhost:9000/mcp",
+  "status": "pending",
+  "status_message": null,
+  "registration_attempts": 0,
+  "next_retry_at": null,
+  "last_error": null
+}
+```
+
+**Status values:**
+- `pending` - MCP initialization in progress (retrying with exponential backoff)
+- `active` - Gateway operational
+- `deleting` - Deletion in progress
+
+**Polling for completion:**
+```bash
+# Poll gateway status
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/my-mcp-server | jq '{status, attempts: .registration_attempts, next_retry: .next_retry_at, error: .last_error}'
+```
+
+**Retry behavior:**
+- Worker retries failed initialization with exponential backoff (2^attempt, max 300s)
+- Retries continue until success or DELETE request
+- Monitor progress via `registration_attempts`, `next_retry_at`, `last_error`
+
+**Idempotency:**
+- Gateway name is deduplication key
+- Retry with same name returns existing gateway (202 if pending, 409 if active)
 
 !!! note "Request Types"
     Supported `request_type` values:
@@ -343,8 +381,11 @@ echo "Gateway ID: $GATEWAY_ID"
 
 ### Update Gateway
 
+!!! note "Async Update"
+    Update operations return `202 Accepted` and trigger re-initialization in background. Gateway status resets to `pending`.
+
 ```bash
-# Update gateway properties
+# Update gateway properties (returns 202, triggers re-init)
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -353,6 +394,17 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
     "enabled": true
   }' \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "id": "abc123",
+  "name": "updated-server-name",
+  "status": "pending",
+  "registration_attempts": 0,
+  "next_retry_at": null
+}
 ```
 
 ### Enable/Disable Gateway
@@ -365,11 +417,27 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 
 ### Delete Gateway
 
+!!! warning "Async Deletion"
+    Delete operations return `202 Accepted` and process cleanup in background. Gateway status changes to `deleting` and stops retry loop.
+
 ```bash
-# Delete a gateway (warning: also deletes associated tools)
+# Delete a gateway (returns 202, processes cleanup async)
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID | jq '.'
 ```
+
+**Response (202 Accepted):**
+```json
+{
+  "message": "deletion accepted"
+}
+```
+
+**Behavior:**
+- Sets gateway `status=deleting`
+- Stops retry loop if gateway was pending
+- Deletes associated tools, resources, prompts
+- Removes gateway record after cleanup completes
 
 ## Tool Management
 

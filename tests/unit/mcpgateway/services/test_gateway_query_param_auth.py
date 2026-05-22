@@ -30,6 +30,7 @@ import pytest
 from url_normalize import url_normalize
 
 # First-Party
+from mcpgateway.db import Gateway
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
@@ -196,11 +197,18 @@ class TestQueryParamAuthRegistration:
 
         await gateway_service.register_gateway(test_db, gateway_create)
 
-        # Verify _initialize_gateway was called with decrypted params
-        gateway_service._initialize_gateway.assert_called_once()
-        call_kwargs = gateway_service._initialize_gateway.call_args[1]
-        assert "auth_query_params" in call_kwargs
-        assert call_kwargs["auth_query_params"] == {"tavilyApiKey": "secret-api-key-123"}  # pragma: allowlist secret
+        # ASYNC LIFECYCLE: register_gateway sets status=pending, worker handles init
+        # _initialize_gateway is NOT called during registration
+        gateway_service._initialize_gateway.assert_not_called()
+
+        # Verify gateway was created with correct auth_type and encrypted params
+        # Check the Gateway object that was added to the mock DB
+        test_db.add.assert_called_once()
+        added_gateway = test_db.add.call_args[0][0]
+        assert added_gateway.auth_type == "query_param"
+        assert added_gateway.auth_query_params is not None
+        assert "tavilyApiKey" in added_gateway.auth_query_params
+        assert added_gateway.status == "pending"
 
 
 class TestQueryParamAuthUrlHelpers:

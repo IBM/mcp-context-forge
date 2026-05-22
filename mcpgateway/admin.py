@@ -21,10 +21,7 @@ underlying data.
 import asyncio
 import base64
 import binascii
-from collections import defaultdict
 import csv
-from datetime import datetime, timedelta, timezone
-from functools import lru_cache, wraps
 import html
 import inspect
 import io
@@ -32,29 +29,32 @@ import json
 import logging
 import math
 import os
-from pathlib import Path
 import re
 import secrets
 import tempfile
 import time
-from typing import Any
-from typing import cast as typing_cast
-from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from functools import lru_cache, wraps
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+from typing import cast as typing_cast
+
+import httpx
+import orjson
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
-import httpx
-import orjson
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, select, String, text
+from sqlalchemy import String, and_, bindparam, case, cast, desc, false, func, or_, select, text
 from sqlalchemy.exc import DataError, IntegrityError, InvalidRequestError, OperationalError, SQLAlchemyError
-from sqlalchemy.orm import joinedload, selectinload, Session, with_loader_criteria
+from sqlalchemy.orm import Session, joinedload, selectinload, with_loader_criteria
 from sqlalchemy.sql.functions import coalesce
 from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -91,17 +91,17 @@ from mcpgateway.common.query_params import (
     QueryVisibilityCompact,
 )
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
+from mcpgateway.config import UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
+from mcpgateway.db import EmailApiToken, EmailTeam
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import utc_now
+from mcpgateway.db import extract_json_field, get_db, utc_now
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
@@ -173,7 +173,7 @@ from mcpgateway.services.root_service import RootService, RootServiceError, Root
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService, UNSET
+from mcpgateway.services.team_management_service import UNSET, TeamManagementService
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -184,7 +184,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
+from mcpgateway.utils.security_cookies import CookieTooLargeError, clear_auth_cookie, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
@@ -12491,7 +12491,7 @@ async def admin_add_gateway(
         skipped_tools = result.skipped_tools if isinstance(getattr(result, "skipped_tools", None), list) else []
         return ORJSONResponse(
             content={"message": message, "success": True, "skipped_tools": skipped_tools},
-            status_code=200,
+            status_code=202,
         )
 
     except GatewayConnectionError as ex:
@@ -12878,8 +12878,8 @@ async def admin_edit_gateway(
             user_email=user_email,
         )
         return ORJSONResponse(
-            content={"message": "Gateway updated successfully!", "success": True},
-            status_code=200,
+            content={"message": "Gateway update accepted, re-initialization queued", "success": True},
+            status_code=202,
         )
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
@@ -12901,8 +12901,31 @@ async def admin_edit_gateway(
         # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
         if isinstance(ex, ValueError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        LOGGER.exception(f"Unexpected error in admin_edit_gateway: {ex}")
+        LOGGER.exception(f"Unexpected error in admin_edit_gateway")
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+@admin_router.delete("/gateways/{gateway_id}")
+@require_permission("gateways.delete", allow_admin_bypass=False)
+async def admin_delete_gateway_api(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+    """Delete a gateway via API (async lifecycle).
+
+    Returns 202 Accepted with status=deleting. Worker will cleanup in background.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
+    try:
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        return ORJSONResponse(
+            content={"message": "Gateway deletion accepted", "success": True},
+            status_code=202,
+        )
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except Exception as e:
+        LOGGER.error(f"Error deleting gateway: {e}")
+        return ORJSONResponse(content={"message": "Failed to delete gateway", "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
