@@ -75,7 +75,6 @@ repos:
   # -----------------------------------------------------------------------------
   - repo: local
     hooks:
-    hooks:
       - id: alembic-check-heads
         name: 🔄 Alembic - Check for Multiple Heads
         description: Ensures there is only one Alembic migration head (prevents migration conflicts).
