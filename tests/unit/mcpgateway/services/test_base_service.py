@@ -276,6 +276,58 @@ class TestApplyAccessControl:
             mock_filter.assert_called_once_with(query, "user@example.com", [], None)
             assert result == "filtered"
 
+    @pytest.mark.asyncio
+    async def test_admin_public_only_token_respects_layer1_scoping(self, service, mock_db):
+        """Admin user with token_teams=[] (explicit public-only API token) should NOT see another user's private rows.
+
+        PR #4788 review comment: API tokens with teams: [] are deliberately limited and should
+        stay public-only even for admin users. This is Layer 1 token scoping, not RBAC.
+        """
+        base_query = sa.select(_FakeItem)
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            result = await service._apply_access_control(
+                base_query,
+                mock_db,
+                user_email="admin@test.com",
+                token_teams=[],
+            )
+
+        compiled = _compile_where(result)
+        # Must have public visibility condition
+        assert "visibility = 'public'" in compiled, f"public-only token should only see public resources: {compiled}"
+        # Must NOT have owner_email clause (no owner access for empty token_teams)
+        assert "owner_email" not in compiled, f"token_teams=[] should not grant owner access even to admins: {compiled}"
+        # Must NOT include private visibility
+        assert "visibility = 'private'" not in compiled, f"token_teams=[] should exclude private resources: {compiled}"
+
+    @pytest.mark.asyncio
+    async def test_admin_with_team_scoped_token_sees_own_private_rows(self, service, mock_db):
+        """Admin user with token_teams=['t1'] (narrowed session token) should see their own private resources.
+
+        PR #4788 review comment: Session-token admins with team scopes should preserve owner access
+        to their own private resources.
+        """
+        base_query = sa.select(_FakeItem)
+
+        with patch("mcpgateway.services.base_service.is_user_admin", return_value=True):
+            result = await service._apply_access_control(
+                base_query,
+                mock_db,
+                user_email="admin@test.com",
+                token_teams=["team-1"],
+            )
+
+        compiled = _compile_where(result)
+        # Should have team visibility condition
+        assert "team_id IN ('team-1')" in compiled, f"should see team-scoped resources: {compiled}"
+        # Should have owner_email clause (preserves owner access)
+        assert "owner_email = 'admin@test.com'" in compiled, f"admin with team scope should see own private resources: {compiled}"
+        # Should include private visibility in owner clause
+        assert "visibility = 'private'" in compiled, f"should allow private resources for owner: {compiled}"
+        # Should include public visibility
+        assert "visibility = 'public'" in compiled or "visibility IN ('team', 'public')" in compiled, f"should include public resources: {compiled}"
+
 
 # ---------------------------------------------------------------------------
 # _apply_visibility_filter

@@ -784,7 +784,7 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
     def test_handle_completion_endpoint_admin_bypass(self, mock_completion, mock_filter_context, test_client, auth_headers):
-        """Protocol completion should preserve explicit admin bypass context."""
+        """Protocol completion should preserve admin user_email for private resource access (issue #4694)."""
         mock_filter_context.return_value = ("admin@example.com", None, True)
         mock_completion.return_value = {"result": "completion_result"}
 
@@ -792,7 +792,7 @@ class TestProtocolEndpoints:
         response = test_client.post("/protocol/completion/complete", json=req, headers=auth_headers)
 
         assert response.status_code == 200
-        mock_completion.assert_called_once_with(ANY, req, user_email=None, token_teams=None)
+        mock_completion.assert_called_once_with(ANY, req, user_email="admin@example.com", token_teams=None)
 
     @patch("mcpgateway.main.get_rpc_filter_context")
     @patch("mcpgateway.main.completion_service.handle_completion")
