@@ -1115,7 +1115,14 @@ class A2AAgentService(BaseService):
         if isinstance(user_info, str):
             user_email = str(user_info)
         else:
-            user_email = user_info.get("email", "")
+            email_value = user_info.get("email", "")
+            # SECURITY: Ensure email is a string, not a nested dict or other object
+            # This prevents passing entire user dicts to SQL queries
+            if isinstance(email_value, str):
+                user_email = email_value
+            else:
+                logger.warning(f"list_agents_for_user: user_info['email'] is non-string type {type(email_value).__name__}, using empty string")
+                user_email = ""
 
         # Build query following existing patterns from list_prompts()
         team_service = TeamManagementService(db)
