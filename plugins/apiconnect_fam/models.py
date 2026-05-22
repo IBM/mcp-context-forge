@@ -14,6 +14,9 @@ from typing import Any, Dict, Optional
 # Third-Party
 from pydantic import BaseModel, Field
 
+# Constants
+RUNTIME_TYPE = "MCP_CONTEXT_FORGE"  # Fixed runtime type for ContextForge
+
 
 class ActivityStatus(str, Enum):
     """Status of an activity execution."""

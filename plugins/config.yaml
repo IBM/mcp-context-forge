@@ -43,7 +43,6 @@ plugins:
       # Runtime metadata (for reference only, not used after initial registration)
       fam_runtime_name: "ContextForge Gateway"
       fam_runtime_description: "ContextForge MCP Gateway Runtime"
-      fam_runtime_type: "MCP_CONTEXT_FORGE"  # WEBMETHODS_GATEWAY, APIGEE, KONG, AWS_API_GATEWAY, AZURE_API_MANAGEMENT
       fam_runtime_deployment_type: "ON_PREMISE"  # ON_PREMISE, CLOUD, HYBRID
       fam_runtime_region: "us-east-1"  # Optional: Region identifier
       fam_runtime_location: "US East"  # Optional: Location description

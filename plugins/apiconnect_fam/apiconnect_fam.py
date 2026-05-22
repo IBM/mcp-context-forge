@@ -20,10 +20,8 @@ import logging
 from typing import List, Optional
 
 # Third-Party
-from pydantic import BaseModel, Field
-
-# First-Party
 from cpex.framework import Plugin, PluginConfig
+from pydantic import BaseModel, Field
 
 # Local
 from .activity_orchestrator import ActivityOrchestrator
@@ -51,7 +49,6 @@ class APIConnectFAMConfig(BaseModel):
         metrics_sync_interval: How often to sync metrics (in seconds). Also used as time window for metrics collection.
         fam_runtime_name: Runtime display name (for reference only).
         fam_runtime_description: Runtime description (for reference only).
-        fam_runtime_type: Runtime type (for reference only).
         fam_runtime_deployment_type: Deployment type (for reference only).
         fam_runtime_region: Region identifier (for reference only).
         fam_runtime_location: Location description (for reference only).
@@ -61,6 +58,9 @@ class APIConnectFAMConfig(BaseModel):
         fam_runtime_capacity_unit: Capacity unit (for reference only).
         fam_runtime_heartbeat_interval: Heartbeat sync interval in milliseconds (for reference only).
         fam_heartbeat_interval_seconds: How often to send heartbeats (in seconds, mandatory when IBM API Connect Federated API Management enabled).
+
+    Note:
+        Runtime type is hardcoded to 'MCP_CONTEXT_FORGE' and will be auto-created if it doesn't exist in FAM.
     """
 
     interval_seconds: int = 60
@@ -80,7 +80,7 @@ class APIConnectFAMConfig(BaseModel):
     # Runtime metadata (for reference only, not used after initial registration)
     fam_runtime_name: str = "ContextForge Gateway"
     fam_runtime_description: str = "ContextForge MCP Gateway Runtime"
-    fam_runtime_type: str = "MCP_CONTEXT_FORGE"
+    # Note: fam_runtime_type removed - hardcoded to MCP_CONTEXT_FORGE in models.py
     fam_runtime_deployment_type: str = "ON_PREMISE"
     fam_runtime_region: Optional[str] = Field(default=None, description="Runtime region")
     fam_runtime_location: Optional[str] = Field(default=None, description="Runtime location")

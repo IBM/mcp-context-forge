@@ -185,6 +185,39 @@ class FAMAssetCatalogClient:
             "success_threshold": self._circuit_breaker.success_threshold,
         }
 
+    async def create_runtime_type(self, runtime_type_id: str, runtime_type_name: str) -> bool:
+        """Create a new runtime type in FAM.
+
+        POST /api/assetcatalog/v1/runtimes/types
+
+        Args:
+            runtime_type_id: Runtime type ID (e.g., "MCP_CONTEXT_FORGE")
+            runtime_type_name: Runtime type display name (e.g., "MCP Context Forge")
+
+        Returns:
+            True if creation succeeded, False otherwise
+        """
+        try:
+            endpoint = f"{self.base_url}{FAMEndpoints.RUNTIME_TYPES}"
+            payload = {"id": runtime_type_id, "name": runtime_type_name, "attributes": {}}
+
+            logger.info(f"Creating runtime type '{runtime_type_name}' (ID: {runtime_type_id}) at {endpoint}")
+            response = await self._http_client.post(endpoint, json=payload)
+
+            if response.status_code in (200, 201):
+                logger.info(f"Successfully created runtime type '{runtime_type_name}' (ID: {runtime_type_id})")
+                return True
+            else:
+                logger.error(f"Failed to create runtime type: status={response.status_code}, body={response.text}")
+                return False
+
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error creating runtime type '{runtime_type_id}': {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error creating runtime type '{runtime_type_id}': {e}", exc_info=True)
+            return False
+
     async def register_runtime(
         self,
         name: str,
@@ -314,7 +347,38 @@ class FAMAssetCatalogClient:
             logger.error(f"Circuit breaker open, cannot register runtime '{name}': {e}")
             return None
         except httpx.HTTPStatusError as e:
-            logger.error(f"IBM API Connect Federated API Management API error registering runtime '{name}': " f"status={e.response.status_code}, body={e.response.text}")
+            # Check if error is "Runtime type does not exists"
+            error_body = e.response.text
+            if e.response.status_code == 400 and "Runtime type does not exists" in error_body:
+                logger.warning(f"Runtime type '{runtime_type}' does not exist in FAM, attempting to create it...")
+
+                # Attempt to create the runtime type
+                type_created = await self.create_runtime_type(runtime_type_id=runtime_type, runtime_type_name="MCP Context Forge")
+
+                if type_created:
+                    logger.info(f"Successfully created runtime type '{runtime_type}', retrying registration...")
+                    # Retry registration after creating the runtime type
+                    return await self.register_runtime(
+                        name=name,
+                        description=description,
+                        runtime_type=runtime_type,
+                        deployment_type=deployment_type,
+                        region=region,
+                        location=location,
+                        host=host,
+                        tags=tags,
+                        capacity_value=capacity_value,
+                        capacity_unit=capacity_unit,
+                        heartbeat_interval=heartbeat_interval,
+                        publish_assets=publish_assets,
+                        sync_assets=sync_assets,
+                        send_metrics=send_metrics,
+                    )
+                else:
+                    logger.error(f"Failed to create runtime type '{runtime_type}', cannot register runtime")
+                    return None
+
+            logger.error(f"IBM API Connect Federated API Management API error registering runtime '{name}': " f"status={e.response.status_code}, body={error_body}")
             return None
         except httpx.HTTPError as e:
             logger.error(f"HTTP error registering runtime '{name}': {e}")

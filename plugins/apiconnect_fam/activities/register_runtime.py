@@ -13,7 +13,7 @@ from typing import Optional
 
 # Local
 from ..fam import FAMAssetCatalogClient
-from ..models import ActivityContext, ReregistrationReport
+from ..models import ActivityContext, ReregistrationReport, RUNTIME_TYPE
 from ..utils import RegistrationError, RetryConfig, with_retry
 from .base import AbstractActivity
 
@@ -96,12 +96,12 @@ class RegisterRuntimeActivity(AbstractActivity):
         """
         self.logger.debug("Calling FAM API: POST /api/assetcatalog/v2/runtimes")
         self.logger.debug(f"Runtime Name: {self._runtime_config.get('name', 'ContextForge Gateway')}")
-        self.logger.debug(f"Runtime Type: {self._runtime_config.get('type', 'MCP_CONTEXT_FORGE')}")
+        self.logger.debug(f"Runtime Type: {RUNTIME_TYPE}")
 
         report = await self._fam_client.register_runtime(
             name=self._runtime_config.get("name", "ContextForge Gateway"),
             description=self._runtime_config.get("description", "ContextForge MCP Gateway Runtime"),
-            runtime_type=self._runtime_config.get("type", "MCP_CONTEXT_FORGE"),
+            runtime_type=RUNTIME_TYPE,
             deployment_type=self._runtime_config.get("deployment_type", "ON_PREMISE"),
             region=self._runtime_config.get("region"),
             location=self._runtime_config.get("location"),
