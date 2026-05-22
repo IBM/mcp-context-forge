@@ -2713,6 +2713,7 @@ class TestBatchedPathBranches:
 
     async def test_batch_platform_admin_required(self, monkeypatch):
         """Batched user not found and platform admin required → 401 (line 884)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {"sub": "admin@example.com", "jti": "jti-1", "user": {"auth_provider": "local"}, "is_admin": True}
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": False}
