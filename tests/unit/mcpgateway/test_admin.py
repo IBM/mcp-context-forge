@@ -5504,28 +5504,45 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
     @patch.object(A2AAgentService, "list_agents")
-    async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
+    async def test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_request, mock_db):
         """Test listing A2A agents when A2A is enabled."""
         # First-Party
+        from mcpgateway.schemas import PaginationMeta, PaginationLinks
+
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = None
 
         # Mock agent data
         mock_agent = MagicMock()
         mock_agent.model_dump.return_value = {"id": "agent-1", "name": "Test Agent", "description": "Test A2A agent", "is_active": True}
-        mock_list_agents.return_value = [mock_agent]
 
-        result = await admin_list_a2a_agents(False, [], mock_db, user={"email": "test-user", "db": mock_db})
+        # Mock the paginated response structure that list_agents returns
+        mock_list_agents.return_value = {
+            "data": [mock_agent],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": None,
+        }
 
-        assert len(result) == 1
-        assert result[0]["name"] == "Test Agent"
-        mock_list_agents.assert_called_with(mock_db, include_inactive=False, tags=[])
+        result = await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert "data" in result
+        assert len(result["data"]) == 1
+        assert result["data"][0]["name"] == "Test Agent"
+        mock_list_agents.assert_called_once()
+        call_kwargs = mock_list_agents.call_args.kwargs
+        assert call_kwargs["include_inactive"] is False
+        assert call_kwargs["page"] == 1
+        assert call_kwargs["per_page"] == 50
 
     @patch("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False)
     @patch("mcpgateway.admin.a2a_service", None)
-    async def test_admin_list_a2a_agents_disabled(self, mock_db):
+    async def test_admin_list_a2a_agents_disabled(self, mock_request, mock_db):
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_a2a_agents(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, dict)
         assert "data" in result
@@ -13193,7 +13210,7 @@ class TestAdminAdditionalCoverage:
         response = await admin_get_user_edit("missing%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
         assert response.status_code == 404
 
-    async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db):
+    async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db, mock_request):
         """List A2A agents when service is available."""
         agent = MagicMock()
         agent.model_dump.return_value = {"id": "agent-1", "name": "Agent One"}
@@ -13205,8 +13222,10 @@ class TestAdminAdditionalCoverage:
         service = MagicMock()
         service.list_agents = AsyncMock(return_value={"data": [agent], "pagination": pagination, "links": links})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+        mock_request.state = MagicMock()
+        mock_request.state.token_teams = None
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, request=mock_request, db=mock_db, user={"email": "user@example.com"})
         assert result["data"][0]["id"] == "agent-1"
         assert result["pagination"]["page"] == 1
 
@@ -15889,36 +15908,101 @@ async def test_admin_get_all_agent_ids_all_teams_view(monkeypatch, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_success(monkeypatch, mock_db):
+async def test_admin_get_agent_success(monkeypatch, mock_db, mock_request):
     agent = MagicMock()
     agent.model_dump.return_value = {"id": "agent-1"}
     service = MagicMock()
     service.get_agent = AsyncMock(return_value=agent)
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
 
-    result = await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+    result = await admin_get_agent("agent-1", mock_request, mock_db, user={"email": "u@example.com"})
     assert result["id"] == "agent-1"
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_not_found(monkeypatch, mock_db):
+async def test_admin_get_agent_not_found(monkeypatch, mock_db, mock_request):
     service = MagicMock()
     service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
     with pytest.raises(HTTPException) as exc:
-        await admin_get_agent("missing", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent("missing", mock_request, mock_db, user={"email": "u@example.com"})
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_admin_get_agent_generic_exception_is_reraised(monkeypatch, mock_db):
+async def test_admin_get_agent_generic_exception_is_reraised(monkeypatch, mock_db, mock_request):
     """Cover generic exception handler in admin_get_agent."""
     service = MagicMock()
     service.get_agent = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
 
     with pytest.raises(RuntimeError):
-        await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent("agent-1", mock_request, mock_db, user={"email": "u@example.com"})
+
+
+@pytest.mark.asyncio
+async def test_admin_get_agent_admin_with_token_teams_none_retrieves_own_private_agent(monkeypatch, mock_db, mock_request):
+    """Happy-path test: admin user with token_teams=None can retrieve their own private agent.
+
+    This test verifies the fix for issue #4694: admin users should be able to view and edit
+    their own private A2A agents. The scenario is:
+    - User is a DB admin
+    - Token has token_teams=None (admin bypass token)
+    - Agent is private and owned by the admin user
+    - Expected: agent is returned successfully
+    """
+    agent = MagicMock()
+    agent.model_dump.return_value = {
+        "id": "private-agent-1",
+        "name": "Admin's Private Agent",
+        "visibility": "private",
+        "owner_email": "admin@example.com",
+    }
+    service = MagicMock()
+    service.get_agent = AsyncMock(return_value=agent)
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = None
+
+    result = await admin_get_agent("private-agent-1", mock_request, mock_db, user={"email": "admin@example.com"})
+
+    assert result["id"] == "private-agent-1"
+    assert result["visibility"] == "private"
+    assert result["owner_email"] == "admin@example.com"
+    # Verify get_agent was called with correct token_teams
+    service.get_agent.assert_awaited_once_with(
+        mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_get_agent_admin_with_public_only_token_cannot_retrieve_others_private_agent(monkeypatch, mock_db, mock_request):
+    """Deny-path test: admin user with token_teams=[] cannot retrieve another user's private agent.
+
+    This test verifies Layer 1 token scoping enforcement: even for admin users, a public-only
+    token (token_teams=[]) suppresses access to private agents owned by other users. Per AGENTS.md:
+    'teams: [] + is_admin: true → PUBLIC-ONLY'.
+    """
+    service = MagicMock()
+    service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found or access denied"))
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []  # Public-only token
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_get_agent("other-user-private-agent", mock_request, mock_db, user={"email": "admin@example.com"})
+
+    assert exc.value.status_code == 404
+    # Verify get_agent was called with token_teams=[]
+    service.get_agent.assert_awaited_once_with(
+        mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[]
+    )
 
 
 @pytest.mark.asyncio
