@@ -11,6 +11,7 @@ Tests for server service implementation.
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from urllib.parse import urlparse
 
 # Third-Party
 import pytest
@@ -3819,6 +3820,12 @@ def _make_server_read(**kwargs) -> ServerRead:
     return ServerRead(**base)
 
 
+def _make_canonical_url(path: str = "/my-srv/mcp") -> str:
+    """Build a canonical URL matching settings.app_domain for tests."""
+    parsed = urlparse(str(settings.app_domain))
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
 class TestCanonicalUrl:
     """Service-layer behavior for canonical_url on register and update."""
 
@@ -3850,10 +3857,12 @@ class TestCanonicalUrl:
         execute_result.scalar_one_or_none = scalar_one_or_none
         test_db.execute.return_value = execute_result
 
+        canonical_url = _make_canonical_url("/servers/my-srv/mcp")
+
         server_create = ServerCreate(
             name="canon-b",
             oauth_enabled=True,
-            canonical_url="http://localhost/servers/my-srv/mcp",
+            canonical_url=canonical_url,
         )
 
         with pytest.raises(ServerError) as exc:
@@ -3880,6 +3889,7 @@ class TestCanonicalUrl:
     async def test_update_set_canonical(self, server_service, mock_server, test_db):
         mock_server.canonical_url = None
         mock_server.owner_email = "test@example.com"
+        canonical_url = _make_canonical_url("/servers/my-srv/mcp")
 
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
@@ -3889,7 +3899,7 @@ class TestCanonicalUrl:
         test_db.rollback = Mock()
         server_service.convert_server_to_read = Mock(return_value=_make_server_read(
             id=mock_server.id, name=mock_server.name,
-            canonical_url="http://localhost/servers/my-srv/mcp",
+            canonical_url=canonical_url,
         ))
 
         call_count = 0
@@ -3902,7 +3912,7 @@ class TestCanonicalUrl:
             return None
 
         server_update = ServerUpdate(
-            canonical_url="http://localhost/servers/my-srv/mcp",
+            canonical_url=canonical_url,
             oauth_enabled=True,
         )
 
@@ -3910,12 +3920,12 @@ class TestCanonicalUrl:
             result = await server_service.update_server(
                 test_db, mock_server.id, server_update, "test@example.com",
             )
-        assert result.canonical_url == "http://localhost/servers/my-srv/mcp"
-        assert mock_server.canonical_url == "http://localhost/servers/my-srv/mcp"
+        assert result.canonical_url == canonical_url
+        assert mock_server.canonical_url == canonical_url
 
     @pytest.mark.asyncio
     async def test_update_clear_canonical(self, server_service, mock_server, test_db):
-        mock_server.canonical_url = "http://localhost/servers/srv/mcp"
+        mock_server.canonical_url = _make_canonical_url("/servers/srv/mcp")
         mock_server.owner_email = "test@example.com"
 
         mock_scalar = Mock()
@@ -3949,6 +3959,7 @@ class TestCanonicalUrl:
     async def test_update_canonical_duplicate_rejected(self, server_service, mock_server, test_db):
         mock_server.canonical_url = None
         mock_server.owner_email = "test@example.com"
+        canonical_url = _make_canonical_url("/servers/my-srv/mcp")
 
         other_server = MagicMock()
         other_server.id = "other-id"
@@ -3968,7 +3979,7 @@ class TestCanonicalUrl:
         test_db.rollback = Mock()
 
         server_update = ServerUpdate(
-            canonical_url="http://localhost/servers/my-srv/mcp",
+            canonical_url=canonical_url,
             oauth_enabled=True,
         )
 
@@ -3980,7 +3991,8 @@ class TestCanonicalUrl:
 
     @pytest.mark.asyncio
     async def test_update_ignores_canonical_not_provided(self, server_service, mock_server, test_db):
-        mock_server.canonical_url = "http://localhost/servers/srv/mcp"
+        canonical_url = _make_canonical_url("/servers/srv/mcp")
+        mock_server.canonical_url = canonical_url
         mock_server.owner_email = "test@example.com"
 
         mock_scalar = Mock()
@@ -3991,7 +4003,7 @@ class TestCanonicalUrl:
         test_db.rollback = Mock()
         server_service.convert_server_to_read = Mock(return_value=_make_server_read(
             id=mock_server.id, name=mock_server.name,
-            canonical_url="http://localhost/servers/srv/mcp",
+            canonical_url=canonical_url,
         ))
 
         call_count = 0
@@ -4008,5 +4020,5 @@ class TestCanonicalUrl:
             result = await server_service.update_server(
                 test_db, mock_server.id, server_update, "test@example.com",
             )
-        assert result.canonical_url == "http://localhost/servers/srv/mcp"
-        assert mock_server.canonical_url == "http://localhost/servers/srv/mcp"
+        assert result.canonical_url == canonical_url
+        assert mock_server.canonical_url == canonical_url
