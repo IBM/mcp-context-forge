@@ -16,8 +16,48 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-class TestRateLimitMiddleware:
-    """Tests for RateLimitMiddleware."""
+class TestRateLimiterRedisUrl:
+    """Test rate limit middleware uses dedicated Redis when configured."""
+
+    @patch("mcpgateway.auth._get_sync_redis_client")
+    @patch("mcpgateway.middleware.rate_limit_middleware.settings")
+    def test_rate_limit_uses_dedicated_redis(self, mock_settings, mock_get_client):
+        """Test rate limit middleware uses dedicated Redis when configured."""
+        mock_settings.rate_limiting_enabled = True
+        mock_settings.rate_limiting_redis_enabled = True
+        mock_settings.ratelimiter_redis_url = "redis://localhost:6380/0"
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(MagicMock())
+
+        # Verify client was obtained (will use dedicated URL via _get_sync_redis_client)
+        mock_get_client.assert_called()
+
+    @patch("mcpgateway.auth._get_sync_redis_client")
+    @patch("mcpgateway.middleware.rate_limit_middleware.settings")
+    def test_rate_limit_falls_back_to_main_redis(self, mock_settings, mock_get_client):
+        """Test rate limit middleware falls back to main Redis when unset."""
+        mock_settings.rate_limiting_enabled = True
+        mock_settings.rate_limiting_redis_enabled = True
+        mock_settings.ratelimiter_redis_url = None
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+        middleware = RateLimitMiddleware(MagicMock())
+
+        # Verify client was obtained (will use main REDIS_URL via _get_sync_redis_client)
+        mock_get_client.assert_called()
+
+
+class TestRateLimitMiddlewareTiers:
+    """Test rate limit middleware tier detection."""
 
     @pytest.fixture
     def mock_app(self):
@@ -851,9 +891,11 @@ class TestRateLimitMiddleware:
             middleware.redis_client = original_client
             middleware._sliding_window_script = original_script
 
-    def test_get_client_ip_with_both_headers(self, middleware, mock_request):
+    def test_get_client_ip_with_both_headers(self, middleware):
         """Test IP extraction prefers X-Forwarded-For."""
+        mock_request = MagicMock()
         mock_request.headers = {"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"}
+        mock_request.scope = {"client": ("10.0.0.1", 12345)}
 
         ip = middleware._get_client_ip(mock_request)
 

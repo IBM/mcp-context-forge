@@ -49,6 +49,32 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     s_json = Settings(sso_entra_admin_groups='["admin", "superadmin"]', _env_file=None)
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
+
+
+
+def test_ratelimiter_redis_url_defaults():
+    """Test rate limiter Redis config defaults to None."""
+    s = Settings(_env_file=None)
+    assert s.ratelimiter_redis_url is None
+    assert s.ratelimiter_redis_max_connections == 50
+    assert s.ratelimiter_redis_socket_timeout == 2.0
+    assert s.ratelimiter_redis_socket_connect_timeout == 2.0
+
+
+def test_ratelimiter_redis_url_set():
+    """Test rate limiter Redis URL can be configured."""
+    s = Settings(
+        ratelimiter_redis_url="redis://localhost:6380/0",
+        ratelimiter_redis_max_connections=100,
+        ratelimiter_redis_socket_timeout=5.0,
+        ratelimiter_redis_socket_connect_timeout=3.0,
+        _env_file=None
+    )
+    assert s.ratelimiter_redis_url == "redis://localhost:6380/0"
+    assert s.ratelimiter_redis_max_connections == 100
+    assert s.ratelimiter_redis_socket_timeout == 5.0
+    assert s.ratelimiter_redis_socket_connect_timeout == 3.0
+
     # Test CSV format
     s_csv = Settings(sso_entra_admin_groups="admin, superadmin", _env_file=None)
     assert s_csv.sso_entra_admin_groups == ["admin", "superadmin"]

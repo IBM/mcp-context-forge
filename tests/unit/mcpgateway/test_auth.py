@@ -50,6 +50,19 @@ class TestGetDb:
 
             db = next(get_db())
 
+
+
+
+class TestGetDb:
+    """Test cases for the get_db dependency function."""
+
+    def test_get_db_yields_session(self):
+        """Test that get_db yields a database session."""
+        with patch("mcpgateway.auth.SessionLocal") as mock_session_local:
+            mock_session = MagicMock(spec=Session)
+            mock_session_local.return_value = mock_session
+
+            db = next(get_db())
             assert db == mock_session
             mock_session_local.assert_called_once()
 

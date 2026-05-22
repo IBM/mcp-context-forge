@@ -968,6 +968,19 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 !!! tip "Cache Backend Selection"
+
+
+#### Rate Limiter Redis
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATELIMITER_REDIS_URL` | `None` | Optional Redis URL for rate limiting. Falls back to `REDIS_URL` when unset. |
+| `RATELIMITER_REDIS_MAX_CONNECTIONS` | `50` | Connection pool size for rate limiter Redis. |
+| `RATELIMITER_REDIS_SOCKET_TIMEOUT` | `2.0` | Socket timeout in seconds. |
+| `RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Connection timeout in seconds. |
+
+**Migration:** Existing deployments continue using main Redis. Set `RATELIMITER_REDIS_URL` to enable dedicated instance.
+
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
 
 !!! note "Redis TLS"

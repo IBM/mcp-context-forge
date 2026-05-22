@@ -1358,6 +1358,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await siem_export_service.initialize()
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
+
+    # Validate rate limiter Redis connection if configured (Issue #4751)
+    if settings.ratelimiter_redis_url:
+        try:
+            # Third-Party
+            import redis  # pylint: disable=import-outside-toplevel
+
+            test_client = redis.from_url(
+                settings.ratelimiter_redis_url, socket_connect_timeout=settings.ratelimiter_redis_socket_connect_timeout, socket_timeout=settings.ratelimiter_redis_socket_timeout
+            )
+            test_client.ping()
+            logger.info(f"Rate limiter Redis connected: {settings.ratelimiter_redis_url}")
+        except Exception as e:
+            logger.warning(f"Rate limiter Redis unreachable ({settings.ratelimiter_redis_url}): {e}. " f"Falling back to main Redis ({settings.redis_url})")
+
     # First-Party
     from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
 

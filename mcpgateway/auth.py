@@ -752,11 +752,17 @@ def _get_sync_redis_client():
             # First-Party
             from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
 
-            if config_settings.redis_url and config_settings.redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+            # Use dedicated rate limiter Redis if configured, otherwise fall back to main Redis
+            redis_url = config_settings.ratelimiter_redis_url or config_settings.redis_url
+            if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
                 log.getLogger(__name__).warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
-
+            pool_size = config_settings.ratelimiter_redis_max_connections if config_settings.ratelimiter_redis_url else config_settings.redis_max_connections
+            socket_timeout = config_settings.ratelimiter_redis_socket_timeout if config_settings.ratelimiter_redis_url else config_settings.redis_socket_timeout
+            socket_connect_timeout = config_settings.ratelimiter_redis_socket_connect_timeout if config_settings.ratelimiter_redis_url else config_settings.redis_socket_connect_timeout
             ssl_kwargs = _build_ssl_kwargs(config_settings)
-            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2, **ssl_kwargs)
+
+            _SYNC_REDIS_CLIENT = redis.from_url(redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs)
+
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success

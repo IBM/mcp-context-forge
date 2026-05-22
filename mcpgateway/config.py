@@ -2593,6 +2593,13 @@ class Settings(BaseSettings):
         description="Seconds the circuit remains open before a single probe is allowed. A successful probe closes the circuit; a failed probe extends the cooldown.",
     )
 
+    # Rate Limiter Redis Configuration (Issue #4751)
+    # Dedicated Redis instance for rate limiting to prevent contention with main Redis
+    ratelimiter_redis_url: Optional[str] = Field(default=None, description="Optional Redis URL for rate limiting middleware. Falls back to REDIS_URL when unset.")
+    ratelimiter_redis_max_connections: int = Field(default=50, description="Connection pool size for rate limiter Redis (matches redis_max_connections default)")
+    ratelimiter_redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout for rate limiter Redis (matches redis_socket_timeout default)")
+    ratelimiter_redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout for rate limiter Redis (matches redis_socket_connect_timeout default)")
+
     # Redis Leader Election - Multi-Node Deployments
     redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
     redis_leader_key: str = Field(default="gateway_service_leader", description="Leader key name")

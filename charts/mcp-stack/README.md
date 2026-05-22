@@ -1044,6 +1044,23 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | redis.external.port | int | `6379` |  |
 | redis.external.db | int | `0` |  |
 | redis.auth.enabled | bool | `true` |  |
+
+
+### Rate Limiter Redis (Optional)
+
+Separate Redis instance for rate limiting to prevent contention:
+
+```yaml
+mcpContextForge:
+  config:
+    RATELIMITER_REDIS_URL: "redis://rate-limiter-redis:6379/0"
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+```
+
+**Migration:** Unset = uses main `REDIS_URL` (backward compatible).
+
 | redis.auth.existingSecret | string | `""` |  |
 | redis.auth.passwordKey | string | `"REDIS_PASSWORD"` |  |
 | redis.auth.password | string | `"change-me-redis"` |  |
