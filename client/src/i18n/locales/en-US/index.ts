@@ -4,7 +4,7 @@ import auth from "./auth.json";
 import dashboard from "./dashboard.json";
 import restApi from "./restApi.json";
 import grpc from "./grpc.json";
-import gateways from "./gateways.json";
+import users from "./users.json";
 
 export default {
   ...common,
@@ -13,5 +13,5 @@ export default {
   ...dashboard,
   ...restApi,
   ...grpc,
-  ...gateways,
+  ...users,
 };
