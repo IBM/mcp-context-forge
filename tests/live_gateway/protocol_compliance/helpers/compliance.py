@@ -63,6 +63,26 @@ async def resolve_tool(client: Client, bare: str) -> Optional[str]:
     return None
 
 
+async def resolve_prompt(client: Client, bare: str) -> Optional[str]:
+    """Return the prompt name as advertised by the connected client, or None.
+
+    Matches in this order:
+      1. Exact bare name (reference target).
+      2. Exact ``<slug>-<bare-with-underscores-as-hyphens>`` (federated targets).
+
+    Returns ``None`` if no candidate prompt is advertised — the caller can
+    ``pytest.skip`` with a clear reason.
+    """
+    prompts = await client.list_prompts()
+    names = {p.name for p in prompts}
+    if bare in names:
+        return bare
+    federated = f"{GATEWAY_UPSTREAM_SLUG}-{bare.replace('_', '-')}"
+    if federated in names:
+        return federated
+    return None
+
+
 def current_target(request: pytest.FixtureRequest) -> str:
     """Return the parametrize cell's target name (e.g. ``"gateway_proxy"``).
 

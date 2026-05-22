@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from fastmcp.client import Client
 
-from .helpers.compliance import xfail_on
+from .helpers.compliance import resolve_prompt, xfail_on
 
 pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_server_features]
 
@@ -20,21 +20,25 @@ pytestmark = [pytest.mark.protocol_compliance, pytest.mark.mcp_server_features]
 async def test_prompt_listed(client: Client, request) -> None:
     xfail_on(
         request,
-        "gateway_proxy",
         "gateway_virtual",
         reason="GAP-006: gateway federation does not surface upstream prompts",
     )
-    names = {p.name for p in await client.list_prompts()}
-    assert "greet" in names
+    # Use resolve_prompt to handle both bare (reference) and slug-prefixed (gateway) names
+    name = await resolve_prompt(client, "greet")
+    assert name is not None, "greet prompt not found (expected bare 'greet' or slug-prefixed variant)"
 
 
 async def test_prompt_renders_argument(client: Client, request) -> None:
     xfail_on(
         request,
-        "gateway_proxy",
         "gateway_virtual",
         reason="GAP-006: gateway federation does not surface upstream prompts",
     )
-    rendered = await client.get_prompt("greet", arguments={"name": "Grace"})
+    # Resolve the prompt name (bare or slug-prefixed)
+    name = await resolve_prompt(client, "greet")
+    if name is None:
+        pytest.skip("greet prompt not advertised by this target")
+
+    rendered = await client.get_prompt(name, arguments={"name": "Grace"})
     texts = [getattr(m.content, "text", "") for m in rendered.messages]
     assert any("Grace" in t for t in texts)

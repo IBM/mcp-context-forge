@@ -120,10 +120,14 @@ def virtual_server(
     gateway_http_client: httpx.Client,
     registered_reference_upstream: dict[str, Any],
 ) -> Iterator[dict[str, Any]]:
-    """Create a virtual server composing the reference server's tools."""
+    """Create a virtual server composing the reference server's tools and prompts."""
     tools, diag = _wait_for_federation_sync(gateway_http_client, registered_reference_upstream["id"])
     if not tools:
         pytest.skip(f"federation sync did not surface any tools for gateway " f"{registered_reference_upstream['id']}: {diag}")
+
+    # Fetch prompts for the same gateway
+    prompts_resp = gateway_http_client.get("/prompts", params={"gateway_id": registered_reference_upstream["id"], "limit": 500})
+    prompts = prompts_resp.json() if prompts_resp.status_code == 200 else []
 
     _delete_if_exists(gateway_http_client, "/servers", "compliance_virtual")
     # POST /servers takes ServerCreate nested under a top-level "server" key
@@ -131,8 +135,9 @@ def virtual_server(
     payload = {
         "server": {
             "name": "compliance_virtual",
-            "description": "Virtual server composed of reference-server tools",
+            "description": "Virtual server composed of reference-server tools and prompts",
             "associated_tools": [t["id"] for t in tools],
+            "associated_prompts": [p["id"] for p in prompts],
         }
     }
     resp = gateway_http_client.post("/servers", json=payload)
