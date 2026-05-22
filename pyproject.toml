@@ -947,4 +947,4 @@ omit-covered-files = false
 # --------------------------------------------------------------------
 [tool.bandit]
 # No global skips - use inline # nosec comments for specific false positives
-exclude_dirs = [".venv", "venv", "build", "dist", ".tox", ".eggs", "node_modules", "tests"]
+exclude_dirs = [".venv", "venv", "build", "dist", ".tox", ".eggs", "node_modules"]
