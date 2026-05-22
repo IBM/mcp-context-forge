@@ -26,7 +26,7 @@ interface AdvancedSettingsProps {
   authType: AuthType;
   onAuthTypeChange: (value: AuthType) => void;
   basicAuthUsername: string;
-  basicAuthPassword: string;
+  basicAuthPassword: string; // pragma: allowlist secret
   onBasicAuthUsernameChange: (value: string) => void;
   onBasicAuthPasswordChange: (value: string) => void;
   bearerToken: string;
@@ -44,7 +44,7 @@ interface AdvancedSettingsProps {
   oauthStoreTokens: boolean;
   oauthAutoRefresh: boolean;
   oauthUsername: string;
-  oauthPassword: string;
+  oauthPassword: string; // pragma: allowlist secret
   onOAuthClientIdChange: (value: string) => void;
   onOAuthClientSecretChange: (value: string) => void;
   onOAuthTokenUrlChange: (value: string) => void;
@@ -61,7 +61,7 @@ interface AdvancedSettingsProps {
   queryParamApiKey: string;
   onQueryParamNameChange: (value: string) => void;
   onQueryParamApiKeyChange: (value: string) => void;
-  oneTimeAuth: boolean;
+  oneTimeAuth: boolean; // pragma: allowlist secret
   onOneTimeAuthChange: (checked: boolean) => void;
   passthroughHeaders: string;
   onPassthroughHeadersChange: (value: string) => void;
