@@ -300,7 +300,7 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                   }}
                   oauthErrors={{
                     username: errors.oauthUsername,
-                    password: errors.oauthPassword,
+                    password: errors.oauthPassword, // pragma: allowlist secret
                   }}
                 />
               )}
