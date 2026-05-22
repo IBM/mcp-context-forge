@@ -46,6 +46,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_okta_client_secret=secret,
         sso_okta_issuer="https://company.okta.com",
         sso_okta_scope="openid profile email groups",
+        sso_okta_auth_server="default",
         okta_group_mapping='{"Engineering": "team-uuid-1"}',
         sso_entra_enabled=True,
         sso_entra_client_id="entra-client",
@@ -988,6 +989,7 @@ def test_okta_default_scope_without_group_mapping(monkeypatch):
         sso_okta_client_secret=secret,
         sso_okta_issuer="https://company.okta.com",
         sso_okta_scope="openid profile email",
+        sso_okta_auth_server="default",
         okta_group_mapping=None,
         sso_entra_enabled=False,
         sso_entra_client_id=None,
@@ -1036,6 +1038,7 @@ def test_okta_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
         sso_okta_client_secret=secret,
         sso_okta_issuer="https://company.okta.com",
         sso_okta_scope="openid profile email groups",
+        sso_okta_auth_server="default",
         okta_group_mapping="not-valid-json{",
         sso_entra_enabled=False,
         sso_entra_client_id=None,
@@ -1093,6 +1096,7 @@ class TestBootstrapPreservesDBValues:
 
         with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
             mock_settings.sso_enabled = True
+            mock_settings.sso_okta_auth_server = "default"
 
             with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
                 with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
@@ -1131,6 +1135,7 @@ class TestBootstrapPreservesDBValues:
 
         with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
             mock_settings.sso_enabled = True
+            mock_settings.sso_okta_auth_server = "default"
 
             with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
                 with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
@@ -1169,6 +1174,7 @@ class TestBootstrapPreservesDBValues:
 
         with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
             mock_settings.sso_enabled = True
+            mock_settings.sso_okta_auth_server = "default"
 
             with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
                 with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
@@ -1207,6 +1213,7 @@ class TestBootstrapPreservesDBValues:
 
         with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
             mock_settings.sso_enabled = True
+            mock_settings.sso_okta_auth_server = "default"
 
             with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
                 with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
@@ -1239,6 +1246,7 @@ def test_okta_non_dict_group_mapping_uses_empty(monkeypatch, caplog):
         sso_okta_client_secret=secret,
         sso_okta_issuer="https://company.okta.com",
         sso_okta_scope="openid profile email",
+        sso_okta_auth_server="default",
         okta_group_mapping='["not", "a", "dict"]',
         sso_entra_enabled=False,
         sso_entra_client_id=None,
@@ -1262,3 +1270,101 @@ def test_okta_non_dict_group_mapping_uses_empty(monkeypatch, caplog):
     assert len(providers) == 1
     assert providers[0]["team_mapping"] == {}
     assert any("must be a JSON object" in record.message for record in caplog.records)
+
+
+def test_get_predefined_sso_providers_okta_org_auth_server(monkeypatch):
+    """Org AS should produce /oauth2/v1/... URLs with bare issuer."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("okta-secret")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        sso_google_enabled=False, sso_ibm_verify_enabled=False,
+        sso_entra_enabled=False, sso_keycloak_enabled=False,
+        sso_adfs_enabled=False, sso_generic_enabled=False,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://acme.okta.com",
+        sso_okta_auth_server="org",
+        sso_okta_scope="openid profile email groups",
+        okta_group_mapping='{"IT": "team-uuid"}',
+        sso_trusted_domains=["acme.com"],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    okta = providers[0]
+    assert okta["id"] == "okta"
+    assert okta["authorization_url"] == "https://acme.okta.com/oauth2/v1/authorize"
+    assert okta["token_url"] == "https://acme.okta.com/oauth2/v1/token"
+    assert okta["userinfo_url"] == "https://acme.okta.com/oauth2/v1/userinfo"
+    assert okta["issuer"] == "https://acme.okta.com"
+    assert okta["team_mapping"] == {"IT": "team-uuid"}
+
+
+def test_get_predefined_sso_providers_okta_custom_auth_server(monkeypatch):
+    """Custom auth server ID should produce /oauth2/{id}/v1/... URLs."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("okta-secret")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        sso_google_enabled=False, sso_ibm_verify_enabled=False,
+        sso_entra_enabled=False, sso_keycloak_enabled=False,
+        sso_adfs_enabled=False, sso_generic_enabled=False,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://acme.okta.com",
+        sso_okta_auth_server="aus1234567890",
+        sso_okta_scope="openid profile email",
+        okta_group_mapping=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    okta = providers[0]
+    assert okta["authorization_url"] == "https://acme.okta.com/oauth2/aus1234567890/v1/authorize"
+    assert okta["token_url"] == "https://acme.okta.com/oauth2/aus1234567890/v1/token"
+    assert okta["userinfo_url"] == "https://acme.okta.com/oauth2/aus1234567890/v1/userinfo"
+    assert okta["issuer"] == "https://acme.okta.com/oauth2/aus1234567890"
+
+
+def test_get_predefined_sso_providers_okta_default_auth_server(monkeypatch):
+    """Default auth server should produce /oauth2/default/v1/... URLs (backward compat)."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("okta-secret")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        sso_google_enabled=False, sso_ibm_verify_enabled=False,
+        sso_entra_enabled=False, sso_keycloak_enabled=False,
+        sso_adfs_enabled=False, sso_generic_enabled=False,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://acme.okta.com",
+        sso_okta_auth_server="default",
+        sso_okta_scope="openid profile email",
+        okta_group_mapping=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    okta = providers[0]
+    assert okta["authorization_url"] == "https://acme.okta.com/oauth2/default/v1/authorize"
+    assert okta["token_url"] == "https://acme.okta.com/oauth2/default/v1/token"
+    assert okta["userinfo_url"] == "https://acme.okta.com/oauth2/default/v1/userinfo"
+    assert okta["issuer"] == "https://acme.okta.com/oauth2/default"
