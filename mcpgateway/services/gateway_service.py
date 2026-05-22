@@ -3897,6 +3897,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         logger.info(f"Reactivating gateway: {gateway_name}, as it is healthy now")
                         with cast(Any, SessionLocal)() as status_db:
                             await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+                        self._gateway_failure_counts[gateway_id] = 0  # Reset failure counter on recovery
 
                     # Update last_seen with fresh session (gateway object is detached)
                     try:

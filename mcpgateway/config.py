@@ -2406,10 +2406,10 @@ class Settings(BaseSettings):
     # Interval in seconds between gateway health checks.
     health_check_interval: int = 60
     # Timeout in seconds for each health check request
-    health_check_timeout: int = 5
+    health_check_timeout: int = 30
     # Per-check timeout (seconds) to bound total time of one gateway health check
     # Env: GATEWAY_HEALTH_CHECK_TIMEOUT
-    gateway_health_check_timeout: float = 5.0
+    gateway_health_check_timeout: float = 30.0
     # Consecutive failures before marking gateway offline
     unhealthy_threshold: int = 3
     # Max concurrent health checks per worker
@@ -2534,7 +2534,9 @@ class Settings(BaseSettings):
     redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
     redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
     redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
-    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)")
+    redis_ssl_check_hostname: bool = Field(
+        default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)"
+    )
 
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."

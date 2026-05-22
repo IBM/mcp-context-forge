@@ -1293,11 +1293,11 @@ RETRY_MAX_DELAY=60
 
 # Health check intervals
 HEALTH_CHECK_INTERVAL=60
-HEALTH_CHECK_TIMEOUT=5
+HEALTH_CHECK_TIMEOUT=30
 UNHEALTHY_THRESHOLD=3
 
 # Gateway health check timeout (seconds)
-GATEWAY_HEALTH_CHECK_TIMEOUT=5.0
+GATEWAY_HEALTH_CHECK_TIMEOUT=30.0
 
 # Auto-refresh tools during health checks
 # When enabled, tools/resources/prompts are fetched and synced during health checks
