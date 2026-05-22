@@ -270,7 +270,16 @@ export function useUserForm(): UseUserFormReturn {
     } catch {
       return false;
     }
-  }, [email, password, confirmPassword, fullName, isAdmin, isActive, passwordChangeRequired, userFormSchema]);
+  }, [
+    email,
+    password,
+    confirmPassword,
+    fullName,
+    isAdmin,
+    isActive,
+    passwordChangeRequired,
+    userFormSchema,
+  ]);
 
   return {
     // State

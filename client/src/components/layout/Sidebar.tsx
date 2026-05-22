@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
+import { useAuthContext } from "../../auth/AuthContext";
 import { AgentIcon } from "../icons/AgentIcon.tsx";
 import { MCPIcon } from "../icons/MCPIcon.tsx";
 import { MainNavIcon } from "../icons/MainNavIcon.tsx";
@@ -73,6 +74,7 @@ const FOOTER_NAV_ITEM: NavItem = {
 export function AppSidebar() {
   const intl = useIntl();
   const { path, navigate } = useRouter();
+  const { user } = useAuthContext();
 
   const renderNavItems = (items: NavItem[]) => {
     return items.map(({ labelKey, path: itemPath, icon: Icon }) => {
@@ -135,15 +137,17 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Administration Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel>
-            {intl.formatMessage({ id: "navigation.administration" })}
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>{renderNavItems(ADMINISTRATION_NAV_ITEMS)}</SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* Administration Section - Platform Admin Only */}
+        {user?.is_admin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>
+              {intl.formatMessage({ id: "navigation.administration" })}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{renderNavItems(ADMINISTRATION_NAV_ITEMS)}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter>
