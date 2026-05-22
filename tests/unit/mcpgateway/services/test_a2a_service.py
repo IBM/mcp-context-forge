@@ -96,7 +96,7 @@ class TestA2AAgentService:
             endpoint_url="https://api.example.com/agent",
             agent_type="custom",
             auth_username="user",
-            auth_password="dummy_pass",
+            auth_password="dummy_pass",  # pragma: allowlist secret
             protocol_version="1.0",
             capabilities={"chat": True, "tools": False},
             config={"max_tokens": 1000},
@@ -214,8 +214,8 @@ class TestA2AAgentService:
             oauth_config={
                 "grant_type": "password",
                 "client_id": "cid",
-                "client_secret": "super-secret",
-                "password": "pw",
+                "client_secret": "super-secret",  # pragma: allowlist secret
+                "password": "pw",  # pragma: allowlist secret
                 "token_url": "https://auth.example.com/token",
                 "username": "svc-user",
             },
@@ -410,8 +410,8 @@ class TestA2AAgentService:
                     oauth_config={
                         "grant_type": "password",
                         "client_id": "cid",
-                        "client_secret": "new-secret",
-                        "password": "new-pw",
+                        "client_secret": "new-secret",  # pragma: allowlist secret
+                        "password": "new-pw",  # pragma: allowlist secret
                         "token_url": "https://auth.example.com/token",
                     }
                 )
@@ -447,7 +447,7 @@ class TestA2AAgentService:
         """Masked auth_headers placeholders preserve existing encrypted header values (issue #3637)."""
         sample_db_agent.version = 1
         sample_db_agent.auth_type = "authheaders"
-        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})  # pragma: allowlist secret
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             mock_db.commit = MagicMock()
@@ -474,7 +474,7 @@ class TestA2AAgentService:
         """When some headers are masked and one is changed, only the changed header is updated."""
         sample_db_agent.version = 1
         sample_db_agent.auth_type = "authheaders"
-        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})  # pragma: allowlist secret
 
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
             mock_db.commit = MagicMock()
@@ -696,7 +696,7 @@ class TestA2AAgentService:
         # Create realistic encrypted auth_value using encode_auth
         basic_auth_headers = {"Authorization": "Basic dXNlcm5hbWU6cGFzc3dvcmQ="}  # username:password in base64
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(basic_auth_headers)
 
         # Mock HTTP client
@@ -762,7 +762,7 @@ class TestA2AAgentService:
         # Create realistic encrypted auth_value using encode_auth
         bearer_auth_headers = {"Authorization": "Bearer my-secret-jwt-token-12345"}
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(bearer_auth_headers)
 
         # Mock HTTP client
@@ -826,9 +826,9 @@ class TestA2AAgentService:
         Regression test for issue #2002: A2A agents with X-API-Key header fail with HTTP 401.
         """
         # Create realistic encrypted auth_value with custom headers
-        custom_auth_headers = {"X-API-Key": "test-key-for-unit-test", "X-Custom-Header": "custom-value"}
+        custom_auth_headers = {"X-API-Key": "test-key-for-unit-test", "X-Custom-Header": "custom-value"}  # pragma: allowlist secret
         with patch("mcpgateway.utils.services_auth.settings") as mock_settings:
-            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"
+            mock_settings.auth_encryption_secret = "test-secret-key-for-encryption"  # pragma: allowlist secret
             encrypted_auth_value = encode_auth(custom_auth_headers)
 
         # Mock HTTP client
@@ -1632,7 +1632,7 @@ class TestRegisterAgentEdgeCases:
                 await service.register_agent(mock_db, agent_data)
 
         added_agent = mock_db.add.call_args[0][0]
-        assert added_agent.auth_query_params == {"api_key": "encrypted"}
+        assert added_agent.auth_query_params == {"api_key": "encrypted"}  # pragma: allowlist secret
 
     async def test_register_query_param_missing_key_or_value_skips_encryption(self, service, mock_db, monkeypatch):
         """Missing key/value skips auth_query_params encryption and continues."""
@@ -2401,7 +2401,7 @@ class TestInvokeAgentEdgeCases:
             endpoint_url="https://x.com/api",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "encrypted_blob"},
+            auth_query_params={"api_key": "encrypted_blob"},  # pragma: allowlist secret
             visibility="public",
             team_id=None,
             owner_email=None,
@@ -2410,7 +2410,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -2442,7 +2442,7 @@ class TestInvokeAgentEdgeCases:
             endpoint_url="https://x.com/api",
             auth_type="query_param",
             auth_value=None,
-            auth_query_params={"api_key": "encrypted_blob"},
+            auth_query_params={"api_key": "encrypted_blob"},  # pragma: allowlist secret
             visibility="public",
             team_id=None,
             owner_email=None,
@@ -2451,7 +2451,7 @@ class TestInvokeAgentEdgeCases:
         )
         mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
         monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
-        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})  # pragma: allowlist secret
         monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
         mock_db.commit = MagicMock()
         mock_db.close = MagicMock()
@@ -3311,7 +3311,7 @@ class TestUpdateAgentQueryParamAuth:
 
     async def test_switching_away_from_queryparam_clears_params(self, service, mock_db, monkeypatch):
         """Switching from query_param to bearer clears auth_query_params (lines 1051-1053)."""
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})  # pragma: allowlist secret
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
@@ -3397,7 +3397,7 @@ class TestUpdateAgentQueryParamAuth:
         """Masked placeholder value with same key preserves existing encrypted value (line 1112)."""
         agent = self._make_agent(
             auth_type="query_param",
-            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},  # pragma: allowlist secret
         )
         original_params = dict(agent.auth_query_params)
 
@@ -3472,7 +3472,7 @@ class TestUpdateAgentQueryParamAuth:
         """Key provided without value results in raw_value=None, no update (lines 1105-1106)."""
         agent = self._make_agent(
             auth_type="query_param",
-            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},
+            auth_query_params={"api_key": encode_auth({"api_key": "real_secret"})},  # pragma: allowlist secret
         )
         original_params = dict(agent.auth_query_params)
 
@@ -3504,7 +3504,7 @@ class TestUpdateAgentQueryParamAuth:
 
     async def test_queryparam_string_value(self, service, mock_db, monkeypatch):
         """Plain string value (no get_secret_value) is used directly (lines 1103-1104)."""
-        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "old"})
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "old"})  # pragma: allowlist secret
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=agent):
             mock_db.commit = MagicMock()
             mock_db.refresh = MagicMock()
@@ -6223,3 +6223,208 @@ async def test_invoke_remote_agent_no_correlation_id(module_service, monkeypatch
     call_args = mock_client.post.call_args
     headers = call_args.kwargs.get("headers", {})
     assert "X-Correlation-ID" not in headers
+
+
+class TestListAgentsForUserTypeValidation:
+    """Test suite for list_agents_for_user email type validation (issue #4670)."""
+
+    @pytest.fixture
+    def service(self):
+        """Create A2A agent service instance."""
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        db = MagicMock(spec=Session)
+        # Mock the execute chain for query results
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        return db
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_string_email(self, service, mock_db):
+        """Test that string email is handled correctly (legacy path)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info="user@example.com",
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with the string email
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("user@example.com")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_dict_valid_email(self, service, mock_db):
+        """Test that dict with valid string email is handled correctly."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": "admin@example.com",
+                "full_name": "Admin User",
+                "is_admin": True
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should extract email string and call get_user_teams
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("admin@example.com")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_dict_email_value(self, service, mock_db, caplog):
+        """Test that dict with nested dict email triggers warning and uses empty string (issue #4670)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            # Simulate the bug: email key contains a dict instead of string
+            user_dict = {
+                "email": {"nested": "dict", "value": "admin@example.com"},
+                "full_name": "Admin User",
+                "is_admin": True
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type dict" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string (public-only access)
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_list_email_value(self, service, mock_db, caplog):
+        """Test that dict with list email triggers warning and uses empty string."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            # Email key contains a list instead of string
+            user_dict = {
+                "email": ["admin@example.com", "backup@example.com"],
+                "full_name": "Admin User"
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type list" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_none_email_value(self, service, mock_db):
+        """Test that dict with None email uses empty string (no warning needed)."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": None,
+                "full_name": "Anonymous User"
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with empty string (None is not a string)
+            # Note: None.get() would fail, but user_dict.get("email") returns None,
+            # which is then checked by isinstance(email_value, str) and fails
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_missing_email_key(self, service, mock_db):
+        """Test that dict without email key uses empty string."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "full_name": "User Without Email",
+                "is_admin": False
+            }
+
+            result = await service.list_agents_for_user(
+                db=mock_db,
+                user_info=user_dict,
+                team_id=None,
+                visibility=None,
+                include_inactive=False,
+                skip=0,
+                limit=100
+            )
+
+            # Should call get_user_teams with empty string (default from .get())
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_agents_for_user_with_integer_email_value(self, service, mock_db, caplog):
+        """Test that dict with integer email triggers warning."""
+        with patch("mcpgateway.services.a2a_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[])
+
+            user_dict = {
+                "email": 12345,
+                "full_name": "User With Integer Email"
+            }
+
+            with caplog.at_level("WARNING"):
+                result = await service.list_agents_for_user(
+                    db=mock_db,
+                    user_info=user_dict,
+                    team_id=None,
+                    visibility=None,
+                    include_inactive=False,
+                    skip=0,
+                    limit=100
+                )
+
+            # Should log warning about non-string type
+            assert any("user_info['email'] is non-string type int" in record.message for record in caplog.records)
+
+            # Should call get_user_teams with empty string
+            mock_team_service.return_value.get_user_teams.assert_called_once_with("")
+            assert result == []

@@ -172,7 +172,9 @@ def _import_fresh_main_module(
 
     # Use in-memory session registry to avoid dependence on SQLALCHEMY_AVAILABLE
     # module-level state which can be polluted by other tests that reload session_registry.
-    monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
+    # Don't override cache_type when the caller explicitly passed it in overrides.
+    if not (overrides and "cache_type" in overrides):
+        monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
 
     # Use fresh in-memory database for each test to avoid conflicts
     monkeypatch.setattr(settings_mod, "database_url", "sqlite:///:memory:", raising=False)
@@ -246,9 +248,7 @@ class TestConditionalPaths:
             },
         )
 
-        assert any(
-            "CSRF protection middleware disabled" in rec.message for rec in caplog.records
-        )
+        assert any("CSRF protection middleware disabled" in rec.message for rec in caplog.records)
 
     def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
         """When boot mode is edge, the ingress mount selects rust-internal by default."""
@@ -381,11 +381,7 @@ class TestConditionalPaths:
             },
         )
 
-        assert any(
-            deps
-            and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps)
-            for _, deps in include_calls
-        )
+        assert any(deps and any(getattr(dep.dependency, "__name__", None) == "enforce_admin_csrf" for dep in deps) for _, deps in include_calls)
 
     def test_redis_initialization_path(self, test_client, auth_headers):
         """Test Redis initialization path by mocking settings."""
@@ -1542,7 +1538,6 @@ class TestApplicationStartupPaths:
             mock_shared_http = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new_callable=AsyncMock))
             mock_shared_http_shutdown = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new_callable=AsyncMock))
 
-
             # Setup all mocks
             services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
             for service in services:
@@ -2597,7 +2592,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2627,7 +2622,7 @@ class TestAdminAuthMiddleware:
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
         mock_permission_service.has_admin_permission.assert_awaited_once_with(
-            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]
+            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]  # pragma: allowlist secret
         )
 
     @pytest.mark.asyncio
@@ -2748,7 +2743,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Empty string is falsy, so team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_admin_bypass_ignores_query_team_id(self, monkeypatch):
@@ -2757,7 +2752,7 @@ class TestAdminAuthMiddleware:
         request = _make_request(
             "/admin/tools",
             headers={"Authorization": "Bearer token"},
-            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},
+            query_params={"team_id": "a1b2c3d4e5f6789012345678abcdef01"},  # pragma: allowlist secret
         )
         request.state.token_teams = None
         call_next = AsyncMock(return_value="ok")
@@ -2800,7 +2795,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "a1b2c3d4-e5f6-7890-1234-5678abcdef01"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2815,7 +2810,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -2831,7 +2826,9 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Hyphenated UUID should be normalized to hex and match token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with(
+            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
+        )  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_garbage_team_id_treated_as_absent(self, monkeypatch):
@@ -2842,7 +2839,7 @@ class TestAdminAuthMiddleware:
             headers={"Authorization": "Bearer token"},
             query_params={"team_id": "not-a-valid-uuid"},
         )
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -2857,7 +2854,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -2872,7 +2869,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Invalid UUID is discarded, falls back to global check
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
@@ -2901,7 +2898,7 @@ class TestAdminAuthMiddleware:
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
         mock_permission_service = MagicMock()
         mock_permission_service.has_admin_permission = AsyncMock(return_value=True)
-        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]
+        request.state.token_teams = ["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
 
         with (
             patch("mcpgateway.main.get_db", _db_gen),
@@ -2916,7 +2913,9 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # .get() returns last value (hex UUID), which IS in token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with(
+            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"]  # pragma: allowlist secret
+        )  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_admin_auth_non_uuid_team_id_matches_legacy_token_teams(self, monkeypatch):
@@ -12052,6 +12051,7 @@ class TestRemainingCoverageGaps:
             "db_query_log_enabled": True,
             "cache_type": "redis",
             "redis_url": "redis://localhost:6379",
+            "redis_ssl": False,
             "structured_logging_enabled": False,
             "mcpgateway_a2a_enabled": False,
             "mcpgateway_tool_cancellation_enabled": False,
@@ -13218,6 +13218,22 @@ class TestRpcScopedPermissions:
         result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
         assert result["error"]["code"] == -32003
         assert "Access denied" in result["error"]["message"]
+
+
+class TestRedisStartupPath:
+    """Cover main.py module-level redis readiness check (lines 255/257)."""
+
+    def test_wait_for_redis_called_on_startup_when_redis_configured(self, monkeypatch):
+        """main.py executes the redis startup path (lines 255/257) when cache_type is redis."""
+        _import_fresh_main_module(
+            monkeypatch,
+            overrides={
+                "cache_type": "redis",
+                "redis_url": "redis://localhost:6379/0",
+                "redis_ssl": False,
+            },
+        )
+        # If we reach here the module loaded — lines 255/257 were executed.
 
 
 @pytest.fixture

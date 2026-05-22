@@ -40,7 +40,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         >>> cfg = SimpleNamespace(
         ...     sso_github_enabled=True,
         ...     sso_github_client_id='id',
-        ...     sso_github_client_secret='sec',
+        ...     sso_github_client_secret='sec',  # pragma: allowlist secret
         ...     sso_trusted_domains=[],
         ...     sso_auto_create_users=True,
         ...     sso_google_enabled=False,
@@ -57,7 +57,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         >>> cfg = SimpleNamespace(
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
-        ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',
+        ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',  # pragma: allowlist secret
         ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False, sso_entra_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -69,7 +69,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         >>> cfg = SimpleNamespace(
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
-        ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',
+        ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',  # pragma: allowlist secret
         ...     sso_ibm_verify_enabled=False, sso_entra_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -82,7 +82,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=False, sso_okta_enabled=False,
-        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=True, sso_entra_client_id='entra_client', sso_entra_client_secret='entra_secret', sso_entra_tenant_id='tenant-id-123',
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=True, sso_entra_client_id='entra_client', sso_entra_client_secret='entra_secret', sso_entra_tenant_id='tenant-id-123',  # pragma: allowlist secret
         ...     sso_generic_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
@@ -96,7 +96,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=False, sso_okta_enabled=False, sso_ibm_verify_enabled=False, sso_entra_enabled=False,
         ...     sso_generic_enabled=True, sso_generic_provider_id='keycloak', sso_generic_display_name='Keycloak',
-        ...     sso_generic_client_id='kc_client', sso_generic_client_secret='kc_secret',
+        ...     sso_generic_client_id='kc_client', sso_generic_client_secret='kc_secret',  # pragma: allowlist secret
         ...     sso_generic_authorization_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth',
         ...     sso_generic_token_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token',
         ...     sso_generic_userinfo_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo',
@@ -334,10 +334,10 @@ def get_predefined_sso_providers() -> List[Dict]:
             "team_mapping": {},
             "provider_metadata": {
                 "groups_claim": settings.sso_generic_groups_claim,
-                "admin_groups": settings.sso_generic_admin_groups,
+                "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
                 "role_mappings": settings.sso_generic_role_mappings,
                 "default_role": settings.sso_generic_default_role,
-                "sync_roles": settings.sso_generic_sync_roles_on_login,
+                "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
             },
         }
         if settings.sso_generic_jwks_uri:

@@ -50,7 +50,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Shared constants / helpers
 # ---------------------------------------------------------------------------
-SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
+SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 ALGO = "HS256"
 
 
@@ -111,7 +111,7 @@ async def test_verify_jwt_token_invalid_signature(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
 
-    bad_token = _token({"x": 1}, secret="other-secret-key-with-minimum-32-bytes")
+    bad_token = _token({"x": 1}, secret="other-secret-key-with-minimum-32-bytes")  # pragma: allowlist secret
     with pytest.raises(HTTPException) as exc:
         await vc.verify_jwt_token(bad_token)
 
@@ -247,7 +247,7 @@ async def test_require_auth_rejects_revoked_token(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: True)
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=True))
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")  # pragma: allowlist secret
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
     mock_request.cookies = {}
@@ -271,7 +271,7 @@ async def test_require_auth_rejects_inactive_user(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", lambda _jti: False)
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: MagicMock(is_active=False))
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")  # pragma: allowlist secret
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
     mock_request.cookies = {}
@@ -291,7 +291,7 @@ async def test_require_auth_allows_missing_user_when_not_required_in_db(monkeypa
     monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")  # pragma: allowlist secret
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
     mock_request.cookies = {}
@@ -309,7 +309,7 @@ async def test_require_auth_rejects_missing_user_when_required_in_db(monkeypatch
     monkeypatch.setattr(vc, "verify_credentials_cached", AsyncMock(return_value={"sub": "ghost@example.com", "token": "token"}))
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", lambda _email: None)
 
-    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")  # pragma: allowlist secret
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
     mock_request.cookies = {}
@@ -377,7 +377,7 @@ async def test_verify_basic_credentials_failure(monkeypatch):
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
 
-    creds = HTTPBasicCredentials(username="bob", password="wrong")
+    creds = HTTPBasicCredentials(username="bob", password="wrong")  # pragma: allowlist secret
     with pytest.raises(HTTPException) as exc:
         await vc.verify_basic_credentials(creds)
 
@@ -649,6 +649,7 @@ async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypa
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_audience", "mcpgateway-api")
     monkeypatch.setattr("mcpgateway.config.settings.jwt_issuer", "mcpgateway")
+    monkeypatch.setattr("mcpgateway.config.settings.require_user_in_db", False)
     # Test with Basic Auth
     basic_creds = base64.b64encode(b"admin:changeme").decode()
     response1 = test_client.get("/docs", headers={"Authorization": f"Basic {basic_creds}"})
@@ -1042,7 +1043,7 @@ async def test_require_admin_auth_invalid_basic_auth_rejected_even_when_enabled(
     mock_request.scope = {"root_path": ""}
 
     # Invalid basic credentials
-    basic_creds = HTTPBasicCredentials(username="admin", password="wrong")
+    basic_creds = HTTPBasicCredentials(username="admin", password="wrong")  # pragma: allowlist secret
 
     with pytest.raises(HTTPException) as exc:
         await vc.require_admin_auth(
@@ -1191,7 +1192,7 @@ async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(
     mock_request.headers = {"accept": "application/json"}
     mock_request.scope = {"root_path": ""}
 
-    bearer_creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    bearer_creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")  # pragma: allowlist secret
     result = await vc.require_admin_auth(request=mock_request, credentials=bearer_creds, jwt_token=None, basic_credentials=None)
     assert result == "admin@example.com"
 
@@ -1273,6 +1274,7 @@ async def test_require_admin_auth_email_auth_non_admin_browser_gets_redirect(mon
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
@@ -1310,6 +1312,7 @@ async def test_require_admin_auth_email_auth_non_admin_json_gets_403(monkeypatch
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
@@ -1879,6 +1882,7 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     # Patch DB + service layer to return a non-admin user
     db_session = MagicMock()

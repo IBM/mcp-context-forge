@@ -77,7 +77,7 @@ connect_args: dict[str, object] = {}
 #
 #    Additionally, support PostgreSQL-specific options like search_path
 #    via the 'options' query parameter in DATABASE_URL.
-#    Example: postgresql+psycopg://user:pass@host/db?options=-c%20search_path=mcp_gateway
+#    Example: postgresql+psycopg://user:pass@host/db?options=-c%20search_path=mcp_gateway  # pragma: allowlist secret
 #
 #    IMPORTANT: Use postgresql+psycopg:// (not postgresql://) for psycopg3.
 # ---------------------------------------------------------------------------
@@ -3243,6 +3243,7 @@ class Tool(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
+    deprecated: Mapped[bool] = mapped_column(default=False, nullable=False)
     reachable: Mapped[bool] = mapped_column(default=True)
     jsonpath_filter: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

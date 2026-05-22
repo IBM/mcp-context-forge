@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Validate fresh installs + release-to-current upgrades for SQLite and PostgreSQL.
 
-BASE_IMAGE="${BASE_IMAGE:-ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2}"
+BASE_IMAGE="${BASE_IMAGE:-ghcr.io/ibm/mcp-context-forge:0.9.0}"
 TARGET_IMAGE="${TARGET_IMAGE:-mcpgateway/mcpgateway:latest}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-artifacts/upgrade-validation}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"

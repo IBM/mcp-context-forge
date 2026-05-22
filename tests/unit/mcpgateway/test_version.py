@@ -207,7 +207,7 @@ def test_sanitize_url() -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    url = "postgres://u:p@host:5432/db"
+    url = "postgres://u:p@host:5432/db"  # pragma: allowlist secret
     assert ver_mod._sanitize_url(url) == "postgres://u@host:5432/db"
 
 

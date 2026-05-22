@@ -375,9 +375,9 @@ class TestEncryptionService:
         # Sample JWT tokens in 100-500 char range
         jwt_tokens = [
             # Short JWT
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",  # pragma: allowlist secret
             # Medium JWT with more claims
-            "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5In0.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIiwic3ViIjoiMTIzNDU2Nzg5MCIsImF1ZCI6WyJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJpYXQiOjE1MTYyMzkwMjIsImV4cCI6MTUxNjI0MjYyMn0.signature",
+            "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3Qta2V5In0.eyJpc3MiOiJodHRwczovL2V4YW1wbGUuY29tIiwic3ViIjoiMTIzNDU2Nzg5MCIsImF1ZCI6WyJodHRwczovL2FwaS5leGFtcGxlLmNvbSJdLCJpYXQiOjE1MTYyMzkwMjIsImV4cCI6MTUxNjI0MjYyMn0.signature",  # pragma: allowlist secret
         ]
 
         for jwt in jwt_tokens:
@@ -415,9 +415,9 @@ class TestEncryptionService:
         encryption = EncryptionService(SecretStr("test_key"))
 
         api_keys = [
-            "sk-1234567890abcdefghijklmnopqrst",  # OpenAI format
-            "ghp_1234567890abcdefghijklmnopqrst",  # GitHub format
-            "AKIAIOSFODNN7EXAMPLE",  # AWS format
+            "sk-1234567890abcdefghijklmnopqrst",  # OpenAI format  # pragma: allowlist secret
+            "ghp_1234567890abcdefghijklmnopqrst",  # GitHub format  # pragma: allowlist secret
+            "AKIAIOSFODNN7EXAMPLE",  # AWS format  # pragma: allowlist secret
             base64.urlsafe_b64encode(b"some_api_key_data" * 5).decode(),  # Base64 encoded key
         ]
 
@@ -731,8 +731,8 @@ class TestOAuthConfigProtection:
         """Sensitive oauth keys are encrypted recursively before storage."""
         oauth_config = {
             "client_id": "cid",
-            "client_secret": "top-secret",
-            "nested": {"password": "pw", "issuer": "https://idp.example.com"},
+            "client_secret": "top-secret",  # pragma: allowlist secret
+            "nested": {"password": "pw", "issuer": "https://idp.example.com"},  # pragma: allowlist secret
             "tokens": [{"refresh_token": "rtok"}, {"scope": "read"}],
         }
 
@@ -794,8 +794,8 @@ class TestOAuthConfigProtection:
     async def test_decrypt_oauth_config_for_runtime_handles_plain_sensitive_nested_values(self):
         """Runtime helper preserves non-encrypted sensitive values and traverses nested lists."""
         oauth_config = {
-            "client_secret": "plaintext-secret",
-            "token": [{"password": "plain-password"}, "raw-token"],
+            "client_secret": "plaintext-secret",  # pragma: allowlist secret
+            "token": [{"password": "plain-password"}, "raw-token"],  # pragma: allowlist secret
             "metadata": ["a", "b"],
         }
 
@@ -816,7 +816,7 @@ class TestOAuthConfigProtection:
         """Sensitive keys handle dict/list/None/non-string/masked placeholder branches."""
         oauth_config = {
             "secret": {"inner": "nested-value"},
-            "token": ["tok-1", {"password": "tok-pw"}],
+            "token": ["tok-1", {"password": "tok-pw"}],  # pragma: allowlist secret
             "client_secret": None,
             "refresh_token": "",
             "password": 12345,

@@ -25,6 +25,7 @@ Examples:
 """
 
 # Standard
+import functools
 import logging
 import re
 import secrets
@@ -153,30 +154,38 @@ class PasswordPolicyService:
 
         # Check complexity requirements (must have 3 of 4 character types)
         complexity_count = 0
-        if re.search(r"[a-z]", password):
+        has_lower = bool(re.search(r"[a-z]", password))
+        has_upper = bool(re.search(r"[A-Z]", password))
+        has_digit = bool(re.search(r"[0-9]", password))
+        has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;\'`~]', password))
+
+        if has_lower:
             complexity_count += 1
-        if re.search(r"[A-Z]", password):
+        if has_upper:
             complexity_count += 1
-        if re.search(r"[0-9]", password):
+        if has_digit:
             complexity_count += 1
-        if re.search(r'[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;\'`~]', password):
+        if has_special:
             complexity_count += 1
 
         if complexity_count < 3:
             raise PasswordPolicyError("Password must contain at least 3 of the following: lowercase letters, uppercase letters, numbers, special characters")
 
         # Check against common passwords
-        if password.lower() in COMMON_PASSWORDS:
+        is_common = password.lower() in COMMON_PASSWORDS
+        if is_common:
             raise PasswordPolicyError("Password is too common or easily guessable")
 
         # Check if password contains username
         if email:
             username = email.split("@")[0].lower()
-            if len(username) >= 3 and username in password.lower():
+            contains_username = len(username) >= 3 and username in password.lower()
+            if contains_username:
                 raise PasswordPolicyError("Password must not be based on your username")
 
         # Check for sequential characters (e.g., "123", "abc")
-        if self._has_sequential_chars(password):
+        has_sequential = self._has_sequential_chars(password)
+        if has_sequential:
             raise PasswordPolicyError("Password contains too many sequential characters")
 
         return True
@@ -453,4 +462,52 @@ class PasswordPolicyService:
             "score": min(score, 100),
             "feedback": feedback,
             "strength": "strong" if score >= 80 else "medium" if score >= 60 else "weak",
+        }
+
+    @staticmethod
+    @functools.lru_cache(maxsize=2)
+    def get_password_requirements(is_privileged: bool = False) -> dict:
+        """Get the actual password requirements for display to users.
+
+        Returns a dict describing what passwords must meet:
+        - Minimum length
+        - Character type requirements (3 of 4: uppercase, lowercase, numbers, special)
+        - Rules about sequential chars, common passwords, username reuse
+
+        This method is cached since settings don't change at runtime, avoiding
+        redundant dict construction across page loads.
+
+        Args:
+            is_privileged: Whether this is for a privileged account
+
+        Returns:
+            dict: Password requirements with descriptions
+
+        Raises:
+            TypeError: If is_privileged is not a boolean
+        """
+        if not isinstance(is_privileged, bool):
+            raise TypeError(f"is_privileged must be bool, got {type(is_privileged).__name__}")
+
+        min_length = getattr(settings, "password_min_length_user", 12)
+        if is_privileged:
+            min_length = getattr(settings, "password_min_length_privileged", 22)
+
+        return {
+            "min_length": min_length,
+            "min_length_description": f"At least {min_length} characters long",
+            "complexity_required": 3,
+            "complexity_total": 4,
+            "complexity_description": "At least 3 of the following 4 character types:",
+            "complexity_types": [
+                {"name": "uppercase", "description": "Uppercase letters (A-Z)"},
+                {"name": "lowercase", "description": "Lowercase letters (a-z)"},
+                {"name": "numbers", "description": "Numbers (0-9)"},
+                {"name": "special", "description": "Special characters (!@#$%^&*()_+-=[]{};:'\"\\|,.<>?)"},
+            ],
+            "restrictions": [
+                "Cannot contain more than 3 sequential characters (e.g., '123', 'abc')",
+                "Cannot be a common password",
+                "Cannot contain your username",
+            ],
         }

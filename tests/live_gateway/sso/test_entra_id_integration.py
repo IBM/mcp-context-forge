@@ -1361,13 +1361,18 @@ class TestEntraIDEndToEndHTTP:
 
 @pytest.mark.skipif(not has_azure_credentials(), reason="Azure credentials not configured")
 class TestEntraIDAdminRoleRetention:
-    """Tests verifying that admin role is RETAINED when user leaves admin group.
+    """Tests verifying that manually-granted admin roles are RETAINED when user leaves an IdP group.
 
-    IMPORTANT: By design, the SSOService only UPGRADES is_admin via SSO, never downgrades.
-    This is intentional to preserve manual admin grants made via Admin UI/API.
-    To revoke admin access, administrators must use the Admin UI/API directly.
+    The SSOService enforces a two-tier admin-origin policy:
+    - admin_origin=None / "manual" / "api": sticky — SSO login never demotes these users.
+      Revocation requires an explicit Admin UI or API action.
+    - admin_origin="sso": bidirectional sync — SSO login promotes AND demotes based on
+      current IdP group membership.  This is intentional so that removing a user from an
+      IdP admin group takes effect on next login without a manual DB change.
 
-    See SSOService._should_user_be_admin() comments for rationale.
+    These tests cover the sticky (manual-grant) path only.
+    See test_is_admin_revoked_when_sso_admin_removed_from_group in
+    test_sso_entra_role_mapping.py for the bidirectional-sync path.
     """
 
     @pytest.mark.asyncio

@@ -169,7 +169,9 @@ class TestInfrastructureConfig:
 
     def test_postgres_custom(self):
         """Test PostgreSQL custom configuration."""
-        config = PostgresConfig(enabled=True, image="postgres:16", database="customdb", user="customuser", password="custompass", storage_size="20Gi", storage_class="fast-ssd")
+        config = PostgresConfig(
+            enabled=True, image="postgres:16", database="customdb", user="customuser", password="custompass", storage_size="20Gi", storage_class="fast-ssd"  # pragma: allowlist secret
+        )  # pragma: allowlist secret
         assert config.image == "postgres:16"
         assert config.database == "customdb"
         assert config.storage_class == "fast-ssd"

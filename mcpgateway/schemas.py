@@ -585,6 +585,7 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1150,6 +1151,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
@@ -1596,6 +1598,7 @@ class ToolRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     enabled: bool
+    deprecated: bool
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
@@ -3716,7 +3719,7 @@ class GatewayRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = GatewayRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = GatewayRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5443,7 +5446,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
             >>> # Custom headers example
             >>> values = A2AAgentRead.model_construct(
             ...     auth_type='authheaders',
-            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})  # pragma: allowlist secret
             ... )
             >>> values = A2AAgentRead._populate_auth(values)
             >>> values.auth_header_key
@@ -5792,7 +5795,7 @@ class EmailLoginRequest(BaseModel):
         password: User's password
 
     Examples:
-        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")
+        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")  # pragma: allowlist secret
         >>> request.email
         'user@example.com'
         >>> request.password
@@ -5819,7 +5822,7 @@ class PublicRegistrationRequest(BaseModel):
     Examples:
         >>> request = PublicRegistrationRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5849,7 +5852,7 @@ class AdminCreateUserRequest(BaseModel):
     Examples:
         >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
-        ...     password="secure123",
+        ...     password="secure123",  # pragma: allowlist secret
         ...     full_name="New User"
         ... )
         >>> request.email
@@ -5887,8 +5890,8 @@ class ChangePasswordRequest(BaseModel):
 
     Examples:
         >>> request = ChangePasswordRequest(
-        ...     old_password="old_secret",
-        ...     new_password="new_secure_password"
+        ...     old_password="old_secret",  # pragma: allowlist secret
+        ...     new_password="new_secure_password"  # pragma: allowlist secret
         ... )
         >>> request.old_password
         'old_secret'

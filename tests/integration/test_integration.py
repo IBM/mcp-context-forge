@@ -189,6 +189,7 @@ MOCK_TOOL = ToolRead(
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
     enabled=True,
+    deprecated=False,
     reachable=True,
     gateway_id=None,
     execution_count=0,
@@ -215,7 +216,7 @@ MOCK_SERVER = ServerRead(
 )
 
 MOCK_RESOURCE = ResourceRead(
-    id="39334ce0ed2644d79ede8913a66930c9",
+    id="39334ce0ed2644d79ede8913a66930c9",  # pragma: allowlist secret
     uri="file:///tmp/hello.txt",
     name="Hello",
     description="demo text",

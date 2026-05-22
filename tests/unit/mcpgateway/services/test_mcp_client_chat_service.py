@@ -59,20 +59,20 @@ def test_mcpserverconfig_command_required_for_stdio(monkeypatch):
 
 
 def test_azure_openai_config_and_defaults():
-    conf = svc.AzureOpenAIConfig(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")
+    conf = svc.AzureOpenAIConfig(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")  # pragma: allowlist secret
     assert conf.model == "gpt-4"
     assert conf.temperature == pytest.approx(0.7)
     assert conf.max_retries == 2
 
 
 def test_openai_config():
-    conf = svc.OpenAIConfig(api_key="sk-123", model="gpt-4")
+    conf = svc.OpenAIConfig(api_key="sk-123", model="gpt-4")  # pragma: allowlist secret
     assert conf.model.startswith("gpt-")
     assert conf.temperature == 0.7
 
 
 def test_anthropic_config_defaults_and_constraints():
-    conf = svc.AnthropicConfig(api_key="ant-1")
+    conf = svc.AnthropicConfig(api_key="ant-1")  # pragma: allowlist secret
     assert 0.0 <= conf.temperature <= 1.0
     assert conf.max_tokens > 0
 
@@ -80,7 +80,7 @@ def test_anthropic_config_defaults_and_constraints():
 def test_bedrock_and_watsonx_config_basic_properties():
     conf = svc.AWSBedrockConfig(model_id="anthropic.claude-v2", region_name="us-east-1")
     assert "anthropic" in conf.model_id
-    watson_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")
+    watson_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")  # pragma: allowlist secret
     assert watson_conf.model_id.startswith("ibm/")
     assert watson_conf.temperature <= 2.0
 
@@ -93,12 +93,12 @@ def test_bedrock_and_watsonx_config_basic_properties():
 @pytest.mark.parametrize(
     "provider_cls,config_cls,required_kwargs",
     [
-        (svc.AzureOpenAIProvider, svc.AzureOpenAIConfig, dict(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")),
-        (svc.OpenAIProvider, svc.OpenAIConfig, dict(api_key="sk-1")),
+        (svc.AzureOpenAIProvider, svc.AzureOpenAIConfig, dict(api_key="key", azure_endpoint="https://end", azure_deployment="gpt-4")),  # pragma: allowlist secret
+        (svc.OpenAIProvider, svc.OpenAIConfig, dict(api_key="sk-1")),  # pragma: allowlist secret
         (svc.OllamaProvider, svc.OllamaConfig, dict(base_url="http://localhost:11434", model="llama2")),
-        (svc.AnthropicProvider, svc.AnthropicConfig, dict(api_key="ant-key")),
+        (svc.AnthropicProvider, svc.AnthropicConfig, dict(api_key="ant-key")),  # pragma: allowlist secret
         (svc.AWSBedrockProvider, svc.AWSBedrockConfig, dict(model_id="anthropic.claude-v2", region_name="us-east-1")),
-        (svc.WatsonxProvider, svc.WatsonxConfig, dict(api_key="key", url="https://us-south.ml.cloud.ibm.com", project_id="proj")),
+        (svc.WatsonxProvider, svc.WatsonxConfig, dict(api_key="key", url="https://us-south.ml.cloud.ibm.com", project_id="proj")),  # pragma: allowlist secret
     ],
 )
 def test_provider_model_name_and_mock_llm(monkeypatch, provider_cls, config_cls, required_kwargs):
@@ -120,7 +120,7 @@ def test_provider_model_name_and_mock_llm(monkeypatch, provider_cls, config_cls,
 
 
 def test_llmprovider_factory_creates_correct_class(monkeypatch):
-    cfg = svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="sk", model="gpt-4"))
+    cfg = svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="sk", model="gpt-4"))  # pragma: allowlist secret
     with patch.object(svc, "OpenAIProvider", MagicMock()) as mock_cls:
         svc.LLMProviderFactory.create(cfg)
         mock_cls.assert_called_once()
@@ -143,7 +143,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     # OpenAI
     monkeypatch.setattr(svc, "ChatOpenAI", DummyLLM)
     monkeypatch.setattr(svc, "OpenAI", DummyLLM)
-    open_conf = svc.OpenAIConfig(api_key="sk-1", model="gpt-4")
+    open_conf = svc.OpenAIConfig(api_key="sk-1", model="gpt-4")  # pragma: allowlist secret
     open_provider = svc.OpenAIProvider(open_conf)
     assert isinstance(open_provider.get_llm("chat"), DummyLLM)
     open_provider = svc.OpenAIProvider(open_conf)
@@ -162,7 +162,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
     monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
-    ant_conf = svc.AnthropicConfig(api_key="ant-1")
+    ant_conf = svc.AnthropicConfig(api_key="ant-1")  # pragma: allowlist secret
     ant_provider = svc.AnthropicProvider(ant_conf)
     assert isinstance(ant_provider.get_llm("chat"), DummyLLM)
     ant_provider = svc.AnthropicProvider(ant_conf)
@@ -182,7 +182,7 @@ def test_provider_get_llm_chat_and_completion(monkeypatch):
     monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
     monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
     monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
-    wat_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")
+    wat_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")  # pragma: allowlist secret
     wat_provider = svc.WatsonxProvider(wat_conf)
     assert isinstance(wat_provider.get_llm("chat"), DummyLLM)
     wat_provider = svc.WatsonxProvider(wat_conf)
