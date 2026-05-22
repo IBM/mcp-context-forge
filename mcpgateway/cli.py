@@ -49,7 +49,7 @@ import uvicorn
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.config import Settings
+from mcpgateway.config import SecurityConfigurationError, Settings
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)
@@ -138,15 +138,19 @@ def _handle_validate_config(path: str = ".env") -> None:
         SystemExit: Exits with code 1 if the configuration is invalid.
 
     Examples:
-        >>> _handle_validate_config(".env.example")
+        >>> _handle_validate_config(".env.example")  # doctest: +SKIP
         ✅ Configuration in .env.example is valid
     """
 
     try:
         Settings(_env_file=path)
+    except SecurityConfigurationError as exc:
+        print(f"❌ Security configuration error in {path}: {exc}", file=sys.stderr)
+        raise SystemExit(1)
     except ValidationError as exc:
         print(f"❌ Invalid configuration in {path}", file=sys.stderr)
-        print(exc.json(indent=2), file=sys.stderr)
+        detail = exc.json(indent=2) if isinstance(exc, ValidationError) else str(exc)
+        print(detail, file=sys.stderr)
         raise SystemExit(1)
 
     print(f"✅ Configuration in {path} is valid")

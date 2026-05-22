@@ -44,8 +44,8 @@ curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/theme/mono
   -o "${STATIC_DIR}/codemirror/theme/monokai.min.css"
 
 # Download Alpine.js (pinned to 3.15.11 for reproducibility)
-echo "  ⬇️  Alpine.js 3.15.8..."
-curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js" \
+echo "  ⬇️  Alpine.js 3.15.12..."
+curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js" \
   -o "${STATIC_DIR}/alpinejs/alpine.min.js"
 
 # Download Chart.js (pinned to 4.5.1 for reproducibility)
@@ -54,15 +54,15 @@ curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
 
 # Download Marked (Markdown parser, pinned to 18.0.2 for reproducibility)
-echo "  ⬇️  Marked 18.0.2..."
+echo "  ⬇️  Marked 18.0.3..."
 mkdir -p "${STATIC_DIR}/marked"
-curl -fsSL "https://cdn.jsdelivr.net/npm/marked@18.0.2/lib/marked.umd.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js" \
   -o "${STATIC_DIR}/marked/marked.min.js"
 
 # Download DOMPurify (XSS sanitizer, pinned to 3.4.1 for reproducibility)
-echo "  ⬇️  DOMPurify 3.4.1..."
+echo "  ⬇️  DOMPurify 3.4.2..."
 mkdir -p "${STATIC_DIR}/dompurify"
-curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.1/dist/purify.min.js" \
+curl -fsSL "https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js" \
   -o "${STATIC_DIR}/dompurify/purify.min.js"
 
 # Download Font Awesome (pinned to 7.0.1 for reproducibility)

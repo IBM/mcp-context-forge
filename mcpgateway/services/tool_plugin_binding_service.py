@@ -324,9 +324,7 @@ class ToolPluginBindingService:
         if not binding:
             raise ToolPluginBindingNotFoundError(f"Tool plugin binding '{binding_id}' not found")
         if allowed_teams is not None and binding.team_id not in allowed_teams:
-            raise ToolPluginBindingForbiddenError(
-                f"Not authorized to delete binding '{binding_id}' for team '{binding.team_id}'"
-            )
+            raise ToolPluginBindingForbiddenError(f"Not authorized to delete binding '{binding_id}' for team '{binding.team_id}'")
         response = self._to_response(binding)
         db.delete(binding)
         db.flush()  # flush so the DELETE is sent before the caller's commit

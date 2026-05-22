@@ -66,6 +66,9 @@ import orjson
 from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# First-Party
+from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
 if not logging.getLogger().handlers:
@@ -167,7 +170,8 @@ class SecurityConfigurationError(Exception):
 
 
 def calculate_entropy(text: str) -> float:
-    """Calculate Shannon entropy to detect low-randomness secrets.
+    """
+    Calculate Shannon entropy to detect low-randomness secrets.
 
     Args:
         text (str): The secret string to evaluate.
@@ -249,7 +253,6 @@ class Settings(BaseSettings):
             "(See Issue #1535 for details)"
         ),
     )
-
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
     static_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "static")))
@@ -390,7 +393,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: SecretStr = Field(default=SecretStr("changeme"))
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default=SecretStr("my-test-key-but-now-longer-than-32-bytes"))
+    jwt_secret_key: SecretStr = Field(default=SecretStr("changeme"))
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -414,8 +417,8 @@ class Settings(BaseSettings):
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
     require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
-        default=False,
-        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
+        default=True,
+        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. Set REQUIRE_USER_IN_DB=false in .env for development environments that use the bootstrap admin path.",
     )
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
@@ -454,6 +457,7 @@ class Settings(BaseSettings):
             "/mcp/",  # Exempt: MCP Streamable HTTP is a programmatic protocol, not browser-based
             "/sse",  # Exempt: SSE is a server-sent event stream, not vulnerable to CSRF
             "/message",  # Exempt: MCP SSE message endpoint
+            "/rpc",  # Exempt: JSON-RPC is a programmatic protocol, not browser-based
         ],
         description="Paths exempt from CSRF protection",
     )
@@ -566,6 +570,10 @@ class Settings(BaseSettings):
     sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
 
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+    sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for generic OIDC groups (e.g. 'groups', 'roles')")
+    sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin (CSV/JSON)")
+    sso_generic_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map generic OIDC groups to ContextForge roles (JSON: {group_name: role_name})")
+    sso_generic_default_role: Optional[str] = Field(default=None, description="Default role for generic OIDC users without a matching group mapping (None = no role assigned)")
 
     sso_generic_groups_claim: str = Field(default="groups", description="JWT claim for Generic OIDC groups (groups/roles/custom)")
     sso_generic_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Generic OIDC groups granting platform_admin role (CSV/JSON)")
@@ -620,7 +628,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("changeme"))
 
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
@@ -839,13 +847,34 @@ class Settings(BaseSettings):
                 host_for_check = host_for_check.split(":")[0]
 
             # Check for localhost variants (including IPv6 bracket notation)
-            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):
+            if host_for_check in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "[::0]"):  # nosec B104
                 invalid_domains.append((domain, "loopback address"))
             # Check for link-local
             elif host_for_check.startswith("169.254."):
                 invalid_domains.append((domain, "link-local address"))
             # Check for private IP ranges (commonly misconfigured)
-            elif domain_lower.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.")):
+            elif domain_lower.startswith(
+                (
+                    "10.",
+                    "172.16.",
+                    "172.17.",
+                    "172.18.",
+                    "172.19.",
+                    "172.20.",
+                    "172.21.",
+                    "172.22.",
+                    "172.23.",
+                    "172.24.",
+                    "172.25.",
+                    "172.26.",
+                    "172.27.",
+                    "172.28.",
+                    "172.29.",
+                    "172.30.",
+                    "172.31.",
+                    "192.168.",
+                )
+            ):
                 invalid_domains.append((domain, "private IP range"))
             # Check for obviously invalid patterns
             elif " " in domain or "\t" in domain or "\n" in domain:
@@ -1015,6 +1044,25 @@ class Settings(BaseSettings):
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
+
+    # Migration runner ownership.
+    # When True, the gateway lifespan does NOT call bootstrap_db.main();
+    # the deployment is expected to run migrations as a separate step
+    # (Helm pre-install Job, init container, CI step, etc.). The library
+    # default is False so `docker run mcpgateway:latest` continues to
+    # bootstrap its own schema without operator action. The Helm chart
+    # ships this as True when the migration Job is enabled, so the
+    # contract "Job runs migrations, app pods skip" is enforced at the
+    # chart layer.
+    mcpgateway_skip_migrations: bool = Field(
+        default=False,
+        description=(
+            "When True, gateway pods skip the in-pod bootstrap_db call. "
+            "Pair with a dedicated migration runner (Helm pre-install Job, "
+            "init container, etc.) that ensures the schema is at head before "
+            "pods start."
+        ),
+    )
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
@@ -1192,17 +1240,7 @@ class Settings(BaseSettings):
 
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
-    WEAK_VALUES: ClassVar[list[str]] = [
-        "my-test-key",
-        "my-test-key-but-now-longer-than-32-bytes",
-        "my-test-salt",
-        "changeme",
-        "secret",
-        "password",
-        "test-secret",
-        "my-secret",
-        "12345678",
-    ]
+    WEAK_VALUES: ClassVar[list[str]] = list(_CANONICAL_WEAK_VALUES)
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -1300,12 +1338,11 @@ class Settings(BaseSettings):
         else:
             value = str(v)
 
-        # Check for default/weak secrets
-        if not info.data.get("client_mode"):
-            weak_secrets = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "my-test-salt", "changeme", "secret", "password"]
-            if value.lower() in weak_secrets:
-                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
+        # Check for default/weak secrets — applies regardless of client_mode
+        if value.lower() in [v.lower() for v in cls.WEAK_VALUES]:
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
+        if not info.data.get("client_mode"):
             # Check minimum length
             if len(value) < 32:
                 logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
@@ -1421,6 +1458,24 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
+        # Reject weak/default secrets in non-development environments.
+        # This check applies regardless of client_mode — client_mode was intended to skip
+        # operational warnings (auth_required, SSL, debug), not secret-strength enforcement.
+        weak_secrets = {v.lower() for v in self.WEAK_VALUES}
+        env = str(self.environment).lower()
+        for field_name, secret_field in (("jwt_secret_key", self.jwt_secret_key), ("auth_encryption_secret", self.auth_encryption_secret)):
+            val = secret_field.get_secret_value()
+            if val.lower().startswith("__replace_me__"):
+                raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+            if val.lower() in weak_secrets:
+                if env != "development":
+                    raise SecurityConfigurationError(
+                        f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                    )
+        # In development mode, weak secrets are allowed but the `validate_secrets` field
+        # validator (above) still emits a SECURITY WARNING for each affected field.
+        # This satisfies the spec requirement that development environments warn on weak secrets.
+
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
             if not self.auth_required and self.mcpgateway_ui_enabled:
@@ -1533,7 +1588,7 @@ class Settings(BaseSettings):
         for name, value in critical_secrets.items():
             if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
-            is_sentinel = value in self.SENTINEL_VALUES
+            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
             is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
 
             if is_sentinel:
@@ -1565,7 +1620,6 @@ class Settings(BaseSettings):
         }
 
     def log_critical_issues(self, status: SecurityStatus) -> None:
-
         """Log critical security issues and remediation steps."""
         if status["status"] == "FAIL":
             logger.critical(f"[SECURITY FATAL] {status['message']}")
@@ -2491,6 +2545,16 @@ class Settings(BaseSettings):
     redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout in seconds")
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
+
+    # Redis TLS Configuration
+    # Local dev:  leave redis_ssl=False and use a plain redis:// URL (default behaviour, no certs needed).
+    # Production: set REDIS_SSL=true and change REDIS_URL to rediss://<host>:6380/0, then supply
+    #             cert paths via REDIS_SSL_CA_CERTS / REDIS_SSL_CERTFILE / REDIS_SSL_KEYFILE.
+    redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    redis_ssl_check_hostname: bool = Field(default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)")
 
     redis_operation_timeout: float = Field(
         default=0.5, gt=0.0, description="Timeout for individual Redis operations in seconds (get/set/delete). " "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."

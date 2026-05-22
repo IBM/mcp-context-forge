@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""add on_error check constraint to tool_plugin_bindings
+"""Location: ./mcpgateway/alembic/versions/926d3e07d098_add_on_error_check_constraint.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add on_error check constraint to tool_plugin_bindings
 
 Revision ID: 926d3e07d098
 Revises: 9c45d2e63bc0

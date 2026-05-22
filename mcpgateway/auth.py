@@ -100,8 +100,10 @@ from mcpgateway.utils.verify_credentials import (
 
 __all__ = [
     "ConfigurableHTTPBearer",
+    "TokenValidationError",
     "security",
     "get_current_user",
+    "validate_token_user",
     "get_user_team_roles",
     "normalize_token_teams",
     "resolve_session_teams",
@@ -747,11 +749,22 @@ def _get_sync_redis_client():
             # Third-Party
             import redis  # pylint: disable=import-outside-toplevel
 
-            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            # First-Party
+            from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+            if config_settings.redis_url and config_settings.redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+                log.getLogger(__name__).warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
+
+            ssl_kwargs = _build_ssl_kwargs(config_settings)
+            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2, **ssl_kwargs)
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
             log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+        except ValueError as e:
+            log.getLogger(__name__).error(f"Sync Redis SSL misconfiguration — client not started: {e}")
+            _SYNC_REDIS_CLIENT = None
+            return None
         except Exception as e:
             log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
             _SYNC_REDIS_CLIENT = None
@@ -1104,6 +1117,87 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         email_verified_at=user_dict.get("email_verified_at"),
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
         updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+    )
+
+
+class TokenValidationError(Exception):
+    """Exception raised when token validation fails.
+
+    Used by validate_token_user to wrap HTTPExceptions from get_current_user
+    into a uniform exception type that callers can handle without importing
+    FastAPI-specific classes.
+    """
+
+    def __init__(self, detail: str, *, status_code: int = 401, original: Optional[Exception] = None) -> None:
+        """Initialize with validation failure detail and optional status code.
+
+        Args:
+            detail: Human-readable error message.
+            status_code: HTTP status code to return (default 401).
+            original: The original exception that caused this error, if any.
+        """
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+        self.original = original
+
+
+async def validate_token_user(request: Request, token: str) -> EmailUser:
+    """Validate a bearer token through the full get_current_user() stack.
+
+    This is the single shared validation path for all admin-token checks.
+    Both /admin/login (redirect-to-dashboard) and /admin (dashboard itself)
+    should call this so they agree on whether a token is acceptable.
+
+    Args:
+        request: FastAPI request object (for request-level caching and state).
+        token: Raw JWT token string (from cookie or header).
+
+    Returns:
+        EmailUser: The fully validated, authenticated user.
+
+    Raises:
+        TokenValidationError: If the token is missing, invalid, expired,
+            revoked, or the user is inactive / not found.
+    """
+    if not token:
+        raise TokenValidationError("Authentication token required", status_code=401)
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    try:
+        return await get_current_user(credentials, request=request)
+    except HTTPException as exc:
+        raise TokenValidationError(
+            str(exc.detail),
+            status_code=exc.status_code,
+            original=exc,
+        ) from exc
+    except Exception as exc:
+        raise TokenValidationError(
+            "Token validation failed",
+            status_code=401,
+            original=exc,
+        ) from exc
+
+
+def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
+    """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
+
+    is_admin is derived from the token's own claim (default False) so that
+    the bootstrap path grants login access without unconditional admin elevation.
+    """
+    return EmailUser(
+        email=email,
+        password_hash="",  # nosec B106 - not used for JWT authentication
+        full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
+        is_admin=bool(payload.get("is_admin", False) or (payload.get("user") or {}).get("is_admin", False)),
+        is_active=True,
+        auth_provider="local",
+        password_change_required=False,
+        email_verified_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
 
@@ -1562,18 +1656,7 @@ async def get_current_user(
                             f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
-                        _batched_user = EmailUser(
-                            email=email,
-                            password_hash="",  # nosec B106
-                            full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                            is_admin=True,
-                            is_active=True,
-                            auth_provider="local",
-                            password_change_required=False,
-                            email_verified_at=datetime.now(timezone.utc),
-                            created_at=datetime.now(timezone.utc),
-                            updated_at=datetime.now(timezone.utc),
-                        )
+                        _batched_user = _bootstrap_platform_admin_user(email=email, payload=payload)
                     else:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1792,18 +1875,7 @@ async def get_current_user(
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes
-            user = EmailUser(
-                email=email,
-                password_hash="",  # nosec B106 - Not used for JWT authentication
-                full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-                is_admin=True,
-                is_active=True,
-                auth_provider="local",
-                password_change_required=False,
-                email_verified_at=datetime.now(timezone.utc),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
+            user = _bootstrap_platform_admin_user(email=email, payload=payload)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

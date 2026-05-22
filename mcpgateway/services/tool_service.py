@@ -1058,6 +1058,7 @@ class ToolService(BaseService):
             "gateway_id": str(tool.gateway_id) if tool.gateway_id else None,
             "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
+            "deprecated": bool(tool.deprecated),
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
             "team_id": tool.team_id,
@@ -1090,6 +1091,7 @@ class ToolService(BaseService):
                 "gateway_mode": getattr(gateway, "gateway_mode", "cache"),  # Gateway mode for direct proxy support
                 "client_cert": getattr(gateway, "client_cert", None),
                 "client_key": getattr(gateway, "client_key", None),
+                "auth_value": getattr(gateway, "auth_value", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -4504,6 +4506,12 @@ class ToolService(BaseService):
                 # Don't reveal tool existence - return generic "not found"
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
+            # Check deprecated status after RBAC to avoid leaking tool existence
+            if tool_payload.get("deprecated") is True:
+                # Cache the deprecated status to avoid repeated DB queries
+                await tool_lookup_cache.set_negative(name, "deprecated")
+                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
             # Tool must be attached to the specified virtual server
@@ -5269,7 +5277,7 @@ class ToolService(BaseService):
 
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
-                            follow_redirects=True,
+                            follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,

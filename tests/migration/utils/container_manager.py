@@ -182,26 +182,40 @@ class ContainerManager:
         else:
             temp_dir = tempfile.mkdtemp(prefix="migration_test_")
             logger.info(f"📁 Created new data directory: {temp_dir}")
-            # Set ownership and permissions so the app user (uid=1001) can write to it
-            try:
-                # Standard
-                import os
-                import stat
 
-                # Change ownership to match the container app user (uid=1001, gid=1001)
-                os.chown(temp_dir, 1001, 1001)
-                # Also set write permissions for good measure
-                os.chmod(temp_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IROTH | stat.S_IXOTH)  # 775 permissions
-                logger.debug(f"📁 Set ownership to app user (1001:1001) on {temp_dir}")
-            except PermissionError:
-                # If we can't chown (common in some environments), try to make it world-writable
+        # ALWAYS set permissions, whether new or reused directory
+        # This ensures container UID 10001 can write to the directory
+        import stat
+
+        try:
+            # First, try to set world-writable permissions (777) on directory
+            os.chmod(temp_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 777 permissions
+            logger.debug(f"📁 Set world-writable permissions (777) on {temp_dir}")
+
+            # Also set permissions on any existing files in the directory (for reused directories)
+            for item in Path(temp_dir).iterdir():
                 try:
-                    os.chmod(temp_dir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 777 permissions
-                    logger.debug(f"📁 Set world-writable permissions on {temp_dir}")
+                    os.chmod(item, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 777 permissions
+                    logger.debug(f"📁 Set permissions on existing file: {item.name}")
                 except Exception as e:
-                    logger.warning(f"⚠️ Could not set permissions on {temp_dir}: {e}")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not set ownership on {temp_dir}: {e}")
+                    logger.debug(f"⚠️ Could not set permissions on {item.name}: {e}")
+
+            # Optionally try to chown if running as root (CI environments)
+            # This will fail silently in most dev environments, which is fine
+            try:
+                os.chown(temp_dir, 10001, 10001)
+                # Also chown files if possible
+                for item in Path(temp_dir).iterdir():
+                    try:
+                        os.chown(item, 10001, 10001)
+                    except (PermissionError, OSError, NotImplementedError):
+                        pass
+                logger.debug(f"📁 Set ownership to app user (10001:10001) on {temp_dir}")
+            except (PermissionError, OSError, NotImplementedError):
+                # Expected in non-root environments and Windows - not a problem
+                pass
+        except Exception as e:
+            logger.warning(f"⚠️ Could not set permissions on {temp_dir}: {e}")
         db_path = Path(temp_dir) / db_file
 
         config = ContainerConfig(

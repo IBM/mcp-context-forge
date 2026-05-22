@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/middleware/rate_limit_middleware.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: ContextForge Team
 
@@ -345,9 +345,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         violation_key = f"ratelimit:violations:{dimension}"
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
-                self.executor, self._should_lockout_sync, violation_key, tier_name, dimension
-            )
+            return await loop.run_in_executor(self.executor, self._should_lockout_sync, violation_key, tier_name, dimension)
         except Exception:
             return self._should_lockout_memory(dimension, tier_name)
 
@@ -383,9 +381,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         violation_key = f"ratelimit:violations:{dimension}"
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                self.executor, self._increment_violation_sync, violation_key, dimension
-            )
+            await loop.run_in_executor(self.executor, self._increment_violation_sync, violation_key, dimension)
         except Exception:
             self._increment_violation_memory(dimension)
 
@@ -396,8 +392,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 self.redis_client.incr(violation_key)
                 self.redis_client.expire(violation_key, self.lockout_duration_minutes * 60)
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Redis violation increment failed for dimension %s, falling back to in-memory: %s",
+                    dimension,
+                    str(e),
+                )
         self._increment_violation_memory(dimension)
 
     def _increment_violation_memory(self, dimension: str) -> None:

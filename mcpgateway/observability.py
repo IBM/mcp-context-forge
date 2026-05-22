@@ -11,7 +11,9 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 # Standard
 import base64
 from contextlib import nullcontext
+from dataclasses import dataclass
 from importlib import import_module as _im
+import inspect
 import logging
 import os
 from typing import Any, Callable, cast, Dict, Mapping, Optional
@@ -157,11 +159,81 @@ logger = logging.getLogger(__name__)
 _LANGFUSE_OTEL_PATH_FRAGMENT = "/api/public/otel"
 _MAX_SPAN_EXCEPTION_MESSAGE_LENGTH = 1024
 _IDENTITY_ATTRIBUTE_KEYS = frozenset({"user.email", "user.is_admin", "team.scope", "team.name", "langfuse.user.id"})
+_SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_NAMES = frozenset({"SpanAttributeCustomizer", "span_attribute_customizer"})
+_SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_KINDS = frozenset(
+    {
+        "plugins.span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+        "span_attribute_customizer.span_attribute_customizer.SpanAttributeCustomizerPlugin",
+    }
+)
+
+
+@dataclass(frozen=True)
+class BaggageSpanAttributePolicy:
+    """Policy for promoting OpenTelemetry baggage into span attributes."""
+
+    emit_prefixed: bool = True
+    allowed_keys: Optional[frozenset[str]] = None
 
 
 # Global tracer instance - using UPPER_CASE for module-level constant
 # pylint: disable=invalid-name
 _TRACER = None
+_BAGGAGE_SPAN_ATTRIBUTE_POLICY = BaggageSpanAttributePolicy()
+
+
+def _supports_exporter_kwarg(exporter_cls: Any, kwarg: str) -> bool:
+    """Return whether an exporter constructor accepts a keyword argument.
+
+    Args:
+        exporter_cls: Exporter class or callable.
+        kwarg: Keyword argument name to check.
+
+    Returns:
+        True if the callable explicitly accepts the kwarg or arbitrary kwargs.
+    """
+    try:
+        signature = inspect.signature(exporter_cls)
+    except (TypeError, ValueError):
+        return False
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return kwarg in signature.parameters
+
+
+def _configured_otlp_insecure(cfg: Any) -> Optional[bool]:
+    """Return the OTLP insecure setting only when it was explicitly configured.
+
+    Args:
+        cfg: Application settings instance.
+
+    Returns:
+        Configured insecure value, or ``None`` when only the Settings default applies.
+    """
+    if "otel_exporter_otlp_insecure" not in getattr(cfg, "model_fields_set", set()):
+        return None
+    return cfg.otel_exporter_otlp_insecure
+
+
+def _otlp_exporter_kwargs(exporter_cls: Any, *, endpoint: str, headers: Optional[Dict[str, str]], _protocol: str, insecure: Optional[bool]) -> Dict[str, Any]:
+    """Build OTLP exporter kwargs while preserving exporter-version compatibility.
+
+    Args:
+        exporter_cls: OTLP exporter class.
+        endpoint: Exporter endpoint.
+        headers: Optional request headers.
+        protocol: OTLP transport protocol.
+        insecure: Explicit insecure transport setting, or ``None`` to keep exporter defaults.
+
+    Returns:
+        Constructor keyword arguments for the selected exporter.
+    """
+    kwargs: Dict[str, Any] = {"endpoint": endpoint, "headers": headers}
+    if insecure is not None and _supports_exporter_kwarg(exporter_cls, "insecure"):
+        kwargs["insecure"] = insecure
+    return kwargs
 
 
 def _sanitize_span_exception_message(exc_val: Optional[BaseException]) -> str:
@@ -390,6 +462,105 @@ def _should_emit_span_attribute(attribute_name: str) -> bool:
     if attribute_name in _IDENTITY_ATTRIBUTE_KEYS and not _should_capture_identity_attributes():
         return False
     return True
+
+
+def _normalize_allowed_baggage_keys(raw_keys: Any) -> Optional[frozenset[str]]:
+    """Validate a configured baggage-key allowlist.
+
+    Args:
+        raw_keys: Raw configuration value from SpanAttributeCustomizer.
+
+    Returns:
+        Optional immutable set of allowed baggage keys. ``None`` means no
+        explicit allowlist was configured, preserving legacy behavior.
+    """
+    if raw_keys is None:
+        return None
+    if not isinstance(raw_keys, list):
+        logger.warning("SpanAttributeCustomizer allowed_baggage_span_attributes must be a list; got %s", type(raw_keys).__name__)
+        return frozenset()
+
+    allowed_keys: set[str] = set()
+    for raw_key in raw_keys:
+        if not isinstance(raw_key, str):
+            logger.warning("Skipping malformed baggage span attribute allowlist entry: %r", raw_key)
+            continue
+        key = raw_key.strip()
+        if not key:
+            logger.warning("Skipping empty baggage span attribute allowlist entry")
+            continue
+        allowed_keys.add(key)
+    return frozenset(allowed_keys)
+
+
+def configure_baggage_span_attribute_policy(policy: Optional[BaggageSpanAttributePolicy] = None) -> None:
+    """Configure process-wide baggage-to-span-attribute emission policy.
+
+    Args:
+        policy: Policy to apply. ``None`` resets to legacy prefixed emission.
+    """
+    global _BAGGAGE_SPAN_ATTRIBUTE_POLICY  # pylint: disable=global-statement
+    _BAGGAGE_SPAN_ATTRIBUTE_POLICY = policy or BaggageSpanAttributePolicy()
+
+
+def extract_baggage_span_attribute_policy(plugin_manager_factory: Any) -> BaggageSpanAttributePolicy:
+    """Extract baggage span-attribute policy from SpanAttributeCustomizer config.
+
+    Args:
+        plugin_manager_factory: Active plugin manager factory with loaded base config.
+
+    Returns:
+        Policy controlling how OTEL baggage is promoted to span attributes.
+    """
+    if plugin_manager_factory is None:
+        return BaggageSpanAttributePolicy()
+
+    base_config = getattr(plugin_manager_factory, "_base_config", None)
+    plugins = getattr(base_config, "plugins", None) or []
+
+    for plugin in plugins:
+        plugin_name = getattr(plugin, "name", None)
+        plugin_kind = getattr(plugin, "kind", None)
+        if plugin_name not in _SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_NAMES and plugin_kind not in _SPAN_ATTRIBUTE_CUSTOMIZER_PLUGIN_KINDS:
+            continue
+
+        config = getattr(plugin, "config", None) or {}
+        emit_prefixed = config.get("emit_baggage_prefixed_attributes", True)
+        if not isinstance(emit_prefixed, bool):
+            logger.warning(
+                "SpanAttributeCustomizer emit_baggage_prefixed_attributes must be a boolean; got %s",
+                type(emit_prefixed).__name__,
+            )
+            emit_prefixed = True
+
+        allowed_keys = _normalize_allowed_baggage_keys(config.get("allowed_baggage_span_attributes"))
+        return BaggageSpanAttributePolicy(emit_prefixed=emit_prefixed, allowed_keys=allowed_keys)
+
+    return BaggageSpanAttributePolicy()
+
+
+def _baggage_span_attributes(baggage_items: Mapping[str, Any]) -> Dict[str, Any]:
+    """Convert OTEL baggage entries to span attributes under configured policy.
+
+    Args:
+        baggage_items: Current OTEL baggage key/value pairs.
+
+    Returns:
+        Span attributes derived from baggage.
+    """
+    if not baggage_items:
+        return {}
+
+    policy = _BAGGAGE_SPAN_ATTRIBUTE_POLICY
+    span_attributes: Dict[str, Any] = {}
+    for key, value in baggage_items.items():
+        if value is None:
+            continue
+        if policy.allowed_keys is not None and key not in policy.allowed_keys:
+            continue
+        attribute_name = f"baggage.{key}" if policy.emit_prefixed else key
+        span_attributes.setdefault(attribute_name, value)
+    return span_attributes
 
 
 def set_span_attribute(span: Any, attribute_name: str, value: Any) -> None:
@@ -777,9 +948,10 @@ class OpenTelemetryRequestMiddleware:
                     if OTEL_AVAILABLE and otel_baggage:
                         baggage_dict = otel_baggage.get_all()
                         if baggage_dict:
-                            for key, value in baggage_dict.items():
-                                set_span_attribute(span, f"baggage.{key}", value)
-                            logger.debug("Injected %d baggage entries into request span", len(baggage_dict))
+                            baggage_attrs = _baggage_span_attributes(baggage_dict)
+                            for key, value in baggage_attrs.items():
+                                set_span_attribute(span, key, value)
+                            logger.debug("Injected %d baggage entries into request span", len(baggage_attrs))
                 except Exception as exc:
                     logger.debug("Failed to inject baggage into request span: %s", exc)
 
@@ -926,21 +1098,22 @@ def init_telemetry() -> Optional[Any]:
         exporter: Optional[Any] = None
 
         if exporter_type == "otlp":
-            endpoint = _resolve_otlp_endpoint()
+            endpoint = _resolve_otlp_endpoint() or ""
             protocol = cfg.otel_exporter_otlp_protocol.lower()
             header_dict = _resolve_otlp_headers(endpoint)
+            headers = header_dict or None
+            insecure = _configured_otlp_insecure(cfg)
             if _is_langfuse_otlp_endpoint(endpoint):
                 protocol = "http"
-            # Note: some versions of OTLP exporters may not accept 'insecure' kwarg; avoid passing it.
-            # Use endpoint scheme or env to control TLS externally.
 
             if protocol == "grpc" and OTLP_SPAN_EXPORTER:
-                exporter = cast(Any, OTLP_SPAN_EXPORTER)(endpoint=endpoint, headers=header_dict or None)
+                exporter_cls = cast(Any, OTLP_SPAN_EXPORTER)
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=endpoint, headers=headers, _protocol="grpc", insecure=insecure))
             elif HTTP_EXPORTER:
                 # Use HTTP exporter as fallback
-                ep = str(endpoint) if endpoint is not None else ""
-                http_ep = (ep.replace(":4317", ":4318") + "/v1/traces") if ":4317" in ep else ep
-                exporter = cast(Any, HTTP_EXPORTER)(endpoint=http_ep, headers=header_dict or None)
+                http_ep = (endpoint.replace(":4317", ":4318") + "/v1/traces") if ":4317" in endpoint else endpoint
+                exporter_cls = cast(Any, HTTP_EXPORTER)
+                exporter = exporter_cls(**_otlp_exporter_kwargs(exporter_cls, endpoint=http_ep, headers=headers, _protocol="http", insecure=insecure))
             else:
                 logger.error("No OTLP exporter available")
                 return None
@@ -1172,10 +1345,10 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         if OTEL_AVAILABLE and otel_baggage:
             baggage_dict = otel_baggage.get_all()
             if baggage_dict:
-                for key, value in baggage_dict.items():
-                    # Prefix baggage attributes to distinguish from direct attributes
-                    attributes.setdefault(f"baggage.{key}", value)
-                logger.debug(f"Injected {len(baggage_dict)} baggage entries as span attributes")
+                baggage_attrs = _baggage_span_attributes(baggage_dict)
+                for key, value in baggage_attrs.items():
+                    attributes.setdefault(key, value)
+                logger.debug(f"Injected {len(baggage_attrs)} baggage entries as span attributes")
     except Exception:
         logger.warning("Failed to inject baggage into span attributes", exc_info=True)
 

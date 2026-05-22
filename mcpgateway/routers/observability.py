@@ -9,8 +9,8 @@ Provides REST endpoints for querying traces, spans, events, and metrics.
 """
 
 # Standard
-import logging
 from datetime import datetime, timedelta
+import logging
 from typing import List, Optional
 
 # Third-Party

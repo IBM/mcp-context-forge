@@ -501,14 +501,14 @@ serviceAccount:
 # PodSecurityPolicy for IKS
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1001
-  fsGroup: 1001
+  runAsUser: 10001
+  fsGroup: 10001
 
 securityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   runAsNonRoot: true
-  runAsUser: 1001
+  runAsUser: 10001
   capabilities:
     drop:
 

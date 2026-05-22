@@ -649,6 +649,7 @@ async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypa
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_audience", "mcpgateway-api")
     monkeypatch.setattr("mcpgateway.config.settings.jwt_issuer", "mcpgateway")
+    monkeypatch.setattr("mcpgateway.config.settings.require_user_in_db", False)
     # Test with Basic Auth
     basic_creds = base64.b64encode(b"admin:changeme").decode()
     response1 = test_client.get("/docs", headers={"Authorization": f"Basic {basic_creds}"})
@@ -1273,6 +1274,7 @@ async def test_require_admin_auth_email_auth_non_admin_browser_gets_redirect(mon
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
@@ -1310,6 +1312,7 @@ async def test_require_admin_auth_email_auth_non_admin_json_gets_403(monkeypatch
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     db_session = MagicMock()
     monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
@@ -1879,6 +1882,7 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "require_user_in_db", False, raising=False)
 
     # Patch DB + service layer to return a non-admin user
     db_session = MagicMock()

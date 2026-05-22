@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 # Shared validation helpers
 # ============================================================================
 
+
 def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any:
     """Validate and normalize server association IDs (tools, resources, prompts, agents).
 
@@ -82,11 +83,7 @@ def _validate_association_ids(v: Any, field_name: str = "associated IDs") -> Any
             try:
                 validated.append(SecurityValidator.validate_uuid(item_str, field_name))
             except ValueError:
-                raise ValueError(
-                    f"Invalid ID format: '{item_str}'. "
-                    f"{field_name} must contain UUID values, not names. "
-                    f"Use UUIDs from the respective entity listings."
-                )
+                raise ValueError(f"Invalid ID format: '{item_str}'. " f"{field_name} must contain UUID values, not names. " f"Use UUIDs from the respective entity listings.")
         return validated
     return v
 
@@ -127,6 +124,45 @@ _SENSITIVE_HEADER_MAPPING_PATTERNS = (
     re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
     re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security)[-_]?(?:token|secret|key)$", re.IGNORECASE),
 )
+
+
+def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate URL-bearing OAuth config entries against core URL/SSRF rules.
+
+    Applies only to known outbound or redirect endpoints that the gateway may
+    later contact or surface to a client. This closes the gap where
+    ``oauth_config["token_url"]`` previously bypassed [`validate_core_url`](mcpgateway/common/validators.py:1939).
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a URL-bearing field is not a string or fails validation.
+    """
+    if v is None:
+        return v
+    if not isinstance(v, dict):
+        raise ValueError("oauth_config must be an object")
+    for field_name in ("token_url", "authorization_url", "issuer", "authorization_server"):
+        raw_value = v.get(field_name)
+        if raw_value in (None, ""):
+            continue
+        if not isinstance(raw_value, str):
+            raise ValueError(f"oauth_config.{field_name} must be a string URL")
+        validate_core_url(raw_value, f"OAuth config {field_name}")
+    raw_servers = v.get("authorization_servers")
+    if raw_servers in (None, ""):
+        return v
+    if not isinstance(raw_servers, list):
+        raise ValueError("oauth_config.authorization_servers must be a list of URLs")
+    for idx, server in enumerate(raw_servers):
+        if not isinstance(server, str):
+            raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
+        validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
 
 
 def _validate_mapping_size(v: dict | None) -> dict | None:
@@ -549,6 +585,7 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1114,6 +1151,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+    deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
@@ -1560,6 +1598,7 @@ class ToolRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     enabled: bool
+    deprecated: bool
     reachable: bool
     gateway_id: Optional[str]
     grpc_service_id: Optional[str] = Field(None, description="ID of the gRPC service this tool was discovered from")
@@ -2906,6 +2945,12 @@ class GatewayCreate(BaseModelWithConfigDict):
         """
         return validate_core_url(v, "Gateway URL")
 
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
+
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: Optional[str]) -> Optional[str]:
@@ -3240,6 +3285,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
             str: Value if validated as safe
         """
         return validate_core_url(v, "Gateway URL")
+
+    @field_validator("oauth_config", mode="before")
+    @classmethod
+    def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate URL-bearing OAuth configuration entries."""
+        return _validate_oauth_config_urls(v)
 
     @field_validator("description", mode="before")
     @classmethod
@@ -8417,4 +8468,122 @@ class ToolPluginBindingListResponse(BaseModelWithConfigDict):
     """Response for GET /v1/tools/plugin_bindings[/{team_id}]."""
 
     bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
+    total: int = Field(0, description="Total number of bindings returned")
+
+
+# --- A2A Agent Plugin Schemas ---
+
+A2A_AGENT_METADATA = "a2a_agent"
+# Metadata key used in GlobalContext.metadata for A2A agent plugin context.
+# Defined locally to avoid depending on the cpex package version for a string constant.
+
+
+class PydanticA2AAgent(BaseModelWithConfigDict):
+    """A2A agent metadata for plugin context.
+
+    Used in GlobalContext.metadata[A2A_AGENT_METADATA] to provide
+    agent configuration to pre/post-invoke plugins. This schema exposes
+    the relevant A2A agent configuration fields that plugins may need
+    for policy decisions, such as authorization type visibility, and
+    header pass-through configuration.
+
+    Attributes:
+        id: A2A agent UUID identifier.
+        name: Agent name (used in context_id generation for plugin bindings).
+        team_id: Team the agent belongs to (None for public agents).
+        visibility: Agent visibility scope (public, private, etc.).
+        enabled: Whether the agent is currently enabled.
+        tags: List of string tags for agent classification (Note: differs from Gateway.tags which is List[Dict[str,str]]).
+        oauth_config: OAuth configuration for the agent (if any).
+        passthrough_headers: List of HTTP header names that should be passed through to upstream agent.
+        auth_type: Authentication type (basic, bearer, api_key, etc.).
+    """
+
+    id: str = Field(..., description="A2A agent UUID identifier")
+    name: str = Field(..., description="Agent name")
+    team_id: Optional[str] = Field(None, description="Team ID the agent belongs to")
+    visibility: str = Field(..., description="Agent visibility scope")
+    enabled: bool = Field(..., description="Whether the agent is enabled")
+    tags: List[str] = Field(default_factory=list, description="String tags for agent classification")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth configuration")
+    passthrough_headers: Optional[List[str]] = Field(None, description="Headers to pass through to upstream agent")
+    auth_type: Optional[str] = Field(None, description="Authentication type")
+    content_type: Optional[str] = Field(None, description="Content-Type of the inbound request")
+
+    class Config:
+        """Pydantic config for A2A agent metadata."""
+
+        from_attributes = True  # SQLAlchemy ORM compatibility
+
+
+class A2AAgentPluginBindingRequest(BaseModelWithConfigDict):
+    """Request schema for creating/updating A2A agent plugin bindings.
+
+    Attributes:
+        agent_name: Agent name (or "*" for team-wide policies).
+        plugin_id: Plugin identifier.
+        mode: Plugin execution mode (enforce, detect).
+        priority: Execution priority (lower runs first).
+        config: Plugin-specific configuration.
+        on_error: Error handling policy (fail, ignore, disable).
+    """
+
+    agent_name: str = Field(..., min_length=1, max_length=255, description="Agent name or '*' for team-wide")
+    plugin_id: str = Field(..., min_length=1, max_length=64, description="Plugin identifier")
+    mode: str = Field(default="enforce", description="Plugin execution mode")
+    priority: int = Field(default=50, description="Execution priority")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy (fail, ignore, disable)")
+
+
+class A2AAgentPluginBindingResponse(BaseModelWithConfigDict):
+    """Response schema for A2A agent plugin bindings.
+
+    Attributes:
+        id: Unique binding identifier (UUID).
+        team_id: Team the binding belongs to.
+        agent_name: Agent name the policy applies to.
+        plugin_id: Plugin identifier.
+        mode: Execution mode.
+        priority: Execution priority.
+        config: Plugin-specific configuration.
+        on_error: Error handling policy.
+        binding_reference_id: Optional external reference ID.
+        created_at: Creation timestamp.
+        created_by: Email of creator.
+        updated_at: Last update timestamp.
+        updated_by: Email of last updater.
+    """
+
+    id: str = Field(..., description="Unique binding identifier")
+    team_id: str = Field(..., description="Team the binding belongs to")
+    agent_name: str = Field(..., description="Agent name the policy applies to")
+    plugin_id: str = Field(..., description="Plugin identifier")
+    mode: str = Field(..., description="Execution mode")
+    priority: int = Field(..., description="Execution priority")
+    config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    on_error: Optional[str] = Field(None, description="Error handling policy")
+    binding_reference_id: Optional[str] = Field(None, description="Optional external reference ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    created_by: str = Field(..., description="Email of creator")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_by: str = Field(..., description="Email of last updater")
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dt(self, v: datetime) -> str:
+        """Serialize datetime fields to ISO 8601.
+
+        Args:
+            v: Datetime to serialize.
+
+        Returns:
+            ISO 8601 string.
+        """
+        return encode_datetime(v)
+
+
+class A2AAgentPluginBindingListResponse(BaseModelWithConfigDict):
+    """Response for GET /v1/a2a-agents/{team_id}/plugin-bindings."""
+
+    bindings: List[A2AAgentPluginBindingResponse] = Field(default_factory=list, description="List of A2A agent plugin bindings")
     total: int = Field(0, description="Total number of bindings returned")

@@ -273,7 +273,16 @@ services:
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
+      # - REDIS_URL=rediss://redis:6380/0  # Redis with TLS (uncomment and configure certs for production)
       - REDIS_URL=redis://redis:6379/0
+      # Redis TLS (disabled by default for local dev).
+      # For production with TLS: change REDIS_URL to rediss://redis:6380/0, set REDIS_SSL=true,
+      # mount certs via a volume (see the redis service below), and set the paths below.
+      # - REDIS_SSL=true
+      # - REDIS_SSL_CA_CERTS=/app/certs/ca.crt
+      # - REDIS_SSL_CERTFILE=/app/certs/client.crt   # only for mTLS
+      # - REDIS_SSL_KEYFILE=/app/certs/client.key     # only for mTLS
+      # - REDIS_SSL_CHECK_HOSTNAME=true
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
       # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
@@ -746,16 +755,36 @@ services:
         soft: 5000
         hard: 5000
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Security Context - Container Hardening (Issue: Security pen test findings)
+    # ──────────────────────────────────────────────────────────────────────
+    security_opt:
+      - no-new-privileges:true              # Prevent privilege escalation via setuid/sudo
+      - apparmor=docker-default             # AppArmor MAC (Mandatory Access Control) profile
+      # For SELinux systems (RHEL/CentOS), uncomment the line below and comment out apparmor:
+      # - label=type:container_runtime_t    # SELinux type enforcement
+    cap_drop:
+      - ALL                                 # Drop all Linux capabilities
+    privileged: false                       # Explicitly disable privileged mode
+    read_only: true                         # Read-only root filesystem prevents tampering
+
+    # Temporary filesystem mounts required for read-only root filesystem
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/tmp:size=50M,mode=1777
+      - /run:size=10M,mode=0755
+
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
         condition: service_healthy   # ▶ wait for connection pooler
       redis:
+        # condition: service_healthy   # ▶ wait for Redis TLS port to be ready
         condition: service_started
       # Direct PostgreSQL (uncomment if bypassing PgBouncer):
       # postgres:
       #   condition: service_healthy
-      # migration:
-      #   condition: service_completed_successfully
+      migration:
+        condition: service_completed_successfully
 
     healthcheck:
       ## Uncomment for HTTP healthcheck
@@ -1063,19 +1092,30 @@ services:
           cpus: '0.5'
           memory: 128M
 
-  # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
-  #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
-  #   build:
-  #     context: .
-  #     dockerfile: Containerfile.lite
-  #   environment:
-  #     - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-  #   command: alembic -c mcpgateway/alembic.ini upgrade head
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks: [mcpnet]
+  migration:
+    # One-shot init container: runs full schema migration + bootstrap before any gateway replica starts.
+    # Uses Postgres directly (port 5432) — advisory locks are session-scoped and must bypass PgBouncer
+    # which operates in transaction-pooling mode.
+    #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Uncomment to test upgrade from a specific release
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Run `make docker-prod` to build local image
+    build:
+      context: .
+      dockerfile: Containerfile.lite
+    environment:
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-jwt-key-here}
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
+      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "mcpgateway.bootstrap_db"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [mcpnet]
+    restart: "no"
 
 ###############################################################################
 #  CACHE
@@ -1089,7 +1129,10 @@ services:
       nproc:
         soft: 5000
         hard: 5000
-    # Performance tuning for 1000+ RPS high-concurrency load testing
+      #volumes:
+        #- ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
+    # ── Plain TCP (default) ────────────────────────────────────────────────────
+    # To enable TLS: add volumes, swap in the TLS command block, change ports to 6380:6380
     command:
       - "redis-server"
       - "--maxmemory"
@@ -1104,8 +1147,48 @@ services:
       - "300"
       - "--maxclients"
       - "10000"
+    # ── TLS (disabled) — uncomment to enable ──────────────────────────────────
+    # volumes:
+    #   - ./certs:/certs:ro          # host path containing ca.crt, server.crt, server.key
+    # command:
+    #   - "redis-server"
+    #   - "--tls-port"
+    #   - "6380"
+    #   - "--port"
+    #   - "0"                         # disable plain-text port
+    #   - "--tls-cert-file"
+    #   - "/certs/server.crt"
+    #   - "--tls-key-file"
+    #   - "/certs/server.key"
+    #   - "--tls-ca-cert-file"
+    #   - "/certs/ca.crt"
+    #   - "--tls-auth-clients"
+    #   - "no"                           # one-way TLS only; no client cert required
+    #   - "--maxmemory"
+    #   - "1gb"
+    #   - "--maxmemory-policy"
+    #   - "allkeys-lru"
+    #   - "--tcp-backlog"
+    #   - "2048"
+    #   - "--timeout"
+    #   - "0"
+    #   - "--tcp-keepalive"
+    #   - "300"
+    #   - "--maxclients"
+    #   - "10000"
+    # ──────────────────────────────────────────────────────────────────────────
+    healthcheck:
+      # Try TLS port 6380 first (TLS mode); fall back to plain TCP 6379 (non-TLS mode).
+      # Works for both configurations without any manual changes.
+      test: ["CMD-SHELL", "redis-cli -p 6380 --tls --cacert /certs/ca.crt --insecure ping 2>/dev/null || redis-cli -p 6379 ping"]
+      # test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     ports:
-      - "6379:6379"      # expose only if you want host access
+      #- "6380:6380"      # TLS port exposed to host
+      - "6379:6379"      # plain TCP port exposed to host
     networks: [mcpnet]
     deploy:
       resources:
@@ -1220,7 +1303,7 @@ services:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     networks: [mcpnet]
     restart: "no"
-    # Gateway image runs as non-root (uid 1001); named volumes are root-owned
+    # Gateway image runs as non-root (uid 10001); named volumes are root-owned
     # by default, so writing /tokens/gateway.jwt requires root.
     user: "0"
     volumes:
@@ -2281,7 +2364,7 @@ services:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     networks: [mcpnet]
     restart: "no"
-    # The gateway image runs as non-root (uid 1001). Docker named volumes are
+    # The gateway image runs as non-root (uid 10001). Docker named volumes are
     # root-owned by default, so writing /tokens/gateway.jwt can fail unless we
     # run this one-shot init container as root.
     user: "0"

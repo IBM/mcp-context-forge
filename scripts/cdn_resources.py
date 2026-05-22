@@ -14,13 +14,13 @@ CDN_RESOURCES = {
     # - Play CDN is a JIT compiler endpoint (non-static script semantics)
     # - It does not provide stable CORS/SRI guarantees for integrity enforcement
     # Alpine.js
-    "alpinejs": "https://cdn.jsdelivr.net/npm/alpinejs@3.15.11/dist/cdn.min.js",
+    "alpinejs": "https://cdn.jsdelivr.net/npm/alpinejs@3.15.12/dist/cdn.min.js",
     # Chart.js
     "chartjs": "https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js",
     # Marked (Markdown parser)
-    "marked": "https://cdn.jsdelivr.net/npm/marked@18.0.2/lib/marked.umd.js",
+    "marked": "https://cdn.jsdelivr.net/npm/marked@18.0.3/lib/marked.umd.js",
     # DOMPurify (XSS sanitizer)
-    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.1/dist/purify.min.js",
+    "dompurify": "https://cdn.jsdelivr.net/npm/dompurify@3.4.2/dist/purify.min.js",
     # CodeMirror (code editor)
     "codemirror_js": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/codemirror.min.js",
     "codemirror_addon_simple": "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.20/addon/mode/simple.min.js",

@@ -24,9 +24,6 @@ Examples:
     True
     >>> hasattr(logger, 'info')
     True
-    >>> from mcpgateway.bootstrap_db import Base
-    >>> hasattr(Base, 'metadata')
-    True
 """
 
 # Standard
@@ -45,15 +42,17 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, or_, text
+from sqlalchemy import create_engine, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
+from mcpgateway.db import A2AAgent, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -97,6 +96,104 @@ def _schema_looks_current(inspector) -> bool:
         and _column_exists(inspector, "prompts", "custom_name")
         and _column_exists(inspector, "sso_providers", "jwks_uri")
     )
+
+
+def make_alembic_cfg(database_url: str, *, configure_logger: bool = False) -> Config:
+    """Build an Alembic ``Config`` wired to ``database_url`` for this project.
+
+    Centralises two pieces of Alembic-config setup that must be identical
+    across every entry-point (``bootstrap_db.main()`` and the schema-at-head
+    startup probe in ``mcpgateway.utils.check_schema_at_head``):
+
+      * locating ``alembic.ini`` via ``importlib.resources`` so it works the
+        same way inside the Python wheel and inside the container image;
+      * doubling ``%`` characters in the URL before handing it to
+        ``cfg.set_main_option(...)`` so configparser doesn't choke on
+        URL-encoded passwords (e.g., ``%40`` for ``@``).
+
+    Both call sites had this block inlined; reviewer flagged the duplication.
+    Keeping the helper public (no leading underscore) so it is intentional
+    shared API — anyone refactoring ``bootstrap_db.py`` can see at a glance
+    that external code depends on this name.
+
+    Args:
+        database_url: SQLAlchemy URL for the target database.
+        configure_logger: When True, set ``cfg.attributes["configure_logger"] = True``.
+            ``bootstrap_db.main()`` opts in (Alembic command-line UX);
+            the startup probe leaves it off (it should not emit Alembic
+            INFO logs on every K8s probe tick).
+
+    Returns:
+        Configured ``alembic.config.Config`` ready for use with the Alembic
+        runtime API or command layer.
+    """
+    ini_path = files("mcpgateway").joinpath("alembic.ini")
+    cfg = Config(str(ini_path))
+    if configure_logger:
+        cfg.attributes["configure_logger"] = True
+    # Escape '%' characters in URL to avoid configparser interpolation errors
+    # (e.g., URL-encoded passwords like %40 for '@').
+    escaped_url = database_url.replace("%", "%%")
+    cfg.set_main_option("sqlalchemy.url", escaped_url)
+    return cfg
+
+
+def alembic_at_head(conn: Connection, cfg: Config) -> bool:
+    """Return True when ``alembic_version`` in the DB matches the script directory head(s).
+
+    Used by ``main()`` to skip the migration advisory lock entirely when no
+    schema work is needed. This is the fast-path that keeps replicas 2..N
+    of a multi-pod deployment from serializing (and potentially hanging)
+    on a session-scoped advisory lock that a transaction-pooling connection
+    pooler (e.g., PgBouncer in pool_mode=transaction) can orphan across its
+    backend handoffs.
+
+    Any error while probing — missing ``alembic_version`` table, connection
+    issue, unexpected Alembic state — causes this to return ``False`` so
+    the caller falls through to the fully-locked slow path, which handles
+    empty/partial/out-of-date databases explicitly.
+
+    Args:
+        conn: Active SQLAlchemy connection (not necessarily locked).
+        cfg: Alembic Config instance for this project.
+
+    Returns:
+        True if the DB schema is at the Alembic script directory's head;
+        False on mismatch, empty DB, or any error while probing.
+    """
+    try:
+        script_heads = set(ScriptDirectory.from_config(cfg).get_heads())
+        if not script_heads:
+            return False
+        context = MigrationContext.configure(conn)
+        db_heads = set(context.get_current_heads())
+        return bool(db_heads) and db_heads == script_heads
+    except Exception as exc:  # noqa: BLE001 - intentionally broad; fall through to slow path
+        logger.warning("Fast-path head probe failed, falling back to advisory-lock path: %s", exc)
+        return False
+
+
+async def _run_post_migration_bootstrap(conn: Connection) -> None:
+    """Run the idempotent post-migration bootstrap steps.
+
+    These steps (team-visibility normalization, admin user, default roles,
+    orphaned-resource assignment) are designed to be safe to re-run on
+    every startup — each checks for existing state and skips if already
+    populated. They must run on replicas that take the fast-path so that a
+    prior replica crashing mid-bootstrap doesn't leave downstream state
+    unpopulated.
+
+    Args:
+        conn: Active SQLAlchemy connection (locked on the slow path,
+            unlocked on the fast path). Writes are idempotent either way.
+    """
+    updated = normalize_team_visibility(conn)
+    if updated:
+        logger.info(f"Normalized {updated} team record(s) to supported visibility values")
+
+    await bootstrap_admin_user(conn)
+    await bootstrap_default_roles(conn)
+    await bootstrap_resource_assignments(conn)
 
 
 @contextmanager
@@ -449,14 +546,23 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 except Exception as e:
                     logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
 
-            # Create default roles
+            # Create or converge default roles
             created_roles = []
             for role_def in default_roles:
                 try:
                     # Check if role already exists
                     existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
-                        logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
+                        # Converge permissions for system roles so schema changes are applied
+                        expected_perms = set(cast(list[str], role_def["permissions"]))
+                        current_perms = set(existing_role.permissions or [])
+                        if existing_role.is_system_role and expected_perms != current_perms:
+                            logger.info(f"Updating system role {SecurityValidator.sanitize_log_message(str(role_def['name']))} permissions")
+                            existing_role.permissions = sorted(expected_perms)
+                            db.commit()
+                            db.refresh(existing_role)
+                        else:
+                            logger.info(f"System role {SecurityValidator.sanitize_log_message(str(role_def['name']))} already exists - skipping")
                         created_roles.append(existing_role)
                         continue
 
@@ -695,6 +801,11 @@ async def main() -> None:
     Uses distributed advisory locks (PG) or file locking (SQLite)
     to prevent race conditions when multiple workers start simultaneously.
 
+    Fast-path: when the schema is already at the Alembic head revision (e.g. after
+    an init container ran migrations, or on any restart after the first), the advisory
+    lock and `alembic upgrade head` are skipped entirely.  Only the idempotent bootstrap
+    helpers (admin user, roles, resource assignments) are re-run.
+
     Args:
         None
 
@@ -702,12 +813,63 @@ async def main() -> None:
         Exception: If migration or bootstrap fails
     """
     engine = create_engine(settings.database_url)
-    ini_path = files("mcpgateway").joinpath("alembic.ini")
-    cfg = Config(str(ini_path))  # path in container
-    cfg.attributes["configure_logger"] = True
+    cfg = make_alembic_cfg(settings.database_url, configure_logger=True)
 
-    # Use advisory lock to prevent concurrent migrations
+    # SQLite multi-replica guard: /tmp is per-container, so FileLock provides no
+    # cross-container coordination. All replicas run migrations concurrently
+    # against the same SQLite file — a silent correctness bug.
+    is_sqlite = settings.database_url.startswith("sqlite")
+    gateway_replicas = int(os.environ.get("GATEWAY_REPLICAS", "1"))
+    if is_sqlite and gateway_replicas > 1:
+        logger.warning(
+            "SQLite detected with GATEWAY_REPLICAS=%d. The migration file lock at '%s' is stored in "
+            "/tmp which is NOT shared across containers — each container holds its own lock file. "
+            "All replicas run migrations concurrently with no cross-container coordination. "
+            "Use GATEWAY_REPLICAS=1 with SQLite, or switch to PostgreSQL for multi-replica deployments.",
+            gateway_replicas,
+            _MIGRATION_LOCK_PATH,
+        )
+
+    # MCPGATEWAY_SKIP_MIGRATIONS: external tooling (init container, CI pipeline)
+    # already ran alembic upgrade head — skip schema migration and run only the
+    # idempotent bootstrap helpers. If the schema is NOT at head, the init
+    # container failed or the wrong DB was targeted; fail fast so the deployment
+    # error is visible.
+    if settings.mcpgateway_skip_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.commit()
+                if not alembic_at_head(conn, cfg):
+                    logger.error("MCPGATEWAY_SKIP_MIGRATIONS=true but schema is not at head — run 'alembic upgrade head' before starting the application")
+                    raise RuntimeError("Schema not at head; migrations required before startup")
+                logger.info("MCPGATEWAY_SKIP_MIGRATIONS=true — schema already at head, skipping migration")
+                await _run_post_migration_bootstrap(conn)
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Bootstrap failed: {e}")
+            raise
+        finally:
+            engine.dispose()
+        logger.info("Database ready")
+        return
+
     try:
+        # Fast path: if the schema is already at the current Alembic head,
+        # skip the migration advisory lock entirely. This is critical for
+        # deployments behind a transaction-pooling connection pooler — the
+        # session-scoped advisory lock can be orphaned across pgbouncer's
+        # backend handoffs, which would otherwise make N-th pod startup
+        # spin indefinitely. Replicas 2..N take this branch on normal
+        # restarts.
+        with engine.connect() as probe_conn:
+            probe_conn.commit()
+            if alembic_at_head(probe_conn, cfg):
+                logger.info("Schema already at Alembic head; skipping migration lock")
+                await _run_post_migration_bootstrap(probe_conn)
+                probe_conn.commit()
+                return
+
+        # Slow path: acquire the migration advisory lock and run schema work.
         with engine.connect() as conn:
             # Commit any open transaction on the connection before locking (though it should be fresh)
             conn.commit()
@@ -717,59 +879,19 @@ async def main() -> None:
 
                 # Pass the LOCKED connection to Alembic config
                 cfg.attributes["connection"] = conn
+                logger.info("Running Alembic migrations to ensure schema is up to date")
+                command.upgrade(cfg, "head")
 
-                # Escape '%' characters in URL to avoid configparser interpolation errors
-                # (e.g., URL-encoded passwords like %40 for '@')
-                escaped_url = settings.database_url.replace("%", "%%")
-                cfg.set_main_option("sqlalchemy.url", escaped_url)
-
-                insp = inspect(conn)
-                table_names = insp.get_table_names()
-
-                if "gateways" not in table_names:
-                    logger.info("Empty DB detected - creating baseline schema")
-                    Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
-                else:
-                    versions: list[str] = []
-                    if "alembic_version" in table_names:
-                        try:
-                            rows = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
-                            versions = [row[0] for row in rows if row[0]]
-                        except Exception as exc:
-                            logger.warning("Failed to read alembic_version table: %s", exc)
-
-                    if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
-                        command.stamp(cfg, "head")
-                    else:
-                        logger.info("Running Alembic migrations to ensure schema is up to date")
-                        command.upgrade(cfg, "head")
-
-                # Post-upgrade normalization passes (inside lock to be safe)
-                updated = normalize_team_visibility(conn)
-                if updated:
-                    logger.info(f"Normalized {updated} team record(s) to supported visibility values")
-
-                # Bootstrap admin user after database is ready, using the LOCKED connection
-                await bootstrap_admin_user(conn)
-
-                # Bootstrap default RBAC roles after admin user is created
-                await bootstrap_default_roles(conn)
-
-                # Assign orphaned resources to admin personal team after all setup is complete
-                await bootstrap_resource_assignments(conn)
-
+                await _run_post_migration_bootstrap(conn)
                 conn.commit()  # Ensure all migration changes are permanently committed
 
     except Exception as e:
-        logger.error(f"Migration/Bootstrap failed: {e}")
+        logger.error(f"Database migration failed: {e}")
         # Allow retry logic or container restart to handle transient issues
         raise
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()
-
     logger.info("Database ready")
 
 

@@ -30,7 +30,7 @@ RUN npm run vite:build
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
 # Use official Red Hat UBI10 Node.js 24 image
-FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1771303073 AS node-builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:10.1-1778561468 AS node-builder
 
 USER root
 RUN mkdir -p /build && chown 1001:0 /build && chmod g=u /build
@@ -51,7 +51,7 @@ RUN npm ci && \
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1778576723
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="1.0.0-RC-2" \
@@ -99,7 +99,7 @@ COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpg
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \

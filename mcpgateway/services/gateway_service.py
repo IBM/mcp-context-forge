@@ -627,6 +627,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return raw_oauth_config
 
         def _validate_discovered(url: str, name: str) -> bool:
+            """Validate a discovered OAuth endpoint URL.
+
+            Args:
+                url: The endpoint URL to validate
+                name: Human-readable name of the endpoint for logging
+
+            Returns:
+                True if URL passes security validation, False otherwise
+            """
             try:
                 SecurityValidator.validate_url(url, name)
                 return True
@@ -3781,7 +3790,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 """
                 return httpx.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
-                    follow_redirects=True,
+                    follow_redirects=False,
                     headers=headers,
                     timeout=timeout if timeout else get_http_timeout(),
                     auth=auth,
@@ -5737,9 +5746,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
+
             return httpx.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,
@@ -5904,9 +5914,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
+
             return httpx.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers=headers,
                 timeout=timeout if timeout else get_http_timeout(),
                 auth=auth,

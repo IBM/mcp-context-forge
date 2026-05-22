@@ -334,10 +334,10 @@ def get_predefined_sso_providers() -> List[Dict]:
             "team_mapping": {},
             "provider_metadata": {
                 "groups_claim": settings.sso_generic_groups_claim,
-                "admin_groups": settings.sso_generic_admin_groups,
+                "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
                 "role_mappings": settings.sso_generic_role_mappings,
                 "default_role": settings.sso_generic_default_role,
-                "sync_roles": settings.sso_generic_sync_roles_on_login,
+                "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
             },
         }
         if settings.sso_generic_jwks_uri:
