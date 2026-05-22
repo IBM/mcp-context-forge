@@ -62,6 +62,24 @@ repos:
   # -----------------------------------------------------------------------------
   - repo: local
     hooks:
+      - id: alembic-check-heads
+        name: 🔄 Alembic - Check for Multiple Heads
+        description: Ensures there is only one Alembic migration head (prevents migration conflicts).
+        entry: 'bash -c ''heads=$(uv run alembic -c mcpgateway/alembic.ini heads | grep -E "^\S+.*\(head\)" | wc -l); if [ "$heads" -ne 1 ]; then echo "ERROR Multiple Alembic heads detected ($heads heads found) Run uv run alembic -c mcpgateway/alembic.ini heads"; exit 1; fi'''
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^mcpgateway/alembic/versions/.*\.py$
+
+      - id: alembic-check-branches
+        name: 🔄 Alembic - Check for Branches
+        description: Ensures there are no Alembic migration branches (prevents migration conflicts).
+        entry: bash -c 'branches=$(uv run alembic -c mcpgateway/alembic.ini branches); if [ -n "$branches" ]; then echo "ERROR Alembic branches detected Run uv run alembic -c mcpgateway/alembic.ini branches"; exit 1; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^mcpgateway/alembic/versions/.*\.py$
+
       - id: forbid-content-reference
         name: ❌ Forbid :contentReference
         description: Prevents :contentReference patterns from being committed.
@@ -125,6 +143,7 @@ repos:
         verbose: true
         exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
+
 
 
   # -----------------------------------------------------------------------------
