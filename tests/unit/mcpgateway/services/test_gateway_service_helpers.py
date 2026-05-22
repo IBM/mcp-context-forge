@@ -225,12 +225,10 @@ async def test_authheaders_auth_value_stored_as_dict(monkeypatch):
     assert captured_gw["auth_value"] == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
 
     # --- DbTool assertion ---
-    # DbTool.auth_value is Mapped[Optional[str]] (Text), so it must be an encoded string,
-    # not a raw dict. tool_service.py calls decode_auth() on it at read-time.
-    assert len(captured_tool_auth_values) == 1, "expected exactly one DbTool to be added"
-    assert isinstance(captured_tool_auth_values[0], str), f"DbTool.auth_value must be an encoded string for Text column, got {type(captured_tool_auth_values[0])}: {captured_tool_auth_values[0]!r}"
-    # Decoding must recover the original headers dict
-    assert decode_auth(captured_tool_auth_values[0]) == {"X-Custom-Auth-Header": "my-token", "X-Custom-User-ID": "user-123"}
+    # ASYNC LIFECYCLE: register_gateway sets status=pending, no tools discovered yet
+    # Worker will discover tools and inherit gateway auth_value during async init
+    # Test only verifies gateway auth_value is stored correctly as dict
+    assert len(captured_tool_auth_values) == 0, "ASYNC: no tools added during registration, worker handles discovery"
 
 
 def test_update_or_create_tools_authheaders_no_spurious_update():

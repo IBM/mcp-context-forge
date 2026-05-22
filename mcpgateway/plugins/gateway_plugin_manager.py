@@ -65,6 +65,7 @@ class _CachedManager:
     __slots__ = ("manager", "created_at")
 
     def __init__(self, manager: TenantPluginManager, created_at: float) -> None:
+        """Initialize the cached manager with the manager and its creation time."""
         self.manager = manager
         self.created_at = created_at
 

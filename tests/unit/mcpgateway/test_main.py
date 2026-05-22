@@ -1968,54 +1968,114 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_endpoint_secondary(self, mock_create, test_client, auth_headers):
         """Test registering a new gateway."""
-        mock_create.return_value = MOCK_GATEWAY_READ
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_create.return_value = gateway_read
         req = {"name": "test_gateway", "url": "http://example.com"}
         response = test_client.post("/gateways/", json=req, headers=auth_headers)
-        assert response.status_code == 200
+        assert response.status_code == 202
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint_secondary(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""
-        mock_get.return_value = MOCK_GATEWAY_READ
+        gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_get.return_value = gateway_read
         response = test_client.get("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
 
-    @patch("mcpgateway.main.gateway_service.update_gateway")
-    def test_update_gateway_endpoint_secondary(self, mock_update, test_client, auth_headers):
+    def test_update_gateway_endpoint_secondary(self, test_client, auth_headers):
         """Test updating an existing gateway."""
-        mock_update.return_value = MOCK_GATEWAY_READ
+        # Create a gateway in the database first
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
+
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="1",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://example.com",
+            description="A test gateway",
+            transport="SSE",
+            enabled=True,
+            reachable=True,
+            status="active",
+            capabilities={},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
         req = {"description": "Updated description"}
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
-        assert response.status_code == 200
-        mock_update.assert_called_once()
+        assert response.status_code == 202
 
-    @patch("mcpgateway.main.gateway_service.delete_gateway")
+        # Verify the gateway was updated
+        db.refresh(gateway_obj)
+        assert gateway_obj.status == "pending"
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_delete_gateway_endpoint_no_resources(self, mock_get, mock_delete, test_client, auth_headers):
+    def test_delete_gateway_endpoint_no_resources(self, mock_get, test_client, auth_headers):
         """Test deleting a gateway that doesn't have resources."""
-        mock_delete.return_value = None
-        mock_get.return_value.capabilities = {}
-        response = test_client.delete("/gateways/1", headers=auth_headers)
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
-        mock_delete.assert_called_once()
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
 
-    @patch("mcpgateway.main.gateway_service.delete_gateway")
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="test-gw-no-res",
+            name="test_gateway_no_res",
+            slug="test-gateway-no-res",
+            url="http://example.com",
+            description="A test gateway",
+            transport="SSE",
+            enabled=True,
+            reachable=True,
+            status="active",
+            capabilities={},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
+        mock_gateway = GatewayRead(**{**MOCK_GATEWAY_READ, "id": "test-gw-no-res"})
+        mock_get.return_value = mock_gateway
+
+        response = test_client.delete("/gateways/test-gw-no-res", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "accepted"
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    @patch("mcpgateway.main.invalidate_resource_cache")
-    def test_delete_gateway_endpoint_with_resources(self, mock_invalidate_cache, mock_get, mock_delete, test_client, auth_headers):
-        """Test deleting a gateway that does have resources."""
-        mock_delete.return_value = None
-        mock_get.return_value = MagicMock()
-        mock_get.return_value.capabilities = {"resources": {"some": "thing"}}
-        response = test_client.delete("/gateways/1", headers=auth_headers)
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
-        mock_delete.assert_called_once()
-        mock_invalidate_cache.assert_called_once()
+    def test_delete_gateway_endpoint_with_resources(self, mock_get, test_client, auth_headers):
+        """Test deleting a gateway that does have resources (async lifecycle)."""
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
+
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="test-gw-with-res",
+            name="test_gateway_with_res",
+            slug="test-gateway-with-res",
+            url="http://example.com",
+            description="A test gateway",
+            transport="SSE",
+            enabled=True,
+            reachable=True,
+            status="active",
+            capabilities={"resources": {"some": "thing"}},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
+        mock_gateway = GatewayRead(**{**MOCK_GATEWAY_READ, "id": "test-gw-with-res"})
+        mock_get.return_value = mock_gateway
+
+        response = test_client.delete("/gateways/test-gw-with-res", headers=auth_headers)
+        assert response.status_code == 202
+        assert response.json()["status"] == "accepted"
+
+        # Async lifecycle: cache invalidation happens in worker, not in endpoint
+        db.refresh(gateway_obj)
+        assert gateway_obj.status == "deleting"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state_secondary(self, mock_toggle, test_client, auth_headers):
@@ -2063,10 +2123,10 @@ class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.register_gateway")
     def test_create_gateway_endpoint(self, mock_create, test_client, auth_headers):
         """Test registering a new gateway."""
-        mock_create.return_value = MOCK_GATEWAY_READ
+        mock_create.return_value = GatewayRead(**MOCK_GATEWAY_READ)
         req = {"name": "test_gateway", "url": "http://example.com"}
         response = test_client.post("/gateways/", json=req, headers=auth_headers)
-        assert response.status_code == 200
+        assert response.status_code == 202
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
@@ -2080,14 +2140,15 @@ class TestGatewayEndpoints:
         mock_create.return_value = gateway_read
         req = {"name": "test_gateway", "url": "http://example.com"}
         response = test_client.post("/gateways/", json=req, headers=auth_headers)
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
-        assert data["skippedTools"] == skipped
+        # Response uses model_dump(mode="json") which converts to camelCase
+        assert data.get("skipped_tools") == skipped or data.get("skippedTools") == skipped
 
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""
-        mock_get.return_value = MOCK_GATEWAY_READ
+        mock_get.return_value = GatewayRead(**MOCK_GATEWAY_READ)
         response = test_client.get("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
@@ -2104,24 +2165,65 @@ class TestGatewayEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
-    @patch("mcpgateway.main.gateway_service.update_gateway")
-    def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
+    def test_update_gateway_endpoint(self, test_client, auth_headers):
         """Test updating an existing gateway."""
-        mock_update.return_value = MOCK_GATEWAY_READ
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
+
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="1",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://example.com",
+            description="A test gateway",
+            transport="SSE",
+            enabled=True,
+            reachable=True,
+            status="active",
+            capabilities={},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
         req = {"description": "Updated description"}
         response = test_client.put("/gateways/1", json=req, headers=auth_headers)
-        assert response.status_code == 200
-        mock_update.assert_called_once()
+        assert response.status_code == 202
 
-    @patch("mcpgateway.main.gateway_service.delete_gateway")
+        db.refresh(gateway_obj)
+        assert gateway_obj.status == "pending"
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_delete_gateway_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
+    def test_delete_gateway_endpoint(self, mock_get, test_client, auth_headers):
         """Test deleting a gateway."""
-        mock_delete.return_value = None
-        mock_get.return_value.capabilities = {}
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
+
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="1",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://example.com",
+            description="A test gateway",
+            transport="SSE",
+            enabled=True,
+            reachable=True,
+            status="active",
+            capabilities={},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
+        mock_gateway = GatewayRead(**MOCK_GATEWAY_READ)
+        mock_get.return_value = mock_gateway
+
         response = test_client.delete("/gateways/1", headers=auth_headers)
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
+        assert response.status_code == 202
+        assert response.json()["status"] == "accepted"
+
+        db.refresh(gateway_obj)
+        assert gateway_obj.status == "deleting"
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
     def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):

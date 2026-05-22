@@ -192,6 +192,37 @@ siem_queue_depth = Gauge(
     ["destination"],
 )
 
+# Gateway Lifecycle Metrics (Issue #4565)
+gateway_status_total = Counter(
+    "gateway_status_total",
+    "Gateway count by status",
+    ["status"],
+)
+
+gateway_registration_attempts = Counter(
+    "gateway_registration_attempts_total",
+    "Total gateway registration attempts",
+    ["gateway_name", "outcome"],
+)
+
+gateway_pending_duration = Gauge(
+    "gateway_pending_duration_seconds",
+    "Time gateway spent in pending state",
+    ["gateway_name"],
+)
+
+gateway_retry_backoff = Gauge(
+    "gateway_retry_backoff_seconds",
+    "Current backoff duration for gateway retry",
+    ["gateway_name"],
+)
+
+gateway_registration_errors = Counter(
+    "gateway_registration_errors_total",
+    "Registration failures by error type",
+    ["error_type"],
+)
+
 
 def setup_metrics(app):
     """

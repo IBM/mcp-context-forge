@@ -5,6 +5,7 @@ nav:
   - password-management.md
   - troubleshooting.md
   - api-usage.md
+  - gateway-lifecycle-operations.md
   - scale.md
   - parallel-session-cleanup.md
   - tuning.md

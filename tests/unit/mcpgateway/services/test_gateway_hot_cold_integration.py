@@ -813,4 +813,7 @@ class TestUpdateGatewayPollSchedule:
 
             await service.update_gateway(mock_db, "gw-update-1", gateway_update)
 
-        mock_classification.mark_poll_completed.assert_awaited_once_with("http://update-gw:8000", "tool_discovery", gateway_id="gw-update-1")
+        # ASYNC LIFECYCLE: update_gateway no longer calls _initialize_gateway synchronously
+        # reinit_succeeded stays False, so mark_poll_completed is NOT called during update
+        # Worker will handle init and advance poll timestamp later
+        mock_classification.mark_poll_completed.assert_not_awaited()

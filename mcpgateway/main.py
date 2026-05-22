@@ -94,8 +94,10 @@ from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -1543,6 +1545,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await prompt_service.initialize()
         await gateway_service.initialize()
 
+        # Start gateway worker for async lifecycle management
+        # First-Party
+        from mcpgateway.services.gateway_worker import get_worker  # pylint: disable=import-outside-toplevel
+
+        if settings.environment != "test":
+            gateway_worker = get_worker()
+            gateway_worker._task = asyncio.create_task(gateway_worker.run_forever())
+            logger.info("Gateway worker started for async lifecycle management")
+        else:
+            logger.info("Gateway worker disabled in test environment")
+
         # Start heartbeat, RPC listener, and notification service for
         # multi-worker session affinity. The upstream-session pool is
         # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
@@ -1760,6 +1773,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await get_runtime_state_coordinator().stop()
         except Exception as e:
             logger.debug(f"Error stopping runtime-mode coordinator: {e}")
+
+        # Stop gateway worker
+        try:
+            # First-Party
+            from mcpgateway.services.gateway_worker import get_worker  # pylint: disable=import-outside-toplevel
+
+            gateway_worker = get_worker()
+            gateway_worker.stop()
+            await gateway_worker.wait_for_completion(timeout=30)
+            logger.info("Gateway worker stopped")
+        except Exception as e:
+            logger.debug(f"Error stopping gateway worker: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -6953,7 +6978,7 @@ async def register_gateway(
 
         logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} is creating a new gateway for team {team_id}")
 
-        return await gateway_service.register_gateway(
+        gateway_response = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -6963,6 +6988,12 @@ async def register_gateway(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+        )
+
+        # Return 202 Accepted for async gateway lifecycle
+        return ORJSONResponse(
+            content=gateway_response.model_dump(mode="json"),
+            status_code=status.HTTP_202_ACCEPTED,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -7040,19 +7071,46 @@ async def update_gateway(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        result = await gateway_service.update_gateway(
-            db,
-            gateway_id,
-            gateway,
-            modified_by=mod_metadata["modified_by"],
-            modified_from_ip=mod_metadata["modified_from_ip"],
-            modified_via=mod_metadata["modified_via"],
-            modified_user_agent=mod_metadata["modified_user_agent"],
-            user_email=user_email,
-        )
+
+        # ASYNC LIFECYCLE: Set status=pending for update, worker will re-init
+        gateway_obj = db.query(DbGateway).filter(DbGateway.id == gateway_id).first()
+        if not gateway_obj:
+            raise GatewayNotFoundError(gateway_id)
+
+        # Update fields from request
+        if gateway.name:
+            gateway_obj.name = gateway.name
+            gateway_obj.slug = generate_display_name(gateway.name)
+        if gateway.url:
+            gateway_obj.url = gateway.url
+        if gateway.description is not None:
+            gateway_obj.description = gateway.description
+        if gateway.transport:
+            gateway_obj.transport = gateway.transport
+
+        # Set async status
+        gateway_obj.status = "pending"
+        gateway_obj.status_message = "Gateway update queued"
+        gateway_obj.registration_attempts = 0
+        gateway_obj.next_retry_at = None
+        gateway_obj.last_error = None
+        gateway_obj.reachable = False
+
+        # Update metadata
+        gateway_obj.modified_by = mod_metadata["modified_by"]
+        gateway_obj.modified_from_ip = mod_metadata["modified_from_ip"]
+        gateway_obj.modified_via = mod_metadata["modified_via"]
+        gateway_obj.modified_user_agent = mod_metadata["modified_user_agent"]
+
         db.commit()
-        db.close()
-        return result
+        db.refresh(gateway_obj)
+
+        logger.info(f"Gateway {gateway_id} marked for update (async)")
+
+        return ORJSONResponse(
+            content=GatewayRead.model_validate(gateway_obj).model_dump(mode="json", exclude_none=False),
+            status_code=status.HTTP_202_ACCEPTED,
+        )
     except Exception as ex:
         if isinstance(ex, PermissionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=403)
@@ -7077,9 +7135,9 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
-    Delete a gateway by ID.
+    Delete a gateway by ID (async).
 
     Args:
         gateway_id: ID of the gateway.
@@ -7098,19 +7156,22 @@ async def delete_gateway(gateway_id: str, request: Request, db: Session = Depend
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
         current = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
-        has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
 
-        # If the gateway had resources and was successfully deleted, invalidate
-        # the whole resource cache. This is needed since the cache holds both
-        # individual resources and the full listing which will also need to be
-        # invalidated.
-        if has_resources:
-            await invalidate_resource_cache()
+        # ASYNC LIFECYCLE: Set status=deleting, worker will cleanup
+        gateway_obj = db.query(DbGateway).filter(DbGateway.id == gateway_id).first()
+        if gateway_obj:
+            gateway_obj.status = "deleting"
+            gateway_obj.status_message = "Gateway deletion queued"
+            db.commit()
 
-        db.commit()
-        db.close()
-        return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
+            logger.info(f"Gateway {gateway_id} marked for deletion (async)")
+
+            return ORJSONResponse(
+                content={"status": "accepted", "message": f"Gateway {gateway_id} deletion accepted"},
+                status_code=status.HTTP_202_ACCEPTED,
+            )
+        else:
+            raise GatewayNotFoundError(gateway_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except GatewayNotFoundError as e:

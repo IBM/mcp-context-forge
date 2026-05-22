@@ -44,27 +44,28 @@ Examples:
 # Standard
 import asyncio
 import binascii
-from datetime import datetime, timezone
 import logging
 import mimetypes
 import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
-from urllib.parse import urlparse, urlunparse
 import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Set, Union, cast
+from urllib.parse import urlparse, urlunparse
+
+import httpx
 
 # Third-Party
 from filelock import FileLock, Timeout
-import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 try:
     # Third-Party - check if redis is available
@@ -82,15 +83,13 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
-from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
+from mcpgateway.db import ResourceMetric, ResourceSubscription, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric
+from mcpgateway.db import ToolMetric, fresh_db_session, get_for_update, server_prompt_association, server_resource_association, server_tool_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
@@ -448,10 +447,7 @@ async def _evict_upstream_sessions_for_gateway(gateway_id: str) -> int:
         unavailable or nothing matched).
     """
     # First-Party
-    from mcpgateway.services.upstream_session_registry import (  # pylint: disable=import-outside-toplevel
-        get_upstream_session_registry,
-        RegistryNotInitializedError,
-    )
+    from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError, get_upstream_session_registry  # pylint: disable=import-outside-toplevel
 
     try:
         return await get_upstream_session_registry().evict_gateway(gateway_id)
@@ -1110,7 +1106,55 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
                 raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
 
-            if initialize_timeout is not None:
+            # ASYNC LIFECYCLE: Skip initialization, persist with status=pending
+            # Worker will retry initialization in background
+            db_gateway = DbGateway(
+                name=gateway.name,
+                slug=slug_name,
+                url=normalized_url,
+                description=gateway.description,
+                transport=gateway.transport,
+                capabilities={},
+                enabled=True,
+                reachable=False,
+                tags=gateway.tags or [],
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                team_id=team_id,
+                owner_email=owner_email,
+                visibility=visibility,
+                auth_type=auth_type,
+                auth_value=auth_value,
+                auth_query_params=auth_query_params_encrypted,
+                oauth_config=oauth_config,
+                ca_certificate=ca_certificate,
+                client_cert=init_client_cert,
+                client_key=init_client_key,
+                passthrough_headers=getattr(gateway, "passthrough_headers", None),
+                refresh_interval_seconds=getattr(gateway, "refresh_interval_seconds", None),
+                gateway_mode=gateway_mode,
+                identity_propagation=getattr(gateway, "identity_propagation", None),
+                # Async status fields
+                status="pending",
+                status_message="Gateway initialization queued",
+                registration_attempts=0,
+                next_retry_at=None,
+                last_error=None,
+            )
+
+            db.add(db_gateway)
+            db.commit()
+            db.refresh(db_gateway)
+
+            logger.info(f"Gateway {gateway.name} created with status=pending (async initialization)")
+
+            # Return immediately with 202 status
+            return GatewayRead.model_validate(db_gateway)
+
+            # OLD SYNC CODE BELOW (kept for reference, will be removed later)
+            if False and initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts, validation_errors = await asyncio.wait_for(
                         self._initialize_gateway(
@@ -2361,7 +2405,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Handle query_param auth updates with service-layer enforcement
                 auth_query_params_decrypted: Optional[Dict[str, str]] = None
-                init_url = gateway.url
+                gateway.url
 
                 # Check if updating to query_param auth or updating existing query_param credentials
                 # Use original_auth_type since gateway.auth_type may have been updated already
@@ -2416,7 +2460,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # Append query params to URL for initialization
                         if auth_query_params_decrypted:
-                            init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+                            apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
                     # Update auth_type if switching
                     if is_switching_to_queryparam:
@@ -2431,158 +2475,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         if encrypted_value:
                             decrypted = decode_auth(encrypted_value)
                             auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
-                            init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+                            apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
-                # Try to reinitialize connection if URL actually changed
-                # if url_changed:
-                # Initialize empty lists in case initialization fails
-                tools_to_add = []
-                resources_to_add = []
-                prompts_to_add = []
+                # ASYNC LIFECYCLE: Reset to pending, worker will retry init
+                gateway.status = "pending"
+                gateway.status_message = "Gateway update queued for re-initialization"
+                gateway.registration_attempts = 0
+                gateway.next_retry_at = None
+                gateway.last_error = None
                 reinit_succeeded = False
-
-                try:
-                    ca_certificate = getattr(gateway, "ca_certificate", None)
-                    update_client_cert = getattr(gateway, "client_cert", None)
-                    update_client_key = getattr(gateway, "client_key", None)
-                    # Decrypt client_key for initialization (stored encrypted)
-                    if update_client_key:
-                        try:
-                            _enc = get_encryption_service(settings.auth_encryption_secret)
-                            update_client_key = _enc.decrypt_secret_or_plaintext(update_client_key)
-                        except Exception:
-                            logger.debug("client_key decryption skipped during gateway re-init")
-                    capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
-                        init_url,
-                        gateway.auth_value,
-                        gateway.transport,
-                        gateway.auth_type,
-                        gateway.oauth_config,
-                        ca_certificate,
-                        auth_query_params=auth_query_params_decrypted,
-                        client_cert=update_client_cert,
-                        client_key=update_client_key,
-                    )
-                    new_tool_names = [tool.name for tool in tools]
-                    new_resource_uris = [resource.uri for resource in resources]
-                    new_prompt_names = [prompt.name for prompt in prompts]
-
-                    if gateway_update.one_time_auth:
-                        # For one-time auth, clear auth_type and auth_value after initialization
-                        gateway.auth_type = "one_time_auth"
-                        gateway.auth_value = None
-                        gateway.oauth_config = None
-
-                    # Update tools using helper method — only propagate visibility
-                    # when the user explicitly changed it in this request
-                    _vis_changed = gateway_update.visibility is not None
-                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
-
-                    # Update resources using helper method
-                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update", update_visibility=_vis_changed)
-
-                    # Update prompts using helper method
-                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update", update_visibility=_vis_changed)
-
-                    # Log newly added items
-                    items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
-                    if items_added > 0:
-                        if tools_to_add:
-                            logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
-                        if resources_to_add:
-                            logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
-                        if prompts_to_add:
-                            logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
-                        logger.info(f"Total {items_added} new items added during gateway update")
-
-                    # Count items before cleanup for logging
-
-                    # Bulk delete tools that are no longer available from the gateway
-                    # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
-                    stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
-                    if stale_tool_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_tool_ids), 500):
-                            chunk = stale_tool_ids[i : i + 500]
-                            db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                            db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                            db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
-
-                    # Bulk delete resources that are no longer available from the gateway
-                    stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
-                    if stale_resource_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_resource_ids), 500):
-                            chunk = stale_resource_ids[i : i + 500]
-                            db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                            db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                            db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                            db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
-
-                    # Bulk delete prompts that are no longer available from the gateway
-                    stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
-                    if stale_prompt_ids:
-                        # Delete child records first to avoid FK constraint violations
-                        for i in range(0, len(stale_prompt_ids), 500):
-                            chunk = stale_prompt_ids[i : i + 500]
-                            db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                            db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                            db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
-
-                    # Expire gateway to clear cached relationships after bulk deletes
-                    # This prevents SQLAlchemy from trying to re-delete already-deleted items
-                    if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
-                        db.expire(gateway)
-
-                    gateway.capabilities = capabilities
-
-                    # Register capabilities for notification-driven actions
-                    register_gateway_capabilities_for_notifications(gateway.id, capabilities)
-
-                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                    gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
-
-                    # Log cleanup results
-                    tools_removed = len(stale_tool_ids)
-                    resources_removed = len(stale_resource_ids)
-                    prompts_removed = len(stale_prompt_ids)
-
-                    if tools_removed > 0:
-                        logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
-                    if resources_removed > 0:
-                        logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
-                    if prompts_removed > 0:
-                        logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
-
-                    gateway.last_seen = datetime.now(timezone.utc)
-
-                    # Add new items to database session in chunks to prevent lock escalation
-                    chunk_size = 50
-
-                    if tools_to_add:
-                        for i in range(0, len(tools_to_add), chunk_size):
-                            chunk = tools_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-                    if resources_to_add:
-                        for i in range(0, len(resources_to_add), chunk_size):
-                            chunk = resources_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-                    if prompts_to_add:
-                        for i in range(0, len(prompts_to_add), chunk_size):
-                            chunk = prompts_to_add[i : i + chunk_size]
-                            db.add_all(chunk)
-                            db.flush()
-
-                    # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
-                    reinit_succeeded = True
-                except Exception as e:
-                    logger.warning(f"Failed to initialize updated gateway: {e}")
-                    reinit_succeeded = False
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
@@ -2659,8 +2560,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     invalidate_passthrough_header_caches()
 
-                # Notify subscribers
-                await self._notify_gateway_updated(gateway)
+                # ASYNC LIFECYCLE: Worker notifies subscribers after successful init
+                # await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
@@ -3378,55 +3279,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if not await permission_service.check_resource_ownership(user_email, gateway):
                     raise PermissionError("Only the owner can delete this gateway")
 
-            # Store gateway info for notification before deletion
-            gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
-            gateway_name = gateway.name
-            gateway_team_id = gateway.team_id
-            gateway_url = gateway.url  # Store URL before expiring the object
-
-            # Manually delete children first to avoid FK constraint violations
-            # (passive_deletes=True means ORM won't auto-cascade, we must do it explicitly)
-            # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
-            tool_ids = [t.id for t in gateway.tools]
-            resource_ids = [r.id for r in gateway.resources]
-            prompt_ids = [p.id for p in gateway.prompts]
-
-            # Delete tool children and tools
-            if tool_ids:
-                for i in range(0, len(tool_ids), 500):
-                    chunk = tool_ids[i : i + 500]
-                    db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
-
-            # Delete resource children and resources
-            if resource_ids:
-                for i in range(0, len(resource_ids), 500):
-                    chunk = resource_ids[i : i + 500]
-                    db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
-                    db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
-
-            # Delete prompt children and prompts
-            if prompt_ids:
-                for i in range(0, len(prompt_ids), 500):
-                    chunk = prompt_ids[i : i + 500]
-                    db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
-
-            # Expire gateway to clear cached relationships after bulk deletes
-            db.expire(gateway)
-
-            # Use DELETE with rowcount check for database-agnostic atomic delete
-            stmt = delete(DbGateway).where(DbGateway.id == gateway_id)
-            result = db.execute(stmt)
-            if result.rowcount == 0:
-                # Gateway was already deleted by another concurrent request
-                raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+            # ASYNC LIFECYCLE: Mark for deletion, worker will cleanup
+            gateway.status = "deleting"
+            gateway.status_message = "Gateway deletion queued"
 
             db.commit()
+
+            logger.info(f"Gateway {gateway.name} marked for deletion (async cleanup)")
+            return
 
             # #4205: close any upstream MCP sessions bound to this gateway
             # so in-flight downstream sessions can't keep talking to the

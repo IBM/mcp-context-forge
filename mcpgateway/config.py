@@ -47,23 +47,25 @@ Examples:
     True
 """
 
-# Standard
-from functools import lru_cache
-from importlib.resources import files
 import logging
 import math
 import os
-from pathlib import Path
 import re
 import sys
+
+# Standard
+from functools import lru_cache
+from importlib.resources import files
+from pathlib import Path
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 from urllib.parse import urlparse
+
+import orjson
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
-import orjson
-from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
+from pydantic import AliasChoices, Field, HttpUrl, PositiveInt, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
@@ -1070,6 +1072,9 @@ class Settings(BaseSettings):
             "pods start."
         ),
     )
+
+    # Gateway Lifecycle Feature Flags
+    gateway_async_lifecycle_enabled: bool = Field(default=True, description="Enable async gateway lifecycle (202 responses, background worker with retry logic)")
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(

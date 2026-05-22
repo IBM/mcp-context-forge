@@ -4791,6 +4791,7 @@ class _StreamableHttpAuthHandler:
     __slots__ = ("scope", "receive", "send")
 
     def __init__(self, scope: Any, receive: Any, send: Any) -> None:
+        """Initialize the handler with the ASGI lifecycle objects."""
         self.scope = scope
         self.receive = receive
         self.send = send

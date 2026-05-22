@@ -477,6 +477,7 @@ class MetricsCleanupService:
         sizes = {}
 
         def _get_sizes() -> Dict[str, int]:
+            """Get the current size of all metrics tables."""
             with fresh_db_session() as db:
                 for table_name, model_class, hourly_class, _ in self.METRIC_TABLES:
                     # pylint: disable=not-callable

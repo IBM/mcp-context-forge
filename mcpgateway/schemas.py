@@ -3624,6 +3624,13 @@ class GatewayRead(BaseModelWithConfigDict):
     # Tools skipped during gateway import due to validation errors (transient, not persisted)
     skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
 
+    # Async lifecycle status fields
+    status: str = Field(default="active", description="Gateway status: pending, active, or deleting")
+    status_message: Optional[str] = Field(None, description="Human-readable status message")
+    registration_attempts: int = Field(default=0, description="Number of registration retry attempts")
+    next_retry_at: Optional[datetime] = Field(None, description="Timestamp of next retry attempt")
+    last_error: Optional[str] = Field(None, description="Last error message from registration attempt")
+
     @model_validator(mode="before")
     @classmethod
     def _mask_query_param_auth(cls, data: Any) -> Any:

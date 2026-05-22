@@ -955,6 +955,7 @@ class SessionRegistry(SessionBackend):
             try:
 
                 def _db_get_owner() -> Optional[str]:
+                    """Get owner email from database."""
                     db_session = next(get_db())
                     try:
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
