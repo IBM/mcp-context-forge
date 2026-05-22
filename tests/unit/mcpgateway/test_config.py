@@ -1244,7 +1244,13 @@ def test_init_cors_production_env():
     """Production environment should get domain-based CORS origins."""
     env = {k: v for k, v in os.environ.items() if k != "ALLOWED_ORIGINS"}
     with patch.dict(os.environ, env, clear=True):
-        s = Settings(environment="production", app_domain="https://myapp.com", _env_file=None)
+        s = Settings(
+            environment="production",
+            app_domain="https://myapp.com",
+            jwt_secret_key="x3Kp!mQ8rZvN2wLsA5dYfB7cEjGhTuIo",  # pragma: allowlist secret
+            auth_encryption_secret="F4nRqW9kMpXzD1sVbYcL6eHjOuAtG2wC",  # pragma: allowlist secret
+            _env_file=None,
+        )
         # Production origins should be based on app_domain
         assert len(s.allowed_origins) >= 1
 

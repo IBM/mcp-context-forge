@@ -315,6 +315,7 @@ mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "cpex.tools.cli:main"
 cforge = "mcpgateway.tools.cli:main"
 init-secrets = "mcpgateway.scripts.init_secrets:main"
+mcpgateway-server = "mcpgateway.__main__:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration

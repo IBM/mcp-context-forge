@@ -16843,7 +16843,8 @@ async def test_streamable_http_auth_basic_auth_admin_gets_admin_bypass(monkeypat
         pass
 
     with patch("mcpgateway.auth._get_user_by_email_sync", mock_get_user):
-        result = await streamable_http_auth(scope, None, send)
+        with patch("mcpgateway.config.settings.require_user_in_db", False):
+            result = await streamable_http_auth(scope, None, send)
 
     assert result is True
 
