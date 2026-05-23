@@ -1587,7 +1587,16 @@ class Settings(BaseSettings):
         }
 
         for name, value in critical_secrets.items():
-            if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
+            if name == "BASIC_AUTH_PASSWORD" and not (self.api_allow_basic_auth or self.docs_allow_basic_auth):
+                # Only require BASIC_AUTH_PASSWORD when basic auth is an
+                # active login path. mcpgateway_ui_enabled was previously
+                # in this disjunction but the admin UI authenticates via
+                # JWT (cookie or bearer) — it never calls
+                # verify_basic_credentials. The real consumers in v1.0.1
+                # are require_docs_basic_auth (gated by
+                # docs_allow_basic_auth) and the CLI export tool (gated
+                # by api_allow_basic_auth); both already short-circuit
+                # here.
                 continue
             is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
             is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
