@@ -326,7 +326,8 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
   "by_tenant": "600/m",
   "by_tool":   { "fast-time-get-system-time": "10/m", "fast-time-convert-time": "5/s" },
   "algorithm": "fixed_window",
-  "backend":   "redis"
+  "backend":   "redis",
+  "fail_mode": "open"
 }
 ```
 
@@ -336,7 +337,10 @@ Rate strings use the format `<count>/<period>` where period is `s` (second) or `
 | `by_tenant` | string \| null                                             | `null`           | `<int>/s` or `<int>/m`         | Rate limit per tenant (team); `null` disables                        |
 | `by_tool`   | object (string → string) \| null                           | `null`           | values: `<int>/s` or `<int>/m` | Per-tool rate limits as a map of `tool_name → rate`; `null` disables |
 | `algorithm` | `"fixed_window"` \| `"sliding_window"` \| `"token_bucket"` | `"fixed_window"` | —                              | Counting algorithm to use                                            |
-| `backend`   | `"memory"` \| `"redis"`                                    | `"memory"`       | —                              | Storage backend for counters; `"redis"` shares state across replicas, `"memory"` is local to each worker |
+| `backend`   | `"memory"` \| `"redis"`                                    | `"redis"`        | —                              | Storage backend for counters; `"redis"` shares state across replicas, `"memory"` is local to each worker |
+| `fail_mode` | `"open"` \| `"closed"`                                     | `"open"`         | —                              | Behaviour when the `"redis"` backend is unreachable: `"open"` falls back to in-process memory counters (availability-first); `"closed"` blocks requests until Redis recovers (enforcement-first) |
+
+> When `backend` is `"redis"`, the Redis connection URL is configured via `redis_url` in `plugins/config.yaml` — it is **not** a binding payload field. Gateway operators set it once at deployment time; binding-API users should not override it per-tenant.
 
 **Validation:** Each non-null rate string must match `^\d+/[sm]$`.
 
@@ -359,7 +363,8 @@ curl -s -X POST \
             "by_tenant": "300/m",
             "by_tool":   null,
             "algorithm": "fixed_window",
-            "backend":   "redis"
+            "backend":   "redis",
+            "fail_mode": "open"
           }
         }]
       }
@@ -540,7 +545,8 @@ curl -s -X POST \
               "by_tenant": "600/m",
               "by_tool": null,
               "algorithm": "fixed_window",
-              "backend": "redis"
+              "backend": "redis",
+              "fail_mode": "open"
             }
           },
           {
