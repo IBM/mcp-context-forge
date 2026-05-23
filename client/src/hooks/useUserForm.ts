@@ -251,7 +251,7 @@ export function useUserForm(): UseUserFormReturn {
         }
       }
     },
-    [validateForm, getFormData, createUser, resetForm],
+    [validateForm, getFormData, createUser, resetForm, intl],
   );
 
   const isValid = useMemo(() => {
