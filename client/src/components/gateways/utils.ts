@@ -1,20 +1,15 @@
 import type { VirtualServer, VirtualServerTag } from "@/types/server";
 import type { DetailComponentItem } from "@/components/gateways/types";
 
-export function formatServerTimestamp(value?: string) {
-  if (!value) return "Not synced yet";
+export function formatServerTimestamp(value?: string, emptyLabel = "Not synced yet") {
+  if (!value) return emptyLabel;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
 }
 
-export function formatServerDateTime(value?: string) {
-  return formatServerTimestamp(value);
-}
-
-export function formatVisibility(value?: string) {
-  if (!value) return "N/A";
-  return value.charAt(0).toUpperCase() + value.slice(1);
+export function formatServerDateTime(value?: string, emptyLabel = "Not synced yet") {
+  return formatServerTimestamp(value, emptyLabel);
 }
 
 export function truncateMiddle(value: string, maxLength = 24) {
@@ -35,19 +30,34 @@ export function copyToClipboard(value: string) {
   void navigator.clipboard?.writeText(value);
 }
 
-export function getTagDisplay(tag: string | VirtualServerTag, index: number) {
+export function getTagDisplay(
+  tag: string | VirtualServerTag,
+  index: number,
+  fallbackLabel = "Tag",
+) {
   if (typeof tag === "string") {
     return { key: `${tag}-${index}`, label: tag };
   }
 
-  const label = tag.label ?? tag.name ?? tag.value ?? tag.id ?? "Tag";
+  const label = tag.label ?? tag.name ?? tag.value ?? tag.id ?? fallbackLabel;
   return { key: `${tag.id ?? label}-${index}`, label };
 }
 
-export function getComponentLabel(type: DetailComponentItem["type"]) {
-  if (type === "tools") return "tool";
-  if (type === "resources") return "resource";
-  return "prompt";
+export function getVirtualServerComponentCounts(server: VirtualServer) {
+  const toolCount = server.associatedToolIds?.length ?? server.associatedTools?.length ?? 0;
+  const resourceCount = server.associatedResources?.length ?? 0;
+  const promptCount = server.associatedPrompts?.length ?? 0;
+
+  return {
+    toolCount,
+    resourceCount,
+    promptCount,
+    total: toolCount + resourceCount + promptCount,
+  };
+}
+
+export function hasVirtualServerComponents(server: VirtualServer) {
+  return getVirtualServerComponentCounts(server).total > 0;
 }
 
 export function buildComponentItems(server: VirtualServer): DetailComponentItem[] {
