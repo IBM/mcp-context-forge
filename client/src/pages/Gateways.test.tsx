@@ -52,6 +52,13 @@ describe("Gateways", () => {
       screen.getByText("Register an endpoint implementing the Model Context Protocol"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Virtual servers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Skip for now" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Add tools, resources, and prompts from connected sources",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the virtual server layout when servers exist", () => {
@@ -105,14 +112,128 @@ describe("Gateways", () => {
     renderWithProviders(<Gateways />);
 
     expect(screen.getByRole("heading", { name: "Virtual servers" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create Server" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create server" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Create server Make external sources/i }),
+    ).toBeInTheDocument();
     expect(screen.getByText("GH repo tasks")).toBeInTheDocument();
     expect(screen.getByText("6")).toBeInTheDocument();
     expect(screen.getByText("team")).toBeInTheDocument();
     expect(screen.queryByText("MCP server")).not.toBeInTheDocument();
   });
 
-  it("navigates to the source form when the header create server button is clicked", async () => {
+  it("renders empty virtual servers as full-width add-components rows", () => {
+    const mockServer: VirtualServer = {
+      id: "gateway-empty",
+      name: "peach-thistle-shark",
+      description: "",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: false,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByTestId("virtual-server-card")).toHaveClass("col-span-full");
+    expect(screen.getByText("peach-thistle-shark")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add sources and components" })).toBeInTheDocument();
+    expect(screen.queryByTestId("tool-count")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("last-updated")).not.toBeInTheDocument();
+  });
+
+  it("renders empty virtual servers after servers with components", () => {
+    const emptyServer: VirtualServer = {
+      id: "gateway-empty",
+      name: "peach-thistle-shark",
+      description: "",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: false,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+    const populatedServer: VirtualServer = {
+      ...emptyServer,
+      id: "gateway-populated",
+      name: "GH repo tasks",
+      enabled: true,
+      associatedToolIds: ["tool-1"],
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [emptyServer, populatedServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    const renderedCards = screen.getAllByTestId("virtual-server-card");
+    expect(renderedCards).toHaveLength(2);
+    expect(renderedCards[0]).toHaveAttribute("data-server-name", "GH repo tasks");
+    expect(renderedCards[1]).toHaveAttribute("data-server-name", "peach-thistle-shark");
+    expect(renderedCards[1]).toHaveClass("col-span-full");
+  });
+
+  it("navigates to the create server UI when the create server card is clicked", async () => {
     const user = userEvent.setup();
     const mockServer: VirtualServer = {
       id: "gateway-1",
@@ -158,19 +279,70 @@ describe("Gateways", () => {
 
     renderWithProviders(<Gateways />);
 
-    await user.click(screen.getByRole("button", { name: "Create Server" }));
+    await user.click(screen.getByRole("button", { name: /Create server Make external sources/i }));
 
-    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
   });
 
-  it("navigates to servers page with open parameter when MCP server connect is clicked", async () => {
+  it("navigates to the create server UI when empty server add-components row is clicked", async () => {
+    const user = userEvent.setup();
+    const mockServer: VirtualServer = {
+      id: "gateway-empty",
+      name: "peach-thistle-shark",
+      description: "",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: false,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: null,
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    await user.click(screen.getByRole("button", { name: "Add sources and components" }));
+
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
+  });
+
+  it("navigates to the create server UI when MCP server connect is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders(<Gateways />);
 
     const buttons = screen.getAllByRole("button", { name: "+ Connect" });
     await user.click(buttons[0]!);
 
-    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
   });
 
   it("disables REST API and gRPC connect buttons until they are implemented", () => {
@@ -272,8 +444,6 @@ describe("Gateways", () => {
 
     renderWithProviders(<Gateways />);
 
-    expect(screen.getByRole("button", { name: /Open GH repo tasks/i })).toBeDisabled();
-
     await user.click(screen.getByRole("button", { name: "Actions for GH repo tasks" }));
 
     const viewDetails = await screen.findByRole("menuitem", { name: "View details" });
@@ -304,9 +474,9 @@ describe("Gateways", () => {
     const drawerAddSourcesButton = screen.getByRole("button", { name: "Add sources" });
     expect(drawerAddSourcesButton).toBeInTheDocument();
     await user.click(drawerAddSourcesButton);
-    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
     await user.click(screen.getByRole("button", { name: "Add components" }));
-    expect(mockNavigate).toHaveBeenCalledWith("/app/servers?openForm=true");
+    expect(mockNavigate).toHaveBeenCalledWith("/app/gateways/create-server");
     expect(screen.getByText("Get Repo Issues")).toBeInTheDocument();
     expect(screen.getByText("GITHUB_GET_REPO_ISSUES")).toBeInTheDocument();
     expect(screen.getAllByText("github://repo/{owner}/{repo}").length).toBeGreaterThan(0);
@@ -368,8 +538,10 @@ describe("Gateways", () => {
     expect(screen.getByText("Sparse server")).toBeInTheDocument();
     const card = screen.getByTestId("virtual-server-card");
     expect(card).toBeInTheDocument();
-    expect(card.querySelector('[data-testid="tool-count"]')).toHaveTextContent("0");
-    expect(card.querySelector('[data-testid="resource-count"]')).toHaveTextContent("0");
-    expect(card.querySelector('[data-testid="prompt-count"]')).toHaveTextContent("0");
+    expect(card).toHaveClass("col-span-full");
+    expect(screen.getByRole("button", { name: "Add sources and components" })).toBeInTheDocument();
+    expect(card.querySelector('[data-testid="tool-count"]')).not.toBeInTheDocument();
+    expect(card.querySelector('[data-testid="resource-count"]')).not.toBeInTheDocument();
+    expect(card.querySelector('[data-testid="prompt-count"]')).not.toBeInTheDocument();
   });
 });
