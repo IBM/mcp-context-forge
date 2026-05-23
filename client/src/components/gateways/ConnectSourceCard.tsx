@@ -1,7 +1,10 @@
+import { useIntl } from "react-intl";
 import { Plus } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function ConnectSourceCard({ onAction }: { onAction: () => void }) {
+  const intl = useIntl();
+
   return (
     <Card
       size="sm"
@@ -21,13 +24,12 @@ export function ConnectSourceCard({ onAction }: { onAction: () => void }) {
           <span className="flex size-6 items-center justify-center rounded-sm bg-primary text-primary-foreground">
             <Plus className="size-4" />
           </span>
-          <CardTitle>Connect a source</CardTitle>
+          <CardTitle>{intl.formatMessage({ id: "gateways.createServer.card.title" })}</CardTitle>
         </div>
       </CardHeader>
       <CardContent>
         <CardDescription className="text-[13px] leading-4">
-          Make an external source available through a virtual server endpoint. Sources can be
-          running MCP servers, REST APIs, gRPC services, or A2A agents
+          {intl.formatMessage({ id: "gateways.createServer.card.description" })}
         </CardDescription>
       </CardContent>
     </Card>
