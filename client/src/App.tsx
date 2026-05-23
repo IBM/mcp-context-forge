@@ -8,6 +8,7 @@ import { ResetPassword } from "./pages/ResetPassword";
 import { ChangePassword } from "./pages/ChangePassword";
 import { Dashboard } from "./pages/Dashboard";
 import { Gateways } from "./pages/Gateways";
+import { CreateServer } from "./pages/CreateServer";
 import { Servers } from "./pages/Servers";
 import { Tools } from "./pages/Tools";
 import { Resources } from "./pages/Resources";
@@ -52,6 +53,7 @@ function PrivateRoutes() {
         <Route path="/app/" component={Dashboard} />
         <Route path="/app/change-password" component={ChangePassword} />
         <Route path="/app/gateways" component={Gateways} />
+        <Route path="/app/gateways/create-server" component={CreateServer} />
         <Route path="/app/servers" component={Servers} />
         <Route path="/app/tools" component={Tools} />
         <Route path="/app/resources" component={Resources} />

@@ -94,7 +94,7 @@ test.describe("Gateways page", () => {
     ).toBeVisible();
   });
 
-  test("navigates to servers page when MCP server card is clicked", async ({ page }) => {
+  test("navigates to create server UI when MCP server card is clicked", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -109,8 +109,8 @@ test.describe("Gateways page", () => {
     // Click the MCP server connect button
     await page.getByRole("button", { name: "+ Connect" }).first().click();
 
-    // Should navigate to servers page with openForm query param
-    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
+    // Should navigate to create server UI
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
   });
 
   test("navigates to agents page when AI agent card is clicked", async ({ page }) => {
@@ -147,10 +147,11 @@ test.describe("Gateways page", () => {
 
     // Check for virtual servers heading
     await expect(page.getByRole("heading", { name: "Virtual servers" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Create Server" })).toBeVisible();
 
-    // Check for connect source card
-    await expect(page.getByText("Connect a source")).toBeVisible();
+    // Check for create server card
+    await expect(
+      page.getByRole("button", { name: /Create server Make external sources/i }),
+    ).toBeVisible();
 
     // Check for virtual server card
     await expect(page.getByText("testVS")).toBeVisible();
@@ -259,7 +260,7 @@ test.describe("Gateways page", () => {
     await expect(drawer.getByText("summarize_pull_request")).toHaveCount(0);
   });
 
-  test("drawer add sources button navigates to the server form", async ({ page }) => {
+  test("drawer add sources button navigates to the create server UI", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -287,7 +288,7 @@ test.describe("Gateways page", () => {
       })
       .click();
 
-    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
   });
 
   test("disables the Upload action button on virtual server cards", async ({ page }) => {
@@ -305,7 +306,7 @@ test.describe("Gateways page", () => {
     await expect(page.getByRole("button", { name: /Open testVS \(coming soon\)/ })).toBeDisabled();
   });
 
-  test("navigates to server form from the header create server button", async ({ page }) => {
+  test("navigates to create server UI from the create server card", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
         status: 200,
@@ -318,9 +319,9 @@ test.describe("Gateways page", () => {
     await page.waitForLoadState("networkidle");
 
     await expect(page.getByRole("button", { name: "Virtual server actions" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Create Server" }).click();
+    await page.getByRole("button", { name: /Create server Make external sources/i }).click();
 
-    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
   });
 
   test("shows error state when API fails", async ({ page }) => {
@@ -393,6 +394,40 @@ test.describe("Gateways page", () => {
     await expect(card2.getByText("private")).toBeVisible();
   });
 
+  test("places empty virtual servers after servers with components", async ({ page }) => {
+    const emptyServer = {
+      ...MOCK_VIRTUAL_SERVER,
+      id: "empty-server-id",
+      name: "peach-thistle-shark",
+      enabled: false,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      tags: [],
+    };
+
+    await page.route("**/servers?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ servers: [emptyServer, MOCK_VIRTUAL_SERVER] }),
+      });
+    });
+
+    await page.goto(APP.GATEWAYS);
+    await page.waitForLoadState("networkidle");
+
+    const cards = page.getByTestId("virtual-server-card");
+    await expect(cards).toHaveCount(2);
+    await expect(cards.nth(0)).toHaveAttribute("data-server-name", "testVS");
+    await expect(cards.nth(1)).toHaveAttribute("data-server-name", "peach-thistle-shark");
+    await expect(cards.nth(1)).toHaveClass(/col-span-full/);
+    await expect(
+      cards.nth(1).getByRole("button", { name: "Add sources and components" }),
+    ).toBeVisible();
+  });
+
   test("connect source card is keyboard accessible", async ({ page }) => {
     await page.route("**/servers?*", async (route) => {
       await route.fulfill({
@@ -405,15 +440,17 @@ test.describe("Gateways page", () => {
     await page.goto(APP.GATEWAYS);
     await page.waitForLoadState("networkidle");
 
-    // Focus the connect source card
-    const connectCard = page.getByRole("button", { name: /Connect a source/i });
+    // Focus the create server card
+    const connectCard = page.getByRole("button", {
+      name: /Create server Make external sources/i,
+    });
     await connectCard.focus();
 
     // Press Enter
     await page.keyboard.press("Enter");
 
-    // Should navigate to servers page
-    await expect(page).toHaveURL(/\/app\/servers\?openForm=true/);
+    // Should navigate to the create server UI
+    await expect(page).toHaveURL(/\/app\/gateways\/create-server/);
   });
 
   test("formats timestamps correctly", async ({ page }) => {
@@ -459,9 +496,11 @@ test.describe("Gateways page", () => {
 
     const card = page.getByTestId("virtual-server-card").filter({ hasText: "testVS" });
 
-    await expect(card.getByTestId("tool-count")).toHaveText("0");
-    await expect(card.getByTestId("resource-count")).toHaveText("0");
-    await expect(card.getByTestId("prompt-count")).toHaveText("0");
+    await expect(card).toHaveClass(/col-span-full/);
+    await expect(card.getByRole("button", { name: "Add sources and components" })).toBeVisible();
+    await expect(card.getByTestId("tool-count")).toHaveCount(0);
+    await expect(card.getByTestId("resource-count")).toHaveCount(0);
+    await expect(card.getByTestId("prompt-count")).toHaveCount(0);
   });
 
   test("disables not-yet-implemented source types in the empty-state selector", async ({

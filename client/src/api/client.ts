@@ -3,7 +3,7 @@
  *
  * Security guarantees:
  *  - Authentication uses same-origin httpOnly cookies; JWTs are never stored in web storage.
- *  - CSRF tokens are read from the non-httpOnly csrf_token cookie and sent on mutating requests.
+ *  - CSRF tokens are read from the non-httpOnly CSRF cookie and sent on mutating requests.
  *  - Content-Type and X-Requested-With are always set on JSON requests.
  *  - Non-2xx responses throw a typed ApiError; callers never handle raw text.
  *  - Protected 401 responses redirect to /app/login.
