@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useIntl } from "react-intl";
 import {
   Activity,
   Box,
@@ -30,18 +31,16 @@ import {
   buildComponentItems,
   copyToClipboard,
   formatServerDateTime,
-  formatVisibility,
-  getComponentLabel,
   getTagDisplay,
   getVirtualServerEndpoint,
   truncateMiddle,
 } from "@/components/gateways/utils";
 
-const COMPONENT_FILTER_OPTIONS: Array<{ value: ComponentFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "tools", label: "Tools" },
-  { value: "resources", label: "Resources" },
-  { value: "prompts", label: "Prompts" },
+const COMPONENT_FILTER_OPTIONS: Array<{ value: ComponentFilter; labelId: string }> = [
+  { value: "all", labelId: "gateways.details.filter.all" },
+  { value: "tools", labelId: "gateways.details.filter.tools" },
+  { value: "resources", labelId: "gateways.details.filter.resources" },
+  { value: "prompts", labelId: "gateways.details.filter.prompts" },
 ];
 
 function DetailRow({
@@ -100,9 +99,29 @@ export function VirtualServerDetailsDrawer({
   onAddSources: () => void;
   onOpenChange: (open: boolean) => void;
 }) {
+  const intl = useIntl();
   const endpoint = server ? getVirtualServerEndpoint(server.id) : "";
-  const tags = (server?.tags ?? []).map(getTagDisplay);
+  const tagFallback = intl.formatMessage({ id: "gateways.details.tagFallback" });
+  const notSyncedYet = intl.formatMessage({ id: "gateways.card.notSyncedYet" });
+  const tags = (server?.tags ?? []).map((tag, index) => getTagDisplay(tag, index, tagFallback));
   const [componentFilter, setComponentFilter] = useState<ComponentFilter>("all");
+  const getComponentLabel = useCallback(
+    (type: Exclude<ComponentFilter, "all">) =>
+      intl.formatMessage({ id: `gateways.details.component.${type}` }),
+    [intl],
+  );
+  const getVisibilityLabel = useCallback(
+    (value?: string) => {
+      if (value === "team")
+        return intl.formatMessage({ id: "gateways.createServer.visibility.team" });
+      if (value === "public")
+        return intl.formatMessage({ id: "gateways.createServer.visibility.public" });
+      if (value === "private")
+        return intl.formatMessage({ id: "gateways.createServer.visibility.private" });
+      return intl.formatMessage({ id: "gateways.details.notAvailable" });
+    },
+    [intl],
+  );
 
   useEffect(() => {
     setComponentFilter("all");
@@ -127,8 +146,12 @@ export function VirtualServerDetailsDrawer({
         {server && (
           <>
             <SheetHeader className="sr-only">
-              <SheetTitle>{server.name} details</SheetTitle>
-              <SheetDescription>Virtual server details and activity.</SheetDescription>
+              <SheetTitle>
+                {intl.formatMessage({ id: "gateways.details.sheetTitle" }, { name: server.name })}
+              </SheetTitle>
+              <SheetDescription>
+                {intl.formatMessage({ id: "gateways.details.sheetDescription" })}
+              </SheetDescription>
             </SheetHeader>
 
             <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -155,18 +178,21 @@ export function VirtualServerDetailsDrawer({
                     onClick={onAddSources}
                   >
                     <Plus className="size-3" />
-                    Add sources
+                    {intl.formatMessage({ id: "gateways.details.addSources" })}
                   </Button>
                 </div>
 
                 <p className="mt-7 max-w-4xl text-[15px] leading-6 text-muted-foreground">
-                  {server.description || "No description provided."}
+                  {server.description ||
+                    intl.formatMessage({ id: "gateways.details.noDescription" })}
                 </p>
 
                 <div className="my-8 h-px bg-border" />
 
                 <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold text-foreground">Components</h3>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {intl.formatMessage({ id: "gateways.details.components" })}
+                  </h3>
                   <Button
                     type="button"
                     variant="outline"
@@ -175,7 +201,7 @@ export function VirtualServerDetailsDrawer({
                     onClick={onAddComponents}
                   >
                     <Plus className="size-3.5" />
-                    Add components
+                    {intl.formatMessage({ id: "gateways.details.addComponents" })}
                   </Button>
                 </div>
 
@@ -192,7 +218,7 @@ export function VirtualServerDetailsDrawer({
                         }`}
                         onClick={() => setComponentFilter(option.value)}
                       >
-                        {option.label}
+                        {intl.formatMessage({ id: option.labelId })}
                       </button>
                     ))}
                   </div>
@@ -233,7 +259,9 @@ export function VirtualServerDetailsDrawer({
                       className="flex items-center gap-2 py-8 text-muted-foreground"
                     >
                       <Loading />
-                      <span>Loading server details...</span>
+                      <span>
+                        {intl.formatMessage({ id: "gateways.details.loadingServerDetails" })}
+                      </span>
                     </div>
                   )}
 
@@ -278,7 +306,16 @@ export function VirtualServerDetailsDrawer({
 
                   {!isLoading && visibleComponentItems.length === 0 && (
                     <div className="py-8 text-sm text-muted-foreground">
-                      No {componentFilter === "all" ? "components" : componentFilter} found.
+                      {componentFilter === "all"
+                        ? intl.formatMessage({ id: "gateways.details.noComponentsFound" })
+                        : intl.formatMessage(
+                            { id: "gateways.details.noFilteredComponentsFound" },
+                            {
+                              filter: intl
+                                .formatMessage({ id: `gateways.details.filter.${componentFilter}` })
+                                .toLowerCase(),
+                            },
+                          )}
                     </div>
                   )}
                 </div>
@@ -298,30 +335,38 @@ export function VirtualServerDetailsDrawer({
 
                 <div className="border-b border-border p-4 pt-8">
                   <h3 className="mb-7 text-sm font-semibold text-foreground">
-                    Virtual server details
+                    {intl.formatMessage({ id: "gateways.details.title" })}
                   </h3>
 
                   <dl className="space-y-4">
-                    <DetailRow label="Status">
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.status" })}>
                       <span className="flex items-center gap-2">
                         <Activity className="size-3.5 text-emerald-400" />
-                        {server.enabled ? "Active" : "Inactive"}
+                        {server.enabled
+                          ? intl.formatMessage({ id: "gateways.details.status.active" })
+                          : intl.formatMessage({ id: "gateways.details.status.inactive" })}
                       </span>
                     </DetailRow>
-                    <DetailRow label="Visibility">
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.visibility" })}>
                       <span className="flex items-center gap-2">
                         <Users className="size-3.5 text-muted-foreground" />
-                        {formatVisibility(server.visibility)}
+                        {getVisibilityLabel(server.visibility)}
                       </span>
                     </DetailRow>
-                    <DetailRow label="Version">{server.version ?? "N/A"}</DetailRow>
-                    <DetailRow label="Server ID">
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.version" })}>
+                      {server.version ??
+                        intl.formatMessage({ id: "gateways.details.notAvailable" })}
+                    </DetailRow>
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.serverId" })}>
                       <CopyValue label="server ID" value={server.id} />
                     </DetailRow>
-                    <DetailRow label="URL">
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.url" })}>
                       <CopyValue label="URL" value={endpoint} />
                     </DetailRow>
-                    <DetailRow label="Tags" className="items-center">
+                    <DetailRow
+                      label={intl.formatMessage({ id: "gateways.details.tags" })}
+                      className="items-center"
+                    >
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {tags.map((tag) => (
                           <Badge
@@ -336,7 +381,7 @@ export function VirtualServerDetailsDrawer({
                           type="button"
                           className="text-[12px] text-muted-foreground hover:text-foreground"
                         >
-                          + add
+                          {intl.formatMessage({ id: "gateways.details.addTag" })}
                         </button>
                       </div>
                     </DetailRow>
@@ -344,11 +389,15 @@ export function VirtualServerDetailsDrawer({
                 </div>
 
                 <div className="p-4">
-                  <h3 className="mb-7 text-sm font-semibold text-foreground">Activity</h3>
+                  <h3 className="mb-7 text-sm font-semibold text-foreground">
+                    {intl.formatMessage({ id: "gateways.details.activity" })}
+                  </h3>
                   <dl className="space-y-4">
-                    <DetailRow label="Created">{formatServerDateTime(server.createdAt)}</DetailRow>
-                    <DetailRow label="Last modified">
-                      {formatServerDateTime(server.updatedAt)}
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.created" })}>
+                      {formatServerDateTime(server.createdAt, notSyncedYet)}
+                    </DetailRow>
+                    <DetailRow label={intl.formatMessage({ id: "gateways.details.lastModified" })}>
+                      {formatServerDateTime(server.updatedAt, notSyncedYet)}
                     </DetailRow>
                   </dl>
                 </div>
