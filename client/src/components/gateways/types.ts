@@ -12,6 +12,16 @@ export interface ActionCard {
 
 export type ComponentFilter = "all" | "tools" | "resources" | "prompts";
 
+export type CreateServerVisibility = "public" | "team" | "private";
+
+export interface CreateServerDetails {
+  name: string;
+  visibility: CreateServerVisibility;
+  oauthEnabled: boolean;
+  tags?: string[];
+  description?: string;
+}
+
 export interface DetailComponentItem {
   id: string;
   name: string;
