@@ -30,7 +30,7 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
-pytest.importorskip("cpex_rate_limiter", reason="cpex-rate-limiter plugin not installed")
+pytest.importorskip("cpex_rate_limiter.rate_limiter")
 
 # First-Party
 from mcpgateway.main import app

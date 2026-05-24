@@ -675,6 +675,33 @@ plugins:
       license_required: false
       allow_overrides: []
 
+  # Prompt Injection Guard - screens for prompt injection and jailbreak attempts (OWASP LLM01/LLM07)
+  - name: "PromptInjectionGuardPlugin"
+    kind: "plugins.prompt_injection_guard.prompt_injection_guard.PromptInjectionGuardPlugin"
+    description: "Screens prompts and tool arguments for prompt injection and jailbreak attempts"
+    version: "0.1.0"
+    author: "ContextForge"
+    hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
+    tags: ["security", "injection", "jailbreak", "owasp-llm01", "owasp-llm07"]
+    mode: "enforce" # Set to "enforce" or "permissive" to activate
+    priority: 45 # After ArgumentNormalizer (40), before PIIFilter (50)
+    conditions: []
+    config:
+      mode: "disable" # block | disable | redact | flag-only
+      check_tool_output: false
+      use_llm_guard: false # Set true after installing plugins extra (pip install mcp-contextforge-gateway[plugins])
+      redaction_placeholder: "[INJECTION_REDACTED]"
+      categories:
+        injection:
+          threshold: 0.75
+          action: "disable"
+        jailbreak:
+          threshold: 0.80
+          action: "disable"
+        system_prompt_leak:
+          threshold: 0.70
+          action: "disable"
+
   # Harmful Content Detector - keyword lexicons
   - name: "HarmfulContentDetector"
     kind: "plugins.harmful_content_detector.harmful_content_detector.HarmfulContentDetectorPlugin"

@@ -1864,3 +1864,36 @@ def test_redact_token_response_returns_new_dict():
     payload = {"access_token": "AT", "scope": "repo"}
     OAuthManager._redact_token_response(payload)
     assert payload["access_token"] == "AT"
+
+
+# ---------- _is_enabled_flag ----------
+
+
+def test_is_enabled_flag_string_values(oauth_manager):
+    assert oauth_manager._is_enabled_flag("true") is True
+    assert oauth_manager._is_enabled_flag("TRUE") is True
+    assert oauth_manager._is_enabled_flag("1") is True
+    assert oauth_manager._is_enabled_flag("yes") is True
+    assert oauth_manager._is_enabled_flag("on") is True
+    assert oauth_manager._is_enabled_flag("false") is False
+    assert oauth_manager._is_enabled_flag("0") is False
+    assert oauth_manager._is_enabled_flag("no") is False
+
+
+# ---------- _extract_token_audience ----------
+
+
+def test_extract_token_audience_empty_token(oauth_manager):
+    assert oauth_manager._extract_token_audience("") is None
+
+
+def test_extract_token_audience_valid_jwt(oauth_manager):
+    # Standard
+    import base64
+    import json
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"aud": "test-audience", "sub": "user"}).encode()).rstrip(b"=").decode()
+    token = f"{header}.{payload}.fakesig"
+    result = oauth_manager._extract_token_audience(token)
+    assert result == "test-audience"
