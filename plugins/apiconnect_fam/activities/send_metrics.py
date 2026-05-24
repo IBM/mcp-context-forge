@@ -96,7 +96,9 @@ class SendMetricsActivity(AbstractScheduledActivity):
 
             tool_metrics_raw = db.query(ToolMetric).filter(ToolMetric.timestamp >= time_window_start).all()
 
-            total_metrics = len(server_metrics_raw) + len(tool_metrics_raw)
+            # Only count server metrics since tool invocations are already included in server metrics
+            # (tools are part of servers, so tool metrics are reflected in server-level metrics)
+            total_metrics = len(server_metrics_raw)
 
             # Organize metrics
             server_metrics_map = self._organize_server_metrics(server_metrics_raw)

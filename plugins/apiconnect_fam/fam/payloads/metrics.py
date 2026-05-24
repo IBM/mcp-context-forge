@@ -125,7 +125,7 @@ class FAMMetricsPayload:
         """Build RuntimeTransactionMetrics payload.
 
         Args:
-            all_metrics: Combined list of all ServerMetric and ToolMetric objects
+            all_metrics: List of all ServerMetric objects (tool metrics are already included in server metrics)
 
         Returns:
             RuntimeTransactionMetrics dict
@@ -146,25 +146,24 @@ class FAMMetricsPayload:
         """
         # Build server metrics list
         mcp_server_metrics_list = []
-        all_metrics = []
+        all_server_metrics = []
 
         for server_id, server_metrics in server_metrics_map.items():
             tool_metrics_map = tool_metrics_by_server.get(server_id, {})
 
-            # Add to combined metrics for runtime summary
-            all_metrics.extend(server_metrics)
-            for tool_metrics in tool_metrics_map.values():
-                all_metrics.extend(tool_metrics)
+            # Only add server metrics to runtime summary
+            # Tool invocations are already included in server metrics (tools are part of servers)
+            all_server_metrics.extend(server_metrics)
 
             # Build server metrics entry
             if server_metrics or tool_metrics_map:
                 mcp_server_metrics_list.append(FAMMetricsPayload.build_server_metrics(server_id, server_metrics, tool_metrics_map))
 
-        # Build runtime metrics
-        runtime_metrics = FAMMetricsPayload.build_runtime_metrics(all_metrics)
+        # Build runtime metrics from server metrics only
+        runtime_metrics = FAMMetricsPayload.build_runtime_metrics(all_server_metrics)
 
-        # Build summary metrics
-        summary_metrics = FAMMetricsPayload._aggregate_metrics(all_metrics)
+        # Build summary metrics from server metrics only
+        summary_metrics = FAMMetricsPayload._aggregate_metrics(all_server_metrics)
 
         return {
             "timestamp": FAMMetricsPayload._convert_to_milliseconds(timestamp),
