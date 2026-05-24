@@ -2247,7 +2247,7 @@ class TestOAuthCallbackCSPCompliance:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret",  # pragma: allowlist secret
             "authorization_url": "https://oauth.example.com/authorize",
             "token_url": "https://oauth.example.com/token",
             "redirect_uri": "http://localhost:4444/oauth/callback",
@@ -2286,8 +2286,7 @@ class TestOAuthCallbackCSPCompliance:
 
         set_cookie = result.headers.get("set-cookie")
         assert set_cookie is not None, "Response must include Set-Cookie header"
-        assert ADMIN_CSRF_COOKIE_NAME in set_cookie, \
-            f"Set-Cookie must contain {ADMIN_CSRF_COOKIE_NAME}"
+        assert ADMIN_CSRF_COOKIE_NAME in set_cookie, f"Set-Cookie must contain {ADMIN_CSRF_COOKIE_NAME}"
 
         cookie_value = None
         for part in set_cookie.split(";"):
@@ -2296,13 +2295,10 @@ class TestOAuthCallbackCSPCompliance:
                 cookie_value = part.split("=", 1)[1]
                 break
         assert cookie_value is not None, f"Cookie {ADMIN_CSRF_COOKIE_NAME} must have a value"
-        assert len(cookie_value) >= 32, \
-            f"CSRF token must be at least 32 chars, got {len(cookie_value)}"
+        assert len(cookie_value) >= 32, f"CSRF token must be at least 32 chars, got {len(cookie_value)}"
 
-        assert "Secure" not in set_cookie or "HttpOnly" not in set_cookie, \
-            "CSRF cookie must NOT be HttpOnly (JS needs to read it)"
-        assert 'SameSite=strict' in set_cookie or 'SameSite=Strict' in set_cookie, \
-            "CSRF cookie must have SameSite=strict"
+        assert "Secure" not in set_cookie or "HttpOnly" not in set_cookie, "CSRF cookie must NOT be HttpOnly (JS needs to read it)"
+        assert "SameSite=strict" in set_cookie or "SameSite=Strict" in set_cookie, "CSRF cookie must have SameSite=strict"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_reuses_existing_csrf_cookie(self, mock_db, mock_request):
@@ -2314,7 +2310,7 @@ class TestOAuthCallbackCSPCompliance:
         mock_gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test-client",
-            "client_secret": "test-secret",
+            "client_secret": "test-secret",  # pragma: allowlist secret
             "authorization_url": "https://oauth.example.com/authorize",
             "token_url": "https://oauth.example.com/token",
             "redirect_uri": "http://localhost:4444/oauth/callback",
@@ -2331,11 +2327,13 @@ class TestOAuthCallbackCSPCompliance:
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
             mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="csrf-reuse-test")
-            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value={
-                "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z",
-                "token_aud": None,
-            })
+            mock_mgr.complete_authorization_code_flow = AsyncMock(
+                return_value={
+                    "user_id": "user@example.com",
+                    "expires_at": "2026-12-31T23:59:59Z",
+                    "token_aud": None,
+                }
+            )
             mock_oauth_mgr.return_value = mock_mgr
 
             with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
@@ -2351,8 +2349,7 @@ class TestOAuthCallbackCSPCompliance:
 
         assert isinstance(result, HTMLResponse)
         set_cookie = result.headers.get("set-cookie", "")
-        assert existing_token in set_cookie, \
-            "Existing valid CSRF token should be reused in Set-Cookie"
+        assert existing_token in set_cookie, "Existing valid CSRF token should be reused in Set-Cookie"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_success_handles_missing_csp_nonce_gracefully(self, mock_db, mock_request):
