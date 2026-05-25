@@ -11,10 +11,11 @@ Handles SSO login flows, provider configuration, and callback handling.
 # Standard
 import secrets
 from typing import Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -220,7 +221,16 @@ async def initiate_sso_login(
     provider_id: str,
     request: Request,
     response: Response,
-    redirect_uri: str = Query(..., max_length=2048, description="Callback URI after authentication"),
+    redirect_uri: Optional[str] = Query(
+        None,
+        max_length=2048,
+        description=(
+            "Callback URI after authentication. When omitted, defaults to this "
+            "gateway's /auth/sso/callback/{provider_id} on the same origin, which "
+            "is the right answer for both the SP-initiated form and IdP-initiated "
+            "chiclet flows."
+        ),
+    ),
     # scopes is space-separated per RFC 6749 Section 3.3 and its character set is
     # provider-specific (Google scopes are URLs, Microsoft Graph allows many special
     # chars). Server-side resolution in _resolve_login_scopes enforces the provider
@@ -230,9 +240,16 @@ async def initiate_sso_login(
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
-    Validates the redirect_uri against a server-side allowlist to prevent open redirect attacks.
-    Only allows relative URIs, URIs matching app_domain, or URIs from configured allowed_origins.
-    Does NOT trust the Host header for validation.
+    When ``redirect_uri`` is supplied, it is validated against a server-side
+    allowlist (relative URIs, ``app_domain``, or ``allowed_origins``) to prevent
+    open redirect attacks; the Host header is not trusted for validation. When
+    omitted, the URI is built server-side from the route name and used as-is —
+    suitable for IdP-initiated chiclet flows on a properly proxy-fronted
+    deployment.
+
+    Browser navigations (``Accept: text/html``) get a 302 to the IdP's
+    authorize endpoint; XHR clients (``Accept: application/json``) keep
+    receiving an ``SSOLoginResponse``.
 
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
@@ -256,9 +273,13 @@ async def initiate_sso_login(
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
-    # Validate redirect_uri to prevent open redirect attacks
-    # Uses server-side allowlist (allowed_origins, app_domain) - does NOT trust Host header
-    if not _validate_redirect_uri(redirect_uri, request):
+    # If the caller didn't supply a redirect_uri, point at our own callback
+    # for this provider. Skipping the allowlist check here is safe only as
+    # long as the request host is itself trustworthy (proxy-normalized in
+    # production); the open-redirect threat model targets user-supplied URIs.
+    if redirect_uri is None:
+        redirect_uri = str(request.url_for("handle_sso_callback", provider_id=provider_id))
+    elif not _validate_redirect_uri(redirect_uri, request):
         # Sanitize untrusted redirect_uri before logging to prevent log injection
         logger.warning(f"SSO login rejected - invalid redirect_uri: {sanitize_for_log(redirect_uri)}")
         raise HTTPException(
@@ -279,23 +300,32 @@ async def initiate_sso_login(
     if not auth_url:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found or disabled")
 
-    # Extract state from URL for client reference
-    # Standard
-    import urllib.parse
-
-    parsed = urllib.parse.urlparse(auth_url)
-    params = urllib.parse.parse_qs(parsed.query)
-    state = params.get("state", [""])[0]
-
     use_secure = (settings.environment == "production") or settings.secure_cookies
-    response.set_cookie(
-        key="sso_session_id",
-        value=browser_session_binding,
-        httponly=True,
-        secure=use_secure,
-        samesite=settings.cookie_samesite,
-        path=settings.app_root_path or "/",
-    )
+    cookie_kwargs = {
+        "key": "sso_session_id",
+        "value": browser_session_binding,
+        "httponly": True,
+        "secure": use_secure,
+        "samesite": settings.cookie_samesite,
+        "path": settings.app_root_path or "/",
+    }
+
+    # Direct browser navigation (e.g. an IdP-initiated chiclet click that
+    # lands users on this URL with a pre-filled redirect_uri) wants a 302
+    # to the IdP's /authorize, not a JSON payload. The XHR-driven login
+    # form keeps getting JSON because it sends Accept: application/json.
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
+        redirect_response = RedirectResponse(url=auth_url, status_code=302)
+        redirect_response.set_cookie(**cookie_kwargs)
+        return redirect_response
+
+    response.set_cookie(**cookie_kwargs)
+
+    # Extract state from URL for client reference
+    parsed = urlparse(auth_url)
+    params = parse_qs(parsed.query)
+    state = params.get("state", [""])[0]
 
     return SSOLoginResponse(authorization_url=auth_url, state=state)
 
