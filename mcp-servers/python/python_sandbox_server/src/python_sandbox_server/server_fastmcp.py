@@ -19,8 +19,10 @@ Security Features:
 - Comprehensive logging and monitoring
 """
 
+import ast
 import logging
 import os
+import secrets as _secrets
 import signal
 import sys
 import time
@@ -32,6 +34,9 @@ from uuid import uuid4
 import orjson
 from fastmcp import FastMCP
 from pydantic import Field
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # Configure logging to stderr to avoid MCP protocol interference
 logging.basicConfig(
@@ -52,6 +57,54 @@ MAX_OUTPUT_SIZE = int(os.getenv("SANDBOX_MAX_OUTPUT_SIZE", "1048576"))  # 1MB
 ENABLE_NETWORK = os.getenv("SANDBOX_ENABLE_NETWORK", "false").lower() == "true"
 ENABLE_FILESYSTEM = os.getenv("SANDBOX_ENABLE_FILESYSTEM", "false").lower() == "true"
 ENABLE_DATA_SCIENCE = os.getenv("SANDBOX_ENABLE_DATA_SCIENCE", "false").lower() == "true"
+
+# HTTP bearer auth token — required when transport=http
+SANDBOX_API_TOKEN = os.getenv("SANDBOX_API_TOKEN", "")
+
+
+class _BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Bearer token authentication middleware for HTTP transport."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        auth = request.headers.get("Authorization", "")
+        bearer = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        if not _secrets.compare_digest(bearer, SANDBOX_API_TOKEN):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+
+# Dunder attributes that are safe to access explicitly in sandboxed code.
+# Everything else starting/ending with __ is blocked by _guarded_getattr.
+_SAFE_DUNDER_ATTRS: frozenset[str] = frozenset({
+    "__str__", "__repr__", "__len__", "__iter__", "__next__",
+    "__getitem__", "__setitem__", "__delitem__", "__contains__",
+    "__add__", "__radd__", "__sub__", "__rsub__", "__mul__", "__rmul__",
+    "__truediv__", "__rtruediv__", "__floordiv__", "__rfloordiv__",
+    "__mod__", "__rmod__", "__pow__", "__rpow__",
+    "__neg__", "__pos__", "__abs__", "__invert__",
+    "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+    "__bool__", "__int__", "__float__", "__complex__",
+    "__enter__", "__exit__", "__call__", "__hash__",
+    "__name__", "__doc__", "__format__",
+    "__and__", "__rand__", "__or__", "__ror__", "__xor__", "__rxor__",
+    "__lshift__", "__rshift__",
+})
+
+
+def _guarded_getattr(obj: object, name: str, *args: Any) -> Any:
+    """RestrictedPython _getattr_ guard — blocks class-hierarchy traversal."""
+    if isinstance(name, str) and name.startswith("__") and name not in _SAFE_DUNDER_ATTRS:
+        raise AttributeError(f"Access to attribute '{name}' is blocked by sandbox policy")
+    if args:
+        return getattr(obj, name, args[0])
+    return getattr(obj, name)
+
+
+def _guarded_setattr(obj: object, name: str, value: Any) -> None:
+    """RestrictedPython _setattr_ guard — blocks dunder mutation."""
+    if isinstance(name, str) and name.startswith("__"):
+        raise AttributeError(f"Setting attribute '{name}' is blocked by sandbox policy")
+    setattr(obj, name, value)
 
 # Safe standard library modules (no I/O, no system access)
 SAFE_STDLIB_MODULES = [
@@ -250,9 +303,6 @@ class PythonSandbox:
             "print": print,
             "isinstance": isinstance,
             "issubclass": issubclass,
-            "hasattr": hasattr,
-            "getattr": getattr,
-            "setattr": setattr,
             "callable": callable,
             "type": type,
             "id": id,
@@ -298,9 +348,13 @@ class PythonSandbox:
                 # Module not installed, skip it
                 pass
 
-        globals_dict = {"__builtins__": safe_builtins, **safe_imports}
-
-        # Note: RestrictedPython support is added during execution
+        globals_dict = {
+            "__builtins__": safe_builtins,
+            # RestrictedPython guards — mediate all attribute access in compiled code
+            "_getattr_": _guarded_getattr,
+            "_setattr_": _guarded_setattr,
+            **safe_imports,
+        }
 
         return globals_dict
 
@@ -359,20 +413,22 @@ class PythonSandbox:
             if pattern in code:
                 warnings.append(warning)
 
-        # Check for dunder methods (but allow __name__, __main__)
-        if "__" in code:
-            # More nuanced check for dangerous dunders
-            dangerous_dunders = [
-                "__class__",
-                "__base__",
-                "__subclasses__",
-                "__globals__",
-                "__code__",
-                "__closure__",
-            ]
-            for dunder in dangerous_dunders:
-                if dunder in code:
-                    security_issues.append(f"Potentially dangerous dunder method: {dunder}")
+        # AST-based check: walk the parse tree for explicit dangerous attribute access.
+        # Substring matching is trivially bypassed by runtime string construction
+        # ('__cla' + 'ss__'); AST analysis catches static accesses without false negatives
+        # from innocuous strings like docstrings. Runtime-constructed names are caught at
+        # execution time by the _guarded_getattr policy injected into safe_globals.
+        try:
+            tree = ast.parse(code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute):
+                    attr = node.attr
+                    if attr.startswith("__") and attr not in _SAFE_DUNDER_ATTRS:
+                        security_issues.append(
+                            f"Potentially dangerous attribute access in source: {attr}"
+                        )
+        except SyntaxError:
+            pass  # already caught by compile() above
 
         # Check for attempts to access builtins
         if "builtins" in code or "__builtins__" in code:
@@ -537,15 +593,21 @@ class PythonSandbox:
                 if "_getitem_" not in safe_globals:
                     safe_globals["_getitem_"] = lambda obj, key: obj[key]
 
-                # Merge builtins (ours + RestrictedPython's)
+                # Merge builtins: start from our allowlist, then let RestrictedPython's
+                # controlled entries win — this preserves RP's mediated versions of any
+                # key that overlaps (e.g. _print_) instead of our raw builtins winning.
                 if "__builtins__" in rp_safe_globals and isinstance(
                     rp_safe_globals["__builtins__"], dict
                 ):
-                    merged_builtins = dict(rp_safe_globals["__builtins__"])
-                    merged_builtins.update(our_builtins)
+                    merged_builtins = dict(our_builtins)
+                    merged_builtins.update(rp_safe_globals["__builtins__"])
                     safe_globals["__builtins__"] = merged_builtins
                 else:
                     safe_globals["__builtins__"] = our_builtins
+
+                # Re-assert our guards after the merge — RP must not override them
+                safe_globals["_getattr_"] = _guarded_getattr
+                safe_globals["_setattr_"] = _guarded_setattr
 
                 safe_globals["_print_"] = PrintCollector
 
@@ -570,15 +632,12 @@ class PythonSandbox:
                     else:
                         raise RuntimeError("Failed to compile code")
             else:
-                # Fallback to regular Python
-                safe_globals["__builtins__"]["__import__"] = self._safe_import
-                if is_single_expression:
-                    expression_result = eval(code, safe_globals, local_vars)
-                else:
-                    exec(code, safe_globals, local_vars)
-                    # Check if we captured a final expression
-                    if last_line_expression and "__ipython_result__" in local_vars:
-                        expression_result = local_vars["__ipython_result__"]
+                # RestrictedPython is a required dependency — fail closed rather than fall
+                # back to unrestricted eval/exec which would bypass the entire sandbox policy.
+                raise RuntimeError(
+                    "RestrictedPython is required but not available. "
+                    "Install it with: pip install RestrictedPython"
+                )
 
             # Cancel timeout
             if hasattr(signal, "SIGALRM"):
@@ -824,8 +883,29 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "http":
-        logger.info(f"Starting Python Sandbox FastMCP Server on HTTP at {args.host}:{args.port}")
-        mcp.run(transport="http", host=args.host, port=args.port)
+        if not SANDBOX_API_TOKEN:
+            logger.error(
+                "SANDBOX_API_TOKEN env var must be set when using HTTP transport. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+            sys.exit(1)
+        if len(SANDBOX_API_TOKEN) < 32:
+            logger.error(
+                "SANDBOX_API_TOKEN must be at least 32 characters. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+            sys.exit(1)
+
+        import uvicorn
+
+        # fastmcp 3.x exposes http_app(); wrap it with auth before handing to uvicorn
+        http_app = mcp.http_app()
+        secured_app = _BearerAuthMiddleware(http_app)
+
+        logger.info(
+            f"Starting Python Sandbox FastMCP Server on HTTP at {args.host}:{args.port} (auth required)"
+        )
+        uvicorn.run(secured_app, host=args.host, port=args.port)
     else:
         logger.info("Starting Python Sandbox FastMCP Server on stdio")
         mcp.run()
