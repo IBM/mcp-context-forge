@@ -1026,6 +1026,15 @@ describe("useMCPServerForm", () => {
           }),
         );
 
+        // Mock triggerOAuthAuthorization to avoid window.open in tests
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockResolvedValueOnce({
+            type: "oauth_callback",
+            status: "success",
+            gatewayName: "Test OAuth Gateway",
+          });
+
         const { result } = renderHook(() => useMCPServerForm());
         const mockEvent = {
           preventDefault: vi.fn(),
@@ -1046,6 +1055,7 @@ describe("useMCPServerForm", () => {
         // in the servers.test.ts file. Here we just verify the form state changes.
         await waitFor(() => {
           expect(result.current.isSubmitting).toBe(false);
+          expect(triggerOAuthMock).toHaveBeenCalledWith("new-gateway-123");
         });
       });
 
@@ -1082,6 +1092,15 @@ describe("useMCPServerForm", () => {
           }),
         );
 
+        // Mock triggerOAuthAuthorization to avoid window.open in tests
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockResolvedValueOnce({
+            type: "oauth_callback",
+            status: "success",
+            gatewayName: "Updated OAuth Gateway",
+          });
+
         const { result } = renderHook(() => useMCPServerForm("existing-gateway"));
         const mockEvent = {
           preventDefault: vi.fn(),
@@ -1101,6 +1120,7 @@ describe("useMCPServerForm", () => {
 
         await waitFor(() => {
           expect(result.current.isSubmitting).toBe(false);
+          expect(triggerOAuthMock).toHaveBeenCalledWith("existing-gateway");
         });
       });
 
