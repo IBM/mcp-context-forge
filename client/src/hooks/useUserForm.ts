@@ -85,7 +85,12 @@ export interface UseUserFormReturn {
   // Actions
   resetForm: () => void;
   validateForm: () => boolean;
-  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
+  handleSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    onSuccess?: () => void,
+    onOptimisticCreate?: (userData: CreateUserRequest) => void,
+    onError?: (userData: CreateUserRequest) => void,
+  ) => Promise<void>;
   getFormData: () => CreateUserRequest;
 }
 
@@ -225,13 +230,23 @@ export function useUserForm(): UseUserFormReturn {
   }, []);
 
   const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
+    async (
+      event: FormEvent<HTMLFormElement>,
+      onSuccess?: () => void,
+      onOptimisticCreate?: (userData: CreateUserRequest) => void,
+      onError?: (userData: CreateUserRequest) => void,
+    ) => {
       event.preventDefault();
 
       if (validateForm()) {
+        // Form is valid, proceed with submission
+        const formData = getFormData();
+
         try {
-          // Form is valid, proceed with submission
-          const formData = getFormData();
+          // Optimistic update: call before API request
+          if (onOptimisticCreate) {
+            onOptimisticCreate(formData);
+          }
 
           // Call the API to create user
           await createUser(formData);
@@ -244,6 +259,11 @@ export function useUserForm(): UseUserFormReturn {
           // Reset form after successful submission
           resetForm();
         } catch (error) {
+          // Rollback optimistic update on error
+          if (onError) {
+            onError(formData);
+          }
+
           // Handle API errors from useQuery
           const fallbackMessage = intl.formatMessage({ id: "users.form.error.createFailed" });
           const errorMessage = parseApiError(error, fallbackMessage);
