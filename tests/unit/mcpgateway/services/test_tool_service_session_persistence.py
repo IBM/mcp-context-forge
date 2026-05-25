@@ -62,20 +62,10 @@ class TestUpstreamSessionPersistence:
         # Verify: Check that request_headers_var was set during PHASE 0
         try:
             current_headers = request_headers_var.get()
-            assert current_headers is not None, (
-                "request_headers_var was not set during invoke_tool. "
-                "This breaks session persistence for stateful MCP servers (Issue #4697)."
-            )
-            assert current_headers == request_headers, (
-                f"request_headers_var was set to {current_headers}, "
-                f"but expected {request_headers}"
-            )
+            assert current_headers is not None, "request_headers_var was not set during invoke_tool. " "This breaks session persistence for stateful MCP servers (Issue #4697)."
+            assert current_headers == request_headers, f"request_headers_var was set to {current_headers}, " f"but expected {request_headers}"
         except LookupError:
-            pytest.fail(
-                "request_headers_var was not set during invoke_tool. "
-                "PHASE 0 in tool_service.py should set this ContextVar "
-                "to enable session ID propagation (Issue #4697)."
-            )
+            pytest.fail("request_headers_var was not set during invoke_tool. " "PHASE 0 in tool_service.py should set this ContextVar " "to enable session ID propagation (Issue #4697).")
 
     @pytest.mark.asyncio
     async def test_invoke_tool_skips_setting_request_headers_var_when_none(self):
@@ -121,19 +111,13 @@ class TestUpstreamSessionPersistence:
             if had_value_before:
                 # If there was a value before, it should be unchanged
                 assert current_headers == value_before, (
-                    f"request_headers_var was modified from {value_before} to {current_headers}. "
-                    "PHASE 0 should skip setting the ContextVar when request_headers is None."
+                    f"request_headers_var was modified from {value_before} to {current_headers}. " "PHASE 0 should skip setting the ContextVar when request_headers is None."
                 )
             else:
                 # If there was no value before, there still shouldn't be one
                 # (or if there is, it shouldn't be None)
-                assert current_headers is not None, (
-                    "request_headers_var was set to None. "
-                    "PHASE 0 should skip setting the ContextVar when request_headers is None."
-                )
+                assert current_headers is not None, "request_headers_var was set to None. " "PHASE 0 should skip setting the ContextVar when request_headers is None."
         except LookupError:
             # This is the expected behavior - ContextVar was never set
             # This is correct when request_headers is None
             pass
-
-# Made with Bob
