@@ -291,7 +291,7 @@ class RootService:
             root_uri: Root URI to remove
 
         Raises:
-            RootServiceError: If root not found
+            RootServiceNotFoundError: If root not found
 
         Examples:
             >>> from mcpgateway.services.root_service import RootService
@@ -311,7 +311,7 @@ class RootService:
         # Normalize the URI to match how it was stored
         normalized_uri = self._make_root_uri(root_uri)
         if normalized_uri not in self._roots:
-            raise RootServiceError(f"Root not found: {root_uri}")
+            raise RootServiceNotFoundError(f"Root not found: {root_uri}")
         root_obj = self._roots.pop(normalized_uri)
         await self._notify_root_removed(root_obj)
         logger.info(f"Removed root: {root_uri}")
