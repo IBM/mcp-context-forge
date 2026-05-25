@@ -1094,9 +1094,7 @@ describe("useMCPServerForm", () => {
       it("delays onSuccess by 2 s after OAuth success so the notification is visible", async () => {
         vi.useFakeTimers();
 
-        server.use(
-          http.post("/gateways", () => HttpResponse.json({ id: "gateway-delay-test" })),
-        );
+        server.use(http.post("/gateways", () => HttpResponse.json({ id: "gateway-delay-test" })));
 
         const triggerOAuthMock = vi
           .spyOn(serversApi, "triggerOAuthAuthorization")
