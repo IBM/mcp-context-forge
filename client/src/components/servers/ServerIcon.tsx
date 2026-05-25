@@ -1,4 +1,5 @@
 import { useMemo, memo } from "react";
+import { MCPIcon } from "@/components/icons/MCPIcon";
 
 enum ServerIconColor {
   Red = "bg-red-500",
@@ -41,19 +42,24 @@ export const ServerIcon = memo(function ServerIcon({ name, size = "md" }: Server
     return COLORS[hash % COLORS.length];
   }, [name]);
 
-  const sizeClasses = {
-    sm: "w-6 h-6 text-xs",
-    md: "w-8 h-8 text-sm",
-    lg: "w-10 h-10 text-base",
+  const wrapperSizeClasses = {
+    sm: "h-5 w-5 rounded-[4px]",
+    md: "h-6 w-6 rounded-[5px]",
+    lg: "h-8 w-8 rounded-md",
   };
 
-  const initial = name.charAt(0).toUpperCase();
+  const iconSizeClasses = {
+    sm: "h-3 w-3 text-black",
+    md: "h-3.5 w-3.5 text-black",
+    lg: "h-4 w-4 text-black",
+  };
 
   return (
     <div
-      className={`${colorClass} ${sizeClasses[size]} rounded-md flex items-center justify-center text-white font-semibold`}
+      className={`${colorClass} ${wrapperSizeClasses[size]} flex shrink-0 items-center justify-center`}
+      aria-label={`${name} icon`}
     >
-      {initial}
+      <MCPIcon className={iconSizeClasses[size]} />
     </div>
   );
 });
