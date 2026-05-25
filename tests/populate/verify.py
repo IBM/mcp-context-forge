@@ -51,14 +51,15 @@ async def verify_entities(base_url: str, email_domain: str = "loadtest.example.c
 
     # Generate admin token
     try:
-        # First-Party
-        from mcpgateway.utils.create_jwt_token import _create_jwt_token
+        # Local
+        from tests.helpers.auth import make_test_jwt
 
-        admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN") or _create_jwt_token(
-            data={"sub": "admin@example.com", "username": "admin@example.com"},
+        admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN") or make_test_jwt(
+            "admin@example.com",
+            is_admin=True,
             expires_in_minutes=60,
-            user_data={"email": "admin@example.com", "full_name": "Admin", "is_admin": True},
             teams=None,
+            extra_payload={"username": "admin@example.com", "full_name": "Admin"},
         )
     except ImportError:
         admin_token = os.environ.get("MCPGATEWAY_BEARER_TOKEN", "")

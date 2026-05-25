@@ -23,10 +23,19 @@ tests/
 ├── migration/        # Database migration tests
 ├── differential/     # Differential testing
 ├── manual/           # Manual test scenarios
-├── helpers/           # Test utilities (query_counter.py, conftest.py)
+├── helpers/           # Test utilities
+│   ├── auth.py        # JWT helpers: make_test_jwt(), make_legacy_test_jwt()
+│   ├── api_helpers.py # API utilities: ApiTestHelper class
+│   └── ...
 ├── utils/            # Additional test utilities
 └── conftest.py        # Shared pytest fixtures
 ```
+
+## Test Helpers
+
+Use centralized helpers in `tests/helpers/`:
+- `auth.py` - JWT token creation (`make_test_jwt`, `make_auth_headers`)
+- `api_helpers.py` - API test utilities (`ApiTestHelper` class)
 
 ## Quick Commands
 

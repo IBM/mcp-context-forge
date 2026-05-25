@@ -71,10 +71,11 @@ def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET, i
     if include_jti and "jti" not in token_payload:
         token_payload["jti"] = str(uuid.uuid4())
 
-    if exp_delta is not None:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
-        token_payload["exp"] = int(expire.timestamp())
+    if exp_delta is None:
+        return jwt.encode(token_payload, secret, algorithm=ALGO)
 
+    expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
+    token_payload["exp"] = int(expire.timestamp())
     return jwt.encode(token_payload, secret, algorithm=ALGO)
 
 
