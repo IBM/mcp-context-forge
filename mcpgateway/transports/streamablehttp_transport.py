@@ -4766,6 +4766,10 @@ class _StreamableHttpAuthHandler:
         self.receive = receive
         self.send = send
 
+    def _request_path(self) -> str:
+        """Return the public MCP path used for authentication decisions."""
+        return self.scope.get("modified_path") or self.scope.get("path", "")
+
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
 
@@ -4802,7 +4806,7 @@ class _StreamableHttpAuthHandler:
             True if authentication passes or is skipped.
             False if authentication fails and a 401 response is sent.
         """
-        path = self.scope.get("path", "")
+        path = self._request_path()
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
         # Check if this is an MCP-related path that requires authentication.
@@ -5304,7 +5308,7 @@ class _StreamableHttpAuthHandler:
             except jwt.DecodeError:
                 return OAuthAuthResult.NOT_APPLICABLE
 
-        path = self.scope.get("path", "")
+        path = self._request_path()
         match = _SERVER_ID_RE.search(path)
         if not match:
             return OAuthAuthResult.NOT_APPLICABLE

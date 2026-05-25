@@ -2807,11 +2807,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
+    Middleware that rewrites paths ending with '/mcp' to '/mcp/' before authentication.
 
     - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
     - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
-    - Authentication is performed before any path rewriting.
+    - Authentication uses ``scope["modified_path"]`` to preserve server-scoped decisions after rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
     - Routes through the middleware stack (including CORSMiddleware) for proper CORS preflight handling.
@@ -2906,10 +2906,11 @@ class MCPPathRewriteMiddleware:
 
     async def _call_streamable_http(self, scope, receive, send):
         """
-        Handles the streamable HTTP request after authentication and path rewriting.
+        Handles streamable HTTP path rewriting, authentication, and routing.
 
-        If auth succeeds and path ends with /mcp, rewrites to /mcp/ and calls self.application
-        (continuing through middleware stack including CORSMiddleware).
+        If a server-scoped path ends with /mcp, rewrites to /mcp/ before auth,
+        then calls self.application after auth succeeds (continuing through
+        middleware stack including CORSMiddleware).
 
         Args:
             scope (dict): The ASGI connection scope containing request metadata.
@@ -2928,11 +2929,6 @@ class MCPPathRewriteMiddleware:
             ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
             >>> app_mock.assert_called_once_with(scope, receive, send)
         """
-        # Auth check first
-        auth_ok = await streamable_http_auth(scope, receive, send)
-        if not auth_ok:
-            return
-
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
 
@@ -2946,6 +2942,9 @@ class MCPPathRewriteMiddleware:
         # Update modified_path to the app-relative path (without root_path prefix).
         # This ensures streamablehttp_transport can extract server_id via regex (#4266).
         scope["modified_path"] = app_path
+
+        rewrite_path = None
+        invalid_server_path = False
 
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
@@ -2962,18 +2961,35 @@ class MCPPathRewriteMiddleware:
                     # would be rewritten and silently fall through (#3891).
                     _srv_match = re.match(r"/servers/([^/]+)/mcp", app_path)
                     if not _srv_match:
-                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
-                        await response(scope, receive, send)
-                        return
+                        invalid_server_path = True
+                    else:
+                        # Rewrite to /mcp/ before auth so auth checks never
+                        # need to touch the streaming request body before the
+                        # downstream MCP handler receives it. Keep the public
+                        # app-relative path in modified_path for server_id
+                        # extraction by auth and the transport handler.
+                        rewrite_path = f"{root_path}/mcp/" if root_path else "/mcp/"
                 else:
                     # Not a /servers/ path — do not rewrite, pass through
-                    await self.application(scope, receive, send)
-                    return
-                # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-                # Preserve root_path prefix when rewriting
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
-                await self.application(scope, receive, send)
-                return
+                    rewrite_path = None
+
+        if rewrite_path is not None:
+            # Continue through middleware with the mounted MCP route while
+            # retaining modified_path as the original app-relative path.
+            scope["path"] = rewrite_path
+
+        # Auth runs after any MCP route rewrite. streamable_http_auth reads
+        # modified_path for server-scoped decisions, so it still sees
+        # /servers/{id}/mcp while the downstream handler sees /mcp/.
+        auth_ok = await streamable_http_auth(scope, receive, send)
+        if not auth_ok:
+            return
+
+        if invalid_server_path:
+            response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+            await response(scope, receive, send)
+            return
+
         await self.application(scope, receive, send)
 
 

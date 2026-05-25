@@ -2977,6 +2977,57 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once_with(scope, receive, send)
 
     @pytest.mark.asyncio
+    async def test_rewrite_happens_before_auth_and_preserves_public_path(self):
+        """Streaming-safe rewrite should happen before auth without losing server scope."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers/server-1/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+        observed = {}
+
+        async def _fake_streamable_http_auth(auth_scope, _receive, _send):
+            observed["path"] = auth_scope["path"]
+            observed["modified_path"] = auth_scope["modified_path"]
+            return True
+
+        with patch("mcpgateway.main.streamable_http_auth", new=_fake_streamable_http_auth):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert observed == {
+            "path": "/mcp/",
+            "modified_path": "/servers/server-1/mcp",
+        }
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_streamable_auth_uses_modified_path_after_rewrite(self, monkeypatch):
+        """Auth should still apply server-scoped checks after path is rewritten to /mcp/."""
+        # First-Party
+        from mcpgateway.transports import streamablehttp_transport as transport
+
+        checked = {}
+
+        async def _fake_check_server_oauth_enforcement(server_id, user_context):
+            checked["server_id"] = server_id
+            checked["user_context"] = user_context
+
+        monkeypatch.setattr(transport.settings, "mcp_require_auth", False)
+        monkeypatch.setattr(transport, "_check_server_oauth_enforcement", _fake_check_server_oauth_enforcement)
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp/",
+            "modified_path": "/servers/server-1/mcp",
+            "headers": [],
+        }
+
+        assert await transport.streamable_http_auth(scope, AsyncMock(), AsyncMock()) is True
+        assert checked["server_id"] == "server-1"
+        assert checked["user_context"] == {"is_authenticated": False}
+
+    @pytest.mark.asyncio
     async def test_rewrite_auth_failure(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
@@ -3165,7 +3216,7 @@ class TestMCPPathRewriteMiddleware:
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
         scope = {"type": "http", "path": "/gateway/servers//mcp", "root_path": "/gateway", "headers": []}
-        receive, send = AsyncMock(), AsyncMock()
+        receive = AsyncMock()
         sent = []
 
         async def mock_send(msg):
