@@ -247,6 +247,7 @@ export function paginationData() {
     // Returns a plain string for x-text binding (avoids template literals in CSP build).
     pageInfoText() {
       if (this.totalItems === 0) return "No items found";
+      if (this.pageItems === 0) return "No items on this page";
       const start = Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems);
       const end =
         this.pageItems !== null

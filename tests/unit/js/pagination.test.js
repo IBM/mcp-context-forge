@@ -778,5 +778,48 @@ describe("paginationData _loading unlock listeners", () => {
 
     // Should have fallen back to document.addEventListener
     expect(global.document.addEventListener).toHaveBeenCalled();
+     });
+});
+
+describe("pageInfoText", () => {
+  let component;
+
+  beforeEach(() => {
+    component = paginationData();
+  });
+
+  test("returns 'No items found' when totalItems is 0", () => {
+    component.totalItems = 0;
+    expect(component.pageInfoText()).toBe("No items found");
+  });
+
+  test("returns 'No items on this page' when pageItems is 0 but totalItems > 0", () => {
+    component.totalItems = 100;
+    component.pageItems = 0;
+    expect(component.pageInfoText()).toBe("No items on this page");
+  });
+
+  test("calculates range using pageItems when set", () => {
+    component.currentPage = 2;
+    component.perPage = 10;
+    component.totalItems = 25;
+    component.pageItems = 5;
+    expect(component.pageInfoText()).toBe("Showing 11 - 15 of 25 items");
+  });
+
+  test("calculates range using perPage when pageItems is null", () => {
+    component.currentPage = 1;
+    component.perPage = 10;
+    component.totalItems = 25;
+    component.pageItems = null;
+    expect(component.pageInfoText()).toBe("Showing 1 - 10 of 25 items");
+  });
+
+  test("clamps end to totalItems on last page", () => {
+    component.currentPage = 3;
+    component.perPage = 10;
+    component.totalItems = 25;
+    component.pageItems = null;
+    expect(component.pageInfoText()).toBe("Showing 21 - 25 of 25 items");
   });
 });
