@@ -2806,7 +2806,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return True
 
         if is_admin_bypass_granted(db, user_email, token_teams):
-            return visibility != "private"
+            # Admin bypass grants access to public + team resources + OWN private resources (PR #4341 / issue #4694)
+            if visibility == "private":
+                gateway_owner_email = getattr(gateway, "owner_email", None)
+                return gateway_owner_email and gateway_owner_email == user_email
+            return True  # public or team visibility
 
         if not user_email:
             return False

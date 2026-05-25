@@ -2645,6 +2645,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=PaginatedResponse)
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_list_servers(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -2658,6 +2659,7 @@ async def admin_list_servers(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive servers.
@@ -2678,6 +2680,7 @@ async def admin_list_servers(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested server list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
 
     # Call server_service.list_servers with page-based pagination
     paginated_result = await server_service.list_servers(
@@ -2686,6 +2689,7 @@ async def admin_list_servers(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -3448,6 +3452,7 @@ async def admin_list_prompts(
 @admin_router.get("/gateways", response_model=PaginatedResponse)
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_list_gateways(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -3461,6 +3466,7 @@ async def admin_list_gateways(
     including those that are inactive. Uses offset-based (page/per_page) pagination.
 
     Args:
+        request (Request): FastAPI request object (required for token team extraction via request.state.token_teams).
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive gateways in the results.
@@ -3480,6 +3486,7 @@ async def admin_list_gateways(
         'admin_list_gateways'
     """
     user_email = get_user_email(user)
+    token_teams = get_token_teams_from_request(request)
     LOGGER.debug(f"User {user_email} requested gateway list (page={page}, per_page={per_page})")
 
     # Call gateway_service.list_gateways with page-based pagination
@@ -3489,6 +3496,7 @@ async def admin_list_gateways(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
