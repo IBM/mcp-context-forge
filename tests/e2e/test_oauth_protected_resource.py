@@ -115,6 +115,7 @@ async def oauth_test_db():
     try:
         seed_db.add(
             EmailUser(
+                id=2,
                 email="testuser@example.com",
                 password_hash="not-a-real-hash",
                 full_name="Test User",

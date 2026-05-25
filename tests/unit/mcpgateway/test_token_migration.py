@@ -169,8 +169,8 @@ async def test_flattened_token_structure():
     assert payload["auth_provider"] == "local"  # Flattened
     assert "full_name" not in payload  # PII removed
 
-    # Should still have email in sub (Phase 1 - backward compatible)
-    assert payload["sub"] == "user@example.com"
+    # Phase 2: sub now contains user ID instead of email
+    assert payload["sub"] == "12345"
 
 
 @pytest.mark.asyncio
@@ -200,5 +200,5 @@ async def test_legacy_token_structure():
     assert "full_name" not in payload  # PII removed
     assert "email" not in payload  # Duplicate removed
 
-    # Should still have email in sub (Phase 1 - backward compatible)
-    assert payload["sub"] == "user@example.com"
+    # Phase 2: sub now contains user ID instead of email
+    assert payload["sub"] == "12345"

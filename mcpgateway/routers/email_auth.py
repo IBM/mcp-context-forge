@@ -149,7 +149,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     # Phase 2 will switch sub to user.id
     payload = {
         # Standard JWT claims
-        "sub": user.email,  # TODO Phase 2: Change to str(user.id)
+        "sub": str(user.id),
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
         "iat": issued_at,
@@ -186,10 +186,9 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     expire = now + expires_delta
 
     # Create simple JWT payload (original format) with primitives only
-    # NOTE: Phase 1 of PII cleanup - removed full_name, keeping email in sub for backward compatibility
-    # Phase 2 will switch sub to user.id
+    # NOTE: Phase 2 - Using user ID in sub claim (backward compatible via get_user_email_from_token)
     payload = {
-        "sub": str(getattr(user, "email", "")),  # TODO Phase 2: Change to str(user.id)
+        "sub": str(getattr(user, "id", "")),  # Phase 2: User ID-based tokens
         "is_admin": bool(getattr(user, "is_admin", False)),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),

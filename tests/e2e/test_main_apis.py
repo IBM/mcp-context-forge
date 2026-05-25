@@ -161,6 +161,7 @@ async def temp_db(main_app_with_admin_api):
     try:
         seed_db.add(
             EmailUser(
+                id=1,
                 email="testuser@example.com",
                 password_hash="not-a-real-hash",
                 full_name="Test User",
