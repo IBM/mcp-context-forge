@@ -30,16 +30,16 @@ export function Servers() {
   const [selectedServerIdForDetails, setSelectedServerIdForDetails] = useState<string | null>(null);
   const [isDetailsDrawerOpen, setIsDetailsDrawerOpen] = useState(false);
 
-  // Initial load only - use default limit, ignore dropdown changes
+  // Keep the primary list in sync with the selected page size
   const queryPath = useMemo(() => {
     const params = new URLSearchParams();
-    params.set("limit", DEFAULT_PAGE_SIZE.toString());
+    params.set("limit", limit.toString());
     params.set("include_pagination", "true");
     params.set("include_inactive", "true");
     return `/gateways?${params.toString()}`;
-  }, []);
+  }, [limit]);
 
-  // Use useQuery hook for initial data fetching only
+  // Use useQuery hook for initial data fetching and limit changes
   const {
     data: response,
     error: queryError,
@@ -219,12 +219,10 @@ export function Servers() {
           {servers.length > 0 ? (
             <>
               <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
-                  MCP Servers
-                </h1>
+                <h1 className="text-base font-semibold text-foreground">MCP Servers</h1>
                 <Button
                   variant="default"
-                  className="h-10 rounded-lg px-4"
+                  className="h-7 rounded-sm px-4"
                   onClick={() => setIsFormOpen(true)}
                 >
                   <Plus className="h-4 w-4" />
