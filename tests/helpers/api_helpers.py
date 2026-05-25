@@ -45,7 +45,7 @@ class ApiTestHelper:
     def create_team(self, name: str, *, description: str = "test team", visibility: str = "private") -> dict[str, Any]:
         """Create a team and return the decoded JSON body."""
         response = self.api.post(
-            "/teams/",
+            "/teams",
             data={"name": name, "description": description, "visibility": visibility},
         )
         assert response.status in (200, 201), f"Failed to create team: {response.status} {response.text()}"
@@ -134,7 +134,7 @@ class ApiTestHelper:
         }
         if visibility is not None:
             payload["visibility"] = visibility
-        response = self.api.post("/resources/", data=payload)
+        response = self.api.post("/resources", data=payload)
         assert response.status in (200, 201), f"Failed to create resource: {response.status} {response.text()}"
         return response.json()
 
