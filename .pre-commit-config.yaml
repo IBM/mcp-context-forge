@@ -386,6 +386,41 @@ repos:
         exclude: _pb2(_grpc)?\.py$
 
   # -----------------------------------------------------------------------------
+  #  ⚛️  Client (React) Quality Checks
+  # -----------------------------------------------------------------------------
+  #  Runs format, lint, and test checks for the React client before push.
+  #  These hooks only run when client files are modified.
+  # -----------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: client-format-check
+        name: ⚛️  Client - Format Check (Prettier)
+        description: Checks React client code formatting with Prettier.
+        entry: bash -c 'cd client && npm run format:check'
+        language: system
+        files: ^client/
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: client-lint
+        name: ⚛️  Client - Lint (ESLint)
+        description: Lints React client code with ESLint.
+        entry: bash -c 'cd client && npm run lint'
+        language: system
+        files: ^client/
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: client-test
+        name: ⚛️  Client - Test (Vitest)
+        description: Runs React client tests with Vitest.
+        entry: bash -c 'cd client && npm run test:run'
+        language: system
+        files: ^client/
+        pass_filenames: false
+        stages: [pre-push]
+
+  # -----------------------------------------------------------------------------
   #  🔐 Security - Detect Secrets
   # -----------------------------------------------------------------------------
   #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
