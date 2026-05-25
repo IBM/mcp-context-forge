@@ -66,9 +66,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
-import redis
-import time
 import threading
+import time
 from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
@@ -76,6 +75,7 @@ import uuid
 from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
+import redis
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -87,6 +87,7 @@ from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.redis_client import _build_ssl_kwargs
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
     set_trace_auth_method,
@@ -100,7 +101,6 @@ from mcpgateway.utils.verify_credentials import (
     security,
     verify_jwt_token_cached,
 )
-from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
 __all__ = [
     "ConfigurableHTTPBearer",
