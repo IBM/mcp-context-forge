@@ -10,3 +10,7 @@
 {"id":"0a21e959-f6a5-40b5-8540-124b4b953931","ts":"2026-05-25T13:29:46.288Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_token_scoping.py","version":"1.0.0","taskID":"fdd8342e-6382-4032-b4b9-bfe91110db3e"}
 {"id":"592963ec-a55a-4b15-84a8-83f2508fb723","ts":"2026-05-25T13:29:59.336Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_token_scoping.py","version":"1.0.0","taskID":"fdd8342e-6382-4032-b4b9-bfe91110db3e"}
 {"id":"5b91c0fa-4f52-4047-9d59-ef56673e513a","ts":"2026-05-25T13:30:43.066Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/tests/unit/mcpgateway/middleware/test_token_scoping.py","version":"1.0.0","taskID":"fdd8342e-6382-4032-b4b9-bfe91110db3e"}
+
+{"id":"012d1811-b1a5-4bbe-b047-464db15e592f","ts":"2026-05-25T12:41:46.550Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/auth.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
+{"id":"0e4ecb24-7646-4c01-a0d2-b5485f193e8f","ts":"2026-05-25T12:41:53.942Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/transports/streamablehttp_transport.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
+{"id":"50d662ca-dabd-4556-abf7-a658141940e7","ts":"2026-05-25T12:45:13.361Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/transports/streamablehttp_transport.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
