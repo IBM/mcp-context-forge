@@ -66,6 +66,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
+import redis
+import time
 import threading
 from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
@@ -80,6 +82,7 @@ from starlette.requests import Request
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.config import settings as config_settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.transports.context import UserContext
@@ -97,6 +100,7 @@ from mcpgateway.utils.verify_credentials import (
     security,
     verify_jwt_token_cached,
 )
+from mcpgateway.utils.redis_client import _build_ssl_kwargs
 
 __all__ = [
     "ConfigurableHTTPBearer",
@@ -732,13 +736,6 @@ def _get_sync_redis_client():
     """
     global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
 
-    # Standard
-    import logging as log  # pylint: disable=import-outside-toplevel,reimported
-    import time  # pylint: disable=import-outside-toplevel
-
-    # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
-
     # Quick check without lock
     if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
         return _SYNC_REDIS_CLIENT
@@ -754,15 +751,9 @@ def _get_sync_redis_client():
             return _SYNC_REDIS_CLIENT
 
         try:
-            # Third-Party
-            import redis  # pylint: disable=import-outside-toplevel
-
-            # First-Party
-            from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
-
             redis_url = config_settings.redis_url
             if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
-                log.getLogger(__name__).warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
+                logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
             ssl_kwargs = _build_ssl_kwargs(config_settings)
 
             _SYNC_REDIS_CLIENT = redis.from_url(
@@ -777,13 +768,13 @@ def _get_sync_redis_client():
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
-            log.getLogger(__name__).debug("Sync Redis client initialized for API token operations")
+            logger.debug("Sync Redis client initialized for API token operations")
         except ValueError as e:
-            log.getLogger(__name__).error(f"Sync Redis SSL misconfiguration — client not started: {e}")
+            logger.error(f"Sync Redis SSL misconfiguration — client not started: {e}")
             _SYNC_REDIS_CLIENT = None
             return None
         except Exception as e:
-            log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
+            logger.debug(f"Sync Redis client unavailable: {e}")
             _SYNC_REDIS_CLIENT = None
             _SYNC_REDIS_FAILURE_TIME = time.time()
 
@@ -800,12 +791,6 @@ def _get_ratelimiter_redis_client():
         Redis client or None if unavailable.
     """
     global _RATELIMITER_REDIS_CLIENT, _RATELIMITER_REDIS_FAILURE_TIME  # pylint: disable=global-statement
-
-    # Standard
-    import time  # pylint: disable=import-outside-toplevel
-
-    # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
 
     # Fallback to main Redis if no dedicated URL configured
     if not config_settings.ratelimiter_redis_url:
@@ -826,12 +811,6 @@ def _get_ratelimiter_redis_client():
             return _RATELIMITER_REDIS_CLIENT
 
         try:
-            # Third-Party
-            import redis  # pylint: disable=import-outside-toplevel
-
-            # First-Party
-            from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
-
             redis_url = config_settings.ratelimiter_redis_url
             pool_size = config_settings.ratelimiter_redis_max_connections
             socket_timeout = config_settings.ratelimiter_redis_socket_timeout
@@ -888,11 +867,6 @@ def _update_api_token_last_used_sync(jti: str) -> None:
         Called via asyncio.to_thread() to avoid blocking the event loop.
         Uses fresh_db_session() for thread-safe database access.
     """
-    # Standard
-    import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
-
-    # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
 
     # Rate-limiting cache key
     cache_key = f"api_token_last_used:{jti}"
