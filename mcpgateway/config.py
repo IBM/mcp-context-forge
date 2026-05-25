@@ -503,6 +503,22 @@ class Settings(BaseSettings):
     sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
+    # Tool Search (experimental)
+    experimental_tool_search_enabled: bool = Field(
+        default=False,
+        description="When enabled, list_tools() returns two synthetic tools (search_tools, call_tool) instead of the full catalog, letting LLMs discover tools on demand.",
+    )
+    tool_search_strategy: Literal["bm25", "regex"] = Field(
+        default="bm25",
+        description="Search algorithm used by search_tools: 'bm25' (relevance-ranked) or 'regex' (pattern match).",
+    )
+    tool_search_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Maximum tools returned by a single search_tools call.",
+    )
+
     # Security Validation & Sanitization
     experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
     experimental_rust_request_logging_masking_enabled: bool = Field(

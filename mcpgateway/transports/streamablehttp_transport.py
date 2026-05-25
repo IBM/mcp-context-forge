@@ -1587,6 +1587,76 @@ def _truthy_is_error(result: Any) -> bool:
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
+def _build_synthetic_tool_listing() -> "List[types.Tool]":
+    """Return the two synthetic tools exposed when tool search is enabled."""
+    return [
+        types.Tool(
+            name="search_tools",
+            description="Find tools matching a query. Returns full definitions including input schemas.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural-language or keyword search query"},
+                    "limit": {"type": "integer", "description": "Max results to return", "default": settings.tool_search_max_results},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="call_tool",
+            description="Execute a tool by name. Use after search_tools to invoke a discovered tool.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Exact tool name from search_tools results"},
+                    "arguments": {"type": "object", "description": "Tool arguments per its input schema", "default": {}},
+                },
+                "required": ["name"],
+            },
+        ),
+    ]
+
+
+async def _handle_search_tools(
+    arguments: dict,
+    user_email: Optional[str],
+    token_teams: Optional[List[str]],
+    server_id: Optional[str],
+    request_headers: Optional[dict],
+) -> "List[types.TextContent]":
+    """Execute the search_tools synthetic tool: query the live catalog and return matching definitions."""
+    # First-Party
+    from mcpgateway.services.tool_search_service import ToolSearchService  # pylint: disable=import-outside-toplevel
+
+    query: str = arguments.get("query", "")
+    limit: int = int(arguments.get("limit", settings.tool_search_max_results))
+    limit = max(1, min(limit, 100))
+
+    catalog: List[dict] = []
+    async with get_db() as db:
+        if server_id:
+            tools_db = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+        else:
+            tools_db, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
+
+        for t in tools_db:
+            catalog.append(
+                {
+                    "name": t.name,
+                    "description": t.description or "",
+                    "inputSchema": t.input_schema or {},
+                }
+            )
+
+    svc = ToolSearchService()
+    if settings.tool_search_strategy == "regex":
+        results = svc.regex_search(catalog, query, limit)
+    else:
+        results = svc.bm25_search(catalog, query, limit)
+
+    return [types.TextContent(type="text", text=orjson.dumps(results).decode())]
+
+
 @mcp_app.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
@@ -1669,6 +1739,18 @@ async def call_tool(name: str, arguments: dict) -> Union[
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
+
+    if settings.experimental_tool_search_enabled:
+        if name == "search_tools":
+            return await _handle_search_tools(arguments, user_email, token_teams, server_id, request_headers)
+        if name == "call_tool":
+            real_name = arguments.get("name") if arguments else None
+            if not real_name:
+                return [types.TextContent(type="text", text='{"error": "Missing required field: name"}')]
+            if real_name in ("search_tools", "call_tool"):
+                return [types.TextContent(type="text", text='{"error": "Cannot call synthetic tools recursively"}')]
+            real_args = arguments.get("arguments") or {}
+            name, arguments = real_name, real_args
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
     gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
@@ -2208,6 +2290,9 @@ async def list_tools() -> List[types.Tool]:
     # logged by the ASGI server.
     if not settings.mcp_require_auth:
         await _check_server_oauth_enforcement(server_id, user_context)
+
+    if settings.experimental_tool_search_enabled:
+        return _build_synthetic_tool_listing()
 
     if server_id:
         try:
