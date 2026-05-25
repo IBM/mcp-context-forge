@@ -1911,8 +1911,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        # Build base query with ordering and eager load relationships for capability counts
+        query = (
+            select(DbGateway)
+            .options(
+                joinedload(DbGateway.email_team),
+                selectinload(DbGateway.tools),
+                selectinload(DbGateway.prompts),
+                selectinload(DbGateway.resources),
+            )
+            .order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        )
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -4632,7 +4641,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Populate tool count from the eagerly-loaded tools relationship when available
         tools_rel = gateway.__dict__.get("tools")
-        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
+        prompts_rel = gateway.__dict__.get("prompts")
+        resources_rel = gateway.__dict__.get("resources")
+
+        tools_count = len(tools_rel) if tools_rel is not None else 0
+        prompts_count = len(prompts_rel) if prompts_rel is not None else 0
+        resources_count = len(resources_rel) if resources_rel is not None else 0
+
+        gateway_dict["tool_count"] = tools_count
+
+        # Populate capabilities with actual counts from relationships
+        gateway_dict["capabilities"] = {
+            "tools": {"count": tools_count},
+            "prompts": {"count": prompts_count},
+            "resources": {"count": resources_count},
+        }
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
