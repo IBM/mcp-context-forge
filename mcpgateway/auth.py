@@ -82,7 +82,6 @@ from starlette.requests import Request
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.config import settings as config_settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.transports.context import UserContext
@@ -737,7 +736,7 @@ def _get_sync_redis_client():
     global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
 
     # Quick check without lock
-    if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+    if _SYNC_REDIS_CLIENT is not None or not (settings.redis_url and settings.redis_url.strip() and settings.cache_type == "redis"):
         return _SYNC_REDIS_CLIENT
 
     # Backoff after recent failure (30 seconds)
@@ -751,17 +750,17 @@ def _get_sync_redis_client():
             return _SYNC_REDIS_CLIENT
 
         try:
-            redis_url = config_settings.redis_url
-            if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+            redis_url = settings.redis_url
+            if redis_url.startswith("rediss://") and not settings.redis_ssl:
                 logger.warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
-            ssl_kwargs = _build_ssl_kwargs(config_settings)
+            ssl_kwargs = _build_ssl_kwargs(settings)
 
             _SYNC_REDIS_CLIENT = redis.from_url(
                 redis_url,
                 decode_responses=True,
-                max_connections=config_settings.redis_max_connections,
-                socket_timeout=config_settings.redis_socket_timeout,
-                socket_connect_timeout=config_settings.redis_socket_connect_timeout,
+                max_connections=settings.redis_max_connections,
+                socket_timeout=settings.redis_socket_timeout,
+                socket_connect_timeout=settings.redis_socket_connect_timeout,
                 **ssl_kwargs,
             )
 
@@ -793,7 +792,7 @@ def _get_ratelimiter_redis_client():
     global _RATELIMITER_REDIS_CLIENT, _RATELIMITER_REDIS_FAILURE_TIME  # pylint: disable=global-statement
 
     # Fallback to main Redis if no dedicated URL configured
-    if not config_settings.ratelimiter_redis_url:
+    if not settings.ratelimiter_redis_url:
         return _get_sync_redis_client()
 
     # Quick check without lock
@@ -811,16 +810,16 @@ def _get_ratelimiter_redis_client():
             return _RATELIMITER_REDIS_CLIENT
 
         try:
-            redis_url = config_settings.ratelimiter_redis_url
-            pool_size = config_settings.ratelimiter_redis_max_connections
-            socket_timeout = config_settings.ratelimiter_redis_socket_timeout
-            socket_connect_timeout = config_settings.ratelimiter_redis_socket_connect_timeout
+            redis_url = settings.ratelimiter_redis_url
+            pool_size = settings.ratelimiter_redis_max_connections
+            socket_timeout = settings.ratelimiter_redis_socket_timeout
+            socket_connect_timeout = settings.ratelimiter_redis_socket_connect_timeout
 
             # Warn if rediss:// but SSL disabled (inherits main Redis SSL settings)
-            if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+            if redis_url.startswith("rediss://") and not settings.redis_ssl:
                 logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. " "TLS settings from main Redis will be applied.")
 
-            ssl_kwargs = _build_ssl_kwargs(config_settings)
+            ssl_kwargs = _build_ssl_kwargs(settings)
 
             _RATELIMITER_REDIS_CLIENT = redis.from_url(
                 redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs
@@ -870,7 +869,7 @@ def _update_api_token_last_used_sync(jti: str) -> None:
 
     # Rate-limiting cache key
     cache_key = f"api_token_last_used:{jti}"
-    update_interval_seconds = config_settings.token_last_used_update_interval_minutes * 60
+    update_interval_seconds = settings.token_last_used_update_interval_minutes * 60
 
     # Try Redis rate-limiting first (if available)
     redis_client = _get_sync_redis_client()

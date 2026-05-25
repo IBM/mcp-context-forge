@@ -1020,7 +1020,7 @@ class TestGetSyncRedisClient:
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.return_value = mock_redis_client
 
-            with patch("mcpgateway.auth.config_settings") as mock_settings, \
+            with patch("mcpgateway.auth.settings") as mock_settings, \
                  patch("mcpgateway.auth.redis", mock_redis_module), \
                  patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
                 # Use actual string for redis_url
@@ -1184,7 +1184,7 @@ class TestGetSyncRedisClient:
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.side_effect = Exception("Connection refused")
 
-            with patch("mcpgateway.auth.config_settings") as mock_settings, \
+            with patch("mcpgateway.auth.settings") as mock_settings, \
                  patch("mcpgateway.auth.redis", mock_redis_module), \
                  patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
                 # Use actual string for redis_url
@@ -1240,7 +1240,7 @@ class TestGetSyncRedisClient:
             ssl_kwargs = {"ssl_ca_certs": "/path/to/ca.pem"}
 
             with (
-                patch("mcpgateway.auth.config_settings") as mock_settings,
+                patch("mcpgateway.auth.settings") as mock_settings,
                 patch("mcpgateway.auth._build_ssl_kwargs", return_value=ssl_kwargs) as mock_build,
                 patch("mcpgateway.auth.redis", mock_redis_module),
             ):
@@ -1320,7 +1320,7 @@ class TestGetSyncRedisClient:
             mock_redis_module.from_url.return_value = mock_redis_client
 
             with (
-                patch("mcpgateway.auth.config_settings") as mock_settings,
+                patch("mcpgateway.auth.settings") as mock_settings,
                 patch("mcpgateway.auth._build_ssl_kwargs", return_value={}),
                 patch.dict(sys.modules, {"redis": mock_redis_module}),
                 caplog.at_level(logging.WARNING, logger="mcpgateway.auth"),

@@ -24,7 +24,7 @@ def reset_redis_globals():
 
 def test_get_ratelimiter_redis_fallback_to_main():
     """Test fallback to main Redis when no dedicated URL configured."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = None
 
         with patch("mcpgateway.auth._get_sync_redis_client") as mock_main:
@@ -38,7 +38,7 @@ def test_get_ratelimiter_redis_returns_cached_client():
     """Test returns cached client on subsequent calls."""
     import mcpgateway.auth as auth_module
 
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
 
         mock_client = MagicMock()
@@ -50,7 +50,7 @@ def test_get_ratelimiter_redis_returns_cached_client():
 
 def test_get_ratelimiter_redis_backoff_after_failure():
     """Test backoff prevents reconnection attempts after recent failure."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
 
         with patch("mcpgateway.auth._RATELIMITER_REDIS_FAILURE_TIME", time.time()):
@@ -60,7 +60,7 @@ def test_get_ratelimiter_redis_backoff_after_failure():
 
 def test_get_ratelimiter_redis_rediss_warning(caplog):
     """Test warning when rediss:// used but SSL disabled."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "rediss://localhost:6380/1"
         mock_settings.redis_ssl = False
         mock_settings.ratelimiter_redis_max_connections = 10
@@ -77,7 +77,7 @@ def test_get_ratelimiter_redis_rediss_warning(caplog):
 
 def test_get_ratelimiter_redis_ssl_kwargs_applied():
     """Test SSL kwargs from _build_ssl_kwargs are applied."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "rediss://localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
@@ -97,7 +97,7 @@ def test_get_ratelimiter_redis_ssl_kwargs_applied():
 
 def test_get_ratelimiter_redis_connection_test():
     """Test connection is tested with ping()."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
@@ -114,7 +114,7 @@ def test_get_ratelimiter_redis_connection_test():
 
 def test_get_ratelimiter_redis_url_sanitization(caplog):
     """Test credentials are stripped from logged URL."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
@@ -131,7 +131,7 @@ def test_get_ratelimiter_redis_url_sanitization(caplog):
 
 def test_get_ratelimiter_redis_ssl_misconfiguration_error(caplog):
     """Test ValueError from SSL config is caught and logged."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
@@ -148,7 +148,7 @@ def test_get_ratelimiter_redis_connection_failure(caplog):
     import logging
 
     with caplog.at_level(logging.DEBUG):
-        with patch("mcpgateway.auth.config_settings") as mock_settings:
+        with patch("mcpgateway.auth.settings") as mock_settings:
             mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
             mock_settings.ratelimiter_redis_max_connections = 10
             mock_settings.ratelimiter_redis_socket_timeout = 5
@@ -169,7 +169,7 @@ def test_get_ratelimiter_redis_connection_failure(caplog):
 
 def test_get_ratelimiter_redis_double_check_lock():
     """Test double-check locking pattern prevents race conditions."""
-    with patch("mcpgateway.auth.config_settings") as mock_settings:
+    with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
