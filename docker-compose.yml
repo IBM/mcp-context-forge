@@ -269,6 +269,8 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}
       # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # Migration already ran via the migration init container; gateway pods skip alembic upgrade head
+      - MCPGATEWAY_SKIP_MIGRATIONS=${MCPGATEWAY_SKIP_MIGRATIONS:-true}
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
