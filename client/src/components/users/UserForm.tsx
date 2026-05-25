@@ -5,14 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useUserForm } from "@/hooks/useUserForm";
+import type { CreateUserRequest } from "@/types/user";
 
 interface UserFormProps {
   isOpen: boolean;
   onToggle: () => void;
   onSuccess?: () => void;
+  onOptimisticCreate?: (userData: CreateUserRequest) => void;
+  onError?: (userData: CreateUserRequest) => void;
 }
 
-export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
+export function UserForm({
+  isOpen,
+  onToggle,
+  onSuccess,
+  onOptimisticCreate,
+  onError,
+}: UserFormProps) {
   const intl = useIntl();
   const {
     email,
@@ -23,7 +32,6 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
     isActive,
     passwordChangeRequired,
     errors,
-    isValid,
     isSubmitting,
     setEmail,
     setPassword,
@@ -38,13 +46,19 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    handleSubmit(event, () => {
-      if (onSuccess) {
-        onSuccess();
-      } else {
-        onToggle();
-      }
-    });
+    handleSubmit(
+      event,
+      () => {
+        // Success callback
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          onToggle();
+        }
+      },
+      onOptimisticCreate,
+      onError,
+    );
   };
 
   if (!isOpen) return null;
@@ -269,7 +283,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!isValid || isSubmitting}
+                  disabled={isSubmitting}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
                   {isSubmitting
