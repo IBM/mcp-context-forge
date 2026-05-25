@@ -199,10 +199,12 @@ spec:
             - name: PLUGINS_CONFIG_FILE
               value: {{ $pluginsConfigFile | quote }}
             {{- end }}
-            # Migration runner ownership — wired from .Values.migration.enabled
-            # so app pods skip the in-pod bootstrap when the pre-install Job
-            # is responsible for the schema. Placed after extraEnv so users
-            # cannot accidentally drop the contract by overriding it.
+            # Migration runner ownership — wired from .Values.migration.enabled:
+            #   true  → pre-install Job owns the schema; gateway pods skip alembic upgrade head
+            #           and fail fast if the Job left the schema behind.
+            #   false → no dedicated runner; each gateway pod runs the advisory-lock migration
+            #           path itself (safe for single-replica or SQLite deployments).
+            # Placed after extraEnv so users cannot accidentally drop the contract by overriding it.
             - name: MCPGATEWAY_SKIP_MIGRATIONS
               value: {{ ternary "true" "false" .Values.migration.enabled | quote }}
 
