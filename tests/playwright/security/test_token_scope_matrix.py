@@ -23,10 +23,10 @@ from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
 # First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
 from .conftest import BASE_URL, TEST_PASSWORD
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 _UNSET = object()
 
@@ -53,34 +53,21 @@ def _make_jwt(
     teams: object = _UNSET,
     scopes: dict[str, Any] | None = None,
 ) -> str:
-    payload: dict[str, Any] = {"sub": email}
-    if teams is not _UNSET:
-        payload["teams"] = teams
-    return _create_jwt_token(
-        payload,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        scopes=scopes,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, scopes=scopes)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 def _create_server(admin_api: APIRequestContext, name: str, visibility: str, team_id: str | None = None) -> str:
-    response = admin_api.post(
-        "/servers",
-        data={
-            "server": {"name": name, "description": "playwright security test"},
-            "team_id": team_id,
-            "visibility": visibility,
-        },
-    )
-    assert response.status in (200, 201), f"Failed to create server ({visibility}): {response.status} {response.text()}"
-    return response.json()["id"]
+    helper = ApiTestHelper(admin_api)
+    return helper.create_server(
+        name,
+        visibility=visibility,
+        team_id=team_id,
+        description="playwright security test",
+    )["id"]
 
 
 @pytest.fixture

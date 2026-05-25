@@ -22,8 +22,7 @@ import uuid
 import httpx
 import pytest
 
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
+from tests.helpers.auth import make_auth_headers, make_test_jwt
 from tests.live_gateway.helpers.mcp_test_helpers import BASE_URL, skip_no_gateway
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
@@ -55,9 +54,9 @@ def _make_admin_jwt() -> str:
     Returns:
         A signed admin JWT.
     """
-    return _create_jwt_token(
-        {"sub": "admin@example.com"},
-        user_data={"email": "admin@example.com", "is_admin": True, "auth_provider": "local"},
+    return make_test_jwt(
+        "admin@example.com",
+        is_admin=True,
         teams=None,
         secret=COMPOSE_TEST_JWT_SECRET,
     )
@@ -72,7 +71,7 @@ def _api_headers(token: str) -> dict[str, str]:
     Returns:
         Standard API headers.
     """
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    return make_auth_headers(token)
 
 
 def _mcp_headers(token: str, *, session_id: str | None = None) -> dict[str, str]:
