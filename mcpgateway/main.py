@@ -2950,6 +2950,18 @@ class MCPPathRewriteMiddleware:
         # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not app_path.startswith("/.well-known/"):
+            # Normalise bare /mcp to /mcp/ so the Starlette Mount at /mcp matches
+            # directly. Without this rewrite Starlette would emit a 307 redirect
+            # to /mcp/, which httpx cannot follow for streaming POST bodies
+            # (chunked Streamable HTTP) and surfaces as httpx.ReadError during
+            # initialize. See #4275.
+            if app_path == "/mcp":
+                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                scope["path"] = new_path
+                if "raw_path" in scope:
+                    scope["raw_path"] = new_path.encode("latin-1")
+                await self.application(scope, receive, send)
+                return
             if (app_path.endswith("/mcp") and app_path != "/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
                 # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
@@ -2970,8 +2982,13 @@ class MCPPathRewriteMiddleware:
                     await self.application(scope, receive, send)
                     return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-                # Preserve root_path prefix when rewriting
-                scope["path"] = f"{root_path}/mcp/" if root_path else "/mcp/"
+                # Preserve root_path prefix when rewriting. Keep raw_path aligned so
+                # downstream URL reconstruction (e.g. Starlette RedirectResponse) stays
+                # consistent with the rewritten path (#4275).
+                new_path = f"{root_path}/mcp/" if root_path else "/mcp/"
+                scope["path"] = new_path
+                if "raw_path" in scope:
+                    scope["raw_path"] = new_path.encode("latin-1")
                 await self.application(scope, receive, send)
                 return
         await self.application(scope, receive, send)

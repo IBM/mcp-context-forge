@@ -3178,6 +3178,79 @@ class TestMCPPathRewriteMiddleware:
         # ORJSONResponse sends http.response.start + http.response.body
         assert any(m.get("status") == 404 for m in sent if m.get("type") == "http.response.start")
 
+    @pytest.mark.asyncio
+    async def test_rewrite_bare_mcp_to_trailing_slash(self):
+        """Bare /mcp rewrites to /mcp/ so Starlette's Mount matches without a 307 redirect (#4275)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp", "headers": []}
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_rewrite_bare_mcp_with_root_path(self):
+        """Bare /mcp with reverse-proxy prefix rewrites to /<prefix>/mcp/ (#4275)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/mcp",
+            "root_path": "/gateway",
+            "headers": [],
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rewrite_updates_raw_path(self):
+        """Rewriting keeps scope['raw_path'] aligned with scope['path'] (#4275)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/servers/123/mcp",
+            "raw_path": b"/servers/123/mcp",
+            "headers": [],
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        assert scope["raw_path"] == b"/mcp/"
+        app_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bare_mcp_updates_raw_path(self):
+        """Bare /mcp rewrite also syncs raw_path so URL reconstruction stays correct (#4275)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "headers": [],
+        }
+        receive, send = AsyncMock(), AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        assert scope["raw_path"] == b"/mcp/"
+        app_mock.assert_called_once()
+
 
 class TestServerEndpointCoverage:
     """Exercise server endpoints and SSE coverage."""
