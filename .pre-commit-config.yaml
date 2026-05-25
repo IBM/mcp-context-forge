@@ -384,7 +384,7 @@ repos:
   #  ⚛️  Client (React) Quality Checks
   # -----------------------------------------------------------------------------
   #  Runs format, lint, and test checks for the React client before push.
-  #  These hooks only run when client files are modified.
+  #  These hooks ONLY run on pre-push stage.
   # -----------------------------------------------------------------------------
   - repo: local
     hooks:
@@ -393,8 +393,8 @@ repos:
         description: Checks React client code formatting with Prettier.
         entry: bash -c 'cd client && npm run format:check'
         language: system
-        files: ^client/
         pass_filenames: false
+        always_run: true
         stages: [pre-push]
 
       - id: client-lint
@@ -402,8 +402,8 @@ repos:
         description: Lints React client code with ESLint.
         entry: bash -c 'cd client && npm run lint'
         language: system
-        files: ^client/
         pass_filenames: false
+        always_run: true
         stages: [pre-push]
 
       - id: client-test
@@ -411,8 +411,8 @@ repos:
         description: Runs React client tests with Vitest.
         entry: bash -c 'cd client && npm run test:run'
         language: system
-        files: ^client/
         pass_filenames: false
+        always_run: true
         stages: [pre-push]
 
   # -----------------------------------------------------------------------------
