@@ -106,7 +106,7 @@ class ApiTestHelper:
         }
         if visibility is not None:
             payload["visibility"] = visibility
-        response = self.api.post("/tools/", data=payload)
+        response = self.api.post("/tools", data=payload)
         assert response.status in (200, 201), f"Failed to create tool: {response.status} {response.text()}"
         return response.json()
 
