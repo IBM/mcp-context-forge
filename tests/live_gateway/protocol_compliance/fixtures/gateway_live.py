@@ -80,10 +80,11 @@ def admin_jwt(gateway_base_url: str) -> str:
     sentinel default to distinguish "not specified" from "explicit None", so
     we pass ``teams=None`` directly.
     """
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token
+    from tests.helpers.auth import make_test_jwt
 
-    return _create_jwt_token(
-        data={"sub": _admin_email(), "is_admin": True},
+    return make_test_jwt(
+        _admin_email(),
+        is_admin=True,
         expires_in_minutes=60,
         secret=_jwt_secret(),
         algorithm="HS256",

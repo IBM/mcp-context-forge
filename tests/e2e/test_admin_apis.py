@@ -47,6 +47,7 @@ import pytest_asyncio  # noqa: E402
 
 # First-Party
 from mcpgateway.config import settings  # noqa: E402
+from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt  # noqa: E402
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -59,32 +60,16 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 # -------------------------
 TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
-
-def create_test_jwt_token():
-    """Create a proper JWT token for testing with required audience and issuer."""
-    # Standard
-    import datetime
-
-    # Third-Party
-    import jwt
-
-    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
-    payload = {
-        "sub": "admin@example.com",
-        "email": "admin@example.com",
-        "iat": int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
-        "exp": int(expire.timestamp()),
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api",
-        "teams": [],  # Empty teams list allows access to public resources and own private resources
-    }
-
-    # Use the test JWT secret key
-    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
-
-
-TEST_JWT_TOKEN = create_test_jwt_token()
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
+TEST_JWT_TOKEN = make_legacy_test_jwt(
+    "admin@example.com",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm="HS256",
+    include_email_claim=True,
+    extra_payload={"iss": "mcpgateway", "aud": "mcpgateway-api"},
+)
+TEST_AUTH_HEADER = make_auth_headers(TEST_JWT_TOKEN)
 
 # Local
 # Test user for the updated authentication system

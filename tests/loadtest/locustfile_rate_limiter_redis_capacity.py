@@ -161,10 +161,10 @@ def _default_prompt_argument_value(prompt_name: str, argument_name: str) -> str:
 def _make_token(email: str) -> str:
     """Generate a rich admin token with explicit teams=null for admin bypass."""
     # First-Party
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
+    from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
 
-    return _create_jwt_token(
-        {"sub": email},
+    return make_test_jwt(
+        email,
         expires_in_minutes=int(timedelta(hours=24).total_seconds() // 60),
         secret=JWT_SECRET_KEY,
         algorithm=JWT_ALGORITHM,
@@ -175,6 +175,7 @@ def _make_token(email: str) -> str:
             "auth_provider": "local",
         },
         teams=None,
+        is_admin=True,
     )
 
 

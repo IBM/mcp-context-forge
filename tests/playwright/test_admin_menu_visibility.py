@@ -28,10 +28,9 @@ from playwright.sync_api import APIRequestContext, Page, Playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL
 
 logger = logging.getLogger(__name__)
@@ -111,13 +110,12 @@ def _make_user_jwt(
         teams: List of team IDs (None for admin bypass)
         token_use: If "session", triggers DB-based team resolution
     """
-    payload: Dict[str, Any] = {"sub": email}
-    if token_use:
-        payload["token_use"] = token_use
-    return _create_jwt_token(
-        payload,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
+    extra_payload: Dict[str, Any] | None = {"token_use": token_use} if token_use else None
+    return make_test_jwt(
+        email,
+        is_admin=is_admin,
         teams=teams,
+        extra_payload=extra_payload,
     )
 
 
@@ -235,10 +233,7 @@ def _create_user_and_join_team(
         if invitation_token:
             # 3. Accept invitation as the user
             user_jwt = _make_user_jwt(email, is_admin=False)
-            user_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
-            )
+            user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
             try:
                 accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
                 assert accept_resp.status in (200, 201), f"Failed to accept invitation for {email}: {accept_resp.status} {accept_resp.text()}"
@@ -268,10 +263,7 @@ def _create_user_and_join_team(
 def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Admin-authenticated API context for test setup/teardown."""
     token = _make_user_jwt("admin@example.com", is_admin=True)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -279,12 +271,8 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 @pytest.fixture(scope="module")
 def menu_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], None, None]:
     """Create a test team for menu visibility tests."""
-    resp = admin_api.post(
-        "/teams/",
-        data={"name": MENU_TEAM_NAME, "description": "Menu visibility test team", "visibility": "private"},
-    )
-    assert resp.status in (200, 201), f"Failed to create team: {resp.status} {resp.text()}"
-    team = resp.json()
+    helper = ApiTestHelper(admin_api)
+    team = helper.create_team(MENU_TEAM_NAME, description="Menu visibility test team", visibility="private")
     team_id = team["id"]
     logger.info("Created menu test team: %s (id=%s)", MENU_TEAM_NAME, team_id)
 

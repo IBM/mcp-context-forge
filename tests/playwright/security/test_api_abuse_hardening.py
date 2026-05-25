@@ -22,10 +22,10 @@ import uuid
 from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+
 from .conftest import BASE_URL, TEST_PASSWORD
 
 _UNSET = object()
@@ -47,20 +47,11 @@ def _extract_servers(response_json: Any) -> list[dict[str, Any]]:
 
 
 def _make_jwt(email: str, *, is_admin: bool, teams: object = _UNSET) -> str:
-    payload: dict[str, Any] = {"sub": email}
-    if teams is not _UNSET:
-        payload["teams"] = teams
-    return _create_jwt_token(
-        payload,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 @pytest.fixture
@@ -70,26 +61,22 @@ def hpp_servers(playwright: Playwright):
     public_server_id: str | None = None
     team_server_id: str | None = None
     try:
-        team_resp = admin_ctx.post(
-            "/teams/",
-            data={"name": f"hpp-team-{uuid.uuid4().hex[:8]}", "description": "HPP test team", "visibility": "private"},
-        )
-        assert team_resp.status in (200, 201), f"Failed creating team for HPP test: {team_resp.status} {team_resp.text()}"
-        team_id = team_resp.json()["id"]
+        helper = ApiTestHelper(admin_ctx)
+        team_id = helper.create_team(
+            f"hpp-team-{uuid.uuid4().hex[:8]}",
+            description="HPP test team",
+            visibility="private",
+        )["id"]
 
-        public_server_resp = admin_ctx.post(
-            "/servers",
-            data={"server": {"name": f"hpp-public-{uuid.uuid4().hex[:8]}"}, "team_id": None, "visibility": "public"},
-        )
-        team_server_resp = admin_ctx.post(
-            "/servers",
-            data={"server": {"name": f"hpp-team-{uuid.uuid4().hex[:8]}"}, "team_id": team_id, "visibility": "team"},
-        )
-        assert public_server_resp.status in (200, 201), f"Failed creating public server: {public_server_resp.status} {public_server_resp.text()}"
-        assert team_server_resp.status in (200, 201), f"Failed creating team server: {team_server_resp.status} {team_server_resp.text()}"
-
-        public_server_id = public_server_resp.json()["id"]
-        team_server_id = team_server_resp.json()["id"]
+        public_server_id = helper.create_server(
+            f"hpp-public-{uuid.uuid4().hex[:8]}",
+            visibility="public",
+        )["id"]
+        team_server_id = helper.create_server(
+            f"hpp-team-{uuid.uuid4().hex[:8]}",
+            team_id=team_id,
+            visibility="team",
+        )["id"]
 
         yield {"team_id": team_id, "public_server_id": public_server_id, "team_server_id": team_server_id}
     finally:

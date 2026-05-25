@@ -23,8 +23,9 @@ import uuid
 from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
+# Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
@@ -32,20 +33,12 @@ TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 def _make_jwt(email: str, *, is_admin: bool, teams: list[str] | None = None, expires_in_minutes: int = 30) -> str:
     """Create a JWT token for OWASP A01 testing with a short-lived expiry."""
-    return _create_jwt_token(
-        {"sub": email},
-        expires_in_minutes=expires_in_minutes,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
-        teams=teams,
-    )
+    return make_test_jwt(email, is_admin=is_admin, teams=teams, expires_in_minutes=expires_in_minutes)
 
 
 def _api_context(playwright: Playwright, token: str) -> APIRequestContext:
     """Create a Playwright API request context with Bearer auth."""
-    return playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    return make_playwright_api_context(playwright, BASE_URL, token)
 
 
 @pytest.fixture(scope="module")
@@ -68,10 +61,7 @@ def owasp_admin_api(playwright: Playwright) -> Generator[APIRequestContext, None
     back to a locally-signed JWT only when ``MCP_AUTH`` is unset.
     """
     token = os.getenv("MCP_AUTH", "") or _make_jwt("admin@example.com", is_admin=True)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -123,31 +113,33 @@ def two_teams_setup(owasp_admin_api: APIRequestContext, playwright: Playwright):
     ctx_a = None
     ctx_b = None
     try:
-        # Team A
-        resp_a = owasp_admin_api.post("/teams/", data={"name": f"owasp-team-a-{suffix}", "description": "OWASP Team A", "visibility": "private"})
-        assert resp_a.status in (200, 201), f"Failed creating Team A: {resp_a.status} {resp_a.text()}"
-        team_a_id = resp_a.json()["id"]
+        helper = ApiTestHelper(owasp_admin_api)
 
-        # Team B
-        resp_b = owasp_admin_api.post("/teams/", data={"name": f"owasp-team-b-{suffix}", "description": "OWASP Team B", "visibility": "private"})
-        assert resp_b.status in (200, 201), f"Failed creating Team B: {resp_b.status} {resp_b.text()}"
-        team_b_id = resp_b.json()["id"]
+        team_a_id = helper.create_team(
+            f"owasp-team-a-{suffix}",
+            description="OWASP Team A",
+            visibility="private",
+        )["id"]
 
-        # Server owned by Team A
-        srv_a = owasp_admin_api.post(
-            "/servers",
-            data={"server": {"name": f"owasp-srv-a-{suffix}", "description": "Team A server"}, "team_id": team_a_id, "visibility": "team"},
-        )
-        assert srv_a.status in (200, 201), f"Failed creating Team A server: {srv_a.status} {srv_a.text()}"
-        server_a_id = srv_a.json()["id"]
+        team_b_id = helper.create_team(
+            f"owasp-team-b-{suffix}",
+            description="OWASP Team B",
+            visibility="private",
+        )["id"]
 
-        # Server owned by Team B
-        srv_b = owasp_admin_api.post(
-            "/servers",
-            data={"server": {"name": f"owasp-srv-b-{suffix}", "description": "Team B server"}, "team_id": team_b_id, "visibility": "team"},
-        )
-        assert srv_b.status in (200, 201), f"Failed creating Team B server: {srv_b.status} {srv_b.text()}"
-        server_b_id = srv_b.json()["id"]
+        server_a_id = helper.create_server(
+            f"owasp-srv-a-{suffix}",
+            team_id=team_a_id,
+            visibility="team",
+            description="Team A server",
+        )["id"]
+
+        server_b_id = helper.create_server(
+            f"owasp-srv-b-{suffix}",
+            team_id=team_b_id,
+            visibility="team",
+            description="Team B server",
+        )["id"]
 
         # Token scoped to Team A only
         ctx_a = _api_context(playwright, _make_jwt("owasp-tenant-a@example.com", is_admin=False, teams=[team_a_id]))

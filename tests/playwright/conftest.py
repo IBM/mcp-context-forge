@@ -22,9 +22,10 @@ import pytest
 
 # First-Party
 from mcpgateway.config import Settings
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_test_jwt
 from .pages.admin_page import AdminPage
 from .pages.agents_page import AgentsPage
 from .pages.gateways_page import GatewaysPage
@@ -181,7 +182,7 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
     (required by SRI integrity attributes).
     """
     try:
-        token = _create_jwt_token({"sub": email}, user_data={"email": email, "is_admin": True, "auth_provider": "local"}, teams=None)
+        token = make_test_jwt(email, is_admin=True, teams=None)
     except Exception as exc:  # pragma: no cover - should only fail on misconfig
         raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
 
@@ -300,32 +301,27 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
-    headers = {"Accept": "application/json"}
-
     token = API_TOKEN
     if not token and not DISABLE_JWT_FALLBACK:
         # Generate a fallback admin token for testing if none provided
         try:
-            token = _create_jwt_token(
-                {"sub": ADMIN_EMAIL},
-                user_data={
-                    "email": ADMIN_EMAIL,
-                    "full_name": "Test Admin",
-                    "is_admin": True,
-                    "auth_provider": "test",
-                },
-                teams=None,  # Admin bypass: null teams with is_admin=true
+            token = make_test_jwt(
+                ADMIN_EMAIL,
+                is_admin=True,
+                teams=None,
+                auth_provider="test",
+                user_data={"email": ADMIN_EMAIL, "is_admin": True, "auth_provider": "test", "full_name": "Test Admin"},
             )
         except Exception:
             pass  # Use empty if generation fails
 
-    auth_header = _format_auth_header(token)
-    if auth_header:
-        headers["Authorization"] = auth_header
-
-    request_context = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers=headers,
+    request_context = (
+        ApiTestHelper.new_context(playwright, BASE_URL, token)
+        if token
+        else playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Accept": "application/json"},
+        )
     )
     yield request_context
     request_context.dispose()

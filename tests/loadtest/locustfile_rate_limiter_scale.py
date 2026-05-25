@@ -444,11 +444,12 @@ def _stop_redis_monitor() -> None:
 def _admin_jwt() -> str:
     """Create a short-lived JWT for the platform admin (setup/teardown only)."""
     # First-Party
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
+    from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
 
     admin_email = _cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-    return _create_jwt_token(
-        {"sub": admin_email},
+    return make_test_jwt(
+        admin_email,
+        is_admin=True,
         user_data={"email": admin_email, "is_admin": True, "auth_provider": "local"},
         teams=None,
         secret=JWT_SECRET_KEY,
@@ -490,11 +491,8 @@ def _bootstrap_users(host: str) -> None:
     """
     global _user_tokens, _registered_state, _server_id, _tool_names  # pylint: disable=global-statement
 
-    # Third-Party
-    import requests  # pylint: disable=import-outside-toplevel
-
     # First-Party
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
+    from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
 
     admin = _admin_session(host)
 
@@ -597,8 +595,9 @@ def _bootstrap_users(host: str) -> None:
                 registered.append({"email": email})
                 continue
 
-            user_jwt = _create_jwt_token(
-                {"sub": email},
+            user_jwt = make_test_jwt(
+                email,
+                is_admin=True,
                 user_data={"email": email, "is_admin": True, "auth_provider": "local"},
                 teams=None,
                 secret=JWT_SECRET_KEY,

@@ -293,8 +293,11 @@ class TestRegistryCache:
 
         fake_now = 1000.0
 
-        with patch("mcpgateway.cache.registry_cache.time") as mock_time:
+        with patch("mcpgateway.cache.registry_cache.time") as mock_time, patch.object(cache, "_get_redis_client", AsyncMock(return_value=None)):
             mock_time.time.return_value = fake_now
+
+            # This test validates in-memory (L1) expiry behavior only.
+            # Disable Redis for the test so tier-2 refill does not mask expiry.
 
             # Set with short TTL
             await cache.set("tools", [{"id": "1"}], ttl=1)

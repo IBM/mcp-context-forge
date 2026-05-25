@@ -24,10 +24,9 @@ from playwright.sync_api import APIRequestContext, Page, Playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
+from tests.helpers.api_helpers import ApiTestHelper
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
 from .conftest import BASE_URL, VALID_MCP_SERVER_URLS
 from .pages.gateways_page import GatewaysPage
 from .pages.prompts_page import PromptsPage
@@ -57,13 +56,12 @@ def _make_user_jwt(email: str, is_admin: bool = False, teams: Optional[list] = N
         token_use: If "session", triggers DB-based team resolution in auth middleware.
                    If None, uses JWT claims directly (matching conftest pattern).
     """
-    payload: Dict[str, Any] = {"sub": email}
-    if token_use:
-        payload["token_use"] = token_use
-    return _create_jwt_token(
-        payload,
-        user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
+    extra_payload: Dict[str, Any] | None = {"token_use": token_use} if token_use else None
+    return make_test_jwt(
+        email,
+        is_admin=is_admin,
         teams=teams,
+        extra_payload=extra_payload,
     )
 
 
@@ -193,10 +191,7 @@ def _submit_server_form_and_get_status(srv_page: ServersPage, name: str) -> int:
 def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Admin-authenticated API context for test setup/teardown."""
     token = _make_user_jwt("admin@example.com", is_admin=True)
-    ctx = playwright.request.new_context(
-        base_url=BASE_URL,
-        extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-    )
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
     yield ctx
     ctx.dispose()
 
@@ -204,9 +199,8 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 @pytest.fixture(scope="module")
 def rbac_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], None, None]:
     """Create a test team for RBAC tests, yield its data, then delete it."""
-    resp = admin_api.post("/teams/", data={"name": RBAC_TEAM_NAME, "description": "RBAC E2E test team", "visibility": "private"})
-    assert resp.status == 200 or resp.status == 201, f"Failed to create team: {resp.status} {resp.text()}"
-    team = resp.json()
+    helper = ApiTestHelper(admin_api)
+    team = helper.create_team(RBAC_TEAM_NAME, description="RBAC E2E test team", visibility="private")
     team_id = team["id"]
     logger.info("Created RBAC test team: %s (id=%s)", RBAC_TEAM_NAME, team_id)
 
@@ -273,10 +267,7 @@ def _create_user_and_join_team(
         if invitation_token:
             # 3. Accept invitation as the user
             user_jwt = _make_user_jwt(email, is_admin=False)
-            user_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
-            )
+            user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
             try:
                 accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
                 assert accept_resp.status in (200, 201), f"Failed to accept invitation for {email}: {accept_resp.status} {accept_resp.text()}"
@@ -576,10 +567,7 @@ class TestRBACRestAPI:
     def test_developer_api_create_gateway_no_team_id(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer should be able to create a gateway via REST API without team_id."""
         token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-gw-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -607,10 +595,7 @@ class TestRBACRestAPI:
     def test_developer_api_create_server_no_team_id(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer should be able to create a virtual server via REST API without team_id."""
         token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-srv-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -638,10 +623,7 @@ class TestRBACRestAPI:
     def test_viewer_api_create_gateway_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
         """Viewer should be denied gateway creation via REST API."""
         token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-gw-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -953,10 +935,7 @@ class TestRBACTeamManagement:
         """Viewer should be denied adding team members (requires teams.manage_members)."""
         team_id = rbac_test_team["id"]
         token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             # POST /admin/teams/{team_id}/add-member requires teams.manage_members
             resp = ctx.post(
@@ -977,10 +956,7 @@ class TestRBACTeamManagement:
         """
         team_id = rbac_test_team["id"]
         token = _make_user_jwt(rbac_team_admin_user["email"], teams=[team_id])
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "text/html"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token, accept="text/html")
         try:
             # GET /admin/teams/{team_id}/members/add requires teams.manage_members
             resp = ctx.get(f"/admin/teams/{team_id}/members/add")
@@ -1007,10 +983,7 @@ class TestRBACRestAPIEntityCreate:
     def test_developer_api_create_tool(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer should be able to create a tool via REST API."""
         token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-tool-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -1041,9 +1014,11 @@ class TestRBACRestAPIEntityCreate:
     def test_viewer_api_create_tool_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
         """Viewer should be denied tool creation via REST API."""
         token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"},
+        ctx = make_playwright_api_context(
+            playwright,
+            BASE_URL,
+            token,
+            extra_headers={"Content-Type": "application/json"},
         )
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-tool-{uuid.uuid4().hex[:8]}"
@@ -1070,10 +1045,7 @@ class TestRBACRestAPIEntityCreate:
     def test_developer_api_create_resource(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer should be able to create a resource via REST API."""
         token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-res-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -1103,9 +1075,11 @@ class TestRBACRestAPIEntityCreate:
     def test_viewer_api_create_resource_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
         """Viewer should be denied resource creation via REST API."""
         token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"},
+        ctx = make_playwright_api_context(
+            playwright,
+            BASE_URL,
+            token,
+            extra_headers={"Content-Type": "application/json"},
         )
         try:
             name = f"{RBAC_TEST_PREFIX}-api-viewer-res-{uuid.uuid4().hex[:8]}"
@@ -1131,10 +1105,7 @@ class TestRBACRestAPIEntityCreate:
     def test_developer_api_create_prompt(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
         """Developer should be able to create a prompt via REST API."""
         token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-        ctx = playwright.request.new_context(
-            base_url=BASE_URL,
-            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+        ctx = make_playwright_api_context(playwright, BASE_URL, token)
         try:
             name = f"{RBAC_TEST_PREFIX}-api-dev-prompt-{uuid.uuid4().hex[:8]}"
             resp = ctx.post(
@@ -1241,9 +1212,11 @@ class TestRPCToolExecutionRBAC:
         try:
             # Developer calls /rpc tools/call as a session token
             token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-            dev_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            dev_ctx = make_playwright_api_context(
+                playwright,
+                BASE_URL,
+                token,
+                extra_headers={"Content-Type": "application/json"},
             )
             try:
                 rpc_resp = dev_ctx.post(
@@ -1275,7 +1248,14 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": "https://httpbin.org/get", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "tool": {
+                        "name": tool_name,
+                        "description": "RPC RBAC viewer execute test tool",
+                        "url": "https://httpbin.org/get",
+                        "integration_type": "REST",
+                        "input_schema": {},
+                        "visibility": "team",
+                    },
                     "team_id": team_id,
                 }
             ),
@@ -1288,9 +1268,11 @@ class TestRPCToolExecutionRBAC:
 
         try:
             token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
-            viewer_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            viewer_ctx = make_playwright_api_context(
+                playwright,
+                BASE_URL,
+                token,
+                extra_headers={"Content-Type": "application/json"},
             )
             try:
                 rpc_resp = viewer_ctx.post(
@@ -1334,10 +1316,7 @@ class TestRPCToolExecutionRBAC:
 
         try:
             token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-            dev_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {token}"},
-            )
+            dev_ctx = make_playwright_api_context(playwright, BASE_URL, token, accept="*/*")
             try:
                 list_resp = dev_ctx.get(f"/tools?team_id={team_id}")
                 assert list_resp.status == 200, f"Developer GET /tools failed: {list_resp.status}"
@@ -1491,9 +1470,8 @@ class TestSessionTokenCookieRBAC:
         import json as _json  # noqa: PLC0415
 
         other_team_name = f"{RBAC_TEST_PREFIX}-other-{uuid.uuid4().hex[:8]}"
-        team_resp = admin_api.post("/teams/", data={"name": other_team_name, "description": "Cross-team isolation test"})
-        assert team_resp.status in (200, 201), f"Failed to create other team: {team_resp.status}"
-        other_team_id = team_resp.json()["id"]
+        other_team = ApiTestHelper(admin_api).create_team(other_team_name, description="Cross-team isolation test")
+        other_team_id = other_team["id"]
 
         tool_name = f"{RBAC_TEST_PREFIX}-xteam-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
@@ -1511,10 +1489,7 @@ class TestSessionTokenCookieRBAC:
 
         try:
             token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
-            dev_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {token}"},
-            )
+            dev_ctx = make_playwright_api_context(playwright, BASE_URL, token, accept="*/*")
             try:
                 list_resp = dev_ctx.get(f"/tools?team_id={other_team_id}")
                 assert list_resp.status == 200

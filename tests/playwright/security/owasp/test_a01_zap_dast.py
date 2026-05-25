@@ -100,12 +100,12 @@ def _make_admin_jwt() -> str:
     """Generate an admin JWT for the ZAP scanner to authenticate with."""
     # Import here so the module-level skip fires before any mcpgateway import
     # errors in environments where the package is not installed.
-    # First-Party
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # noqa: PLC0415
+    # Local
+    from tests.helpers.auth import make_test_jwt  # noqa: PLC0415
 
-    return _create_jwt_token(
-        {"sub": "zap-scanner@example.com"},
-        user_data={"email": "zap-scanner@example.com", "is_admin": True, "auth_provider": "local"},
+    return make_test_jwt(
+        "zap-scanner@example.com",
+        is_admin=True,
         teams=None,  # teams=None + is_admin=True → admin bypass (sees everything)
     )
 

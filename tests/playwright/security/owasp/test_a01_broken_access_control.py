@@ -43,10 +43,8 @@ import uuid
 from playwright.sync_api import APIRequestContext, Playwright
 import pytest
 
-# First-Party
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
-
 # Local
+from tests.helpers.auth import make_test_jwt
 from ..conftest import BASE_URL, TEST_PASSWORD
 from .conftest import _api_context, _make_jwt
 
@@ -240,11 +238,7 @@ class TestVerticalPrivilegeEscalation:
     def test_non_admin_cannot_create_user(self, non_admin_ctx: APIRequestContext) -> None:
         resp = non_admin_ctx.post(
             "/admin/users",
-            data={
-                "email": f"injected-{uuid.uuid4().hex[:8]}@example.com",
-                "password": "TestP@ssw0rd!Test2026X",  # pragma: allowlist secret
-                "full_name": "Injected"
-            },
+            data={"email": f"injected-{uuid.uuid4().hex[:8]}@example.com", "password": "TestP@ssw0rd!Test2026X", "full_name": "Injected"},  # pragma: allowlist secret
         )
         assert resp.status == 403, f"Non-admin should be denied user creation, got {resp.status}: {resp.text()}"
 
@@ -304,9 +298,10 @@ class TestJWTTampering:
 
     def test_expired_jwt_rejected(self, playwright: Playwright) -> None:
         """A JWT with `exp` set in the past must be rejected."""
-        expired_token = _create_jwt_token(
-            {"sub": "expired@example.com", "exp": int(time.time()) - 3600},
-            user_data={"email": "expired@example.com", "is_admin": False, "auth_provider": "local"},
+        expired_token = make_test_jwt(
+            "expired@example.com",
+            is_admin=False,
+            extra_payload={"exp": int(time.time()) - 3600},
         )
         ctx = _raw_bearer_context(playwright, expired_token)
         try:
@@ -331,9 +326,10 @@ class TestJWTTampering:
 
     def test_jwt_with_wrong_issuer_rejected(self, playwright: Playwright) -> None:
         """A JWT from a different issuer must be rejected."""
-        wrong_iss_token = _create_jwt_token(
-            {"sub": "wrongiss@example.com", "iss": "https://evil.example.com"},
-            user_data={"email": "wrongiss@example.com", "is_admin": False, "auth_provider": "local"},
+        wrong_iss_token = make_test_jwt(
+            "wrongiss@example.com",
+            is_admin=False,
+            extra_payload={"iss": "https://evil.example.com"},
         )
         ctx = _raw_bearer_context(playwright, wrong_iss_token)
         try:
@@ -347,9 +343,10 @@ class TestJWTTampering:
 
     def test_jwt_with_wrong_audience_rejected(self, playwright: Playwright) -> None:
         """A JWT with a mismatched audience must be rejected."""
-        wrong_aud_token = _create_jwt_token(
-            {"sub": "wrongaud@example.com", "aud": "https://other-service.example.com"},
-            user_data={"email": "wrongaud@example.com", "is_admin": False, "auth_provider": "local"},
+        wrong_aud_token = make_test_jwt(
+            "wrongaud@example.com",
+            is_admin=False,
+            extra_payload={"aud": "https://other-service.example.com"},
         )
         ctx = _raw_bearer_context(playwright, wrong_aud_token)
         try:

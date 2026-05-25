@@ -36,6 +36,7 @@ import pytest_asyncio
 
 # First-Party
 from mcpgateway.db import get_db
+from tests.helpers.auth import make_auth_header_for_email, make_test_jwt
 
 # Set environment variables for testing
 os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
@@ -54,27 +55,22 @@ def is_postgresql() -> bool:
 SKIP_IF_NOT_POSTGRES = pytest.mark.skipif(not is_postgresql(), reason="Row-level locking only works on PostgreSQL")
 
 
-def create_test_jwt_token():
-    """Create a proper JWT token for testing."""
-    import datetime
-    import jwt
+TEST_JWT_SECRET = "integration-test-jwt-secret-key-with-minimum-32-bytes"
 
-    test_secret = "integration-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
-    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
-    payload = {
-        "sub": "admin@example.com",
-        "email": "admin@example.com",
-        "iat": int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
-        "exp": int(expire.timestamp()),
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api",
-        "teams": [],
-    }
-    return jwt.encode(payload, test_secret, algorithm="HS256")
-
-
-TEST_JWT_TOKEN = create_test_jwt_token()
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
+TEST_JWT_TOKEN = make_test_jwt(
+    "admin@example.com",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm="HS256",
+)
+TEST_AUTH_HEADER = make_auth_header_for_email(
+    "admin@example.com",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm="HS256",
+)
 
 
 @pytest_asyncio.fixture
