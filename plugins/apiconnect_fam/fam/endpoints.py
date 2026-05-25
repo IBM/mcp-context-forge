@@ -23,7 +23,7 @@ class FAMEndpoints:
 
     # Asset Catalog API v2 - Runtimes
     RUNTIMES = "/api/assetcatalog/v2/runtimes"
-    RUNTIME_TYPES = "/api/assetcatalog/v1/runtimes/types"
+    RUNTIME_TYPES = "/api/assetcatalog/v2/runtimes/types"
 
     # Engine API v2 - Heartbeat
     HEARTBEAT = "/api/engine/v2/runtimes/heartbeat"

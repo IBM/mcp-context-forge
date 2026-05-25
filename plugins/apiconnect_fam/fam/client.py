@@ -199,7 +199,7 @@ class FAMAssetCatalogClient:
         """
         try:
             endpoint = f"{self.base_url}{FAMEndpoints.RUNTIME_TYPES}"
-            payload = {"id": runtime_type_id, "name": runtime_type_name, "attributes": {}}
+            payload = {"id": runtime_type_id, "name": runtime_type_name, "capabilities": ["AI"]}
 
             logger.info(f"Creating runtime type '{runtime_type_name}' (ID: {runtime_type_id}) at {endpoint}")
             response = await self._http_client.post(endpoint, json=payload)
