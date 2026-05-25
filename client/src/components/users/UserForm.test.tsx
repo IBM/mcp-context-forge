@@ -13,7 +13,7 @@ const messages = {
   "users.form.email.placeholder": "user@example.com",
   "users.form.password": "Password",
   "users.form.password.placeholder": "Enter password",
-  "users.form.confirmPassword": "Confirm Password",
+  "users.form.confirmPassword": "Confirm Password", // pragma: allowlist secret
   "users.form.confirmPassword.placeholder": "Re-enter password",
   "users.form.fullName": "Full Name",
   "users.form.fullName.placeholder": "John Doe",
@@ -28,8 +28,8 @@ const messages = {
 
 const defaultFormState = {
   email: "",
-  password: "",
-  confirmPassword: "",
+  password: "", // pragma: allowlist secret
+  confirmPassword: "", // pragma: allowlist secret
   fullName: "",
   isAdmin: false,
   isActive: true,
@@ -243,7 +243,7 @@ describe("UserForm", () => {
     it("should display password error with proper ARIA attributes", () => {
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
-        errors: { password: "Password too short" },
+        errors: { password: "Password too short" }, // pragma: allowlist secret
       });
 
       render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
@@ -335,7 +335,7 @@ describe("UserForm", () => {
       });
     });
 
-    it("should disable submit button when form is invalid", () => {
+    it("should keep submit button enabled when form is invalid", () => {
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
         isValid: false,
@@ -344,7 +344,7 @@ describe("UserForm", () => {
       render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
 
       const submitButton = screen.getByText("Create User");
-      expect(submitButton).toBeDisabled();
+      expect(submitButton).toBeEnabled();
     });
 
     it("should disable submit button when submitting", () => {

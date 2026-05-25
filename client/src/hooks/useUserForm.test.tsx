@@ -365,7 +365,7 @@ describe("useUserForm", () => {
 
       expect(formData).toEqual({
         email: "test@example.com",
-        password: "SecurePass123!",
+        password: "SecurePass123!", // pragma: allowlist secret
         full_name: "John Doe",
         is_admin: true,
         is_active: false,
@@ -423,7 +423,7 @@ describe("useUserForm", () => {
       expect(mockEvent.preventDefault).toHaveBeenCalled();
       expect(mockExecute).toHaveBeenCalledWith({
         email: "test@example.com",
-        password: "SecurePass123!",
+        password: "SecurePass123!", // pragma: allowlist secret
         full_name: undefined,
         is_admin: false,
         is_active: true,
@@ -501,6 +501,40 @@ describe("useUserForm", () => {
       });
 
       expect(result.current.errors.submit).toBe("User already exists");
+    });
+
+    it("should call onError callback with form data on API failure", async () => {
+      mockExecute.mockRejectedValue({
+        body: {
+          message: "User already exists",
+        },
+      });
+      const { result } = renderHook(() => useUserForm(), { wrapper });
+      const onError = vi.fn();
+
+      act(() => {
+        result.current.setEmail("test@example.com");
+        result.current.setPassword("SecurePass123!");
+        result.current.setConfirmPassword("SecurePass123!");
+        result.current.setFullName("John Doe");
+      });
+
+      const mockEvent = {
+        preventDefault: vi.fn(),
+      } as unknown as React.FormEvent<HTMLFormElement>;
+
+      await act(async () => {
+        await result.current.handleSubmit(mockEvent, undefined, undefined, onError);
+      });
+
+      expect(onError).toHaveBeenCalledWith({
+        email: "test@example.com",
+        password: "SecurePass123!", // pragma: allowlist secret
+        full_name: "John Doe",
+        is_admin: false,
+        is_active: true,
+        password_change_required: false,
+      });
     });
 
     it("should handle API error with string detail", async () => {
