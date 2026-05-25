@@ -75,6 +75,27 @@ def test_ratelimiter_redis_url_set():
     assert s.ratelimiter_redis_socket_timeout == 5.0
     assert s.ratelimiter_redis_socket_connect_timeout == 3.0
 
+
+def test_ratelimiter_redis_url_validation_rejects_invalid_scheme():
+    """Test rate limiter Redis URL validation rejects invalid schemes."""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="must start with redis:// or rediss://"):
+        Settings(ratelimiter_redis_url="http://localhost:6379", _env_file=None)
+
+    with pytest.raises(ValidationError, match="must start with redis:// or rediss://"):
+        Settings(ratelimiter_redis_url="postgresql://localhost:5432", _env_file=None)
+
+
+def test_ratelimiter_redis_url_validation_accepts_valid_schemes():
+    """Test rate limiter Redis URL validation accepts redis:// and rediss://."""
+    s1 = Settings(ratelimiter_redis_url="redis://localhost:6379/0", _env_file=None)
+    assert s1.ratelimiter_redis_url == "redis://localhost:6379/0"
+
+    s2 = Settings(ratelimiter_redis_url="rediss://localhost:6379/0", _env_file=None)
+    assert s2.ratelimiter_redis_url == "rediss://localhost:6379/0"
+
     # Test CSV format
     s_csv = Settings(sso_entra_admin_groups="admin, superadmin", _env_file=None)
     assert s_csv.sso_entra_admin_groups == ["admin", "superadmin"]

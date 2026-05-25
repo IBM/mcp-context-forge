@@ -109,10 +109,18 @@ __all__ = [
     "resolve_session_teams",
 ]
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _SYNC_REDIS_LOCK = threading.Lock()
 _SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+# Rate limiter Redis client (Issue #4751)
+_RATELIMITER_REDIS_CLIENT = None  # pylint: disable=invalid-name
+_RATELIMITER_REDIS_LOCK = threading.Lock()
+_RATELIMITER_REDIS_FAILURE_TIME: Optional[float] = None
 
 # Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
 _LAST_USED_CACHE: dict = {}
@@ -120,7 +128,7 @@ _LAST_USED_CACHE_LOCK = threading.Lock()
 
 
 def _log_auth_event(
-    logger: logging.Logger,
+    logger_handle: logging.Logger,
     message: str,
     level: int = logging.INFO,
     user_id: Optional[str] = None,
@@ -136,7 +144,7 @@ def _log_auth_event(
     correlation ID context, enabling end-to-end tracing of authentication flows.
 
     Args:
-        logger: Logger instance to use
+        logger_handle: Logger instance to use
         message: Log message
         level: Log level (default: INFO)
         user_id: User identifier
@@ -167,7 +175,7 @@ def _log_auth_event(
     extra.update(extra_context)
 
     # Log with structured context
-    logger.log(level, message, extra=extra)
+    logger_handle.log(level, message, extra=extra)
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -752,26 +760,24 @@ def _get_sync_redis_client():
             # First-Party
             from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
 
-            # Use dedicated rate limiter Redis if configured, otherwise fall back to main Redis
-            redis_url = config_settings.ratelimiter_redis_url or config_settings.redis_url
+            redis_url = config_settings.redis_url
             if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
                 log.getLogger(__name__).warning("REDIS_URL uses rediss:// scheme but REDIS_SSL=false — TLS certificate settings will not be applied")
-            pool_size = config_settings.ratelimiter_redis_max_connections if config_settings.ratelimiter_redis_url else config_settings.redis_max_connections
-            socket_timeout = config_settings.ratelimiter_redis_socket_timeout if config_settings.ratelimiter_redis_url else config_settings.redis_socket_timeout
-            socket_connect_timeout = config_settings.ratelimiter_redis_socket_connect_timeout if config_settings.ratelimiter_redis_url else config_settings.redis_socket_connect_timeout
             ssl_kwargs = _build_ssl_kwargs(config_settings)
 
-            _SYNC_REDIS_CLIENT = redis.from_url(redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs)
+            _SYNC_REDIS_CLIENT = redis.from_url(
+                redis_url,
+                decode_responses=True,
+                max_connections=config_settings.redis_max_connections,
+                socket_timeout=config_settings.redis_socket_timeout,
+                socket_connect_timeout=config_settings.redis_socket_connect_timeout,
+                **ssl_kwargs,
+            )
 
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
             _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
-
-            # Log which Redis instance is being used (Issue #4751)
-            if config_settings.ratelimiter_redis_url:
-                log.getLogger(__name__).info(f"Rate limiter using dedicated Redis: {redis_url}")
-            else:
-                log.getLogger(__name__).debug(f"Rate limiter using main Redis: {redis_url}")
+            log.getLogger(__name__).debug("Sync Redis client initialized for API token operations")
         except ValueError as e:
             log.getLogger(__name__).error(f"Sync Redis SSL misconfiguration — client not started: {e}")
             _SYNC_REDIS_CLIENT = None
@@ -782,6 +788,87 @@ def _get_sync_redis_client():
             _SYNC_REDIS_FAILURE_TIME = time.time()
 
     return _SYNC_REDIS_CLIENT
+
+
+def _get_ratelimiter_redis_client():
+    """Get or create rate limiter Redis client.
+
+    Falls back to main Redis (_get_sync_redis_client) when
+    ratelimiter_redis_url is not configured.
+
+    Returns:
+        Redis client or None if unavailable.
+    """
+    global _RATELIMITER_REDIS_CLIENT, _RATELIMITER_REDIS_FAILURE_TIME  # pylint: disable=global-statement
+
+    # Standard
+    import time  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
+
+    # Fallback to main Redis if no dedicated URL configured
+    if not config_settings.ratelimiter_redis_url:
+        return _get_sync_redis_client()
+
+    # Quick check without lock
+    if _RATELIMITER_REDIS_CLIENT is not None:
+        return _RATELIMITER_REDIS_CLIENT
+
+    # Backoff after recent failure (30 seconds)
+    if _RATELIMITER_REDIS_FAILURE_TIME and (time.time() - _RATELIMITER_REDIS_FAILURE_TIME < 30):
+        return None
+
+    # Lazy initialization with lock
+    with _RATELIMITER_REDIS_LOCK:
+        # Double-check after acquiring lock
+        if _RATELIMITER_REDIS_CLIENT is not None:
+            return _RATELIMITER_REDIS_CLIENT
+
+        try:
+            # Third-Party
+            import redis  # pylint: disable=import-outside-toplevel
+
+            # First-Party
+            from mcpgateway.utils.redis_client import _build_ssl_kwargs  # pylint: disable=import-outside-toplevel
+
+            redis_url = config_settings.ratelimiter_redis_url
+            pool_size = config_settings.ratelimiter_redis_max_connections
+            socket_timeout = config_settings.ratelimiter_redis_socket_timeout
+            socket_connect_timeout = config_settings.ratelimiter_redis_socket_connect_timeout
+
+            # Warn if rediss:// but SSL disabled (inherits main Redis SSL settings)
+            if redis_url.startswith("rediss://") and not config_settings.redis_ssl:
+                logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. " "TLS settings from main Redis will be applied.")
+
+            ssl_kwargs = _build_ssl_kwargs(config_settings)
+
+            _RATELIMITER_REDIS_CLIENT = redis.from_url(
+                redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs
+            )
+
+            # Test connection
+            _RATELIMITER_REDIS_CLIENT.ping()
+            _RATELIMITER_REDIS_FAILURE_TIME = None
+
+            # Sanitize URL for logging (strip credentials)
+            # Standard
+            from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+            parsed = urlparse(redis_url)
+            safe_url = parsed._replace(netloc=f"***@{parsed.hostname}:{parsed.port}" if parsed.password else parsed.netloc).geturl()
+            logger.info(f"Rate limiter using dedicated Redis: {safe_url}")
+
+        except ValueError as e:
+            logger.error(f"Rate limiter Redis SSL misconfiguration: {e}")
+            _RATELIMITER_REDIS_CLIENT = None
+            return None
+        except Exception as e:
+            logger.debug(f"Rate limiter Redis unavailable: {e}")
+            _RATELIMITER_REDIS_CLIENT = None
+            _RATELIMITER_REDIS_FAILURE_TIME = time.time()
+
+    return _RATELIMITER_REDIS_CLIENT
 
 
 def _update_api_token_last_used_sync(jti: str) -> None:
@@ -840,7 +927,6 @@ def _update_api_token_last_used_sync(jti: str) -> None:
             return
         except Exception as exc:
             # Redis failed, fall through to in-memory cache
-            logger = logging.getLogger(__name__)
             logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
 
     # Fallback: In-memory cache (module-level dict with threading.Lock for thread-safety)
@@ -1237,7 +1323,6 @@ async def get_current_user(
     Raises:
         HTTPException: If authentication fails
     """
-    logger = logging.getLogger(__name__)
     clear_trace_context()
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
@@ -1958,7 +2043,6 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         user: User related information
     """
 
-    logger = logging.getLogger(__name__)
     # Get request ID from correlation ID context (set by CorrelationIDMiddleware)
     request_id = get_correlation_id()
     if not request_id:

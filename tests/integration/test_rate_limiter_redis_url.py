@@ -22,72 +22,48 @@ class TestRateLimiterWithDedicatedRedis:
         mock_dedicated_client.get.return_value = None
         mock_dedicated_client.setex.return_value = True
 
-        # Mock main Redis client
-        mock_main_client = MagicMock()
-        mock_main_client.ping.return_value = True
+        mock_redis.Redis.return_value = mock_dedicated_client
 
-        def from_url_side_effect(url, **kwargs):
-            if "6380" in url:  # Dedicated Redis
-                return mock_dedicated_client
-            return mock_main_client
-
-        mock_redis.from_url.side_effect = from_url_side_effect
-
-        # Reset global client
+        # Reset global clients
         import mcpgateway.auth
-        mcpgateway.auth._SYNC_REDIS_CLIENT = None
+        mcpgateway.auth._RATELIMITER_REDIS_CLIENT = None
 
-        with patch("mcpgateway.auth.config_settings") as mock_settings:
+        with patch("mcpgateway.auth.settings") as mock_settings:
             mock_settings.ratelimiter_redis_url = "redis://localhost:6380/0"
             mock_settings.ratelimiter_redis_max_connections = 50
             mock_settings.ratelimiter_redis_socket_timeout = 2.0
             mock_settings.ratelimiter_redis_socket_connect_timeout = 2.0
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_ssl = False
 
-            from mcpgateway.auth import _get_sync_redis_client
+            from mcpgateway.auth import _get_ratelimiter_redis_client
 
-            client = _get_sync_redis_client()
+            client = _get_ratelimiter_redis_client()
 
             # Verify dedicated Redis was used
             assert client == mock_dedicated_client
-            mock_redis.from_url.assert_called_with(
-                "redis://localhost:6380/0",
-                decode_responses=True,
-                max_connections=50,
-                socket_timeout=2.0,
-                socket_connect_timeout=2.0
-            )
+            mock_redis.Redis.assert_called_once()
+            mock_dedicated_client.ping.assert_called_once()
 
-    @patch("mcpgateway.auth.redis")
-    def test_rate_limiter_fallback_to_main_redis(self, mock_redis):
+    @patch("mcpgateway.auth._get_sync_redis_client")
+    def test_rate_limiter_fallback_to_main_redis(self, mock_get_sync):
         """Verify rate limiting falls back to main Redis when dedicated unset."""
         mock_main_client = MagicMock()
-        mock_main_client.ping.return_value = True
-        mock_redis.from_url.return_value = mock_main_client
+        mock_get_sync.return_value = mock_main_client
 
+        # Reset global clients
         import mcpgateway.auth
-        mcpgateway.auth._SYNC_REDIS_CLIENT = None
+        mcpgateway.auth._RATELIMITER_REDIS_CLIENT = None
 
-        with patch("mcpgateway.auth.config_settings") as mock_settings:
+        with patch("mcpgateway.auth.settings") as mock_settings:
             mock_settings.ratelimiter_redis_url = None
-            mock_settings.redis_url = "redis://localhost:6379/0"
-            mock_settings.redis_max_connections = 50
-            mock_settings.redis_socket_timeout = 2.0
-            mock_settings.redis_socket_connect_timeout = 2.0
 
-            from mcpgateway.auth import _get_sync_redis_client
+            from mcpgateway.auth import _get_ratelimiter_redis_client
 
-            client = _get_sync_redis_client()
+            client = _get_ratelimiter_redis_client()
 
-            # Verify main Redis was used
+            # Verify main Redis was used via fallback
             assert client == mock_main_client
-            mock_redis.from_url.assert_called_with(
-                "redis://localhost:6379/0",
-                decode_responses=True,
-                max_connections=50,
-                socket_timeout=2.0,
-                socket_connect_timeout=2.0
-            )
+            mock_get_sync.assert_called_once()
 
 
 class TestStartupValidation:

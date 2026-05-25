@@ -1059,7 +1059,11 @@ mcpContextForge:
     RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
 ```
 
-**Migration:** Unset = uses main `REDIS_URL` (backward compatible).
+**Notes:**
+- **Migration:** Unset = uses main `REDIS_URL` (backward compatible)
+- **TLS:** Inherits TLS settings from main Redis (`REDIS_SSL`, `REDIS_CA_CERT`, etc). Use `rediss://` scheme for TLS
+- **URL Validation:** Must start with `redis://` or `rediss://` (validated at startup)
+- **Independent:** Operates independently of `CACHE_TYPE` setting
 
 | redis.auth.existingSecret | string | `""` |  |
 | redis.auth.passwordKey | string | `"REDIS_PASSWORD"` |  |

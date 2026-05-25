@@ -2595,10 +2595,21 @@ class Settings(BaseSettings):
 
     # Rate Limiter Redis Configuration (Issue #4751)
     # Dedicated Redis instance for rate limiting to prevent contention with main Redis
-    ratelimiter_redis_url: Optional[str] = Field(default=None, description="Optional Redis URL for rate limiting middleware. Falls back to REDIS_URL when unset.")
-    ratelimiter_redis_max_connections: int = Field(default=50, description="Connection pool size for rate limiter Redis (matches redis_max_connections default)")
-    ratelimiter_redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout for rate limiter Redis (matches redis_socket_timeout default)")
-    ratelimiter_redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout for rate limiter Redis (matches redis_socket_connect_timeout default)")
+    ratelimiter_redis_url: Optional[str] = Field(
+        default=None, description="Optional Redis URL for rate limiting middleware. Falls back to main Redis when unset. Must start with redis:// or rediss://"
+    )
+    ratelimiter_redis_max_connections: int = Field(default=50, description="Connection pool size for rate limiter Redis")
+    ratelimiter_redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout for rate limiter Redis")
+    ratelimiter_redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout for rate limiter Redis")
+
+    @field_validator("ratelimiter_redis_url")
+    @classmethod
+    def validate_ratelimiter_redis_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate rate limiter Redis URL format."""
+        if v is not None and v.strip():
+            if not (v.startswith("redis://") or v.startswith("rediss://")):
+                raise ValueError("RATELIMITER_REDIS_URL must start with redis:// or rediss://")
+        return v
 
     # Redis Leader Election - Multi-Node Deployments
     redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")

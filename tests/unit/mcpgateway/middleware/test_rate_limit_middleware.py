@@ -17,12 +17,12 @@ import pytest
 
 
 class TestRateLimiterRedisUrl:
-    """Test rate limit middleware uses dedicated Redis when configured."""
+    """Test rate limit middleware uses dedicated Redis function."""
 
-    @patch("mcpgateway.auth._get_sync_redis_client")
+    @patch("mcpgateway.auth._get_ratelimiter_redis_client")
     @patch("mcpgateway.middleware.rate_limit_middleware.settings")
-    def test_rate_limit_uses_dedicated_redis(self, mock_settings, mock_get_client):
-        """Test rate limit middleware uses dedicated Redis when configured."""
+    def test_rate_limit_calls_dedicated_redis_function(self, mock_settings, mock_get_client):
+        """Test rate limit middleware calls _get_ratelimiter_redis_client."""
         mock_settings.rate_limiting_enabled = True
         mock_settings.rate_limiting_redis_enabled = True
         mock_settings.ratelimiter_redis_url = "redis://localhost:6380/0"
@@ -34,13 +34,13 @@ class TestRateLimiterRedisUrl:
 
         middleware = RateLimitMiddleware(MagicMock())
 
-        # Verify client was obtained (will use dedicated URL via _get_sync_redis_client)
+        # Verify dedicated function was called
         mock_get_client.assert_called()
 
-    @patch("mcpgateway.auth._get_sync_redis_client")
+    @patch("mcpgateway.auth._get_ratelimiter_redis_client")
     @patch("mcpgateway.middleware.rate_limit_middleware.settings")
-    def test_rate_limit_falls_back_to_main_redis(self, mock_settings, mock_get_client):
-        """Test rate limit middleware falls back to main Redis when unset."""
+    def test_rate_limit_dedicated_function_handles_fallback(self, mock_settings, mock_get_client):
+        """Test rate limit middleware dedicated function handles fallback internally."""
         mock_settings.rate_limiting_enabled = True
         mock_settings.rate_limiting_redis_enabled = True
         mock_settings.ratelimiter_redis_url = None
@@ -382,7 +382,7 @@ class TestRateLimitMiddlewareTiers:
         mock_script = MagicMock()
         mock_client.register_script.return_value = mock_script
 
-        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch("mcpgateway.middleware.rate_limit_middleware.auth._get_sync_redis_client", return_value=mock_client):
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch("mcpgateway.middleware.rate_limit_middleware.auth._get_ratelimiter_redis_client", return_value=mock_client):
             mock_settings.rate_limiting_enabled = True
             mock_settings.rate_limiting_redis_enabled = True
             mock_settings.trust_proxy_auth = True
@@ -402,7 +402,7 @@ class TestRateLimitMiddlewareTiers:
 
             mw = RateLimitMiddleware(mock_app)
 
-        mock_client.ping.assert_called_once()
+        # Note: _get_ratelimiter_redis_client() calls ping() internally, so we don't assert it here
         mock_client.register_script.assert_called_once()
         assert mw.use_redis is True
         assert mw._sliding_window_script is mock_script
