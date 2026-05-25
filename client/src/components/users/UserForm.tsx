@@ -5,14 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useUserForm } from "@/hooks/useUserForm";
+import type { CreateUserRequest } from "@/types/user";
 
 interface UserFormProps {
   isOpen: boolean;
   onToggle: () => void;
   onSuccess?: () => void;
+  onOptimisticCreate?: (userData: CreateUserRequest) => void;
+  onError?: (userData: CreateUserRequest) => void;
 }
 
-export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
+export function UserForm({
+  isOpen,
+  onToggle,
+  onSuccess,
+  onOptimisticCreate,
+  onError,
+}: UserFormProps) {
   const intl = useIntl();
   const {
     email,
@@ -23,7 +32,6 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
     isActive,
     passwordChangeRequired,
     errors,
-    isValid,
     isSubmitting,
     setEmail,
     setPassword,
@@ -38,13 +46,19 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    handleSubmit(event, () => {
-      if (onSuccess) {
-        onSuccess();
-      } else {
-        onToggle();
-      }
-    });
+    handleSubmit(
+      event,
+      () => {
+        // Success callback
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          onToggle();
+        }
+      },
+      onOptimisticCreate,
+      onError,
+    );
   };
 
   if (!isOpen) return null;
@@ -58,7 +72,10 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-blue-500 text-white shadow-sm">
                 <User className="h-5 w-5" />
               </div>
-              <h2 className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+              <h2
+                id="user-form-title"
+                className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50"
+              >
                 {intl.formatMessage({ id: "users.form.title" })}
               </h2>
             </div>
@@ -68,7 +85,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
             </p>
           </div>
 
-          <form className="space-y-6" onSubmit={onSubmit}>
+          <form className="space-y-6" onSubmit={onSubmit} aria-labelledby="user-form-title">
             <div className="space-y-1">
               <label
                 htmlFor="user-email"
@@ -81,6 +98,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               <Input
                 id="user-email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder={intl.formatMessage({ id: "users.form.email.placeholder" })}
@@ -112,6 +130,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               <Input
                 id="user-password"
                 type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder={intl.formatMessage({ id: "users.form.password.placeholder" })}
@@ -143,6 +162,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               <Input
                 id="user-confirm-password"
                 type="password"
+                autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 placeholder={intl.formatMessage({ id: "users.form.confirmPassword.placeholder" })}
@@ -172,6 +192,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
               <Input
                 id="user-full-name"
                 type="text"
+                autoComplete="name"
                 value={fullName}
                 onChange={(event) => setFullName(event.target.value)}
                 placeholder={intl.formatMessage({ id: "users.form.fullName.placeholder" })}
@@ -197,54 +218,69 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 onClick={() => setAdvancedOpen((current) => !current)}
                 className="inline-flex w-full items-center gap-2 rounded-md border border-neutral-200 px-3 py-2 text-sm font-medium text-neutral-600 transition hover:text-neutral-950 dark:border-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-300"
                 aria-expanded={advancedOpen}
+                aria-controls="advanced-settings-region"
               >
-                <ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} />
+                <ChevronDown
+                  className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`}
+                  aria-hidden="true"
+                />
                 {intl.formatMessage({ id: "users.form.advancedSettings" })}
               </button>
 
               {advancedOpen && (
-                <div className="space-y-4 rounded-md border border-neutral-200 p-4 dark:border-neutral-800">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="user-is-admin"
-                      checked={isAdmin}
-                      onCheckedChange={(checked) => setIsAdmin(checked === true)}
-                    />
-                    <label
-                      htmlFor="user-is-admin"
-                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {intl.formatMessage({ id: "users.form.isAdmin" })}
-                    </label>
-                  </div>
+                <div
+                  id="advanced-settings-region"
+                  role="region"
+                  aria-labelledby="advanced-settings-label"
+                  className="space-y-4 rounded-md border border-neutral-200 p-4 dark:border-neutral-800"
+                >
+                  <span id="advanced-settings-label" className="sr-only">
+                    {intl.formatMessage({ id: "users.form.advancedSettings" })}
+                  </span>
+                  <fieldset className="space-y-4">
+                    <legend className="sr-only">User Permissions and Settings</legend>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="user-is-admin"
+                        checked={isAdmin}
+                        onCheckedChange={(checked) => setIsAdmin(checked === true)}
+                      />
+                      <label
+                        htmlFor="user-is-admin"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                      >
+                        {intl.formatMessage({ id: "users.form.isAdmin" })}
+                      </label>
+                    </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="user-is-active"
-                      checked={isActive}
-                      onCheckedChange={(checked) => setIsActive(checked === true)}
-                    />
-                    <label
-                      htmlFor="user-is-active"
-                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {intl.formatMessage({ id: "users.form.isActive" })}
-                    </label>
-                  </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="user-is-active"
+                        checked={isActive}
+                        onCheckedChange={(checked) => setIsActive(checked === true)}
+                      />
+                      <label
+                        htmlFor="user-is-active"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                      >
+                        {intl.formatMessage({ id: "users.form.isActive" })}
+                      </label>
+                    </div>
 
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="user-password-change-required"
-                      checked={passwordChangeRequired}
-                      onCheckedChange={(checked) => setPasswordChangeRequired(checked === true)}
-                    />
-                    <label
-                      htmlFor="user-password-change-required"
-                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {intl.formatMessage({ id: "users.form.passwordChangeRequired" })}
-                    </label>
-                  </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="user-password-change-required"
+                        checked={passwordChangeRequired}
+                        onCheckedChange={(checked) => setPasswordChangeRequired(checked === true)}
+                      />
+                      <label
+                        htmlFor="user-password-change-required"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                      >
+                        {intl.formatMessage({ id: "users.form.passwordChangeRequired" })}
+                      </label>
+                    </div>
+                  </fieldset>
                 </div>
               )}
 
@@ -269,7 +305,7 @@ export function UserForm({ isOpen, onToggle, onSuccess }: UserFormProps) {
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!isValid || isSubmitting}
+                  disabled={isSubmitting}
                   className="h-10 rounded-md bg-neutral-950 px-4 text-sm font-medium text-white hover:enabled:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-950 dark:hover:enabled:bg-neutral-200"
                 >
                   {isSubmitting
