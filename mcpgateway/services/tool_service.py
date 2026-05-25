@@ -4366,6 +4366,14 @@ class ToolService(BaseService):
         # pylint: disable=comparison-with-callable
         logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}, server_id={server_id}")
         # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
+        # This is needed for upstream session registry to work correctly
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+        if request_headers:
+            request_headers_var.set(request_headers)
+        # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
