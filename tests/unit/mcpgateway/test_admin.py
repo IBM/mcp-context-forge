@@ -458,7 +458,9 @@ class TestAdminServerRoutes:
         )
 
         # Test with include_inactive=False
-        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(token_teams=None)
+        result = await admin_list_servers(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert "pagination" in result
@@ -3113,7 +3115,9 @@ class TestAdminGatewayRoutes:
             return_value={"data": [mock_gateway], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(token_teams=None)
+        result = await admin_list_gateways(request=mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert "data" in result
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
