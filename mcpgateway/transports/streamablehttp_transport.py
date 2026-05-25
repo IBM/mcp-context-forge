@@ -1998,8 +1998,27 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     s_id = server_id_var.get()
 
     # Check if context vars are populated with real data (not defaults)
+    # Only use ContextVars if they contain the enriched headers with session ID
+    # If session ID is missing, fall through to ASGI scope (Path 2) which has enriched headers
     if s_id != "default_server_id":
-        return s_id, request_headers_var.get(), user_context_var.get()
+        headers = request_headers_var.get()
+        session_id = headers.get("x-mcp-session-id") if headers else None
+
+        # If we have a server_id but no session ID in headers, the ContextVars were captured
+        # before enrichment. Fall through to ASGI scope which has the enriched headers.
+        if not session_id:
+            logger.debug(
+                "[CONTEXT_RESOLUTION] Path 1 skipped (no session ID) | server_id=%s | falling through to ASGI scope",
+                s_id[:8] if s_id else None,
+            )
+            # Don't return - fall through to Path 2 (ASGI scope)
+        else:
+            logger.debug(
+                "[CONTEXT_RESOLUTION] Path 1 (ContextVars) | server_id=%s | has_session_id=%s",
+                s_id[:8] if s_id else None,
+                bool(session_id),
+            )
+            return s_id, headers, user_context_var.get()
 
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
@@ -2009,9 +2028,16 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
             if isinstance(gw_ctx, dict):
+                headers = gw_ctx.get("request_headers", {})
+                session_id = headers.get("x-mcp-session-id") if headers else None
+                logger.debug(
+                    "[CONTEXT_RESOLUTION] Path 2 (ASGI scope) | server_id=%s | has_session_id=%s",
+                    (gw_ctx.get("server_id") or s_id)[:8] if (gw_ctx.get("server_id") or s_id) else None,
+                    bool(session_id),
+                )
                 return (
                     gw_ctx.get("server_id") or s_id,
-                    gw_ctx.get("request_headers", {}),
+                    headers,
                     gw_ctx.get("user_context", {}),
                 )
     except LookupError:
@@ -4345,7 +4371,10 @@ class SessionManagerWrapper:
                 logger.debug("Session affinity check failed, proceeding locally: %s", e)
 
         # Store headers in context for tool invocations
-        request_headers_var.set(headers)
+        # Enrich with session ID BEFORE SDK handling so tool invocations can access it
+        # Set request_headers_var BEFORE server_id_var to ensure ContextVars are captured together
+        enriched_headers = dict(headers)
+        request_headers_var.set(enriched_headers)
 
         server_id_var.set(validated)
 
@@ -4379,7 +4408,7 @@ class SessionManagerWrapper:
         # the startup context rather than the per-request context).
         scope[_MCPGATEWAY_CONTEXT_KEY] = {
             "server_id": server_id_var.get(),
-            "request_headers": headers,
+            "request_headers": enriched_headers,
             "user_context": user_context,
         }
 

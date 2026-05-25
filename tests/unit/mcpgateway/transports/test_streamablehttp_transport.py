@@ -12344,7 +12344,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
 @pytest.mark.asyncio
 async def test_get_request_context_fast_path():
-    """Fast path: returns ContextVars directly when server_id is not the default."""
+    """Fast path: returns ContextVars directly when server_id is not the default and session ID is present."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         _get_request_context_or_default,
@@ -12354,14 +12354,65 @@ async def test_get_request_context_fast_path():
     )
 
     s_tok = server_id_var.set("real-server-abc123")
-    h_tok = request_headers_var.set({"authorization": "Bearer xyz"})
+    h_tok = request_headers_var.set({"authorization": "Bearer xyz", "x-mcp-session-id": "session-123"})
     u_tok = user_context_var.set({"email": "user@test.com", "teams": ["t1"]})
 
     try:
         sid, headers, user = await _get_request_context_or_default()
         assert sid == "real-server-abc123"
-        assert headers == {"authorization": "Bearer xyz"}
+        assert headers == {"authorization": "Bearer xyz", "x-mcp-session-id": "session-123"}
         assert user == {"email": "user@test.com", "teams": ["t1"]}
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_fast_path_no_session_id_falls_through(monkeypatch, caplog):
+    """Fast path skipped when session ID missing - falls through to ASGI scope (lines 2010-2014)."""
+    # Standard
+    import logging
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    # Set ContextVars with server_id but NO session ID in headers
+    s_tok = server_id_var.set("real-server-abc123")
+    h_tok = request_headers_var.set({"authorization": "Bearer xyz"})  # No x-mcp-session-id
+    u_tok = user_context_var.set({"email": "user@test.com", "teams": ["t1"]})
+
+    # Mock ASGI scope fallback path
+    mock_request = MagicMock()
+    mock_request.url.path = "/servers/fallback-server/mcp"
+    mock_request.headers = {"x-mcp-session-id": "enriched-session-456"}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    mock_auth = AsyncMock(return_value={"email": "fallback@test.com", "teams": ["t2"], "is_authenticated": True})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with caplog.at_level(logging.DEBUG, logger="mcpgateway.transports.streamablehttp_transport"):
+                sid, headers, user = await _get_request_context_or_default()
+
+                # Should fall through to ASGI scope, not use ContextVars
+                assert sid == "fallback-server"
+                assert headers["x-mcp-session-id"] == "enriched-session-456"
+                assert user["email"] == "fallback@test.com"
+
+                # Verify debug log for fallthrough
+                assert any("[CONTEXT_RESOLUTION] Path 1 skipped (no session ID)" in record.message for record in caplog.records)
     finally:
         server_id_var.reset(s_tok)
         request_headers_var.reset(h_tok)
