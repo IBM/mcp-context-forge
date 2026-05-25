@@ -20,14 +20,27 @@ export interface BaseServer {
  * Note: Backend uses "Gateway" terminology and endpoints (/gateways),
  * but frontend displays these as "MCP Servers" to users.
  */
+export interface MCPServerCapabilities {
+  prompts?: Record<string, unknown>;
+  resources?: Record<string, unknown>;
+  tools?: Record<string, unknown>;
+  completions?: Record<string, unknown>;
+}
+
 export interface MCPServer extends BaseServer {
   url: string;
   transport: "SSE" | "STREAMABLEHTTP";
   reachable: boolean;
+  capabilities?: MCPServerCapabilities;
   last_seen?: string;
+  lastSeen?: string;
   tool_count: number;
+  toolCount?: number;
   created_at: string;
+  createdAt?: string;
   updated_at: string;
+  updatedAt?: string;
+  slug?: string;
 }
 
 export interface PaginationMeta {
