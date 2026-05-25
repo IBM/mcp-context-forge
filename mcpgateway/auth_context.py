@@ -121,6 +121,7 @@ from typing import Any, Dict, List, Optional
 # Third-Party
 from fastapi import Request
 import orjson
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
@@ -567,3 +568,48 @@ def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any
         return user_email, []
 
     return user_email, token_teams
+
+
+async def set_user_context_from_token(request: Request, payload: dict, db: Session) -> None:
+    """Set user context on request state from JWT payload.
+
+    Resolves user ID to email and caches on request.state for performance.
+    This helper supports the token migration from email-based to user-ID-based
+    tokens by using get_user_email_from_token() which handles both formats.
+
+    Args:
+        request: FastAPI request object
+        payload: JWT payload dictionary
+        db: Database session for user lookup
+
+    Side Effects:
+        Sets the following attributes on request.state:
+        - user_email: Resolved user email (from ID or direct)
+        - user_id: User ID from sub claim (may be email in legacy tokens)
+        - is_admin: Admin flag from payload
+        - auth_provider: Auth provider from payload
+
+    Examples:
+        >>> # New format: sub contains user ID
+        >>> payload = {"sub": "12345", "is_admin": True, "auth_provider": "local"}
+        >>> await set_user_context_from_token(request, payload, db)
+        >>> request.state.user_email
+        'user@example.com'
+        >>> request.state.user_id
+        '12345'
+
+        >>> # Legacy format: sub contains email
+        >>> payload = {"sub": "user@example.com", "is_admin": False}
+        >>> await set_user_context_from_token(request, payload, db)
+        >>> request.state.user_email
+        'user@example.com'
+        >>> request.state.user_id
+        'user@example.com'
+    """
+    from mcpgateway.auth import get_user_email_from_token
+
+    user_email = await get_user_email_from_token(payload, db)
+    request.state.user_email = user_email
+    request.state.user_id = payload.get("sub")
+    request.state.is_admin = payload.get("is_admin", False)
+    request.state.auth_provider = payload.get("auth_provider", "local")

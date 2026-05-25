@@ -1439,6 +1439,7 @@ class EmailUser(Base):
     __tablename__ = "email_users"
 
     # Core identity fields
+    id: Mapped[int] = mapped_column(Integer, unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)

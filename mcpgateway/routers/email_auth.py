@@ -145,9 +145,11 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
 
     issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
+    # NOTE: Phase 1 of PII cleanup - flattened structure, keeping email in sub for backward compatibility
+    # Phase 2 will switch sub to user.id
     payload = {
         # Standard JWT claims
-        "sub": user.email,
+        "sub": user.email,  # TODO Phase 2: Change to str(user.id)
         "iss": settings.jwt_issuer,
         "aud": settings.jwt_audience,
         "iat": issued_at,
@@ -156,13 +158,9 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         # Idle-timeout bootstrap: first request after issuance uses this until
         # `TokenBlocklistService.update_activity()` writes a fresher value to Redis.
         "last_activity": issued_at,
-        # User profile information
-        "user": {
-            "email": str(getattr(user, "email", "")),
-            "full_name": str(getattr(user, "full_name", "")),
-            "is_admin": bool(getattr(user, "is_admin", False)),
-            "auth_provider": str(getattr(user, "auth_provider", "local")),
-        },
+        # Flattened user context (no PII except email in sub - removed full_name)
+        "is_admin": bool(getattr(user, "is_admin", False)),
+        "auth_provider": str(getattr(user, "auth_provider", "local")),
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
@@ -188,10 +186,10 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     expire = now + expires_delta
 
     # Create simple JWT payload (original format) with primitives only
+    # NOTE: Phase 1 of PII cleanup - removed full_name, keeping email in sub for backward compatibility
+    # Phase 2 will switch sub to user.id
     payload = {
-        "sub": str(getattr(user, "email", "")),
-        "email": str(getattr(user, "email", "")),
-        "full_name": str(getattr(user, "full_name", "")),
+        "sub": str(getattr(user, "email", "")),  # TODO Phase 2: Change to str(user.id)
         "is_admin": bool(getattr(user, "is_admin", False)),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),
