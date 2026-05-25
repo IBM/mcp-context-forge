@@ -7,3 +7,9 @@
 {"id":"733e5a61-7bd1-43aa-bfc4-69c79bc16502","ts":"2026-05-26T14:26:55.962Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/hooks/useUserForm.ts","version":"1.0.0","taskID":"8e7ca400-4e52-4081-ad1f-cb1932953f49"}
 {"id":"d70e24f3-df40-40b5-89d8-7c5c4662a7eb","ts":"2026-05-26T14:27:41.895Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/hooks/useUserForm.test.tsx","version":"1.0.0","taskID":"8e7ca400-4e52-4081-ad1f-cb1932953f49"}
 {"id":"3e9144bb-07af-474d-a646-9c0e2f7c1681","ts":"2026-05-26T14:29:40.019Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/hooks/useUserForm.ts","version":"1.0.0","taskID":"8e7ca400-4e52-4081-ad1f-cb1932953f49"}
+
+{"id":"4e6d40bb-6068-458c-b263-a6f8b07819fd","ts":"2026-05-25T14:44:26.911Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/pages/Users.tsx","version":"1.0.0","taskID":"a2aad51a-fb74-4c38-8e35-bba6f39ff9b9"}
+
+{"id":"ca7e4fa0-9fc4-48a3-81ce-0a248c7918d9","ts":"2026-05-25T14:26:51.081Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/pages/Users.tsx","version":"1.0.0","taskID":"a2aad51a-fb74-4c38-8e35-bba6f39ff9b9"}
+{"id":"6dcfec42-6878-48cf-9ba2-209168f34232","ts":"2026-05-25T14:27:05.597Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/components/users/UserForm.tsx","version":"1.0.0","taskID":"a2aad51a-fb74-4c38-8e35-bba6f39ff9b9"}
+{"id":"b04efd8e-18e8-48dd-8de5-3b0f31815bda","ts":"2026-05-25T14:27:22.568Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/client/src/hooks/useUserForm.ts","version":"1.0.0","taskID":"a2aad51a-fb74-4c38-8e35-bba6f39ff9b9"}
