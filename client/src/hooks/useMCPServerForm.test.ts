@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
+import { serversApi } from "@/api/servers";
 import { useMCPServerForm } from "./useMCPServerForm";
 
 describe("useMCPServerForm", () => {
@@ -1038,6 +1039,108 @@ describe("useMCPServerForm", () => {
           expect(result.current.isSubmitting).toBe(false);
         });
       });
+
+      it("reuses the created gateway ID on OAuth retry to prevent duplicate gateway creation", async () => {
+        let createCallCount = 0;
+        server.use(
+          http.post("/gateways", () => {
+            createCallCount++;
+            return HttpResponse.json({ id: "gateway-retry-test" });
+          }),
+        );
+
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockRejectedValueOnce(new Error("OAuth popup blocked"))
+          .mockResolvedValueOnce({
+            type: "oauth_callback",
+            status: "success",
+            gatewayName: "Test Gateway",
+          });
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const mockEvent = {
+          preventDefault: vi.fn(),
+        } as unknown as React.FormEvent<HTMLFormElement>;
+
+        act(() => {
+          result.current.setName("Test Gateway");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("oauth");
+        });
+
+        // First submit: gateway is created, OAuth fails
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        await waitFor(() => expect(result.current.oauthPending).toBe(false));
+        expect(createCallCount).toBe(1);
+        expect(result.current.oauthNotification?.type).toBe("error");
+
+        // Second submit: gateway must NOT be created again — reuses stored ID
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent);
+        });
+
+        await waitFor(() => expect(result.current.oauthPending).toBe(false));
+        expect(createCallCount).toBe(1); // still 1 — no duplicate
+        expect(triggerOAuthMock).toHaveBeenCalledTimes(2);
+        expect(triggerOAuthMock).toHaveBeenCalledWith("gateway-retry-test");
+
+        triggerOAuthMock.mockRestore();
+      });
+
+      it("delays onSuccess by 2 s after OAuth success so the notification is visible", async () => {
+        vi.useFakeTimers();
+
+        server.use(
+          http.post("/gateways", () => HttpResponse.json({ id: "gateway-delay-test" })),
+        );
+
+        const triggerOAuthMock = vi
+          .spyOn(serversApi, "triggerOAuthAuthorization")
+          .mockResolvedValueOnce({
+            type: "oauth_callback",
+            status: "success",
+            gatewayName: "Delay Test",
+          });
+
+        const { result } = renderHook(() => useMCPServerForm());
+        const onSuccess = vi.fn();
+        const mockEvent = {
+          preventDefault: vi.fn(),
+        } as unknown as React.FormEvent<HTMLFormElement>;
+
+        act(() => {
+          result.current.setName("Delay Test");
+          result.current.setUrl("http://localhost:3000");
+          result.current.setAuthType("oauth");
+        });
+
+        await act(async () => {
+          await result.current.handleSubmit(mockEvent, onSuccess);
+        });
+
+        // Success notification must be set immediately
+        expect(result.current.oauthNotification?.type).toBe("success");
+        // But onSuccess must not have fired yet
+        expect(onSuccess).not.toHaveBeenCalled();
+
+        // After the 2-second delay onSuccess is called
+        act(() => {
+          vi.advanceTimersByTime(2000);
+        });
+        expect(onSuccess).toHaveBeenCalledTimes(1);
+
+        vi.useRealTimers();
+        triggerOAuthMock.mockRestore();
+      });
     });
   });
+});
+
+// Restore all spies after each test in this file
+afterEach(() => {
+  vi.restoreAllMocks();
 });
