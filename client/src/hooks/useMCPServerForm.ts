@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, type FormEvent } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, type FormEvent } from "react";
 import { z } from "zod";
 import { useQuery } from "@/hooks/useQuery";
 import { serversApi } from "@/api/servers";
@@ -313,6 +313,9 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     type: "success" | "error";
     message: string;
   } | null>(null);
+  // Tracks gateway created during a failed OAuth attempt so retries reuse it instead of creating a duplicate.
+  const [pendingOAuthGatewayId, setPendingOAuthGatewayId] = useState<string | undefined>(undefined);
+  const successCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isEditMode = Boolean(gatewayId);
 
@@ -544,6 +547,12 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     oauthPassword,
   ]);
 
+  useEffect(() => {
+    return () => {
+      if (successCloseTimeoutRef.current) clearTimeout(successCloseTimeoutRef.current);
+    };
+  }, []);
+
   const validateField = useCallback((field: keyof FormErrors, value: string) => {
     try {
       const fieldSchema =
@@ -625,6 +634,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
     setQueryParamName(initialState.queryParamName);
     setQueryParamApiKey(initialState.queryParamApiKey);
     setErrors({});
+    setPendingOAuthGatewayId(undefined);
   }, []);
 
   const handleSubmit = useCallback(
@@ -645,10 +655,16 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
             }
             await updateGateway(formData);
             responseGatewayId = gatewayId;
+          } else if (authType === "oauth" && pendingOAuthGatewayId) {
+            // Reuse the gateway created in a previous OAuth attempt to avoid duplicates.
+            responseGatewayId = pendingOAuthGatewayId;
           } else {
             const response = await createGateway(formData);
             // Extract gateway ID from response
             responseGatewayId = (response as { id?: string })?.id;
+            if (authType === "oauth" && responseGatewayId) {
+              setPendingOAuthGatewayId(responseGatewayId);
+            }
           }
 
           if (authType === "oauth" && responseGatewayId) {
@@ -662,8 +678,11 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
                 type: "success",
                 message: `OAuth authorization successful${oauthResult.gatewayName ? ` for ${oauthResult.gatewayName}` : ""}.`,
               });
-              if (onSuccess) onSuccess();
-              resetForm();
+              // Delay closing so the success notification is visible before the form unmounts.
+              successCloseTimeoutRef.current = setTimeout(() => {
+                if (onSuccess) onSuccess();
+                resetForm();
+              }, 2000);
             } catch (oauthError) {
               setOAuthNotification({
                 type: "error",
@@ -733,6 +752,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
       isEditMode,
       gatewayId,
       authType,
+      pendingOAuthGatewayId,
     ],
   );
 
