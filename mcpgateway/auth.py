@@ -1982,3 +1982,50 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
     if request and global_context:
         request.state.plugin_global_context = global_context
+
+
+async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
+    """Resolve user email from JWT payload (supports both ID and email in sub).
+
+    This helper enables backward-compatible token migration from email-based
+    to user-ID-based tokens. It checks if the 'sub' claim contains a numeric
+    user ID (new format) or an email address (legacy format).
+
+    Args:
+        payload: JWT payload dictionary containing 'sub' claim
+        db: Database session for user lookup
+
+    Returns:
+        User email string if found, None otherwise
+
+    Examples:
+        >>> # New format: sub contains user ID
+        >>> payload = {"sub": "12345"}
+        >>> email = await get_user_email_from_token(payload, db)
+        >>> email
+        'user@example.com'
+
+        >>> # Legacy format: sub contains email
+        >>> payload = {"sub": "user@example.com"}
+        >>> email = await get_user_email_from_token(payload, db)
+        >>> email
+        'user@example.com'
+
+        >>> # Invalid user ID
+        >>> payload = {"sub": "99999"}
+        >>> email = await get_user_email_from_token(payload, db)
+        >>> email is None
+        True
+    """
+    sub = payload.get("sub")
+    if not sub:
+        return None
+
+    # Try as user ID first (new format)
+    if isinstance(sub, str) and sub.isdigit():
+        user_id = int(sub)
+        user = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+        return user.email if user else None
+
+    # Fall back to email (legacy format)
+    return sub if isinstance(sub, str) else None
