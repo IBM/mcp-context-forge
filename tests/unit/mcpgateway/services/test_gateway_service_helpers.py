@@ -117,6 +117,118 @@ def test_gateway_service_convert_gateway_to_read(monkeypatch):
     assert result._masked_called, "convert_gateway_to_read must call .masked() to prevent credential leakage"
 
 
+def test_convert_gateway_to_read_capabilities_from_relationships(monkeypatch):
+    """convert_gateway_to_read populates capabilities from eagerly-loaded relationships."""
+    service = GatewayService()
+
+    # Simulate a gateway whose relationships are already loaded in __dict__
+    gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+        tools=["t1", "t2", "t3"],      # 3 tools
+        prompts=["p1"],                  # 1 prompt
+        resources=["r1", "r2"],          # 2 resources
+    )
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    service.convert_gateway_to_read(gateway)
+
+    assert captured["tool_count"] == 3
+    assert captured["capabilities"]["tools"]["count"] == 3
+    assert captured["capabilities"]["prompts"]["count"] == 1
+    assert captured["capabilities"]["resources"]["count"] == 2
+
+
+def test_convert_gateway_to_read_capabilities_absent_relationships(monkeypatch):
+    """convert_gateway_to_read uses zero counts when relationships are not loaded."""
+    service = GatewayService()
+
+    # No tools/prompts/resources keys in __dict__ at all
+    gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+    )
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    service.convert_gateway_to_read(gateway)
+
+    assert captured["tool_count"] == 0
+    assert captured["capabilities"]["tools"]["count"] == 0
+    assert captured["capabilities"]["prompts"]["count"] == 0
+    assert captured["capabilities"]["resources"]["count"] == 0
+
+
+def test_convert_gateway_to_read_capabilities_empty_relationships(monkeypatch):
+    """convert_gateway_to_read handles empty (but loaded) relationship lists."""
+    service = GatewayService()
+
+    gateway = SimpleNamespace(
+        auth_value=None,
+        tags=[],
+        created_by=None,
+        modified_by=None,
+        created_at=None,
+        updated_at=None,
+        version=None,
+        team=None,
+        tools=[],
+        prompts=[],
+        resources=[],
+    )
+
+    captured: dict = {}
+
+    class MockGatewayRead:
+        def __init__(self, data):
+            captured.update(data)
+
+        def masked(self):
+            return self
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
+
+    service.convert_gateway_to_read(gateway)
+
+    assert captured["tool_count"] == 0
+    assert captured["capabilities"] == {
+        "tools": {"count": 0},
+        "prompts": {"count": 0},
+        "resources": {"count": 0},
+    }
+
+
 def test_gateway_service_validate_tools_valueerror(monkeypatch):
     service = GatewayService()
 
