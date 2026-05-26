@@ -115,7 +115,7 @@ jobs:
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
-                  LOG_LEVEL: DEBUG
+                  LOG_LEVEL: INFO
               run: |
                   make venv
                   make install
