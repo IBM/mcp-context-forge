@@ -5460,3 +5460,42 @@ class TestA2AInvokeBodyEndpoint:
         response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
+
+
+class TestSanitizeErrorMessage:
+    """Tests for sanitize_error_message in main.py."""
+
+    def test_sanitize_empty_message(self):
+        from mcpgateway.main import sanitize_error_message
+
+        assert sanitize_error_message("") == ""
+        assert sanitize_error_message(None) is None  # noqa: E711
+
+    def test_sanitize_redacts_bearer_token(self):
+        from mcpgateway.main import sanitize_error_message
+
+        result = sanitize_error_message("Bearer sk-1234567890abcdef connection failed")
+        assert "[REDACTED]" in result
+        assert "sk-1234567890abcdef" not in result
+
+    def test_sanitize_redacts_password(self):
+        from mcpgateway.main import sanitize_error_message
+
+        result = sanitize_error_message("password=super-secret-123 error")
+        assert "[REDACTED]" in result
+        assert "super-secret-123" not in result
+
+    def test_sanitize_truncates_long_message(self):
+        from mcpgateway.main import sanitize_error_message
+
+        long_msg = "x" * 1000
+        result = sanitize_error_message(long_msg)
+        assert len(result) == 500
+        assert result.endswith("...")
+
+    def test_sanitize_normal_message_passes_through(self):
+        from mcpgateway.main import sanitize_error_message
+
+        msg = "Service threw an unexpected error"
+        result = sanitize_error_message(msg)
+        assert result == msg
