@@ -1,7 +1,7 @@
 import { AppState } from "./appState.js";
 import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
 import { escapeAttrValue } from "./security.js";
-import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
+import { updateEditToolRequestTypes, handleEditToolIntegrationTypeChange, handleEditToolPassthrough } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateways.js";
 import { closeModal, openModal } from "./modals.js";
 import {
@@ -701,6 +701,151 @@ export const editTool = async function (toolId) {
       window.editToolOutputSchemaEditor.refresh();
     }
 
+    // Populate advanced configuration fields
+    const titleField = safeGetElement("edit-tool-title");
+    if (titleField) {
+      titleField.value = tool.title || "";
+    }
+
+    const timeoutField = safeGetElement("edit-tool-timeout-ms");
+    if (timeoutField) {
+      timeoutField.value = tool.timeoutMs || "";
+    }
+
+    const jsonpathFilterField = safeGetElement("edit-tool-jsonpath-filter");
+    if (jsonpathFilterField) {
+      jsonpathFilterField.value = tool.jsonpathFilter || "";
+    }
+
+    // Populate gateway dropdown
+    const gatewayField = safeGetElement("edit-tool-gateway-id");
+    if (gatewayField) {
+      try {
+        const gatewayResponse = await fetchWithTimeout(
+          `${window.ROOT_PATH}/admin/gateways`
+        );
+        if (gatewayResponse.ok) {
+          const gateways = await gatewayResponse.json();
+          gatewayField.innerHTML = '<option value="">Select Gateway (optional)</option>';
+          gateways.forEach((gw) => {
+            const option = document.createElement("option");
+            option.value = gw.id;
+            option.textContent = `${gw.slug} (${gw.url})`;
+            if (tool.gatewayId === gw.id) {
+              option.selected = true;
+            }
+            gatewayField.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.warn("Could not fetch gateways:", error);
+      }
+    }
+
+    // Populate team dropdown
+    const teamField = safeGetElement("edit-tool-team-id");
+    if (teamField) {
+      try {
+        const teamResponse = await fetchWithTimeout(
+          `${window.ROOT_PATH}/admin/teams`
+        );
+        if (teamResponse.ok) {
+          const teams = await teamResponse.json();
+          teamField.innerHTML = '<option value="">No Team (optional)</option>';
+          teams.forEach((team) => {
+            const option = document.createElement("option");
+            option.value = team.id;
+            option.textContent = team.name;
+            if (tool.teamId === team.id) {
+              option.selected = true;
+            }
+            teamField.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.warn("Could not fetch teams:", error);
+      }
+    }
+
+    // Handle REST passthrough button visibility and populate fields
+    const restPassthroughButtonWrapper = safeGetElement("edit-tool-rest-passthrough-button-wrapper");
+    const restPassthroughContainer = safeGetElement("edit-tool-passthrough-container");
+
+    // Always populate REST passthrough fields (they'll be hidden if not REST)
+    const baseUrlField = safeGetElement("edit-tool-base-url");
+    if (baseUrlField) {
+      baseUrlField.value = tool.baseUrl || "";
+    }
+
+    const pathTemplateField = safeGetElement("edit-tool-path-template");
+    if (pathTemplateField) {
+      pathTemplateField.value = tool.pathTemplate || "";
+    }
+
+    const queryMappingField = safeGetElement("edit-tool-query-mapping");
+    if (queryMappingField) {
+      queryMappingField.value = tool.queryMapping ? JSON.stringify(tool.queryMapping, null, 2) : "";
+    }
+
+    const headerMappingField = safeGetElement("edit-tool-header-mapping");
+    if (headerMappingField) {
+      headerMappingField.value = tool.headerMapping ? JSON.stringify(tool.headerMapping, null, 2) : "";
+    }
+
+    const exposePassthroughField = safeGetElement("edit-tool-expose-passthrough");
+    if (exposePassthroughField) {
+      exposePassthroughField.checked = tool.exposePassthrough || false;
+    }
+
+    const allowlistField = safeGetElement("edit-tool-allowlist");
+    if (allowlistField) {
+      allowlistField.value = Array.isArray(tool.allowlist) ? tool.allowlist.join(", ") : "";
+    }
+
+    // Show/hide button and container based on integration type
+    if (restPassthroughButtonWrapper) {
+      if (tool.integrationType === "REST") {
+        restPassthroughButtonWrapper.style.display = "block";
+        // Show container if any passthrough fields have values
+        if (restPassthroughContainer) {
+          const hasPassthroughData = tool.baseUrl || tool.pathTemplate ||
+                                     tool.queryMapping || tool.headerMapping ||
+                                     tool.exposePassthrough ||
+                                     (Array.isArray(tool.allowlist) && tool.allowlist.length > 0);
+          if (hasPassthroughData) {
+            restPassthroughContainer.style.display = "block";
+          } else {
+            restPassthroughContainer.style.display = "none";
+          }
+        }
+      } else {
+        restPassthroughButtonWrapper.style.display = "none";
+        if (restPassthroughContainer) {
+          restPassthroughContainer.style.display = "none";
+        }
+      }
+    }
+
+    // Handle plugin section visibility
+    const pluginSection = safeGetElement("edit-tool-plugin-section");
+    if (pluginSection) {
+      if (window.PLUGINS_ENABLED) {
+        pluginSection.style.display = "block";
+
+        const pluginChainPreField = safeGetElement("edit-tool-plugin-chain-pre");
+        if (pluginChainPreField) {
+          pluginChainPreField.value = Array.isArray(tool.pluginChainPre) ? tool.pluginChainPre.join(", ") : "";
+        }
+
+        const pluginChainPostField = safeGetElement("edit-tool-plugin-chain-post");
+        if (pluginChainPostField) {
+          pluginChainPostField.value = Array.isArray(tool.pluginChainPost) ? tool.pluginChainPost.join(", ") : "";
+        }
+      } else {
+        pluginSection.style.display = "none";
+      }
+    }
+
     // Prefill integration type from DB and set request types accordingly
     if (typeField) {
       typeField.value = tool.integrationType || "REST";
@@ -933,6 +1078,24 @@ export const editTool = async function (toolId) {
       default:
         // No auth – keep everything hidden
         break;
+    }
+
+    // Set up event listener for integration type changes
+    const editToolTypeSelect = safeGetElement("edit-tool-type");
+    if (editToolTypeSelect) {
+      // Remove any existing listener to avoid duplicates
+      editToolTypeSelect.removeEventListener("change", handleEditToolIntegrationTypeChange);
+      // Add the listener
+      editToolTypeSelect.addEventListener("change", handleEditToolIntegrationTypeChange);
+    }
+
+    // Set up event listener for passthrough button
+    const editToolPassthroughBtn = safeGetElement("edit-tool-passthrough-btn");
+    if (editToolPassthroughBtn) {
+      // Remove any existing listener to avoid duplicates
+      editToolPassthroughBtn.removeEventListener("click", handleEditToolPassthrough);
+      // Add the listener
+      editToolPassthroughBtn.addEventListener("click", handleEditToolPassthrough);
     }
 
     openModal("tool-edit-modal");

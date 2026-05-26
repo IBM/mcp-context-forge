@@ -343,6 +343,50 @@ export const updateEditToolRequestTypes = function (selectedMethod = null) {
   }
 };
 
+// Handle integration type changes in edit form to show/hide REST passthrough button
+export const handleEditToolIntegrationTypeChange = function () {
+  const editToolTypeSelect = safeGetElement("edit-tool-type");
+  if (!editToolTypeSelect) {
+    return;
+  }
+
+  const selectedType = editToolTypeSelect.value;
+  const restPassthroughButtonWrapper = safeGetElement("edit-tool-rest-passthrough-button-wrapper");
+  const restPassthroughContainer = safeGetElement("edit-tool-passthrough-container");
+
+  // Show REST passthrough button only for REST integration type
+  if (restPassthroughButtonWrapper) {
+    if (selectedType === "REST") {
+      restPassthroughButtonWrapper.style.display = "block";
+    } else {
+      restPassthroughButtonWrapper.style.display = "none";
+      // Also hide the container if integration type changes away from REST
+      if (restPassthroughContainer) {
+        restPassthroughContainer.style.display = "none";
+      }
+    }
+  }
+};
+
+// Handle passthrough button click in edit form
+export const handleEditToolPassthrough = function () {
+  const passthroughContainer = safeGetElement("edit-tool-passthrough-container");
+  if (!passthroughContainer) {
+    console.error("Edit tool passthrough container not found");
+    return;
+  }
+
+  // Toggle visibility
+  if (
+    passthroughContainer.style.display === "none" ||
+    passthroughContainer.style.display === ""
+  ) {
+    passthroughContainer.style.display = "block";
+  } else {
+    passthroughContainer.style.display = "none";
+  }
+};
+
 // ===================================================================
 // ADVANCED TOOLS FIELDS
 // ===================================================================
