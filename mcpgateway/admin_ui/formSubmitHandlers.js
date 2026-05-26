@@ -700,11 +700,9 @@ export const handleEditToolFormSubmit = async function (event) {
   const form = event.target;
 
   try {
-    const formData = new FormData(form);
-
-    // Basic validation (customize as needed)
-    const name = formData.get("name");
-    const url = formData.get("url");
+    // Basic validation before touching editors
+    const name = form.elements["name"]?.value;
+    const url = form.elements["url"]?.value;
     const nameValidation = validateInputName(name, "tool");
     const urlValidation = validateUrl(url);
 
@@ -715,8 +713,8 @@ export const handleEditToolFormSubmit = async function (event) {
       throw new Error(urlValidation.error);
     }
 
-    // // Save CodeMirror editors' contents if present
-
+    // Flush all CodeMirror editors to their underlying <textarea> elements
+    // BEFORE constructing FormData so the snapshot captures current values.
     if (window.editToolHeadersEditor) {
       window.editToolHeadersEditor.save();
     }
@@ -726,6 +724,9 @@ export const handleEditToolFormSubmit = async function (event) {
     if (window.editToolOutputSchemaEditor) {
       window.editToolOutputSchemaEditor.save();
     }
+
+    // Snapshot form data AFTER editors are flushed.
+    const formData = new FormData(form);
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
