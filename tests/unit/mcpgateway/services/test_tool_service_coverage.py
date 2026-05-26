@@ -199,6 +199,16 @@ def mock_tool(mock_gateway):
         "avg_response_time": None,
         "last_execution_time": None,
     }
+    # REST passthrough fields
+    tool.timeout_ms = None
+    tool.base_url = None
+    tool.path_template = None
+    tool.query_mapping = None
+    tool.header_mapping = None
+    tool.expose_passthrough = None
+    tool.allowlist = None
+    tool.plugin_chain_pre = None
+    tool.plugin_chain_post = None
     return tool
 
 
@@ -222,6 +232,16 @@ def _make_tool_update(**overrides) -> MagicMock:
         visibility=None,
         auth=None,
         tags=None,
+        team_id=None,
+        timeout_ms=None,
+        base_url=None,
+        path_template=None,
+        query_mapping=None,
+        header_mapping=None,
+        expose_passthrough=None,
+        allowlist=None,
+        plugin_chain_pre=None,
+        plugin_chain_post=None,
     )
     defaults.update(overrides)
     for attr, value in defaults.items():
@@ -3830,6 +3850,19 @@ class TestToolNotificationMethods:
         tool.description = "A test tool"
         tool.enabled = True
         tool.reachable = True
+        tool.team_id = None
+        tool.visibility = "public"
+        tool.version = 1
+        # REST passthrough fields
+        tool.timeout_ms = None
+        tool.base_url = None
+        tool.path_template = None
+        tool.query_mapping = None
+        tool.header_mapping = None
+        tool.expose_passthrough = None
+        tool.allowlist = None
+        tool.plugin_chain_pre = None
+        tool.plugin_chain_post = None
         return tool
 
     @pytest.mark.asyncio
@@ -5523,6 +5556,16 @@ class TestUpdateToolBranches:
         tool_update.visibility = "team"
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
+        tool_update.team_id = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         db = MagicMock()
 
@@ -5582,6 +5625,16 @@ class TestUpdateToolBranches:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.team_id = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         db = MagicMock()
         with (
