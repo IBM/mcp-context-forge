@@ -1131,6 +1131,7 @@ class ToolService(BaseService):
             "grpc_service_id": str(tool.grpc_service_id) if tool.grpc_service_id else None,
             "enabled": bool(tool.enabled),
             "deprecated": bool(tool.deprecated),
+            "sunset_date": tool.sunset_date.isoformat() if tool.sunset_date else None,
             "reachable": bool(tool.reachable),
             "tags": tool.tags or [],
             "team_id": tool.team_id,
@@ -1394,6 +1395,46 @@ class ToolService(BaseService):
                 can_view = True
             if not can_view:
                 tool_dict["headers"] = {k: settings.masked_auth_value for k in headers}
+
+        # Compute lifecycle fields
+        deprecated = tool_dict.get("deprecated", False)
+        sunset_date = tool_dict.get("sunset_date")
+        enabled = tool_dict.get("enabled", True)
+
+        # Map sunset_date to sunsetDate for Pydantic serialization (camelCase)
+        if sunset_date is not None:
+            tool_dict["sunsetDate"] = sunset_date
+
+        # Determine lifecycle_state
+        if not enabled and deprecated and sunset_date:
+            # Tool has been sunset (disabled after reaching sunset date)
+            tool_dict["lifecycle_state"] = "sunset"
+            tool_dict["is_executable"] = False
+        elif deprecated and sunset_date:
+            # Tool is deprecated with a sunset date
+            now = datetime.now(timezone.utc)
+            # Ensure sunset_date is timezone-aware for comparison
+            if sunset_date.tzinfo is None:
+                sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+            if sunset_date <= now:
+                # Sunset date has passed but tool hasn't been disabled yet (scheduler will handle it)
+                tool_dict["lifecycle_state"] = "sunset"
+                tool_dict["is_executable"] = False
+            else:
+                # Deprecated but still before sunset date
+                tool_dict["lifecycle_state"] = "deprecated"
+                tool_dict["is_executable"] = True
+                # Calculate days until sunset
+                time_until_sunset = sunset_date - now
+                tool_dict["days_until_sunset"] = max(0, time_until_sunset.days)
+        else:
+            # Active tool (not deprecated or no sunset date)
+            tool_dict["lifecycle_state"] = "active"
+            tool_dict["is_executable"] = True
+
+        # Ensure days_until_sunset is None for non-deprecated or sunset tools
+        if tool_dict["lifecycle_state"] != "deprecated":
+            tool_dict["days_until_sunset"] = None
 
         return ToolRead.model_validate(tool_dict)
 
@@ -2021,6 +2062,9 @@ class ToolService(BaseService):
                 auth_value=auth_value,
                 gateway_id=tool.gateway_id,
                 tags=tool.tags or [],
+                # Lifecycle management fields
+                deprecated=getattr(tool, "deprecated", False),
+                sunset_date=getattr(tool, "sunsetDate", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -4590,11 +4634,25 @@ class ToolService(BaseService):
                 # Don't reveal tool existence - return generic "not found"
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
-            # Check deprecated status after RBAC to avoid leaking tool existence
-            if tool_payload.get("deprecated") is True:
-                # Cache the deprecated status to avoid repeated DB queries
-                await tool_lookup_cache.set_negative(name, "deprecated")
-                raise ToolInvocationError(f"Tool '{name}' is deprecated and cannot be executed. Please update your agent to use an alternative tool.")
+            # Check sunset status after RBAC to avoid leaking tool existence
+            # Deprecated tools CAN still be executed until their sunset date
+            # Only sunset tools (deprecated + past sunset_date) are blocked
+            sunset_date_str = tool_payload.get("sunset_date")
+            if sunset_date_str:
+                # Third-Party
+                from dateutil import parser as dateutil_parser
+
+                sunset_date = dateutil_parser.isoparse(sunset_date_str)
+                now = datetime.now(timezone.utc)
+                # Ensure sunset_date is timezone-aware for comparison
+                if sunset_date.tzinfo is None:
+                    sunset_date = sunset_date.replace(tzinfo=timezone.utc)
+                if sunset_date <= now:
+                    # Tool has reached sunset - prevent execution
+                    await tool_lookup_cache.set_negative(name, "sunset")
+                    raise ToolInvocationError(
+                        f"Tool '{name}' has been sunset and can no longer be executed. " f"Sunset date: {sunset_date.strftime('%Y-%m-%d')}. " f"Please update your agent to use an alternative tool."
+                    )
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Enforce server scoping if server_id is provided
@@ -6406,6 +6464,14 @@ class ToolService(BaseService):
             # Update tags if provided
             if tool_update.tags is not None:
                 tool.tags = tool_update.tags
+
+            # Update deprecated status if provided
+            if tool_update.deprecated is not None:
+                tool.deprecated = tool_update.deprecated
+
+            # Update sunset_date if provided
+            if tool_update.sunsetDate is not None:
+                tool.sunset_date = tool_update.sunsetDate
 
             # Update modification metadata
             if modified_by is not None:

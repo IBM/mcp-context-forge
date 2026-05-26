@@ -2480,6 +2480,11 @@ class Settings(BaseSettings):
     # Max concurrent health checks per worker
     max_concurrent_health_checks: int = 10
 
+    # Tool Lifecycle Management
+    # Interval in minutes between sunset scheduler runs (checks for tools that have reached sunset_date)
+    # Env: SUNSET_SCHEDULER_INTERVAL_MINUTES
+    sunset_scheduler_interval_minutes: int = Field(default=60, description="Interval in minutes between sunset scheduler runs")
+
     # Auto-refresh tools/resources/prompts from gateways during health checks
     # When enabled, tools/resources/prompts are fetched and synced with DB during health checks
     auto_refresh_servers: bool = Field(default=False, description="Enable automatic tool/resource/prompt refresh during gateway health checks")

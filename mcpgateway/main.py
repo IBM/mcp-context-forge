@@ -1624,6 +1624,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await metrics_rollup_service.start()
             logger.info("Metrics rollup service initialized (interval: %dh)", settings.metrics_rollup_interval_hours)
 
+        # Initialize sunset scheduler service for tool lifecycle management
+        # First-Party
+        from mcpgateway.services.sunset_scheduler_service import get_sunset_scheduler_service  # pylint: disable=import-outside-toplevel
+
+        sunset_scheduler_service = get_sunset_scheduler_service()
+        await sunset_scheduler_service.start()
+        logger.info("Sunset scheduler service initialized (interval: %d minutes)", settings.sunset_scheduler_interval_minutes)
+
         refresh_slugs_on_startup()
 
         # Initialize experimental dataplane publisher to send config data to redis
@@ -1851,6 +1859,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
+
+        # Add sunset scheduler service (shutdown after metrics services)
+        # First-Party
+        from mcpgateway.services.sunset_scheduler_service import get_sunset_scheduler_service  # pylint: disable=import-outside-toplevel
+
+        sunset_scheduler_service = get_sunset_scheduler_service()
+        services_to_shutdown.insert(4, sunset_scheduler_service)
 
         await shutdown_services(services_to_shutdown)
 

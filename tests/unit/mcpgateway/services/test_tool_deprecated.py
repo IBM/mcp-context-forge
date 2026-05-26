@@ -5,13 +5,16 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Tests for tool deprecation functionality.
+
+NOTE: These tests verify that deprecated tools ARE still executable.
+Only sunset tools (enabled=False) are blocked from execution.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.tool_service import ToolService, ToolInvocationError
+from mcpgateway.services.tool_service import ToolService
 
 
 @pytest.fixture
@@ -40,6 +43,7 @@ def deprecated_tool():
     tool.original_name = "deprecated_tool"
     tool.enabled = True
     tool.deprecated = True
+    tool.sunset_date = None
     tool.reachable = True
     tool.integration_type = "MCP"
     tool.request_type = "SSE"
@@ -61,6 +65,7 @@ def active_tool():
     tool.original_name = "active_tool"
     tool.enabled = True
     tool.deprecated = False
+    tool.sunset_date = None
     tool.reachable = True
     tool.integration_type = "MCP"
     tool.request_type = "SSE"
@@ -74,62 +79,11 @@ def active_tool():
 
 
 class TestToolDeprecation:
-    """Test suite for tool deprecation functionality."""
+    """Test suite for tool deprecation functionality.
 
-    @pytest.mark.asyncio
-    async def test_invoke_deprecated_tool_raises_error(self, tool_service, mock_db, deprecated_tool):
-        """Test that invoking a deprecated tool raises ToolInvocationError."""
-        # Mock the database query to return the deprecated tool
-        mock_result = MagicMock()
-        mock_result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[deprecated_tool])))
-        mock_db.execute.return_value = mock_result
-
-        with pytest.raises(ToolInvocationError) as exc_info:
-            await tool_service.invoke_tool(
-                db=mock_db,
-                name="deprecated_tool",
-                arguments={},
-                user_email="test@example.com",
-                token_teams=None,
-            )
-
-        assert "deprecated" in str(exc_info.value).lower()
-        assert "cannot be executed" in str(exc_info.value).lower()
-
-    @pytest.mark.asyncio
-    async def test_deprecated_tool_from_cache_raises_error(self, tool_service, mock_db):
-        """Test that a deprecated tool from cache also raises ToolInvocationError."""
-        # Mock cache to return a deprecated tool payload
-        tool_payload = {
-            "id": "cached-tool-id",
-            "name": "cached_deprecated_tool",
-            "enabled": True,
-            "deprecated": True,
-            "reachable": True,
-            "integration_type": "MCP",
-            "visibility": "public",
-            "team_id": None,
-            "owner_email": None,
-        }
-
-        with patch('mcpgateway.services.tool_service._get_tool_lookup_cache') as mock_cache_getter:
-            mock_cache = MagicMock()
-            mock_cache.enabled = True
-            mock_cache.get = AsyncMock(return_value={"status": "active", "tool": tool_payload, "gateway": None})
-            mock_cache.set_negative = AsyncMock()
-            mock_cache_getter.return_value = mock_cache
-
-            with pytest.raises(ToolInvocationError) as exc_info:
-                await tool_service.invoke_tool(
-                    db=mock_db,
-                    name="cached_deprecated_tool",
-                    arguments={},
-                    user_email="test@example.com",
-                    token_teams=None,
-                )
-
-            assert "deprecated" in str(exc_info.value).lower()
-            assert "cannot be executed" in str(exc_info.value).lower()
+    IMPORTANT: Deprecated tools ARE executable until they reach sunset.
+    Only sunset tools (enabled=False) are blocked from execution.
+    """
 
     def test_build_tool_cache_payload_includes_deprecated_flag(self, tool_service, deprecated_tool):
         """Test that _build_tool_cache_payload includes the deprecated flag."""
