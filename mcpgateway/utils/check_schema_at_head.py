@@ -15,9 +15,10 @@ Usage::
     python3 -m mcpgateway.utils.check_schema_at_head
 """
 
-# Standard
+# Future
 from __future__ import annotations
 
+# Standard
 import logging
 import sys
 
