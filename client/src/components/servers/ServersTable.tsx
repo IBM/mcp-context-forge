@@ -203,14 +203,14 @@ export function ServersTable({
                     <span>{promptsCount} prompts</span>
                   </div>
                 </TableCell>
-                <TableCell className="px-4 py-2.5 text-xs text-neutral-400">
+                <TableCell className="px-4 py-2.5 text-xs text-neutral-600 dark:text-neutral-400">
                   {formatLastSeen(lastSeen)}
                 </TableCell>
                 <TableCell className="px-4 py-2.5">
                   <button
                     type="button"
                     onClick={() => handleCopy(server.id)}
-                    className="inline-flex items-center gap-2 text-xs text-neutral-400 transition hover:text-neutral-200"
+                    className="inline-flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400 transition hover:text-neutral-900 dark:hover:text-neutral-200"
                     aria-label={`Copy UUID for ${server.name}`}
                   >
                     <span className="max-w-[180px] truncate">{server.id}</span>
