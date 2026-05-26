@@ -1895,6 +1895,17 @@ def validate_security_configuration():
     try:
         current_settings = get_settings()
 
+        for _field_name, _secret_field in (
+            ("jwt_secret_key", current_settings.jwt_secret_key),
+            ("auth_encryption_secret", current_settings.auth_encryption_secret),
+        ):
+            _val = _secret_field.get_secret_value()
+            if _val.lower().startswith("__replace_me__"):
+                _msg = f"{_field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
+                if str(current_settings.environment).lower() == "production":
+                    raise SecurityConfigurationError(_msg)
+                logger.warning("🔓 SECURITY WARNING - %s", _msg)
+
         security_status: settings.SecurityStatus = current_settings.get_security_status()
         security_warnings = security_status["warnings"]
 
