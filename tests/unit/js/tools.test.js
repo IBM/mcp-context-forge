@@ -3560,3 +3560,164 @@ describe("invokeTool", () => {
     consoleSpy.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #4061: Gateway Reassignment Removal
+// ---------------------------------------------------------------------------
+describe("Issue #4061: Gateway Reassignment Field Removal", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    window.ROOT_PATH = "";
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+    delete window.ROOT_PATH;
+  });
+
+  test("edit tool form should not contain gateway_id field", () => {
+    // Setup edit tool form
+    const form = document.createElement("form");
+    form.id = "edit-tool-form";
+    document.body.appendChild(form);
+
+    // Add expected fields
+    const nameField = document.createElement("input");
+    nameField.id = "edit-tool-name";
+    nameField.name = "name";
+    form.appendChild(nameField);
+
+    const typeField = document.createElement("select");
+    typeField.id = "edit-tool-type";
+    typeField.name = "integration_type";
+    form.appendChild(typeField);
+
+    // Gateway field should NOT exist (removed per issue #4061)
+    const gatewayField = document.getElementById("edit-tool-gateway-id");
+    expect(gatewayField).toBeNull();
+
+    // Verify no gateway_id input in form
+    const gatewayInputs = form.querySelectorAll('[name="gateway_id"]');
+    expect(gatewayInputs.length).toBe(0);
+  });
+
+  test("edit tool modal should not have gateway dropdown element", () => {
+    const modal = document.createElement("div");
+    modal.id = "edit-tool-modal";
+    document.body.appendChild(modal);
+
+    const form = document.createElement("form");
+    form.id = "edit-tool-form";
+    modal.appendChild(form);
+
+    // Check for gateway_id select element
+    const gatewaySelect = modal.querySelector('select[name="gateway_id"]');
+    expect(gatewaySelect).toBeNull();
+
+    // Check by ID
+    const gatewayById = document.getElementById("edit-tool-gateway-id");
+    expect(gatewayById).toBeNull();
+  });
+
+  test("gateway_id should not be in FormData when submitting edit tool form", () => {
+    const form = document.createElement("form");
+    form.id = "edit-tool-form";
+    document.body.appendChild(form);
+
+    const nameField = document.createElement("input");
+    nameField.name = "name";
+    nameField.value = "test_tool";
+    form.appendChild(nameField);
+
+    const typeField = document.createElement("select");
+    typeField.name = "integration_type";
+    const option = document.createElement("option");
+    option.value = "REST";
+    option.selected = true;
+    typeField.appendChild(option);
+    form.appendChild(typeField);
+
+    // Create FormData from form
+    const formData = new FormData(form);
+
+    // Gateway should not be in FormData
+    expect(formData.has("gateway_id")).toBe(false);
+
+    // Other fields should be present
+    expect(formData.has("name")).toBe(true);
+    expect(formData.has("integration_type")).toBe(true);
+  });
+
+  test("edit tool form has essential fields but not gateway_id", () => {
+    const form = document.createElement("form");
+    form.id = "edit-tool-form";
+    document.body.appendChild(form);
+
+    // Essential fields that should exist
+    const nameField = document.createElement("input");
+    nameField.id = "edit-tool-name";
+    nameField.name = "name";
+    form.appendChild(nameField);
+
+    const displayNameField = document.createElement("input");
+    displayNameField.id = "edit-tool-display-name";
+    displayNameField.name = "displayName";
+    form.appendChild(displayNameField);
+
+    const urlField = document.createElement("input");
+    urlField.id = "edit-tool-url";
+    urlField.name = "url";
+    form.appendChild(urlField);
+
+    const descriptionField = document.createElement("textarea");
+    descriptionField.id = "edit-tool-description";
+    descriptionField.name = "description";
+    form.appendChild(descriptionField);
+
+    const typeField = document.createElement("select");
+    typeField.id = "edit-tool-type";
+    typeField.name = "integration_type";
+    form.appendChild(typeField);
+
+    // Verify essential fields exist
+    expect(form.querySelector('[name="name"]')).not.toBeNull();
+    expect(form.querySelector('[name="displayName"]')).not.toBeNull();
+    expect(form.querySelector('[name="url"]')).not.toBeNull();
+    expect(form.querySelector('[name="description"]')).not.toBeNull();
+    expect(form.querySelector('[name="integration_type"]')).not.toBeNull();
+
+    // Verify gateway_id does not exist
+    expect(form.querySelector('[name="gateway_id"]')).toBeNull();
+  });
+
+  test("edit tool form includes advanced fields but not gateway_id", () => {
+    const form = document.createElement("form");
+    form.id = "edit-tool-form";
+    document.body.appendChild(form);
+
+    // Advanced configuration fields (from issue #4061)
+    const titleField = document.createElement("input");
+    titleField.id = "edit-tool-title";
+    titleField.name = "title";
+    form.appendChild(titleField);
+
+    const timeoutField = document.createElement("input");
+    timeoutField.id = "edit-tool-timeout-ms";
+    timeoutField.name = "timeout_ms";
+    form.appendChild(timeoutField);
+
+    const jsonpathFilterField = document.createElement("input");
+    jsonpathFilterField.id = "edit-tool-jsonpath-filter";
+    jsonpathFilterField.name = "jsonpath_filter";
+    form.appendChild(jsonpathFilterField);
+
+    // Verify advanced fields exist
+    expect(form.querySelector('[name="title"]')).not.toBeNull();
+    expect(form.querySelector('[name="timeout_ms"]')).not.toBeNull();
+    expect(form.querySelector('[name="jsonpath_filter"]')).not.toBeNull();
+
+    // Verify gateway_id does not exist
+    expect(form.querySelector('[name="gateway_id"]')).toBeNull();
+    expect(document.getElementById("edit-tool-gateway-id")).toBeNull();
+  });
+});

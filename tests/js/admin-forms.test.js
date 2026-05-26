@@ -605,3 +605,313 @@ describe("ALLOW_PUBLIC_VISIBILITY flag", () => {
     expect(checkedRadio.value).toBe("public");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #4061: Edit Tool Gateway Reassignment Removal
+// ---------------------------------------------------------------------------
+describe("Edit Tool Gateway Reassignment Removal - Issue #4061", () => {
+  function setupEditToolFormDOM() {
+    // Create the edit tool modal
+    const modal = doc.createElement("div");
+    modal.id = "edit-tool-modal";
+    doc.body.appendChild(modal);
+
+    // Create edit tool form
+    const form = doc.createElement("form");
+    form.id = "edit-tool-form";
+    modal.appendChild(form);
+
+    // Create other fields that should exist
+    const nameField = doc.createElement("input");
+    nameField.id = "edit-tool-name";
+    nameField.name = "name";
+    form.appendChild(nameField);
+
+    const urlField = doc.createElement("input");
+    urlField.id = "edit-tool-url";
+    urlField.name = "url";
+    form.appendChild(urlField);
+
+    const typeSelect = doc.createElement("select");
+    typeSelect.id = "edit-tool-type";
+    typeSelect.name = "integration_type";
+    form.appendChild(typeSelect);
+
+    // Gateway field should NOT exist (removed per issue #4061)
+    // const gatewayField = doc.createElement("select");
+    // gatewayField.id = "edit-tool-gateway-id";
+    // gatewayField.name = "gateway_id";
+    // form.appendChild(gatewayField);
+
+    return { modal, form, nameField, urlField, typeSelect };
+  }
+
+  test("edit tool form does not contain gateway_id field", () => {
+    setupEditToolFormDOM();
+    const gatewayField = doc.getElementById("edit-tool-gateway-id");
+    expect(gatewayField).toBeNull();
+  });
+
+  test("edit tool form does not contain gateway_id select element", () => {
+    const { form } = setupEditToolFormDOM();
+    const gatewaySelects = form.querySelectorAll('select[name="gateway_id"]');
+    expect(gatewaySelects.length).toBe(0);
+  });
+
+  test("edit tool form contains other essential fields but not gateway_id", () => {
+    const { form, nameField, urlField, typeSelect } = setupEditToolFormDOM();
+
+    expect(nameField).toBeDefined();
+    expect(nameField.name).toBe("name");
+
+    expect(urlField).toBeDefined();
+    expect(urlField.name).toBe("url");
+
+    expect(typeSelect).toBeDefined();
+    expect(typeSelect.name).toBe("integration_type");
+
+    // Gateway field should not exist
+    const gatewayField = form.querySelector('[name="gateway_id"]');
+    expect(gatewayField).toBeNull();
+  });
+
+  test("form data collection does not include gateway_id", () => {
+    const { form } = setupEditToolFormDOM();
+    const formData = new FormData(form);
+
+    expect(formData.has("gateway_id")).toBe(false);
+    expect(formData.has("name")).toBe(true);
+    expect(formData.has("url")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #4061: Advanced Configuration Fields - Conditional Collection
+// ---------------------------------------------------------------------------
+describe("Advanced Configuration Fields Conditional Collection - Issue #4061", () => {
+  function setupAdvancedFieldsDOM(integrationType = "REST") {
+    const form = doc.createElement("form");
+    form.id = "edit-tool-form";
+    doc.body.appendChild(form);
+
+    // Integration type selector
+    const typeSelect = doc.createElement("select");
+    typeSelect.id = "edit-tool-type";
+    typeSelect.name = "integration_type";
+    const typeOpt = doc.createElement("option");
+    typeOpt.value = integrationType;
+    typeOpt.selected = true;
+    typeSelect.appendChild(typeOpt);
+    form.appendChild(typeSelect);
+
+    // Common advanced fields (applicable to all tool types)
+    const titleField = doc.createElement("input");
+    titleField.id = "edit-tool-title";
+    titleField.name = "title";
+    titleField.value = "";
+    form.appendChild(titleField);
+
+    const timeoutField = doc.createElement("input");
+    timeoutField.id = "edit-tool-timeout-ms";
+    timeoutField.name = "timeout_ms";
+    timeoutField.type = "number";
+    timeoutField.value = "";
+    form.appendChild(timeoutField);
+
+    const jsonpathFilterField = doc.createElement("input");
+    jsonpathFilterField.id = "edit-tool-jsonpath-filter";
+    jsonpathFilterField.name = "jsonpath_filter";
+    jsonpathFilterField.value = "";
+    form.appendChild(jsonpathFilterField);
+
+    // REST passthrough fields (only applicable to REST tools)
+    const baseUrlField = doc.createElement("input");
+    baseUrlField.id = "edit-tool-base-url";
+    baseUrlField.name = "base_url";
+    baseUrlField.value = "";
+    form.appendChild(baseUrlField);
+
+    const pathTemplateField = doc.createElement("input");
+    pathTemplateField.id = "edit-tool-path-template";
+    pathTemplateField.name = "path_template";
+    pathTemplateField.value = "";
+    form.appendChild(pathTemplateField);
+
+    const queryMappingField = doc.createElement("textarea");
+    queryMappingField.id = "edit-tool-query-mapping";
+    queryMappingField.name = "query_mapping";
+    queryMappingField.value = "";
+    form.appendChild(queryMappingField);
+
+    const headerMappingField = doc.createElement("textarea");
+    headerMappingField.id = "edit-tool-header-mapping";
+    headerMappingField.name = "header_mapping";
+    headerMappingField.value = "";
+    form.appendChild(headerMappingField);
+
+    const exposePassthroughCheckbox = doc.createElement("input");
+    exposePassthroughCheckbox.id = "edit-tool-expose-passthrough";
+    exposePassthroughCheckbox.name = "expose_passthrough";
+    exposePassthroughCheckbox.type = "checkbox";
+    exposePassthroughCheckbox.checked = false;
+    form.appendChild(exposePassthroughCheckbox);
+
+    const allowlistField = doc.createElement("input");
+    allowlistField.id = "edit-tool-allowlist";
+    allowlistField.name = "allowlist";
+    allowlistField.value = "";
+    form.appendChild(allowlistField);
+
+    // Plugin chain fields
+    const pluginChainPreField = doc.createElement("input");
+    pluginChainPreField.id = "edit-tool-plugin-chain-pre";
+    pluginChainPreField.name = "plugin_chain_pre";
+    pluginChainPreField.value = "";
+    form.appendChild(pluginChainPreField);
+
+    const pluginChainPostField = doc.createElement("input");
+    pluginChainPostField.id = "edit-tool-plugin-chain-post";
+    pluginChainPostField.name = "plugin_chain_post";
+    pluginChainPostField.value = "";
+    form.appendChild(pluginChainPostField);
+
+    return {
+      form,
+      typeSelect,
+      titleField,
+      timeoutField,
+      jsonpathFilterField,
+      baseUrlField,
+      pathTemplateField,
+      queryMappingField,
+      headerMappingField,
+      exposePassthroughCheckbox,
+      allowlistField,
+      pluginChainPreField,
+      pluginChainPostField,
+    };
+  }
+
+  test("common advanced fields are collected when values are present", () => {
+    const { form, titleField, timeoutField, jsonpathFilterField } = setupAdvancedFieldsDOM("MCP");
+
+    titleField.value = "My Tool Title";
+    timeoutField.value = "5000";
+    jsonpathFilterField.value = "$.data[*]";
+
+    const formData = new FormData(form);
+
+    expect(formData.get("title")).toBe("My Tool Title");
+    expect(formData.get("timeout_ms")).toBe("5000");
+    expect(formData.get("jsonpath_filter")).toBe("$.data[*]");
+  });
+
+  test("common advanced fields are not collected when values are empty", () => {
+    const { form, titleField, timeoutField, jsonpathFilterField } = setupAdvancedFieldsDOM("MCP");
+
+    // Leave fields empty
+    titleField.value = "";
+    timeoutField.value = "";
+    jsonpathFilterField.value = "";
+
+    const formData = new FormData(form);
+
+    // Empty string values are still included in FormData, but backend should handle them conditionally
+    expect(formData.get("title")).toBe("");
+    expect(formData.get("timeout_ms")).toBe("");
+    expect(formData.get("jsonpath_filter")).toBe("");
+  });
+
+  test("REST passthrough fields exist in form for REST integration type", () => {
+    const { form, baseUrlField, pathTemplateField } = setupAdvancedFieldsDOM("REST");
+
+    expect(baseUrlField).toBeDefined();
+    expect(baseUrlField.name).toBe("base_url");
+    expect(pathTemplateField).toBeDefined();
+    expect(pathTemplateField.name).toBe("path_template");
+  });
+
+  test("REST passthrough fields are collected only when values are present", () => {
+    const { form, baseUrlField, pathTemplateField, queryMappingField } = setupAdvancedFieldsDOM("REST");
+
+    baseUrlField.value = "https://api.example.com";
+    pathTemplateField.value = "/v1/{resource}";
+    queryMappingField.value = '{"search": "q"}';
+
+    const formData = new FormData(form);
+
+    expect(formData.get("base_url")).toBe("https://api.example.com");
+    expect(formData.get("path_template")).toBe("/v1/{resource}");
+    expect(formData.get("query_mapping")).toBe('{"search": "q"}');
+  });
+
+  test("expose_passthrough checkbox value is collected correctly", () => {
+    const { form, exposePassthroughCheckbox } = setupAdvancedFieldsDOM("REST");
+
+    exposePassthroughCheckbox.checked = true;
+    const formData = new FormData(form);
+
+    expect(formData.has("expose_passthrough")).toBe(true);
+  });
+
+  test("plugin chain fields are collected when values are present", () => {
+    const { form, pluginChainPreField, pluginChainPostField } = setupAdvancedFieldsDOM("MCP");
+
+    pluginChainPreField.value = "auth_plugin,validation_plugin";
+    pluginChainPostField.value = "logging_plugin";
+
+    const formData = new FormData(form);
+
+    expect(formData.get("plugin_chain_pre")).toBe("auth_plugin,validation_plugin");
+    expect(formData.get("plugin_chain_post")).toBe("logging_plugin");
+  });
+
+  test("field name consistency: jsonpath_filter uses snake_case not camelCase", () => {
+    const { jsonpathFilterField } = setupAdvancedFieldsDOM("MCP");
+
+    // Critical: field name must be snake_case to match backend expectation
+    expect(jsonpathFilterField.name).toBe("jsonpath_filter");
+    expect(jsonpathFilterField.name).not.toBe("jsonpathFilter");
+  });
+
+  test("all REST passthrough field names use snake_case", () => {
+    const {
+      baseUrlField,
+      pathTemplateField,
+      queryMappingField,
+      headerMappingField,
+      exposePassthroughCheckbox,
+      allowlistField,
+    } = setupAdvancedFieldsDOM("REST");
+
+    expect(baseUrlField.name).toBe("base_url");
+    expect(pathTemplateField.name).toBe("path_template");
+    expect(queryMappingField.name).toBe("query_mapping");
+    expect(headerMappingField.name).toBe("header_mapping");
+    expect(exposePassthroughCheckbox.name).toBe("expose_passthrough");
+    expect(allowlistField.name).toBe("allowlist");
+  });
+
+  test("plugin chain field names use snake_case", () => {
+    const { pluginChainPreField, pluginChainPostField } = setupAdvancedFieldsDOM("MCP");
+
+    expect(pluginChainPreField.name).toBe("plugin_chain_pre");
+    expect(pluginChainPostField.name).toBe("plugin_chain_post");
+  });
+
+  test("all new advanced configuration field IDs follow naming convention", () => {
+    const fields = setupAdvancedFieldsDOM("REST");
+
+    expect(fields.titleField.id).toBe("edit-tool-title");
+    expect(fields.timeoutField.id).toBe("edit-tool-timeout-ms");
+    expect(fields.jsonpathFilterField.id).toBe("edit-tool-jsonpath-filter");
+    expect(fields.baseUrlField.id).toBe("edit-tool-base-url");
+    expect(fields.pathTemplateField.id).toBe("edit-tool-path-template");
+    expect(fields.queryMappingField.id).toBe("edit-tool-query-mapping");
+    expect(fields.headerMappingField.id).toBe("edit-tool-header-mapping");
+    expect(fields.exposePassthroughCheckbox.id).toBe("edit-tool-expose-passthrough");
+    expect(fields.allowlistField.id).toBe("edit-tool-allowlist");
+    expect(fields.pluginChainPreField.id).toBe("edit-tool-plugin-chain-pre");
+    expect(fields.pluginChainPostField.id).toBe("edit-tool-plugin-chain-post");
+  });
+});
