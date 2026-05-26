@@ -1123,7 +1123,7 @@ describe("editTool - enhanced", () => {
     consoleSpy.mockRestore();
   });
 
-  test("injects hidden team_id input when URL contains team_id param", async () => {
+  test("team_id is handled via select dropdown not hidden input", async () => {
     window.ROOT_PATH = "";
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.stubGlobal("location", { href: "http://localhost/?team_id=team-42" });
@@ -1142,12 +1142,22 @@ describe("editTool - enhanced", () => {
     editForm.id = "edit-tool-form";
     document.body.appendChild(editForm);
 
+    // Create the team_id select dropdown
+    const teamSelect = document.createElement("select");
+    teamSelect.id = "edit-tool-team-id";
+    teamSelect.name = "team_id";
+    editForm.appendChild(teamSelect);
+
     await editTool("t1");
 
-    const hidden = editForm.querySelector('input[name="team_id"]');
-    expect(hidden).not.toBeNull();
-    expect(hidden.type).toBe("hidden");
-    expect(hidden.value).toBe("team-42");
+    // Team ID should NOT be a hidden input (old behavior)
+    const hidden = editForm.querySelector('input[type="hidden"][name="team_id"]');
+    expect(hidden).toBeNull();
+
+    // Team ID should be handled by the select dropdown
+    const teamDropdown = editForm.querySelector('select[name="team_id"]');
+    expect(teamDropdown).not.toBeNull();
+    expect(teamDropdown.id).toBe("edit-tool-team-id");
 
     vi.unstubAllGlobals();
     consoleSpy.mockRestore();
