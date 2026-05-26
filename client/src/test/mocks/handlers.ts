@@ -63,6 +63,18 @@ export const handlers = [
     });
   }),
 
+  // Mock single gateway fetch endpoint
+  http.get("*/gateways/:id", ({ params }) => {
+    return HttpResponse.json({
+      id: params.id,
+      name: "Test Server",
+      url: "http://localhost:9000",
+      transport: "STREAMABLEHTTP",
+      visibility: "public",
+      authType: "none",
+    });
+  }),
+
   // Mock gateway delete endpoint
   http.delete("*/gateways/:id", () => {
     return HttpResponse.json({ success: true });

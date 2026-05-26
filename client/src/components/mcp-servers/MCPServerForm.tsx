@@ -416,7 +416,9 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
                     ? "Connecting..."
                     : oauthPending
                       ? "Waiting for OAuth…"
-                      : "Connect server"}
+                      : serverId
+                        ? "Save changes"
+                        : "Connect server"}
                 </Button>
               </div>
             </div>
