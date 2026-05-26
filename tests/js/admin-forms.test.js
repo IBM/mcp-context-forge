@@ -245,6 +245,159 @@ describe("updateEditToolRequestTypes", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Edit Tool Advanced Configuration Fields
+// ---------------------------------------------------------------------------
+describe("Edit Tool Advanced Configuration Fields", () => {
+  function setupEditToolAdvancedFieldsDOM() {
+    // Create advanced configuration fields
+    const titleField = doc.createElement("input");
+    titleField.id = "edit-tool-title";
+    titleField.type = "text";
+    titleField.name = "title";
+    doc.body.appendChild(titleField);
+
+    const timeoutField = doc.createElement("input");
+    timeoutField.id = "edit-tool-timeout-ms";
+    timeoutField.type = "number";
+    timeoutField.name = "timeout_ms";
+    doc.body.appendChild(timeoutField);
+
+    const jsonpathFilterField = doc.createElement("input");
+    jsonpathFilterField.id = "edit-tool-jsonpath-filter";
+    jsonpathFilterField.type = "text";
+    jsonpathFilterField.name = "jsonpath_filter";
+    doc.body.appendChild(jsonpathFilterField);
+
+    const gatewayField = doc.createElement("select");
+    gatewayField.id = "edit-tool-gateway-id";
+    gatewayField.name = "gateway_id";
+    doc.body.appendChild(gatewayField);
+
+    const teamField = doc.createElement("select");
+    teamField.id = "edit-tool-team-id";
+    teamField.name = "team_id";
+    doc.body.appendChild(teamField);
+
+    return { titleField, timeoutField, jsonpathFilterField, gatewayField, teamField };
+  }
+
+  test("title field exists and is text input", () => {
+    const { titleField } = setupEditToolAdvancedFieldsDOM();
+    expect(titleField).toBeDefined();
+    expect(titleField.type).toBe("text");
+    expect(titleField.name).toBe("title");
+  });
+
+  test("timeout_ms field exists and is number input", () => {
+    const { timeoutField } = setupEditToolAdvancedFieldsDOM();
+    expect(timeoutField).toBeDefined();
+    expect(timeoutField.type).toBe("number");
+    expect(timeoutField.name).toBe("timeout_ms");
+  });
+
+  test("jsonpath_filter field exists and is text input", () => {
+    const { jsonpathFilterField } = setupEditToolAdvancedFieldsDOM();
+    expect(jsonpathFilterField).toBeDefined();
+    expect(jsonpathFilterField.type).toBe("text");
+    expect(jsonpathFilterField.name).toBe("jsonpath_filter");
+  });
+
+  test("gateway_id field exists and is select dropdown", () => {
+    const { gatewayField } = setupEditToolAdvancedFieldsDOM();
+    expect(gatewayField).toBeDefined();
+    expect(gatewayField.tagName.toLowerCase()).toBe("select");
+    expect(gatewayField.name).toBe("gateway_id");
+  });
+
+  test("team_id field exists and is select dropdown", () => {
+    const { teamField } = setupEditToolAdvancedFieldsDOM();
+    expect(teamField).toBeDefined();
+    expect(teamField.tagName.toLowerCase()).toBe("select");
+    expect(teamField.name).toBe("team_id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edit Tool REST Passthrough Fields
+// ---------------------------------------------------------------------------
+describe("Edit Tool REST Passthrough Fields", () => {
+  function setupRestPassthroughDOM(integrationType = "REST") {
+    // Create integration type select
+    const typeSelect = doc.createElement("select");
+    typeSelect.id = "edit-tool-type";
+    const opt = doc.createElement("option");
+    opt.value = integrationType;
+    opt.selected = true;
+    typeSelect.appendChild(opt);
+    doc.body.appendChild(typeSelect);
+
+    // Create REST passthrough button wrapper
+    const buttonWrapper = doc.createElement("div");
+    buttonWrapper.id = "edit-tool-rest-passthrough-button-wrapper";
+    buttonWrapper.style.display = integrationType === "REST" ? "block" : "none";
+    doc.body.appendChild(buttonWrapper);
+
+    // Create passthrough button
+    const button = doc.createElement("button");
+    button.id = "edit-tool-passthrough-btn";
+    button.type = "button";
+    button.textContent = "Advanced: Add Passthrough";
+    buttonWrapper.appendChild(button);
+
+    // Create passthrough container
+    const container = doc.createElement("fieldset");
+    container.id = "edit-tool-passthrough-container";
+    container.style.display = "none";
+    doc.body.appendChild(container);
+
+    // Add REST passthrough fields
+    const baseUrlField = doc.createElement("input");
+    baseUrlField.id = "edit-tool-base-url";
+    baseUrlField.name = "base_url";
+    container.appendChild(baseUrlField);
+
+    const pathTemplateField = doc.createElement("input");
+    pathTemplateField.id = "edit-tool-path-template";
+    pathTemplateField.name = "path_template";
+    container.appendChild(pathTemplateField);
+
+    const exposePassthroughCheckbox = doc.createElement("input");
+    exposePassthroughCheckbox.id = "edit-tool-expose-passthrough";
+    exposePassthroughCheckbox.type = "checkbox";
+    exposePassthroughCheckbox.name = "expose_passthrough";
+    container.appendChild(exposePassthroughCheckbox);
+
+    return { typeSelect, buttonWrapper, button, container, baseUrlField, pathTemplateField, exposePassthroughCheckbox };
+  }
+
+  test("passthrough button wrapper is shown for REST integration type", () => {
+    const { buttonWrapper } = setupRestPassthroughDOM("REST");
+    expect(buttonWrapper.style.display).toBe("block");
+  });
+
+  test("passthrough button wrapper is hidden for MCP integration type", () => {
+    const { buttonWrapper } = setupRestPassthroughDOM("MCP");
+    expect(buttonWrapper.style.display).toBe("none");
+  });
+
+  test("passthrough container is initially hidden", () => {
+    const { container } = setupRestPassthroughDOM("REST");
+    expect(container.style.display).toBe("none");
+  });
+
+  test("passthrough fields exist within container", () => {
+    const { baseUrlField, pathTemplateField, exposePassthroughCheckbox } = setupRestPassthroughDOM("REST");
+    expect(baseUrlField).toBeDefined();
+    expect(baseUrlField.name).toBe("base_url");
+    expect(pathTemplateField).toBeDefined();
+    expect(pathTemplateField.name).toBe("path_template");
+    expect(exposePassthroughCheckbox).toBeDefined();
+    expect(exposePassthroughCheckbox.type).toBe("checkbox");
+    expect(exposePassthroughCheckbox.name).toBe("expose_passthrough");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // cleanUpUrlParamsForTab
 // ---------------------------------------------------------------------------
 describe("cleanUpUrlParamsForTab", () => {

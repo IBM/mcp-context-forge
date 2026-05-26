@@ -16,6 +16,8 @@ import {
   updateRequestTypeOptions,
   updateEditToolRequestTypes,
   handleAddPassthrough,
+  handleEditToolIntegrationTypeChange,
+  handleEditToolPassthrough,
   searchTeamSelector,
   performTeamSelectorSearch,
   selectTeamFromSelector,
@@ -1061,5 +1063,115 @@ describe("selectTeamFromSelector", () => {
     document.body.appendChild(btn);
 
     expect(() => selectTeamFromSelector(btn)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleEditToolIntegrationTypeChange
+// ---------------------------------------------------------------------------
+describe("handleEditToolIntegrationTypeChange", () => {
+  function setupEditToolIntegrationTypeDOM(integrationType = "REST") {
+    const typeSelect = document.createElement("select");
+    typeSelect.id = "edit-tool-type";
+    const opt = document.createElement("option");
+    opt.value = integrationType;
+    opt.selected = true;
+    typeSelect.appendChild(opt);
+    document.body.appendChild(typeSelect);
+
+    const buttonWrapper = document.createElement("div");
+    buttonWrapper.id = "edit-tool-rest-passthrough-button-wrapper";
+    buttonWrapper.style.display = "none";
+    document.body.appendChild(buttonWrapper);
+
+    const container = document.createElement("fieldset");
+    container.id = "edit-tool-passthrough-container";
+    container.style.display = "none";
+    document.body.appendChild(container);
+
+    return { typeSelect, buttonWrapper, container };
+  }
+
+  test("shows passthrough button wrapper for REST integration type", () => {
+    const { buttonWrapper } = setupEditToolIntegrationTypeDOM("REST");
+
+    handleEditToolIntegrationTypeChange();
+
+    expect(buttonWrapper.style.display).toBe("block");
+  });
+
+  test("hides passthrough button wrapper for MCP integration type", () => {
+    const { buttonWrapper } = setupEditToolIntegrationTypeDOM("MCP");
+
+    handleEditToolIntegrationTypeChange();
+
+    expect(buttonWrapper.style.display).toBe("none");
+  });
+
+  test("hides passthrough container when switching away from REST", () => {
+    const { container, typeSelect } = setupEditToolIntegrationTypeDOM("REST");
+
+    // First set container to visible
+    container.style.display = "block";
+
+    // Change type to MCP
+    typeSelect.value = "MCP";
+    handleEditToolIntegrationTypeChange();
+
+    expect(container.style.display).toBe("none");
+  });
+
+  test("does not throw when elements are missing", () => {
+    expect(() => handleEditToolIntegrationTypeChange()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// handleEditToolPassthrough
+// ---------------------------------------------------------------------------
+describe("handleEditToolPassthrough", () => {
+  function setupPassthroughButtonDOM() {
+    const container = document.createElement("fieldset");
+    container.id = "edit-tool-passthrough-container";
+    container.style.display = "none";
+    document.body.appendChild(container);
+
+    return { container };
+  }
+
+  test("toggles passthrough container from hidden to visible", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "none";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("block");
+  });
+
+  test("toggles passthrough container from visible to hidden", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "block";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("none");
+  });
+
+  test("treats empty display as hidden and toggles to visible", () => {
+    const { container } = setupPassthroughButtonDOM();
+
+    container.style.display = "";
+    handleEditToolPassthrough();
+
+    expect(container.style.display).toBe("block");
+  });
+
+  test("logs error when container is missing", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    handleEditToolPassthrough();
+
+    expect(errorSpy).toHaveBeenCalledWith("Edit tool passthrough container not found");
+    errorSpy.mockRestore();
   });
 });

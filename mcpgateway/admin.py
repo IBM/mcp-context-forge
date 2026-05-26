@@ -11980,7 +11980,7 @@ async def admin_edit_tool(
         "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
-        "owner_email": user_email,
+        # Note: owner_email is NOT included to prevent ownership changes during edits
         "team_id": team_id,
     }
     # Only include integration_type if it's provided (not disabled in form)

@@ -1161,6 +1161,8 @@ class ToolUpdate(BaseModelWithConfigDict):
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped tools")
+    owner_email: Optional[str] = Field(None, description="Email of the tool owner")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")

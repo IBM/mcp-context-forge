@@ -6396,6 +6396,10 @@ class ToolService(BaseService):
                 tool.jsonpath_filter = tool_update.jsonpath_filter
             if tool_update.visibility is not None:
                 tool.visibility = tool_update.visibility
+            if tool_update.team_id is not None:
+                tool.team_id = tool_update.team_id
+            # Note: owner_email is intentionally NOT updated here to prevent ownership changes
+            # during regular edits. Ownership transfer would require a separate endpoint.
 
             if tool_update.auth is not None:
                 if tool_update.auth.auth_type is not None:
