@@ -31,13 +31,11 @@ import pytest
 from mcpgateway.config import settings
 
 # Local
-from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+from tests.helpers.auth import _UNSET, make_playwright_api_context, make_test_jwt
 from ..pages.login_page import LoginPage
 from .conftest import BASE_URL
 
 pytestmark = [pytest.mark.ui, pytest.mark.e2e, pytest.mark.playwright_security_e2e]
-
-_UNSET = object()
 TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
 
 

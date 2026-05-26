@@ -24,11 +24,9 @@ import pytest
 
 # Local
 from tests.helpers.api_helpers import ApiTestHelper
-from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+from tests.helpers.auth import _UNSET, make_playwright_api_context, make_test_jwt
 
 from .conftest import BASE_URL, TEST_PASSWORD
-
-_UNSET = object()
 
 
 def _extract_token_id(response_json: dict[str, Any]) -> str | None:
