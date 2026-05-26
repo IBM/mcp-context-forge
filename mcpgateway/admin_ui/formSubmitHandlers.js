@@ -611,14 +611,13 @@ export const handleToolFormSubmit = async function (event) {
 
   try {
     const form = event.target;
-    const formData = new FormData(form);
 
-    // Validate form inputs
-    const name = formData.get("name");
-    const url = formData.get("url");
-
-    const nameValidation = validateInputName(name, "tool");
-    const urlValidation = validateUrl(url);
+    // Validate form inputs before touching editors
+    const nameValidation = validateInputName(
+      form.elements["name"]?.value,
+      "tool"
+    );
+    const urlValidation = validateUrl(form.elements["url"]?.value);
 
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
@@ -628,7 +627,8 @@ export const handleToolFormSubmit = async function (event) {
       throw new Error(urlValidation.error);
     }
 
-    // If in UI mode, update schemaEditor with generated schema
+    // If in UI mode, generate schema and inject it into the hidden textarea
+    // BEFORE taking the FormData snapshot so the value is included.
     const mode = document.querySelector(
       'input[name="schema_input_mode"]:checked'
     );
@@ -646,7 +646,8 @@ export const handleToolFormSubmit = async function (event) {
       }
     }
 
-    // Save CodeMirror editors' contents
+    // Flush all CodeMirror editors to their underlying <textarea> elements
+    // BEFORE constructing FormData so the snapshot captures current values.
     if (window.headersEditor) {
       window.headersEditor.save();
     }
@@ -656,6 +657,9 @@ export const handleToolFormSubmit = async function (event) {
     if (window.outputSchemaEditor) {
       window.outputSchemaEditor.save();
     }
+
+    // Snapshot form data AFTER editors are flushed.
+    const formData = new FormData(form);
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
