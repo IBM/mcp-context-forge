@@ -1,9 +1,14 @@
-"""add_deprecated_flag_to_tools
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/e28566875fa4_add_deprecated_flag_to_tools.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_deprecated_flag_to_tools
 
 Revision ID: e28566875fa4
 Revises: b29af8761e97
 Create Date: 2026-05-20 12:39:20.637697
-
 """
 
 # Standard

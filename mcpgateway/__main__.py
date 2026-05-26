@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcpgateway/__main__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Startup entry point for: python -m mcpgateway
 
 Calls ensure_env_file_secrets() BEFORE importing mcpgateway.config so that
