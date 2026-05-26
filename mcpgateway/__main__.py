@@ -1,29 +1,15 @@
 # -*- coding: utf-8 -*-
-"""
-Startup entry point for: python -m mcpgateway
+"""Location: ./mcpgateway/__main__.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
-Calls ensure_env_file_secrets() BEFORE importing mcpgateway.config so that
-the pydantic-settings Settings singleton reads the freshly-generated values
-from os.environ rather than the weak Field defaults.
+Startup entry point for: python -m mcpgateway
 """
 
 
 def main() -> None:
-    """Ensure secrets are strong, then start the uvicorn server."""
-    # IMPORTANT: import only stdlib here — mcpgateway.config must not be
-    # imported until os.environ has been patched by ensure_env_file_secrets().
-    # First-Party
-    from mcpgateway.scripts.init_secrets import ensure_env_file_secrets  # noqa: PLC0415
-
-    generated = ensure_env_file_secrets()
-    if generated:
-        keys = ", ".join(generated.keys())
-        print(
-            f"[startup] Auto-generated secrets for: {keys}. " "Written to .env. Subsequent starts will load these values without regeneration.",
-            flush=True,
-        )
-
-    # Only import uvicorn and settings after os.environ is patched.
+    """Start the uvicorn server."""
     # Third-Party
     import uvicorn  # noqa: PLC0415
 

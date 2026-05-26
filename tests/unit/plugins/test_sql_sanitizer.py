@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./tests/unit/plugins/test_sql_sanitizer.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
 import asyncio
 
 from cpex.framework import GlobalContext, PluginConfig, PluginContext, ToolHookType, ToolPreInvokePayload

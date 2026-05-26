@@ -26,9 +26,7 @@ import pytest
 # Local
 from .conftest import BASE_URL, TEST_PASSWORD
 from tests.helpers.api_helpers import ApiTestHelper
-from tests.helpers.auth import make_playwright_api_context, make_test_jwt
-
-_UNSET = object()
+from tests.helpers.auth import _UNSET, make_playwright_api_context, make_test_jwt
 
 
 def _extract_token_id(response_json: dict[str, Any]) -> str | None:

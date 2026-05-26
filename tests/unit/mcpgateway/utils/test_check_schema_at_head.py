@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for ``mcpgateway.utils.check_schema_at_head``.
+"""Location: ./tests/unit/mcpgateway/utils/test_check_schema_at_head.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for ``mcpgateway.utils.check_schema_at_head``.
 
 The module is the gateway pod's K8s startup-probe entrypoint — it runs
 every five seconds and its exit code determines whether a pod is allowed

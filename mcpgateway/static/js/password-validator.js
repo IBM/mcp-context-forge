@@ -15,7 +15,7 @@ window.PasswordValidator = window.PasswordValidator || {
       uppercase: /[A-Z]/.test(password),
       lowercase: /[a-z]/.test(password),
       numbers: /[0-9]/.test(password),
-      special: /[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;'`~]/.test(password)
+      special: /[!@#$%^&*(),.?":{}|<>\-_=+[\]\\;'`~]/.test(password)
     };
 
     const typesPresent = Object.values(has).filter(Boolean).length;
@@ -114,7 +114,7 @@ window.PasswordValidator = window.PasswordValidator || {
     const hasLower = /[a-z]/.test(password);
     const hasUpper = /[A-Z]/.test(password);
     const hasDigit = /[0-9]/.test(password);
-    const hasSpecial = /[!@#$%^&*(),.?":{}|<>\-_=+\[\]\\;'`~]/.test(password);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>\-_=+[\]\\;'`~]/.test(password);
 
     const complexityCount = [hasLower, hasUpper, hasDigit, hasSpecial].filter(Boolean).length;
     score += complexityCount * 15;
