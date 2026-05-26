@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the A2A agent plugin bindings router.
+"""Location: ./tests/unit/mcpgateway/routers/test_a2a_agent_plugin_bindings.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the A2A agent plugin bindings router.
 
 Uses an in-memory SQLite database and the real A2AAgentPluginBindingService so
 tests exercise the full stack from router handler down to SQL, with no mocked

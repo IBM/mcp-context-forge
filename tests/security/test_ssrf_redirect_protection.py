@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_ssrf_redirect_protection.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 HTTP Client Redirect Protection Tests.
 
 Validates that HTTP clients do not automatically follow redirects, which could

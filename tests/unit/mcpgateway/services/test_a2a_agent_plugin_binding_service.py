@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for A2AAgentPluginBindingService.
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_agent_plugin_binding_service.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for A2AAgentPluginBindingService.
 
 Tests cover:
     - _to_response: ORM → Pydantic conversion helper
