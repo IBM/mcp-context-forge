@@ -87,7 +87,7 @@ services:
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=Changeme123!
       - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
-      - TOKEN_EXPIRY=1008000
+      - TOKEN_EXPIRY=1440
 
       # ── Password policy (relaxed for dev) ──
       - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false

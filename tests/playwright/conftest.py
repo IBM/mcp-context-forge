@@ -219,6 +219,20 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         _set_admin_jwt_cookie(page, admin_email)
         _goto_admin(page, "/admin/")
         _wait_for_admin_transition(page)
+        # Password change enforcement middleware redirects even JWT-cookie sessions
+        # when the user has password_change_required=True (e.g. fresh Docker stack).
+        # Try each candidate password in order (ADMIN_PASSWORD, ADMIN_NEW_PASSWORD,
+        # configured_password which defaults to "changeme" matching Docker defaults).
+        if login_page.is_on_change_password_page():
+            for _pw_candidate in _candidate_admin_passwords(settings, ADMIN_ACTIVE_PASSWORD[0]):
+                login_page.submit_password_change(_pw_candidate, ADMIN_NEW_PASSWORD)
+                _wait_for_admin_transition(page)
+                if not login_page.is_on_change_password_page():
+                    ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+                    _set_admin_jwt_cookie(page, admin_email)
+                    _goto_admin(page, "/admin/")
+                    _wait_for_admin_transition(page)
+                    break
     else:
         # ---- Fallback: interactive form login (JWT disabled) ----
         _goto_admin(page, "/admin")
@@ -280,6 +294,20 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             _set_admin_jwt_cookie(page, admin_email)
             _goto_admin(page, "/admin/")
             _wait_for_admin_transition(page)
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
+            return
+
+        if login_page.is_on_change_password_page() and not DISABLE_JWT_FALLBACK:
+            # Recovery: password change enforcement redirected mid-load (race condition).
+            for _pw_candidate in _candidate_admin_passwords(settings, ADMIN_ACTIVE_PASSWORD[0]):
+                login_page.submit_password_change(_pw_candidate, ADMIN_NEW_PASSWORD)
+                _wait_for_admin_transition(page)
+                if not login_page.is_on_change_password_page():
+                    ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+                    _set_admin_jwt_cookie(page, admin_email)
+                    _goto_admin(page, "/admin/")
+                    _wait_for_admin_transition(page)
+                    break
             page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
             return
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Helm chart render tests — gateway Deployment env wiring.
+"""Location: ./tests/unit/charts/test_deployment_mcpgateway.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Helm chart render tests — gateway Deployment env wiring.
 
 Pins the migration-Job / gateway-Deployment contract:
 

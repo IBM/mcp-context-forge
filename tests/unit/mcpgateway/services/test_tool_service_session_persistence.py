@@ -1,4 +1,9 @@
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_tool_service_session_persistence.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Regression tests for Issue #4697: Upstream MCP session persistence.
 
 Tests verify that request_headers_var ContextVar is properly set during

@@ -2,6 +2,125 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [1.0.2] - 2026-05-25 - Admin UI Rewrite, Database Migrations, Security Enhancements, and Bug Fixes
+
+### Overview
+
+Release 1.0.2 consolidates **59 PRs** focused on **Admin UI rewrite completion**, **database migration improvements**, **security enhancements**, and **bug fixes**. This release completes the React-based Admin UI migration, strengthens database schema management with Alembic, enhances OAuth flows, and improves multi-replica deployment reliability:
+
+- **🖥️ Admin UI Rewrite** - React-based UI components for virtual servers, tools, users, teams, navigation improvements, OAuth popup authorization flow, loading states, CSRF validation fixes, cookie authentication support.
+- **🗄️ Database & Migrations** - Full migration to Alembic for schema management, UUID migration, migration lock contention elimination, multi-replica startup reliability, Alembic history branch detection.
+- **🔐 Security & Auth** - CSP nonce support for OAuth callbacks, RBAC admin bypass fixes, vault plugin header normalization, generic OIDC platform_admin promotion, Redis TLS support, secrets baseline updates.
+- **🧩 Plugins & A2A** - A2A agent integration into plugin framework, CPEX plugin package updates, baggage attribute mapping for span customization, A2A protocol version dropdown, type validation improvements.
+- **🔧 Infrastructure & DevOps** - Docker Compose security hardening, OTLP insecure exporter setting, Slack CI failure notifications, Helm unit test suites, pre-commit hooks for client code.
+- **🐛 Bug Fixes** - Password validation feedback alignment, search state preservation across pagination, private A2A agent visibility for admins, OAuth tool discovery button fix, upstream MCP session persistence, rate-limit cleanup optimization.
+### Breaking Changes
+
+#### **🔒 HTTP Redirect Handling - Security Hardening**
+
+As part of ongoing security hardening, ContextForge now disables HTTP redirect following on all outbound requests. This defense-in-depth security enhancement ensures all outbound requests go to explicitly registered destinations, preventing unintended request routing.
+
+**Impact**: Systems relying on HTTP redirects (302/301/307/308) for REST tools, gateway health checks, SSE connections, StreamableHTTP endpoints, or A2A agent invocations may experience apparent breaking behavior.
+
+**Mitigation**: Register final destination URLs directly instead of redirect-based URLs. For detailed migration guidance and testing procedures, see the [HTTP Redirect Handling Migration Guide](../docs/docs/operations/ssrf-redirect-protection-migration.md).
+
+**Rationale**: This change implements defense-in-depth security by adding redirect blocking as a second layer of protection (in addition to URL validation at registration), strengthening the overall security posture against SSRF attacks.
+
+
+### Added
+
+#### **🖥️ Admin UI Rewrite**
+
+- **📋 Virtual Server Management** ([#4806](https://github.com/IBM/mcp-context-forge/pull/4806), [#4858](https://github.com/IBM/mcp-context-forge/pull/4858)) – Virtual server detail drawer and create flow in React UI. Enables full virtual server lifecycle management in new UI.
+- **🔧 Tools Page Cards** ([#4646](https://github.com/IBM/mcp-context-forge/pull/4646)) – Cards component to list MCP server tools on Tools page. Improves tool discovery and visualization.
+- **👥 User Management Screen** ([#4839](https://github.com/IBM/mcp-context-forge/pull/4839)) – User screen and create user form in React UI. Enables user administration in new UI.
+- **🎨 Navigation Improvements** ([#4762](https://github.com/IBM/mcp-context-forge/pull/4762), [#4752](https://github.com/IBM/mcp-context-forge/pull/4752)) – Updated nav sidebar and main top navbar components. Improves navigation UX and consistency.
+- **⚡ Loading State Improvements** ([#4781](https://github.com/IBM/mcp-context-forge/pull/4781)) – Enhanced loading state and icon components. Provides better user feedback during async operations.
+- **🔐 OAuth Popup Authorization Flow** ([#4842](https://github.com/IBM/mcp-context-forge/pull/4842)) – OAuth 2.0 popup authorization flow for MCP servers in React UI. Streamlines OAuth authorization UX.
+- **🔧 MCP Server Edit Mode** ([#4745](https://github.com/IBM/mcp-context-forge/pull/4745)) – MCP server edit mode with OAuth password grant validation and auth type refactoring. Enables comprehensive server configuration management.
+
+#### **🔐 Security & Auth**
+
+- **🔒 Redis TLS Support** ([#4809](https://github.com/IBM/mcp-context-forge/pull/4809)) – Redis TLS support for production deployments. Enables encrypted Redis connections for enhanced security.
+- **🛡️ CSP Nonce Support for OAuth** ([#4776](https://github.com/IBM/mcp-context-forge/pull/4776)) – CSP nonce support added to OAuth callback page. Strengthens Content Security Policy compliance.
+- **👥 Generic OIDC Platform Admin Promotion** ([#4277](https://github.com/IBM/mcp-context-forge/pull/4277)) – Generic OIDC providers can now promote users to platform_admin role. Improves SSO integration flexibility.
+
+#### **🧩 Plugins & A2A**
+
+- **🔌 A2A Plugin Framework Integration** ([#4775](https://github.com/IBM/mcp-context-forge/pull/4775)) – Integrates A2A agents into plugin framework for header handling and RBAC (ICACF-43). Unifies plugin and agent security model.
+- **📊 Baggage Attribute Mapping** ([#4705](https://github.com/IBM/mcp-context-forge/pull/4705)) – Baggage attribute mapping for span customization in observability. Enables custom OTEL span attributes via baggage propagation.
+- **🔢 A2A Protocol Version Dropdown** ([#4761](https://github.com/IBM/mcp-context-forge/pull/4761)) – A2A protocol version dropdown in agent form. Enables explicit protocol version selection.
+- **🔧 Tool Deprecation Flag** ([#4829](https://github.com/IBM/mcp-context-forge/pull/4829)) – Deprecated flag for tool lifecycle management. Enables graceful tool deprecation without deletion.
+
+#### **🔧 Infrastructure & DevOps**
+
+- **📢 Slack CI Failure Notifications** ([#4851](https://github.com/IBM/mcp-context-forge/pull/4851), [#4854](https://github.com/IBM/mcp-context-forge/pull/4854)) – Slack failure notifications for main branch builds. Improves CI/CD visibility and incident response.
+- **🧪 Helm Unit Test Suites** ([#4875](https://github.com/IBM/mcp-context-forge/pull/4875)) – Fixed linting-helm-unittest CI gate and added Helm unit test suites. Improves Helm chart quality and reliability.
+- **🔒 Docker Compose Security Hardening** ([#4469](https://github.com/IBM/mcp-context-forge/pull/4469)) – Hardened gateway service with no-new-privileges, cap_drop, read_only, and tmpfs. Strengthens container security posture.
+- **🎣 Pre-commit Hooks for Client** ([#4880](https://github.com/IBM/mcp-context-forge/pull/4880)) – Pre-commit hook to run lint, formatter, and test before git push on client code. Improves code quality enforcement.
+
+### Changed
+
+#### **🗄️ Database & Migrations**
+
+- **🔄 Full Alembic Migration** ([#4690](https://github.com/IBM/mcp-context-forge/pull/4690)) – Moved DB creation and migrations fully to Alembic. Eliminates dual schema management and improves migration reliability.
+- **🆔 UUID Migration** ([#4614](https://github.com/IBM/mcp-context-forge/pull/4614)) – Migrated primary keys and foreign keys to UUID format. Improves distributed system compatibility and security.
+- **🔓 Migration Lock Contention Elimination** ([#4784](https://github.com/IBM/mcp-context-forge/pull/4784)) – Eliminated migration lock contention on multi-replica startup. Improves deployment reliability in clustered environments.
+- **🔍 Alembic History Branch Detection** ([#4703](https://github.com/IBM/mcp-context-forge/pull/4703)) – Added Alembic history branches check. Prevents migration conflicts and ensures single-head chain.
+
+#### **🖥️ Admin UI**
+
+- **🍪 Cookie Authentication for React App** ([#4782](https://github.com/IBM/mcp-context-forge/pull/4782)) – Enabled React app cookie authentication for API endpoints. Fixes authentication flow for new UI.
+- **🔐 CSRF Validation Fixes** ([#4833](https://github.com/IBM/mcp-context-forge/pull/4833), [#4837](https://github.com/IBM/mcp-context-forge/pull/4837)) – Fixed CSRF validation failures for React app API calls on localhost:8000 and CSRF library imports. Resolves CSRF token validation issues in development.
+- **📦 Vite Bundle Config Update** ([#4853](https://github.com/IBM/mcp-context-forge/pull/4853)) – Updated Vite bundle configuration. Optimizes client bundle size and performance.
+
+#### **🔧 Infrastructure**
+
+- **📊 OTLP Exporter Setting** ([#4692](https://github.com/IBM/mcp-context-forge/pull/4692)) – Applied OTLP insecure exporter setting. Fixes observability export configuration.
+- **🔧 Bootstrap Reliability** ([#4444](https://github.com/IBM/mcp-context-forge/pull/4444), [#4872](https://github.com/IBM/mcp-context-forge/pull/4872)) – Improved startup reliability for multi-replica deploys with env var alignment, advisory lock release fixes, and connect_args passing. Enhances deployment stability.
+
+### Fixed
+
+#### **🔐 Security & Auth**
+
+- **🔒 RBAC Admin Bypass Token Teams** ([#4824](https://github.com/IBM/mcp-context-forge/pull/4824)) – Fixed RBAC admin bypass token teams upsert. Resolves admin token creation edge cases.
+- **🔧 Vault Plugin Header Normalization** ([#4668](https://github.com/IBM/mcp-context-forge/pull/4668)) – Normalized vault plugin headers to lowercase for ASGI compliance. Fixes header handling compatibility issues.
+- **🔓 Logout Functionality** ([#4845](https://github.com/IBM/mcp-context-forge/pull/4845)) – Fixed logout functionality in React UI. Resolves session termination issues.
+
+#### **🖥️ Admin UI**
+
+- **🔍 Globally-Public Items Visibility** ([#4773](https://github.com/IBM/mcp-context-forge/pull/4773)) – Fixed globally-public items hidden when team filter is active in Admin UI. Resolves visibility filtering bug.
+- **👥 Team Management Functions** ([#4728](https://github.com/IBM/mcp-context-forge/pull/4728)) – Registered team management functions with window.Admin namespace. Fixes team management functionality in UI.
+- **🔍 Search State Preservation** ([#4840](https://github.com/IBM/mcp-context-forge/pull/4840)) – Preserved search state across pagination and unlocked _loading on htmx:swapError. Improves search UX and error handling.
+
+#### **🧩 Plugins & A2A**
+
+- **🔧 A2A Type Validation** ([#4699](https://github.com/IBM/mcp-context-forge/pull/4699)) – Added type validation for email extraction in list_agents_for_user. Prevents type errors in agent listing.
+- **👁️ Private A2A Agent Visibility** ([#4788](https://github.com/IBM/mcp-context-forge/pull/4788)) – Admin users can now view and edit their own private A2A agents. Fixes admin UX inconsistency.
+- **🔧 OAuth Tool Discovery Button** ([#4841](https://github.com/IBM/mcp-context-forge/pull/4841)) – Resolved OAuth "Fetch Tools from MCP Server" button not triggering tool discovery. Fixes OAuth tool registration workflow.
+
+#### **🔧 Infrastructure & Performance**
+
+- **🔄 Upstream MCP Session Persistence** ([#4799](https://github.com/IBM/mcp-context-forge/pull/4799)) – Fixed upstream MCP session persistence. Resolves session management issues with upstream servers.
+- **⏱️ Rate-Limit Cleanup Optimization** ([#4505](https://github.com/IBM/mcp-context-forge/pull/4505)) – Rate-limited _cleanup_table DELETEs with configurable inter-batch sleep. Prevents database overload during cleanup operations.
+- **🔧 Password Validation Feedback** ([#4778](https://github.com/IBM/mcp-context-forge/pull/4778)) – Aligned validation feedback and showed correct policy requirements. Improves password policy UX.
+- **🧪 Playwright CI Smoke Tests** ([#4870](https://github.com/IBM/mcp-context-forge/pull/4870)) – Supplied CI env vars so playwright-ci-smoke gateway starts. Fixes CI test reliability.
+
+### Chores
+
+- **👥 Codeowners Updates** ([#4769](https://github.com/IBM/mcp-context-forge/pull/4769), [#4847](https://github.com/IBM/mcp-context-forge/pull/4847)) – Updated CODEOWNERS to include additional code owners. Improves code review coverage.
+- **📦 Dependency Updates** ([#4794](https://github.com/IBM/mcp-context-forge/pull/4794), [#4881](https://github.com/IBM/mcp-context-forge/pull/4881)) – Updated transitive dependencies and CPEX plugin packages. Maintains dependency freshness and security.
+- **🧹 Test Cleanup** ([#4796](https://github.com/IBM/mcp-context-forge/pull/4796), [#4635](https://github.com/IBM/mcp-context-forge/pull/4635)) – Test cleanup and alignment of integration + load tests with current main + CPEX contracts. Improves test maintainability.
+- **🔧 Linting Fixes** ([#4759](https://github.com/IBM/mcp-context-forge/pull/4759), [#4798](https://github.com/IBM/mcp-context-forge/pull/4798)) – Corrected linting issues following release and format fixup. Maintains code quality standards.
+- **🔐 Secrets Baseline Update** ([#4835](https://github.com/IBM/mcp-context-forge/pull/4835)) – Updated secrets baseline to allow fake secrets in codebase. Reduces false positives in secret detection.
+- **📝 Alembic History Files** ([#4818](https://github.com/IBM/mcp-context-forge/pull/4818)) – Updated Alembic history files to pass pre-commit. Ensures migration file quality.
+- **🐳 LangChain Dependencies** ([#3922](https://github.com/IBM/mcp-context-forge/pull/3922)) – Added missing LangChain/LangGraph dependencies in Containerfiles. Fixes container build completeness.
+- **🔧 SQL Sanitizer Nested Strings** ([#4730](https://github.com/IBM/mcp-context-forge/pull/4730)) – Enhanced SQL sanitizer to handle nested strings. Improves SQL injection protection.
+- **🔧 Gunicorn Script Fix** ([#4767](https://github.com/IBM/mcp-context-forge/pull/4767)) – Used project .venv exclusively in run-gunicorn.sh. Fixes virtual environment isolation.
+
+---
+
+
 ## [1.0.1] - 2026-05-12 - Security Hardening, UI Improvements, and Bug Fixes
 
 ### Overview

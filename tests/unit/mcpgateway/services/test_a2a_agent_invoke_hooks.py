@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for A2A agent invoke plugin hook integration.
+"""Location: ./tests/unit/mcpgateway/services/test_a2a_agent_invoke_hooks.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for A2A agent invoke plugin hook integration.
 
 Tests that the plugin hooks fired inside `invoke_agent()` receive the correct
 payloads and that hook results are applied correctly.

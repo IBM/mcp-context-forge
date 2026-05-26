@@ -88,7 +88,7 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
     parsed_app = urlparse(app_domain)
     app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
     allowed = {app_origin}
-    if parsed_app.hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+    if parsed_app.hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:  # nosec B104
         request_origin = f"{request.url.scheme}://{request.url.netloc}"
         allowed.add(request_origin)
     allowed.update(settings.csrf_trusted_origins)

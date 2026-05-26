@@ -1,4 +1,11 @@
-"""Tests for CWE-321 hardcoded JWT key fixes."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_cwe321_hardcoded_jwt.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for CWE-321 hardcoded JWT key fixes.
+"""
 
 import logging
 import re
@@ -150,14 +157,29 @@ class TestRemainingGaps:
             )
         assert "placeholder" in str(exc_info.value).lower() or "replace_me" in str(exc_info.value).lower()
 
-    def test_placeholder_value_blocked_in_development(self):
-        """__REPLACE_ME__ is never valid — even in dev."""
-        with pytest.raises(SecurityConfigurationError) as exc_info:
-            _make_settings(
+    def test_placeholder_value_warns_in_development(self, caplog):
+        """__REPLACE_ME__ in development emits a warning but does not block startup."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+            settings = _make_settings(
                 environment="development",
                 jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
             )
-        assert "placeholder" in str(exc_info.value).lower() or "replace_me" in str(exc_info.value).lower()
+        assert settings is not None
+        assert "replace_me" in caplog.text.lower() or "placeholder" in caplog.text.lower()
+
+    def test_placeholder_value_warns_in_staging(self, caplog):
+        """__REPLACE_ME__ in staging emits a warning but does not block startup."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.config"):
+            settings = _make_settings(
+                environment="staging",
+                jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
+            )
+        assert settings is not None
+        assert "replace_me" in caplog.text.lower() or "placeholder" in caplog.text.lower()
 
     def test_placeholder_prefix_variations_blocked(self):
         """Case-insensitive prefix match."""

@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct FilesystemServer {
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     ctx: Arc<AppContext>,
 }
@@ -419,11 +420,10 @@ impl FilesystemServer {
 #[tool_handler]
 impl ServerHandler for FilesystemServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_06_18,
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            server_info: Implementation::from_build_env(),
-            instructions: Some(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_06_18)
+            .with_server_info(Implementation::from_build_env())
+            .with_instructions(
                 "I manage a filesystem sandbox. Available actions:
                 - list_directory
                 - search_files
@@ -434,10 +434,8 @@ impl ServerHandler for FilesystemServer {
                 - write_file
                 - edit_file
                 - create_directory
-                - list_allowed_directories"
-                    .to_string(),
-            ),
-        }
+                - list_allowed_directories",
+            )
     }
 
     async fn initialize(

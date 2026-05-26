@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CLI: exit 0 iff the database schema is at the Alembic script-directory head.
+"""Location: ./mcpgateway/utils/check_schema_at_head.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+CLI: exit 0 iff the database schema is at the Alembic script-directory head.
 
 Used as the gateway pod's startup-probe command in the Helm chart so that
 pods refuse Ready until the schema has been migrated — regardless of which
@@ -15,9 +20,10 @@ Usage::
     python3 -m mcpgateway.utils.check_schema_at_head
 """
 
-# Standard
+# Future
 from __future__ import annotations
 
+# Standard
 import logging
 import sys
 
