@@ -10724,6 +10724,7 @@ async def test_invoke_tool_sessionless_pool_path():
     mock_tool.gateway_id = "gw-1"
     mock_tool.server_id = None
     mock_tool.enabled = True
+    mock_tool.deprecated = False
     mock_tool.visibility = "public"
     mock_tool.team_id = "public"
     mock_tool.integration_type = "MCP"
