@@ -187,7 +187,7 @@ class TestValidateSecurityConfigurationPlaceholder:
         fake = self._make_fake_settings("development", "__REPLACE_ME__placeholder")
         monkeypatch.setattr(main, "get_settings", lambda: fake)
 
-        with caplog.at_level(logging.WARNING, logger="mcpgateway.main"):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway"):
             main.validate_security_configuration()  # must not raise
 
         assert any("replace_me" in r.message.lower() or "placeholder" in r.message.lower() for r in caplog.records)
