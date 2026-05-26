@@ -11976,13 +11976,65 @@ async def admin_edit_tool(
         "input_schema": input_schema,
         "output_schema": output_schema,
         "annotations": annotations,
-        "jsonpath_filter": form.get("jsonpathFilter", ""),
+        "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
         # Note: owner_email is NOT included to prevent ownership changes during edits
         "team_id": team_id,
     }
+
+    # Add optional fields only if present in form
+    if "timeout_ms" in form and form.get("timeout_ms"):
+        tool_data["timeout_ms"] = int(form.get("timeout_ms"))
+
+    if "title" in form and form.get("title"):
+        tool_data["title"] = form.get("title")
+
+    # Add REST passthrough fields only if present in form (REST tools only)
+    if "base_url" in form and form.get("base_url"):
+        tool_data["base_url"] = form.get("base_url")
+
+    if "path_template" in form and form.get("path_template"):
+        tool_data["path_template"] = form.get("path_template")
+
+    if "query_mapping" in form and form.get("query_mapping"):
+        try:
+            query_mapping_raw = form.get("query_mapping")
+            tool_data["query_mapping"] = orjson.loads(query_mapping_raw) if isinstance(query_mapping_raw, str) else None
+        except orjson.JSONDecodeError as ex:
+            LOGGER.error(f"Invalid JSON in query_mapping field: {str(ex)}")
+            return ORJSONResponse(
+                content={"message": f"Invalid JSON in query_mapping field: {str(ex)}", "success": False},
+                status_code=422,
+            )
+
+    if "header_mapping" in form and form.get("header_mapping"):
+        try:
+            header_mapping_raw = form.get("header_mapping")
+            tool_data["header_mapping"] = orjson.loads(header_mapping_raw) if isinstance(header_mapping_raw, str) else None
+        except orjson.JSONDecodeError as ex:
+            LOGGER.error(f"Invalid JSON in header_mapping field: {str(ex)}")
+            return ORJSONResponse(
+                content={"message": f"Invalid JSON in header_mapping field: {str(ex)}", "success": False},
+                status_code=422,
+            )
+
+    if "expose_passthrough" in form:
+        tool_data["expose_passthrough"] = form.get("expose_passthrough") == "true"
+
+    if "allowlist" in form and form.get("allowlist"):
+        allowlist_raw = form.get("allowlist")
+        tool_data["allowlist"] = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+
+    # Add plugin chain fields only if present in form
+    if "plugin_chain_pre" in form and form.get("plugin_chain_pre"):
+        plugin_chain_pre_raw = form.get("plugin_chain_pre")
+        tool_data["plugin_chain_pre"] = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
+
+    if "plugin_chain_post" in form and form.get("plugin_chain_post"):
+        plugin_chain_post_raw = form.get("plugin_chain_post")
+        tool_data["plugin_chain_post"] = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
     # Only include integration_type if it's provided (not disabled in form)
     if "integrationType" in form:
         tool_data["integration_type"] = form.get("integrationType")
