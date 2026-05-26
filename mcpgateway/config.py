@@ -1459,23 +1459,26 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
-        # Reject weak/default secrets in non-development environments.
-        # This check applies regardless of client_mode — client_mode was intended to skip
-        # operational warnings (auth_required, SSL, debug), not secret-strength enforcement.
+        # __REPLACE_ME__ placeholders block startup only in production; warn in other environments.
+        # Weak/default secrets are rejected in any non-development environment (staging + production).
+        # client_mode is intentionally NOT exempted — secret-strength enforcement is always active.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
         for field_name, secret_field in (("jwt_secret_key", self.jwt_secret_key), ("auth_encryption_secret", self.auth_encryption_secret)):
             val = secret_field.get_secret_value()
             if val.lower().startswith("__replace_me__"):
-                raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+                if env == "production":
+                    raise SecurityConfigurationError(f"{field_name}: Value is an unset placeholder (__REPLACE_ME__). " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
+                else:
+                    logger.warning(f"🔓 SECURITY WARNING - {field_name}: Value is an unset placeholder (__REPLACE_ME__). Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values.")
             if val.lower() in weak_secrets:
                 if env != "development":
                     raise SecurityConfigurationError(
                         f"{field_name}: Weak/default secret rejected in '{env}' environment. " "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values."
                     )
-        # In development mode, weak secrets are allowed but the `validate_secrets` field
-        # validator (above) still emits a SECURITY WARNING for each affected field.
-        # This satisfies the spec requirement that development environments warn on weak secrets.
+        # In non-production environments, unset placeholder secrets emit SECURITY WARNINGs but
+        # do not block startup. Production always rejects them. Weak secrets are rejected in
+        # staging and production; development allows them with warnings from the field validator.
 
         if not self.client_mode:
             # Check for dangerous combinations - only log warnings, don't raise errors
