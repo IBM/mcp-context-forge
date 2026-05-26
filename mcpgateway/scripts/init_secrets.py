@@ -10,6 +10,7 @@ encryption, and administrative passwords. It supports writing to a file,
 overwriting existing configurations, or piping to stdout.
 
 Usage:
+    python -m mcpgateway.scripts.init_secrets            # merges into .env if exists, else writes .env.secrets
     python -m mcpgateway.scripts.init_secrets --output .env.secrets
     python -m mcpgateway.scripts.init_secrets --stdout --force
 """
@@ -224,9 +225,12 @@ def main() -> None:
 
     Parses arguments, generates required secrets for the Gateway,
     and handles file I/O operations or stdout printing.
+
+    When no ``--output`` is given: merges secrets into ``.env`` if it exists,
+    otherwise writes a new ``.env.secrets`` file.
     """
     parser = argparse.ArgumentParser(description="Generate secure secrets for MCP Gateway deployment.")
-    parser.add_argument("--output", type=str, default=".env.secrets", help="Output file path")
+    parser.add_argument("--output", type=str, default=None, help="Output file path (default: .env if it exists, else .env.secrets)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing file if it exists")
     parser.add_argument("--stdout", action="store_true", help="Print secrets to stdout instead of a file")
 
@@ -248,6 +252,41 @@ def main() -> None:
     if args.stdout:
         print(output_content, end="")
         return
+
+    # Auto-detect target: merge into .env if it exists, otherwise write .env.secrets
+    env_file_exists = os.path.isfile(".env")
+    if args.output is None:
+        if env_file_exists:
+            existing = _read_env_file(".env")
+            keys_with_real_values = [
+                key for key in secrets_map
+                if key in existing
+                and existing[key].lower() not in _WEAK_VALUES
+                and not existing[key].lower().startswith("__replace_me__")
+            ]
+            if keys_with_real_values:
+                print("Warning: the following keys in .env already have non-placeholder values:")
+                for key in keys_with_real_values:
+                    print(f"  {key}")
+                print("Replacing these will overwrite existing secrets.")
+                try:
+                    answer = input("Continue? [y/N] ").strip().lower()
+                except EOFError:
+                    answer = ""
+                if answer not in ("y", "yes"):
+                    print("Aborted. No changes made.")
+                    return
+            try:
+                _merge_env_file(".env", secrets_map)
+                print("Secrets merged into .env")
+                print("\nNext steps:")
+                print("1. Review the updated secrets in .env")
+                print("2. IMPORTANT: Keep .env secure and never commit it to Git.")
+            except OSError as e:
+                print(f"Error: Could not write to .env: {e}")
+                sys.exit(1)
+            return
+        args.output = ".env.secrets"
 
     try:
         _write_secrets_file(args.output, output_content, args.force)

@@ -346,6 +346,20 @@ check-env-dev:
 init-secrets: ## Generate secure secrets for the gateway (US-3)
 	python3 -m mcpgateway.scripts.init_secrets
 
+.PHONY: check-secrets
+check-secrets: ## Warn if .env secrets are still placeholders (run 'make init-secrets' first)
+	@if [ ! -f .env ]; then \
+		echo ""; \
+		echo "⚠️  WARNING: .env not found."; \
+		echo "   Run 'make init-secrets' to generate secrets before starting services."; \
+		echo ""; \
+	elif grep -qE '^(JWT_SECRET_KEY|AUTH_ENCRYPTION_SECRET|BASIC_AUTH_PASSWORD|PLATFORM_ADMIN_PASSWORD)=(__REPLACE_ME__|changeme)' .env 2>/dev/null; then \
+		echo ""; \
+		echo "⚠️  WARNING: .env contains placeholder secrets (__REPLACE_ME__ / changeme)."; \
+		echo "   Run 'make init-secrets' before starting production or testing services."; \
+		echo ""; \
+	fi
+
 # =============================================================================
 # ▶️ SERVE
 # =============================================================================
@@ -1672,7 +1686,7 @@ HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 
 .PHONY: testing-up
-testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
+testing-up: check-secrets                  ## Start testing stack (Locust + A2A echo + fast_test_server)
 	@echo "🧪 Starting testing stack (fast_test_server)..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@# Fail early if port 8080 is already bound (nginx needs it)
@@ -5797,7 +5811,7 @@ docker-dev:
 docker:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
 
-docker-prod:
+docker-prod: check-secrets
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker
 
 docker-prod-rust:

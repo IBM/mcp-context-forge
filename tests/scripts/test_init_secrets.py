@@ -365,3 +365,117 @@ class TestEnsureEnvFileSecrets:
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme # generated\n", encoding="utf-8")
         assert _read_env_file(str(env))["JWT_SECRET_KEY"] == "changeme"
+
+
+# --- Auto-detect target: .env vs .env.secrets ---
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_merges_into_env_when_env_exists(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """No --output + .env present → all 4 secrets merged into .env, other keys preserved."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("JWT_SECRET_KEY=changeme\nOTHER=keep\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    main()
+
+    content = env_file.read_text(encoding="utf-8")
+    assert "OTHER=keep" in content
+    assert "JWT_SECRET_KEY=changeme" not in content
+    assert "JWT_SECRET_KEY=" in content
+    assert "AUTH_ENCRYPTION_SECRET=" in content
+    assert "BASIC_AUTH_PASSWORD=" in content
+    assert "PLATFORM_ADMIN_PASSWORD=" in content
+    assert not (tmp_path / ".env.secrets").exists()
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_writes_env_secrets_when_no_env(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """No --output + no .env → writes .env.secrets with all 4 secrets."""
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    main()
+
+    secrets_file = tmp_path / ".env.secrets"
+    assert secrets_file.exists()
+    content = secrets_file.read_text(encoding="utf-8")
+    assert "JWT_SECRET_KEY=" in content
+    assert "AUTH_ENCRYPTION_SECRET=" in content
+    assert "BASIC_AUTH_PASSWORD=" in content
+    assert "PLATFORM_ADMIN_PASSWORD=" in content
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_no_warning_for_placeholder_values(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """Placeholder (__REPLACE_ME__) and weak values in .env → no confirmation prompt."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets\n"
+        "AUTH_ENCRYPTION_SECRET=changeme\n"
+        "BASIC_AUTH_PASSWORD=changeme\n"
+        "PLATFORM_ADMIN_PASSWORD=changeme\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    with patch("builtins.input") as mock_input:
+        main()
+        mock_input.assert_not_called()
+
+    content = env_file.read_text(encoding="utf-8")
+    assert "JWT_SECRET_KEY=__REPLACE_ME__" not in content
+    assert "JWT_SECRET_KEY=" in content
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_warns_and_proceeds_on_yes(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """Real values in .env → warning shown, user confirms 'y' → secrets replaced."""
+    strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"JWT_SECRET_KEY={strong}\nOTHER=keep\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    with patch("builtins.input", return_value="y") as mock_input:
+        main()
+        mock_input.assert_called_once()
+
+    content = env_file.read_text(encoding="utf-8")
+    assert f"JWT_SECRET_KEY={strong}" not in content
+    assert "JWT_SECRET_KEY=" in content
+    assert "OTHER=keep" in content
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_warns_and_aborts_on_no(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """Real values in .env → warning shown, user declines → .env unchanged."""
+    strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+    original = f"JWT_SECRET_KEY={strong}\nOTHER=keep\n"
+    env_file = tmp_path / ".env"
+    env_file.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    with patch("builtins.input", return_value="n"):
+        main()
+
+    assert env_file.read_text(encoding="utf-8") == original
+
+
+@patch("argparse.ArgumentParser.parse_args")
+def test_main_warns_and_aborts_on_eof(mock_args: MagicMock, tmp_path: Path, monkeypatch) -> None:
+    """Real values in .env → EOFError on input (non-interactive) → aborts safely."""
+    strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+    original = f"JWT_SECRET_KEY={strong}\n"
+    env_file = tmp_path / ".env"
+    env_file.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    mock_args.return_value = argparse.Namespace(output=None, force=False, stdout=False)
+
+    with patch("builtins.input", side_effect=EOFError):
+        main()
+
+    assert env_file.read_text(encoding="utf-8") == original
