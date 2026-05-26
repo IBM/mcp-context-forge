@@ -587,15 +587,9 @@ export const editTool = async function (toolId) {
       tagsField.value = rawTags.join(", ");
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    // Note: team_id is now handled by the edit-tool-team-id select dropdown
+    // which allows users to reassign tools to different teams.
+    // The dropdown value will be submitted with the form.
 
     const visibility = tool.visibility ? tool.visibility.toLowerCase() : null;
     const publicRadio = safeGetElement("edit-tool-visibility-public");
@@ -742,29 +736,21 @@ export const editTool = async function (toolId) {
       }
     }
 
-    // Populate team dropdown
+    // Populate team dropdown - only teams associated with logged-in user
+    // Use window.USER_TEAMS_DATA which is server-rendered and already filtered by user membership
     const teamField = safeGetElement("edit-tool-team-id");
     if (teamField) {
-      try {
-        const teamResponse = await fetchWithTimeout(
-          `${window.ROOT_PATH}/admin/teams`
-        );
-        if (teamResponse.ok) {
-          const teams = await teamResponse.json();
-          teamField.innerHTML = '<option value="">No Team (optional)</option>';
-          teams.forEach((team) => {
-            const option = document.createElement("option");
-            option.value = team.id;
-            option.textContent = team.name;
-            if (tool.teamId === team.id) {
-              option.selected = true;
-            }
-            teamField.appendChild(option);
-          });
+      const teams = window.USER_TEAMS_DATA || [];
+      teamField.innerHTML = '<option value="">No Team (optional)</option>';
+      teams.forEach((team) => {
+        const option = document.createElement("option");
+        option.value = team.id;
+        option.textContent = team.name;
+        if (tool.teamId === team.id) {
+          option.selected = true;
         }
-      } catch (error) {
-        console.warn("Could not fetch teams:", error);
-      }
+        teamField.appendChild(option);
+      });
     }
 
     // Handle REST passthrough button visibility and populate fields
