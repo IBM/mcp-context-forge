@@ -711,31 +711,6 @@ export const editTool = async function (toolId) {
       jsonpathFilterField.value = tool.jsonpathFilter || "";
     }
 
-    // Populate gateway dropdown
-    const gatewayField = safeGetElement("edit-tool-gateway-id");
-    if (gatewayField) {
-      try {
-        const gatewayResponse = await fetchWithTimeout(
-          `${window.ROOT_PATH}/admin/gateways`
-        );
-        if (gatewayResponse.ok) {
-          const gateways = await gatewayResponse.json();
-          gatewayField.innerHTML = '<option value="">Select Gateway (optional)</option>';
-          gateways.forEach((gw) => {
-            const option = document.createElement("option");
-            option.value = gw.id;
-            option.textContent = `${gw.slug} (${gw.url})`;
-            if (tool.gatewayId === gw.id) {
-              option.selected = true;
-            }
-            gatewayField.appendChild(option);
-          });
-        }
-      } catch (error) {
-        console.warn("Could not fetch gateways:", error);
-      }
-    }
-
     // Populate team dropdown - only teams associated with logged-in user
     // Use window.USER_TEAMS_DATA which is server-rendered and already filtered by user membership
     const teamField = safeGetElement("edit-tool-team-id");
