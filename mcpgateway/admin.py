@@ -3887,6 +3887,21 @@ async def admin_ui(
         LOGGER.exception("Failed to load gRPC services: %s", e)
         grpc_services = []
 
+    # Compute failure metadata from gRPC services for template rendering
+    grpc_services_with_failures = False
+    failed_service_count = 0
+    failed_service_ids: set[str] = set()
+    total_service_count = len(grpc_services)
+    if grpc_services:
+        total_service_count = len(grpc_services)
+        for svc in grpc_services:
+            discovered = svc.get("discovered_services", {}) or {}
+            svc_failed = discovered.get("_failed_services", [])
+            if svc_failed:
+                grpc_services_with_failures = True
+                failed_service_count += len(svc_failed)
+                failed_service_ids.add(svc.get("id", ""))
+
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
@@ -3906,6 +3921,10 @@ async def admin_ui(
             "gateways": gateways,
             "a2a_agents": a2a_agents,
             "grpc_services": grpc_services,
+            "grpc_services_with_failures": grpc_services_with_failures,
+            "failed_service_count": failed_service_count,
+            "failed_service_ids": failed_service_ids,
+            "total_service_count": total_service_count,
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,

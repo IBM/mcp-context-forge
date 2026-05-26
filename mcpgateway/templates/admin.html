@@ -7695,6 +7695,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </p>
         </div>
 
+        <!-- Reflection Failure Warning Banner -->
+        {% if grpc_services_with_failures %}
+        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 dark:bg-yellow-800 dark:border-yellow-400 dark:text-yellow-200">
+          <p class="font-bold">{{ failed_service_count }} of {{ total_service_count }} services failed reflection</p>
+          <p class="text-sm">Some services could not be fully reflected. Check individual services below for error details. Services may fail due to network issues, missing reflection support, or invalid gRPC configuration.</p>
+        </div>
+        {% endif %}
+
         <!-- gRPC Service Add Form -->
         <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
@@ -7914,12 +7922,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         TLS
                       </span>
                       {% endif %}
+                      {% if service.id in failed_service_ids %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">
+                        Reflection Failed
+                      </span>
+                      {% endif %}
                     </div>
                     <div class="mt-2 text-sm text-gray-600 dark:text-gray-400">
                       <p><strong>Target:</strong> {{ service.target }}</p>
                       <p><strong>Services:</strong> {{ service.service_count }} | <strong>Methods:</strong> {{ service.method_count }}</p>
                       {% if service.last_reflection %}
                       <p><strong>Last Reflection:</strong> {{ service.last_reflection }}</p>
+                      {% endif %}
+                      {% if service.id in failed_service_ids and service.discovered_services %}
+                      {% set svc_failures = service.discovered_services.get('_failed_services', []) %}
+                      {% for failure in svc_failures %}
+                      <p class="text-xs text-red-600 dark:text-red-400 mt-1"><strong>Reflection Error:</strong> {{ failure.error | sanitize_error }}</p>
+                      {% endfor %}
                       {% endif %}
                     </div>
                   </div>

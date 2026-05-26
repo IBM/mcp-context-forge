@@ -771,7 +771,13 @@ class GrpcService:
                                         service_count += 1
 
                 except Exception as detail_error:
-                    logger.warning(f"Failed to get details for {service_name}: {detail_error}")
+                    logger.error("Failed to get details for %s: %s", service_name, detail_error, exc_info=True)
+                    discovered_services.setdefault("_failed_services", []).append(
+                        {
+                            "service": service_name,
+                            "error": str(detail_error),
+                        }
+                    )
                     # Add basic info even if detailed discovery fails
                     discovered_services[service_name] = {
                         "name": service_name,

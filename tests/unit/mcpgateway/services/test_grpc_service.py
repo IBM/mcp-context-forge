@@ -1541,3 +1541,234 @@ class TestUpdateServiceVisibilityPropagation:
         second_call_arg = db.execute.call_args_list[1].args[0]
         rendered = str(second_call_arg).lower()
         assert "update" in rendered and "tools" in rendered
+
+
+class TestPerformReflectionFailureTracking:
+    """Tests for _failed_services tracking in _perform_reflection."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_grpc_target_validation(self, monkeypatch):
+        """Disable SSRF target validation for unit tests."""
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _target: None)
+
+    @pytest.fixture
+    def service(self):
+        """Create gRPC service instance."""
+        return GrpcService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def sample_db_service(self):
+        """Sample database gRPC service with no TLS."""
+        return DbGrpcService(
+            id=uuid.uuid4().hex,
+            name="test-svc",
+            slug="test-svc",
+            target="localhost:50051",
+            description="Test service",
+            reflection_enabled=True,
+            tls_enabled=False,
+            tls_cert_path=None,
+            tls_key_path=None,
+            grpc_metadata={},
+            enabled=True,
+            reachable=False,
+            service_count=0,
+            method_count=0,
+            discovered_services={},
+            last_reflection=None,
+            tags=[],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email="test@example.com",
+        )
+
+    def _make_service_list_resp(self, names: list[str]) -> MagicMock:
+        """Create a mock list_services reflection response with given service names."""
+        list_resp = MagicMock()
+        list_resp.HasField = lambda f: f == "list_services_response"
+        svc_infos = []
+        for name in names:
+            info = MagicMock()
+            info.name = name
+            svc_infos.append(info)
+        list_resp.list_services_response.service = svc_infos
+        return list_resp
+
+    def _make_file_descriptor_resp(self, service_name: str, method_name: str) -> MagicMock:
+        """Create a mock file_descriptor reflection response for one service with one method."""
+        # Third-Party
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto
+
+        fd_proto = FileDescriptorProto()
+        fd_proto.name = "test.proto"
+        fd_proto.package = "testpkg"
+        svc_desc = fd_proto.service.add()
+        svc_desc.name = service_name.rsplit(".", maxsplit=1)[-1]
+        m = svc_desc.method.add()
+        m.name = method_name
+        m.input_type = ".testpkg.Req"
+        m.output_type = ".testpkg.Resp"
+        proto_bytes = fd_proto.SerializeToString()
+
+        fd_resp = MagicMock()
+        fd_resp.HasField = lambda f: f == "file_descriptor_response"
+        fd_resp.file_descriptor_response.file_descriptor_proto = [proto_bytes]
+        return fd_resp
+
+    @patch("mcpgateway.services.grpc_service.grpc")
+    async def test_happy_path_no_failed_services(self, mock_grpc, service, mock_db, sample_db_service):
+        """All services reflect successfully — _failed_services should not exist."""
+        sample_db_service.tls_enabled = False
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        list_resp = self._make_service_list_resp(["testpkg.SvcA", "testpkg.SvcB"])
+        fd_resp_a = self._make_file_descriptor_resp("testpkg.SvcA", "MethodA")
+        fd_resp_b = self._make_file_descriptor_resp("testpkg.SvcB", "MethodB")
+
+        mock_stub = MagicMock()
+        mock_stub.ServerReflectionInfo = MagicMock(
+            side_effect=[
+                iter([list_resp]),
+                iter([fd_resp_a]),
+                iter([fd_resp_b]),
+            ]
+        )
+        mock_grpc.ServerReflectionStub = MagicMock(return_value=mock_stub)
+        # Fake the reflection_pb2_grpc import path
+        mock_grpc_reflection = MagicMock()
+        mock_grpc_reflection.ServerReflectionStub = MagicMock(return_value=mock_stub)
+
+        with (
+            patch("mcpgateway.services.grpc_service.reflection_pb2_grpc", mock_grpc_reflection),
+            patch.object(service, "_sync_tools_from_reflection"),
+            patch("mcpgateway.services.grpc_service._enforce_descriptor_limits"),
+        ):
+            await service._perform_reflection(mock_db, sample_db_service)
+
+        discovered = sample_db_service.discovered_services
+        assert "_failed_services" not in discovered, "No services should have failed"
+        assert "testpkg.SvcA" in discovered
+        assert "testpkg.SvcB" in discovered
+
+    @patch("mcpgateway.services.grpc_service.grpc")
+    async def test_all_services_fail(self, mock_grpc, service, mock_db, sample_db_service):
+        """All services fail reflection — _failed_services should list every service."""
+        sample_db_service.tls_enabled = False
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        list_resp = self._make_service_list_resp(["testpkg.SvcA", "testpkg.SvcB"])
+        # Both file descriptor calls raise
+        mock_stub = MagicMock()
+        mock_stub.ServerReflectionInfo = MagicMock(
+            side_effect=[
+                iter([list_resp]),
+                Exception("Connection timeout"),
+                Exception("Service not found"),
+            ]
+        )
+        mock_grpc.ServerReflectionStub = MagicMock(return_value=mock_stub)
+        mock_grpc_reflection = MagicMock()
+        mock_grpc_reflection.ServerReflectionStub = MagicMock(return_value=mock_stub)
+
+        with (
+            patch("mcpgateway.services.grpc_service.reflection_pb2_grpc", mock_grpc_reflection),
+            patch.object(service, "_sync_tools_from_reflection"),
+            patch("mcpgateway.services.grpc_service._enforce_descriptor_limits"),
+        ):
+            await service._perform_reflection(mock_db, sample_db_service)
+
+        discovered = sample_db_service.discovered_services
+        assert "_failed_services" in discovered
+        assert len(discovered["_failed_services"]) == 2
+        failed_names = [f["service"] for f in discovered["_failed_services"]]
+        errors = [f["error"] for f in discovered["_failed_services"]]
+        assert "testpkg.SvcA" in failed_names
+        assert "testpkg.SvcB" in failed_names
+        assert "Connection timeout" in errors
+        assert "Service not found" in errors
+        # Backward compatibility: services still registered with empty methods
+        assert discovered["testpkg.SvcA"]["methods"] == []
+        assert discovered["testpkg.SvcB"]["methods"] == []
+
+    @patch("mcpgateway.services.grpc_service.grpc")
+    async def test_mixed_success_failure(self, mock_grpc, service, mock_db, sample_db_service):
+        """Some services succeed and some fail — only failed ones in _failed_services."""
+        sample_db_service.tls_enabled = False
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        list_resp = self._make_service_list_resp(["testpkg.SvcA", "testpkg.SvcB", "testpkg.SvcC"])
+        fd_resp_a = self._make_file_descriptor_resp("testpkg.SvcA", "MethodA")
+        fd_resp_c = self._make_file_descriptor_resp("testpkg.SvcC", "MethodC")
+
+        mock_stub = MagicMock()
+        mock_stub.ServerReflectionInfo = MagicMock(
+            side_effect=[
+                iter([list_resp]),
+                iter([fd_resp_a]),
+                Exception("Reflection failed for SvcB"),
+                iter([fd_resp_c]),
+            ]
+        )
+        mock_grpc.ServerReflectionStub = MagicMock(return_value=mock_stub)
+        mock_grpc_reflection = MagicMock()
+        mock_grpc_reflection.ServerReflectionStub = MagicMock(return_value=mock_stub)
+
+        with (
+            patch("mcpgateway.services.grpc_service.reflection_pb2_grpc", mock_grpc_reflection),
+            patch.object(service, "_sync_tools_from_reflection"),
+            patch("mcpgateway.services.grpc_service._enforce_descriptor_limits"),
+        ):
+            await service._perform_reflection(mock_db, sample_db_service)
+
+        discovered = sample_db_service.discovered_services
+        assert "_failed_services" in discovered
+        assert len(discovered["_failed_services"]) == 1
+        assert discovered["_failed_services"][0]["service"] == "testpkg.SvcB"
+        assert "Reflection failed" in discovered["_failed_services"][0]["error"]
+        # Successful services have their methods
+        assert "testpkg.SvcA" in discovered
+        assert len(discovered["testpkg.SvcA"]["methods"]) == 1
+        assert "testpkg.SvcC" in discovered
+        assert len(discovered["testpkg.SvcC"]["methods"]) == 1
+        # Failed service has empty methods (backward compatibility)
+        assert discovered["testpkg.SvcB"]["methods"] == []
+
+    @patch("mcpgateway.services.grpc_service.grpc")
+    async def test_logger_error_called_instead_of_warning(self, mock_grpc, service, mock_db, sample_db_service):
+        """Verify logger.error is called with exc_info=True on reflection failure."""
+        sample_db_service.tls_enabled = False
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        list_resp = self._make_service_list_resp(["testpkg.SvcA"])
+        mock_stub = MagicMock()
+        mock_stub.ServerReflectionInfo = MagicMock(
+            side_effect=[
+                iter([list_resp]),
+                Exception("Something broke"),
+            ]
+        )
+        mock_grpc.ServerReflectionStub = MagicMock(return_value=mock_stub)
+        mock_grpc_reflection = MagicMock()
+        mock_grpc_reflection.ServerReflectionStub = MagicMock(return_value=mock_stub)
+
+        with (
+            patch("mcpgateway.services.grpc_service.reflection_pb2_grpc", mock_grpc_reflection),
+            patch.object(service, "_sync_tools_from_reflection"),
+            patch("mcpgateway.services.grpc_service._enforce_descriptor_limits"),
+            patch("mcpgateway.services.grpc_service.logger") as mock_logger,
+        ):
+            await service._perform_reflection(mock_db, sample_db_service)
+
+        mock_logger.error.assert_called_once()
+        args, kwargs = mock_logger.error.call_args
+        assert "Failed to get details for" in args[0]
+        assert "testpkg.SvcA" in args[1]
+        assert kwargs.get("exc_info") is True
