@@ -475,6 +475,39 @@ describe("handleEditToolFormSubmit", () => {
     delete window.editToolSchemaEditor;
     delete window.editToolOutputSchemaEditor;
   });
+
+  test("FormData snapshot includes schema value written by editor.save()", async () => {
+    // Simulate a CodeMirror editor whose .save() flushes a value into the
+    // underlying <textarea>. If FormData is constructed before .save() is
+    // called the textarea will still be empty and the schema will be lost.
+    const schemaValue = '{"type":"object","properties":{}}';
+
+    window.editToolSchemaEditor = {
+      save: vi.fn(function () {
+        // Simulate CodeMirror writing its internal value into the textarea
+        const textarea = document.querySelector("textarea[name='input_schema']");
+        if (textarea) textarea.value = schemaValue;
+      }),
+    };
+
+    const event = createFormEvent(`
+      <form action="/admin/tools/1/edit">
+        <input name="name" value="EditedTool" />
+        <input name="url" value="http://example.com/api" />
+        <textarea name="input_schema"></textarea>
+      </form>
+    `);
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true });
+    safeParseJsonResponse.mockResolvedValue({ success: true });
+
+    await handleEditToolFormSubmit(event);
+
+    const submittedFormData = globalThis.fetch.mock.calls[0][1].body;
+    expect(submittedFormData.get("input_schema")).toBe(schemaValue);
+
+    delete window.editToolSchemaEditor;
+  });
 });
 
 // ---------------------------------------------------------------------------
