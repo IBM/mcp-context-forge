@@ -807,8 +807,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
-    # mode: "sequential"
-    mode: "disabled"
+    mode: "sequential"
     priority: 52
     conditions: []
     config:
