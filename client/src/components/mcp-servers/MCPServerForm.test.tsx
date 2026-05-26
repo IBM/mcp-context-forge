@@ -84,6 +84,11 @@ describe("MCPServerForm", () => {
       expect(screen.getByRole("button", { name: /Connect server/i })).toBeInTheDocument();
     });
 
+    it("shows 'Save changes' submit button in edit mode", () => {
+      renderWithRouter(<MCPServerForm isOpen={true} onToggle={vi.fn()} serverId="edit-123" />);
+      expect(screen.getByRole("button", { name: /Save changes/i })).toBeInTheDocument();
+    });
+
     it("should render link to server catalog", () => {
       renderWithRouter(<MCPServerForm {...defaultProps} />);
 
