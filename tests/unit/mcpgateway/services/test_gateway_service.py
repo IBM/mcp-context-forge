@@ -2478,6 +2478,7 @@ class TestGatewayService:
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {"type": "object"}}
             mock_tools_response.tools = [mock_tool]
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with URI handling
@@ -2540,6 +2541,7 @@ class TestGatewayService:
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response with complex URI object
@@ -2599,6 +2601,7 @@ class TestGatewayService:
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock prompts response
@@ -2653,6 +2656,7 @@ class TestGatewayService:
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Make list_resources fail
@@ -2698,6 +2702,7 @@ class TestGatewayService:
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Make list_prompts fail
@@ -3277,6 +3282,7 @@ class TestGatewayRefresh:
         long_name_tool.model_dump.return_value = {"name": long_name, "inputSchema": {}}
         mock_list_tools = MagicMock()
         mock_list_tools.tools = [valid_tool, long_name_tool]
+        mock_list_tools.nextCursor = None
         mock_session.list_tools.return_value = mock_list_tools
 
         mock_sse_cm = AsyncMock()
@@ -3358,6 +3364,7 @@ class TestGatewayRefresh:
 
         mock_list_tools = MagicMock()
         mock_list_tools.tools = [MagicMock(model_dump=MagicMock(return_value={"name": "tool1", "inputSchema": {}}))]
+        mock_list_tools.nextCursor = None
         mock_session.list_tools.return_value = mock_list_tools
 
         mock_list_resources = MagicMock()
@@ -3401,6 +3408,7 @@ class TestGatewayRefresh:
 
         mock_list_tools = MagicMock()
         mock_list_tools.tools = []
+        mock_list_tools.nextCursor = None
         mock_session.list_tools.return_value = mock_list_tools
 
         # Simulate failures
@@ -4104,8 +4112,8 @@ async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
             capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
             return DummyResponse(capabilities=capabilities)
 
-        async def list_tools(self):
-            return DummyResponse(tools=[DummyTool()])
+        async def list_tools(self, cursor=None):
+            return DummyResponse(tools=[DummyTool()], nextCursor=None)
 
         async def list_resources(self):
             return DummyResponse(resources=[DummyResource()])
@@ -4213,8 +4221,8 @@ async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatc
             capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
             return DummyResponse(capabilities=capabilities)
 
-        async def list_tools(self):
-            return DummyResponse(tools=[DummyTool()])
+        async def list_tools(self, cursor=None):
+            return DummyResponse(tools=[DummyTool()], nextCursor=None)
 
         async def list_resources(self):
             return DummyResponse(resources=[DummyResource()])
@@ -4331,8 +4339,8 @@ async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
             capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
             return DummyResponse(capabilities=capabilities)
 
-        async def list_tools(self):
-            return DummyResponse(tools=[DummyTool()])
+        async def list_tools(self, cursor=None):
+            return DummyResponse(tools=[DummyTool()], nextCursor=None)
 
         async def list_resources(self):
             return DummyResponse(resources=[DummyResource()])

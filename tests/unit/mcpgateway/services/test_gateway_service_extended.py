@@ -91,6 +91,7 @@ class TestGatewayServiceExtended:
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Execute
@@ -139,6 +140,7 @@ class TestGatewayServiceExtended:
             mock_tool = MagicMock()
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Execute
@@ -206,6 +208,7 @@ class TestGatewayServiceExtended:
 
             mock_tools_response = MagicMock()
             mock_tools_response.tools = []
+            mock_tools_response.nextCursor = None
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             await service._initialize_gateway(

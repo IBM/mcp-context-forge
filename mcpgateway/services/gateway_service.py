@@ -6104,9 +6104,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         while True:
             response = await session.list_tools(cursor=cursor)
             all_tools.extend(response.tools)
-            if not response.nextCursor:
+            next_cursor = getattr(response, 'nextCursor', None)
+            if not isinstance(next_cursor, str):
                 break
-            cursor = response.nextCursor
+            cursor = next_cursor
         return all_tools
 
     def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> tuple[list[ToolCreate], list[str]]:
