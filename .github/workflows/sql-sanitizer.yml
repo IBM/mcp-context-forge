@@ -307,7 +307,7 @@ jobs:
                     echo "Failure: SQLSanitizer did not block the malicious command as expected."
                     exit 1
                   fi
-                  cat gunicorn.log | grep sql_sanitizer
+                  cat gateway.log | grep sql_sanitizer
 
                   echo "All sql-sanitizer tests passed!"
             - name: Upload logs on failure
