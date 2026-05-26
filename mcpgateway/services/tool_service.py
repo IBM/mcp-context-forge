@@ -5411,23 +5411,36 @@ class ToolService(BaseService):
                         )
 
                         try:
-                            # #4205: Reuse upstream MCP sessions 1:1 per downstream session.
-                            # Prefer the registry when we have a downstream Mcp-Session-Id and
-                            # we're not inside a distributed trace (reused transports carry
-                            # pinned headers, so per-request traceparent can't propagate).
+                            # #4205 / #4686: Connection reuse strategy depends on protocol semantics.
+                            # - Sessionful protocols (< 2025-11-25): Use UpstreamSessionRegistry
+                            #   keyed by downstream Mcp-Session-Id for 1:1 binding.
+                            # - Sessionless protocols (>= 2025-11-25): Use SessionlessConnectionPool
+                            #   keyed by (gateway_id, url, transport, auth_fingerprint).
+                            # - Fallback: Per-call session when tracing is active or pool unavailable.
                             tool_call_result = None
                             downstream_session_id = _downstream_session_id_from_request()
                             use_registry = bool(downstream_session_id) and not tracing_active and bool(gateway_id_str)
+                            use_sessionless_pool = not downstream_session_id and not tracing_active and bool(gateway_id_str)
 
                             if use_registry:
-                                # Registry path: 1:1 binding means upstream state is private to
-                                # this downstream session. Connection reuse still amortizes the
-                                # initialize cost across multiple tool calls in the same session.
+                                # Sessionful path: 1:1 binding to downstream session
                                 try:
                                     registry = get_upstream_session_registry()
                                 except RegistryNotInitializedError:
-                                    # Registry not initialized (tests, early startup) — fall through.
                                     use_registry = False
+
+                            if use_sessionless_pool:
+                                # Sessionless path: gateway-scoped connection pool
+                                try:
+                                    # First-Party
+                                    from mcpgateway.services.sessionless_connection_pool import (  # pylint: disable=import-outside-toplevel
+                                        get_sessionless_connection_pool,
+                                        SessionlessConnectionPoolNotInitializedError,
+                                    )
+
+                                    sessionless_pool = get_sessionless_connection_pool()
+                                except SessionlessConnectionPoolNotInitializedError:
+                                    use_sessionless_pool = False
 
                             if use_registry:
                                 async with registry.acquire(
@@ -5440,6 +5453,16 @@ class ToolService(BaseService):
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
                                         tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                            elif use_sessionless_pool:
+                                async with sessionless_pool.acquire(
+                                    gateway_id=gateway_id_str,
+                                    url=server_url,
+                                    headers=headers,
+                                    transport_type=TransportType.SSE,
+                                    httpx_client_factory=get_httpx_client_factory,
+                                ) as pooled_conn:
+                                    with anyio.fail_after(effective_timeout):
+                                        tool_call_result = await pooled_conn.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), or

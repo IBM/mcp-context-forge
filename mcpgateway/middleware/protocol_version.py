@@ -8,24 +8,18 @@ Middleware to validate MCP-Protocol-Version header for MCP HTTP endpoints.
 """
 
 # Standard
+from collections.abc import Awaitable, Callable
 import logging
-from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
+from mcpgateway.utils.mcp_protocol import DEFAULT_PROTOCOL_VERSION, is_supported_mcp_protocol_version, normalize_mcp_protocol_version, SUPPORTED_PROTOCOL_VERSIONS, uses_sessionless_mcp_semantics
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
-
-# MCP protocol versions are sourced from the MCP SDK to stay aligned with schema.ts.
-SUPPORTED_PROTOCOL_VERSIONS = list(MCP_SUPPORTED_PROTOCOL_VERSIONS)
-# Default to the latest protocol for this implementation.
-DEFAULT_PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 
 
 class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
@@ -33,7 +27,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
     Validates MCP-Protocol-Version header on MCP protocol HTTP endpoints.
     """
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Validate MCP-Protocol-Version header for MCP protocol endpoints.
 
         Args:
@@ -112,15 +106,15 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Get the protocol version from headers (case-insensitive)
-        protocol_version = request.headers.get("mcp-protocol-version")
+        raw_protocol_version = request.headers.get("mcp-protocol-version")
+        protocol_version = normalize_mcp_protocol_version(raw_protocol_version)
 
         # If no protocol version provided, assume default version (backwards compatibility)
-        if protocol_version is None:
-            protocol_version = DEFAULT_PROTOCOL_VERSION
+        if raw_protocol_version is None:
             logger.debug(f"No MCP-Protocol-Version header, assuming {DEFAULT_PROTOCOL_VERSION}")
 
         # Validate protocol version
-        if protocol_version not in SUPPORTED_PROTOCOL_VERSIONS:
+        if not is_supported_mcp_protocol_version(protocol_version):
             supported = ", ".join(SUPPORTED_PROTOCOL_VERSIONS)
             logger.warning(f"Unsupported protocol version: {protocol_version}")
             return ORJSONResponse(
@@ -128,8 +122,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
                 content={"error": "Bad Request", "message": f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"},
             )
 
-        # Store validated version in request state for use by handlers
+        # Store validated version and phase-1 semantics gate for use by handlers
         request.state.mcp_protocol_version = protocol_version
+        request.state.mcp_sessionless_semantics = uses_sessionless_mcp_semantics(protocol_version)
 
         return await call_next(request)
 

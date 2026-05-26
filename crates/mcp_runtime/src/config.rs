@@ -13,6 +13,10 @@ const DEFAULT_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
 /// Default maximum request body size (10MB)
 pub const DEFAULT_MAX_REQUEST_BODY_SIZE_BYTES: usize = 10_485_760;
 
+/// MCP protocol versions at or after this cutoff use the post-session
+/// sessionless Streamable HTTP semantics introduced for issue #4686.
+pub const SESSIONLESS_PROTOCOL_MIN_VERSION: &str = "2025-11-25";
+
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-mcp-runtime")]
 #[command(about = "Experimental Rust MCP runtime edge for ContextForge")]

@@ -1436,6 +1436,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
+    # Initialize sessionless connection pool for MCP protocol versions >= 2025-11-25
+    # First-Party
+    from mcpgateway.services.sessionless_connection_pool import init_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+
+    await init_sessionless_connection_pool()
+    logger.info("Sessionless connection pool initialized")
+
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
     # importing the router pulls in the langchain stack which is several
     # seconds of cold-start cost).
@@ -1840,6 +1847,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from mcpgateway.services.upstream_session_registry import shutdown_upstream_session_registry  # pylint: disable=import-outside-toplevel
 
         await shutdown_upstream_session_registry()
+
+        # Drain sessionless connection pool
+        # First-Party
+        from mcpgateway.services.sessionless_connection_pool import shutdown_sessionless_connection_pool  # pylint: disable=import-outside-toplevel
+
+        await shutdown_sessionless_connection_pool()
 
         # Shutdown shared HTTP client (after services, before Redis)
         await SharedHttpClient.shutdown()

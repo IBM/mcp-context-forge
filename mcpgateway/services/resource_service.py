@@ -1983,19 +1983,35 @@ class ResourceService(BaseService):
                             if authentication is None:
                                 authentication = {}
                             try:
-                                # #4205: Registry path is taken when the caller has a downstream
-                                # Mcp-Session-Id; upstream state is then bound 1:1 to that
-                                # downstream session and never shared across clients.
+                                # #4205 / #4686: Connection reuse strategy depends on protocol semantics.
+                                # - Sessionful protocols (< 2025-11-25): Use UpstreamSessionRegistry
+                                #   keyed by downstream Mcp-Session-Id for 1:1 binding.
+                                # - Sessionless protocols (>= 2025-11-25): Use SessionlessConnectionPool
+                                #   keyed by (gateway_id, url, transport, auth_fingerprint).
+                                # - Fallback: Per-call session when pool unavailable.
                                 downstream_session_id = _downstream_session_id_from_request()
                                 use_registry = bool(downstream_session_id) and bool(gateway_id)
-                                registry = None
+                                use_sessionless_pool = not downstream_session_id and bool(gateway_id)
+
                                 if use_registry:
                                     try:
                                         registry = get_upstream_session_registry()
                                     except RegistryNotInitializedError:
                                         use_registry = False
 
-                                if use_registry and registry is not None:
+                                if use_sessionless_pool:
+                                    try:
+                                        # First-Party
+                                        from mcpgateway.services.sessionless_connection_pool import (  # pylint: disable=import-outside-toplevel
+                                            get_sessionless_connection_pool,
+                                            SessionlessConnectionPoolNotInitializedError,
+                                        )
+
+                                        sessionless_pool = get_sessionless_connection_pool()
+                                    except SessionlessConnectionPoolNotInitializedError:
+                                        use_sessionless_pool = False
+
+                                if use_registry:
                                     async with registry.acquire(
                                         downstream_session_id=downstream_session_id,
                                         gateway_id=gateway_id,
@@ -2005,6 +2021,16 @@ class ResourceService(BaseService):
                                         httpx_client_factory=_get_httpx_client_factory,
                                     ) as upstream:
                                         resource_response = await _read_resource_with_meta(upstream.session, uri, meta_data)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                                elif use_sessionless_pool:
+                                    async with sessionless_pool.acquire(
+                                        gateway_id=gateway_id,
+                                        url=server_url,
+                                        headers=authentication,
+                                        transport_type=TransportType.SSE,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                    ) as pooled_conn:
+                                        resource_response = await _read_resource_with_meta(pooled_conn.session, uri, meta_data)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback: per-call session when no downstream session id is in scope.

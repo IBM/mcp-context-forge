@@ -1730,7 +1730,12 @@ def test_downstream_session_id_helper_prefers_x_mcp_session_id_header():
     from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
     from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
-    token = request_headers_var.set({"X-Mcp-Session-Id": "x-prefix", "mcp-session-id": "rfc-name"})
+    # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+    token = request_headers_var.set({
+        "X-Mcp-Session-Id": "x-prefix",
+        "mcp-session-id": "rfc-name",
+        "mcp-protocol-version": "2024-11-05"
+    })
     try:
         assert downstream_session_id_from_request_context() == "x-prefix"
     finally:
@@ -1743,7 +1748,11 @@ def test_downstream_session_id_helper_falls_back_to_mcp_session_id_header():
     from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
     from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
-    token = request_headers_var.set({"mcp-session-id": "rfc-only"})
+    # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+    token = request_headers_var.set({
+        "mcp-session-id": "rfc-only",
+        "mcp-protocol-version": "2024-11-05"
+    })
     try:
         assert downstream_session_id_from_request_context() == "rfc-only"
     finally:
@@ -1769,9 +1778,31 @@ def test_downstream_session_id_helper_is_case_insensitive():
     from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
     from mcpgateway.transports.streamablehttp_transport import request_headers_var
 
-    token = request_headers_var.set({"MCP-Session-Id": "mixed-case"})
+    # Phase 1 / #4686: Use legacy protocol version so session ID is not ignored
+    token = request_headers_var.set({
+        "MCP-Session-Id": "mixed-case",
+        "mcp-protocol-version": "2024-11-05"
+    })
     try:
         assert downstream_session_id_from_request_context() == "mixed-case"
+    finally:
+        request_headers_var.reset(token)
+
+
+def test_downstream_session_id_helper_returns_none_for_sessionless_protocol():
+    """Phase 1 / #4686: Sessionless protocol versions ignore session IDs."""
+    # First-Party
+    from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context
+    from mcpgateway.transports.streamablehttp_transport import request_headers_var
+
+    # Use sessionless protocol version (>= 2025-11-25)
+    token = request_headers_var.set({
+        "X-Mcp-Session-Id": "should-be-ignored",
+        "mcp-session-id": "also-ignored",
+        "mcp-protocol-version": "2025-11-25"
+    })
+    try:
+        assert downstream_session_id_from_request_context() is None
     finally:
         request_headers_var.reset(token)
 

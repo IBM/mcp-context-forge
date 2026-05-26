@@ -6863,7 +6863,7 @@ async def test_handle_streamable_http_get_returns_405_when_stateless(monkeypatch
     await wrapper.initialize()
     send, messages = _make_send_collector()
     with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
-        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET"), _make_receive(b""), send)
+        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET", headers=[(b"mcp-protocol-version", b"2024-11-05")]), _make_receive(b""), send)
     await wrapper.shutdown()
 
     assert not sdk.called
@@ -6895,7 +6895,7 @@ async def test_handle_streamable_http_get_returns_405_when_no_session_id(monkeyp
     await wrapper.initialize()
     send, messages = _make_send_collector()
     with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
-        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET"), _make_receive(b""), send)
+        await wrapper.handle_streamable_http(_make_scope("/mcp", method="GET", headers=[(b"mcp-protocol-version", b"2024-11-05")]), _make_receive(b""), send)
     await wrapper.shutdown()
 
     assert not sdk.called
@@ -7178,7 +7178,7 @@ async def test_handle_streamable_http_get_returns_405_when_feature_disabled(monk
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
     send, messages = _make_send_collector()
-    scope = _make_scope("/mcp", method="GET", headers=[(b"mcp-session-id", b"abc-123-valid")])
+    scope = _make_scope("/mcp", method="GET", headers=[(b"mcp-session-id", b"abc-123-valid"), (b"mcp-protocol-version", b"2024-11-05")])
     with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
     await wrapper.shutdown()
@@ -8180,7 +8180,7 @@ async def test_handle_streamable_http_get_server_scoped_405_after_validation(mon
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
     send, messages = _make_send_collector()
-    await wrapper.handle_streamable_http(_make_scope("/servers/abc/mcp", method="GET"), _make_receive(b""), send)
+    await wrapper.handle_streamable_http(_make_scope("/servers/abc/mcp", method="GET", headers=[(b"mcp-protocol-version", b"2024-11-05")]), _make_receive(b""), send)
     await wrapper.shutdown()
 
     assert not sdk.called
