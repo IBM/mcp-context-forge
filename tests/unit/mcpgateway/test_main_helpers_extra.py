@@ -69,6 +69,8 @@ def test_validate_security_configuration(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    from pydantic import SecretStr
+
     fake_settings = SimpleNamespace(
         get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
         require_user_in_db=False,
@@ -79,6 +81,8 @@ def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: 
         uaid_allowed_domains=["trusted.example.com"],
         auth_required=True,
         database_url="sqlite:///./mcp.db",
+        jwt_secret_key=SecretStr("strong-jwt-secret-value-xyz"),  # pragma: allowlist secret
+        auth_encryption_secret=SecretStr("strong-enc-secret-value-xyz"),  # pragma: allowlist secret
     )
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
 
@@ -92,6 +96,8 @@ def test_validate_security_configuration_logs_default_jwt_warnings(monkeypatch: 
 
 
 def test_validate_security_configuration_logs_insecure_uaid_config(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    from pydantic import SecretStr
+
     fake_settings = SimpleNamespace(
         get_security_status=lambda: {"warnings": [], "secure_secrets": False, "auth_enabled": False},
         require_user_in_db=False,
@@ -102,6 +108,8 @@ def test_validate_security_configuration_logs_insecure_uaid_config(monkeypatch: 
         uaid_allowed_domains=[],
         auth_required=False,
         database_url="sqlite:///./mcp.db",
+        jwt_secret_key=SecretStr("strong-jwt-secret-value-xyz"),  # pragma: allowlist secret
+        auth_encryption_secret=SecretStr("strong-enc-secret-value-xyz"),  # pragma: allowlist secret
     )
     monkeypatch.setattr(main, "get_settings", lambda: fake_settings)
 
