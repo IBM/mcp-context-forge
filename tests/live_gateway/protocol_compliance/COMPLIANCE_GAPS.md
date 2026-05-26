@@ -223,49 +223,32 @@ limitation. Independent of #4205.
 
 ---
 
-### GAP-008 — Gateway federation drops a subset of upstream tools
+### GAP-008 — Gateway federation drops a subset of upstream tools *(closed 2026-05-26)*
 
-| | |
-|---|---|
-| **Targets affected** | `gateway_proxy`, `gateway_virtual` |
-| **Tests** | `test_drift.py::test_drift_tool_names`, `test_tools.py::test_tool_error_is_surfaced_as_is_error`, `test_utilities.py::test_long_running_tool_is_cancellable`, `::test_cancellation_notification_reaches_server`, `test_notifications.py::test_tools_list_changed_notification_delivered`, `::test_resources_list_changed_notification_delivered`, `::test_prompts_list_changed_notification_delivered` (co-blocked with GAP-006), `::test_resources_updated_after_bump` (co-blocked with GAP-009) |
-| **Spec** | [MCP 2025-11-25 — server `tools` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) |
+**Root cause**: `session.list_tools()` was called once per session without
+iterating paginated responses. Servers that return partial results with
+a `nextCursor` (including the compliance reference server, which
+registers 120 `stub_NNN` tools beyond the first page) silently lost any
+tools on subsequent pages. The fix adds a `_fetch_all_tools()` helper
+that loops over `session.list_tools(cursor=...)` until `nextCursor` is
+`None`, then applies it to all three federation paths (SSE, SSE OAuth,
+Streamable HTTP).
 
-**Observed**: the reference server registers 136 tools (16 named tools —
-`echo`, `add`, `boom`, `progress_reporter`, `long_running`,
-`get_cancellation_count`, `mutate_tool_list`, `mutate_resource_list`,
-`mutate_prompt_list`, `bump_subscribable`, `roots_echo`,
-`sample_trigger`, `sample_trigger_with_params`, `elicit_trigger`,
-`elicit_trigger_numeric`, `log_at_level` — plus 120 `stub_NNN`
-pagination stubs). Several of the named tools are missing after gateway
-federation (specifically the no-arg / raising / long-sleep variants —
-`boom`, `bump_subscribable`, `mutate_tool_list`, `long_running` have
-been observed dropped; exact current set varies and should be re-probed
-when this gap is investigated).
+**How we learned it closed**:
+- `test_drift_tool_names` XPASSed after the code change — all 136 tools
+  (16 named + 120 stubs) are now surfaced identically across every target.
+- `test_tool_error_is_surfaced_as_is_error` (exercises `boom`) passes on
+  all targets.
+- `test_long_running_tool_is_cancellable` (exercises `long_running`)
+  passes on all targets.
+- Remaining xfail markers on `test_cancellation_notification_reaches_server`,
+  `test_tools_list_changed_notification_delivered`,
+  `test_resources_list_changed_notification_delivered`,
+  `test_prompts_list_changed_notification_delivered`,
+  `test_resources_updated_after_bump` are now attributed to their
+  surviving gaps (GAP-001/002, GAP-006, GAP-009) respectively.
 
-**Expected**: the gateway should federate every tool the upstream
-advertises, provided it passes the gateway's validator layer. If a tool
-is intentionally rejected (e.g. missing input schema), the rejection
-should be observable (log, diagnostic endpoint) so operators can spot it.
-
-**Why**: unclear. Not obviously a common property — the dropped tools
-don't all lack args (e.g. `long_running` takes `duration_seconds`). The
-dropped `boom` tool has no args AND raises; possibly the gateway
-validates return types or rejects tools without output schemas.
-Investigation needed to confirm whether this is intentional filtering
-or a silent federation bug.
-
-**How to close**: confirm root cause, either (a) fix federation to
-propagate all well-formed tools, or (b) document the filter rule
-explicitly so the reference server can sidestep it in the stubs it
-uses to exercise federation. Once federation covers the missing tools,
-re-probe every test in the "Tests" row and drop or narrow the
-`xfail_on` call individually as each passes. Tests that depend on a
-dropped tool AND a separate gap (e.g. `test_resources_updated_after_bump`
-needs GAP-009's resource federation too, and
-`test_tools_list_changed_notification_delivered` needs the
-POST-correlated notification relay tracked by GAP-001/002) will
-remain xfailed against the surviving gap after GAP-008 closes.
+**Fixing PR**: #4304 (this issue).
 
 ---
 

@@ -44,12 +44,6 @@ async def test_progress_notifications_delivered(connect, request) -> None:
 
 async def test_long_running_tool_is_cancellable(connect, request) -> None:
     """A long-running tool call can be cancelled via asyncio.wait_for."""
-    xfail_on(
-        request,
-        "gateway_proxy",
-        "gateway_virtual",
-        reason="GAP-008: gateway federation drops `long_running` (among other tools)",
-    )
     async with connect() as client:
         name = await resolve_tool(client, "long_running")
         assert name is not None, "long_running tool missing on reference target (unexpected)"
@@ -90,9 +84,8 @@ async def test_cancellation_notification_reaches_server(connect, request) -> Non
         "gateway_proxy",
         "gateway_virtual",
         reason=(
-            "GAP-008: gateway federation drops `long_running`, so the trigger is "
-            "unreachable. Even with federation fixed, the notification would need "
-            "relay on the POST-correlated stream (same shape as GAP-001/002)."
+            "GAP-001/GAP-002: gateway does not relay notifications on the POST-correlated "
+            "stream — the cancellation notification never reaches the server."
         ),
     )
 

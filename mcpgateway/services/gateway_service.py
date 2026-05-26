@@ -6086,6 +6086,29 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         await self._event_service.publish_event(event)
 
+    @staticmethod
+    async def _fetch_all_tools(session: ClientSession) -> list:
+        """Fetch all tools from an initialized MCP session, handling pagination.
+
+        Iterates over paginated ``tools/list`` responses until the server
+        returns no ``nextCursor``, collecting every tool into a single list.
+
+        Args:
+            session: An initialized MCP ``ClientSession``.
+
+        Returns:
+            List of ``mcp.types.Tool`` objects from every page.
+        """
+        all_tools: list = []
+        cursor: str | None = None
+        while True:
+            response = await session.list_tools(cursor=cursor)
+            all_tools.extend(response.tools)
+            if not response.nextCursor:
+                break
+            cursor = response.nextCursor
+        return all_tools
+
     def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> tuple[list[ToolCreate], list[str]]:
         """Validate tools individually with richer logging and error aggregation.
 
@@ -6172,8 +6195,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                     logger.debug("Server capabilities: %s", capabilities)
 
-                    response = await session.list_tools()
-                    tools = response.tools
+                    tools = await self._fetch_all_tools(session)
                     tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                     tools, validation_errors = self._validate_tools(tools, context="oauth")
@@ -6349,8 +6371,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await self._fetch_all_tools(session)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)
@@ -6515,8 +6536,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
                 logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
+                tools = await self._fetch_all_tools(session)
                 tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools, validation_errors = self._validate_tools(tools)

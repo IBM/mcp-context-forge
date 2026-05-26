@@ -37,10 +37,8 @@ async def test_tools_list_changed_notification_delivered(connect, request) -> No
         "gateway_proxy",
         "gateway_virtual",
         reason=(
-            "GAP-008: gateway federation drops `mutate_tool_list`, so the trigger is "
-            "unreachable. Even with federation fixed, the list_changed notification "
-            "would still be blocked by the same POST-correlated-stream "
-            "notification-relay issue tracked in GAP-001/GAP-002."
+            "GAP-001/GAP-002: gateway does not relay list_changed notifications on the "
+            "POST-correlated stream — the notification never reaches the client."
         ),
     )
     observed_methods: list[str] = []
@@ -67,10 +65,8 @@ async def test_resources_list_changed_notification_delivered(connect, request) -
         "gateway_proxy",
         "gateway_virtual",
         reason=(
-            "GAP-008: gateway federation drops `mutate_resource_list`, so the trigger "
-            "is unreachable. Even with federation fixed, the list_changed "
-            "notification would still be blocked by the same POST-correlated-stream "
-            "notification-relay issue tracked in GAP-001/GAP-002."
+            "GAP-001/GAP-002: gateway does not relay list_changed notifications on the "
+            "POST-correlated stream — the notification never reaches the client."
         ),
     )
     observed_methods: list[str] = []
@@ -95,7 +91,7 @@ async def test_prompts_list_changed_notification_delivered(connect, request) -> 
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason=("GAP-006 (prompts not federated) + GAP-008 (mutate_prompt_list dropped by gateway). " "Both paths make the trigger unreachable via the gateway."),
+        reason="GAP-006: prompts not federated through gateway — tools are available but the prompt list remains empty.",
     )
     observed_methods: list[str] = []
 
@@ -119,7 +115,7 @@ async def test_resources_updated_after_bump(connect, request) -> None:
         request,
         "gateway_proxy",
         "gateway_virtual",
-        reason="GAP-008: gateway federation drops `bump_subscribable` (among other tools); " "also GAP-009 for the associated `reference://mutable/counter` resource",
+        reason="GAP-009: gateway does not federate resources through virtual-server paths — `reference://mutable/counter` is unreachable.",
     )
     async with connect() as client:
         name = await resolve_tool(client, "bump_subscribable")
