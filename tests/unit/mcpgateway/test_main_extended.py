@@ -12087,6 +12087,10 @@ class TestRemainingCoverageGaps:
             "toolops_enabled": True,
         }
 
+        # Ensure REDIS_AVAILABLE reflects actual install state; prior tests that
+        # reload session_registry with redis.asyncio=None pollute this flag in-place.
+        monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+
         mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "true"}, force_import_error=force_error)
 
         # Allow the import-time bootstrap_db create_task (running-loop branch) to complete.
