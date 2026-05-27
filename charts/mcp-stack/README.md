@@ -1050,6 +1050,32 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 
 Separate Redis instance for rate limiting to prevent contention:
 
+#### Using Kubernetes Secrets (Recommended)
+
+Create a Secret for the rate limiter Redis URL:
+
+```bash
+kubectl create secret generic rate-limiter-redis-secret \
+  --from-literal=RATELIMITER_REDIS_URL='redis://:password@rate-limiter-redis:6379/0'
+```
+
+Reference the Secret in your `values.yaml`:
+
+```yaml
+mcpContextForge:
+  extraEnvFrom:
+    - secretRef:
+        name: rate-limiter-redis-secret
+
+  config:
+    # Connection pool settings for rate limiter Redis
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+```
+
+#### Direct Configuration (Development Only)
+
 ```yaml
 mcpContextForge:
   config:
@@ -1058,6 +1084,14 @@ mcpContextForge:
     RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
     RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
 ```
+
+#### Fallback Behavior
+
+When `RATELIMITER_REDIS_URL` is not set, the gateway automatically falls back to the main Redis instance configured via `REDIS_URL`. This ensures backward compatibility with existing deployments.
+
+#### TLS Configuration
+
+The rate limiter Redis inherits TLS settings from the main Redis configuration (`REDIS_SSL`, `REDIS_SSL_CA_CERTS`, etc.). Both Redis instances must use the same TLS configuration.
 
 **Notes:**
 - **Migration:** Unset = uses main `REDIS_URL` (backward compatible)

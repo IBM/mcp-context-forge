@@ -1361,7 +1361,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # First-Party
     from mcpgateway.auth import _get_ratelimiter_redis_client  # pylint: disable=import-outside-toplevel
 
-    _get_ratelimiter_redis_client()  # Triggers lazy init + logging
+    if settings.ratelimiter_redis_url:
+        _get_ratelimiter_redis_client()  # Triggers lazy init + logging
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party

@@ -13,8 +13,8 @@ from unittest.mock import patch, MagicMock
 class TestRateLimiterWithDedicatedRedis:
     """End-to-end test with dedicated Redis for rate limiting."""
 
-    @patch("mcpgateway.auth.redis")
-    def test_rate_limiter_with_dedicated_redis(self, mock_redis):
+    @patch("redis.from_url")
+    def test_rate_limiter_with_dedicated_redis(self, mock_from_url):
         """Verify rate limiting works with dedicated Redis URL."""
         # Mock dedicated Redis client
         mock_dedicated_client = MagicMock()
@@ -22,7 +22,7 @@ class TestRateLimiterWithDedicatedRedis:
         mock_dedicated_client.get.return_value = None
         mock_dedicated_client.setex.return_value = True
 
-        mock_redis.Redis.return_value = mock_dedicated_client
+        mock_from_url.return_value = mock_dedicated_client
 
         # Reset global clients
         import mcpgateway.auth
@@ -37,11 +37,12 @@ class TestRateLimiterWithDedicatedRedis:
 
             from mcpgateway.auth import _get_ratelimiter_redis_client
 
-            client = _get_ratelimiter_redis_client()
+            with patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+                client = _get_ratelimiter_redis_client()
 
             # Verify dedicated Redis was used
             assert client == mock_dedicated_client
-            mock_redis.Redis.assert_called_once()
+            mock_from_url.assert_called_once()
             mock_dedicated_client.ping.assert_called_once()
 
     @patch("mcpgateway.auth._get_sync_redis_client")

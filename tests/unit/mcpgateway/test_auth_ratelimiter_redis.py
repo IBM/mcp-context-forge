@@ -7,7 +7,6 @@ import pytest
 import redis
 
 from mcpgateway.auth import _get_ratelimiter_redis_client
-from mcpgateway.config import Settings
 
 
 @pytest.fixture(autouse=True)
@@ -195,5 +194,68 @@ def test_get_ratelimiter_redis_double_check_lock():
             result2 = _get_ratelimiter_redis_client()
             assert result2 is mock_client
             assert call_count == 1  # No additional call
+
+
+def test_get_ratelimiter_redis_ssl_valueerror_no_backoff():
+    """Test SSL misconfiguration doesn't set backoff timer."""
+    import mcpgateway.auth as auth_module
+
+    with patch("mcpgateway.auth.settings") as mock_settings:
+        mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
+        mock_settings.ratelimiter_redis_max_connections = 10
+        mock_settings.ratelimiter_redis_socket_timeout = 5
+        mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+
+        with patch("mcpgateway.auth._build_ssl_kwargs", side_effect=ValueError("SSL error")):
+            result = _get_ratelimiter_redis_client()
+            assert result is None
+
+            # Verify backoff timer NOT set
+            assert auth_module._RATELIMITER_REDIS_FAILURE_TIME is None
+
+
+def test_get_ratelimiter_redis_success_log_sanitization(caplog):
+    """Test credentials sanitized in success log message."""
+    with patch("mcpgateway.auth.settings") as mock_settings:
+        mock_settings.ratelimiter_redis_url = "redis://user:password@localhost:6380/1"
+        mock_settings.ratelimiter_redis_max_connections = 10
+        mock_settings.ratelimiter_redis_socket_timeout = 5
+        mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+
+        mock_client = MagicMock()
+        mock_client.ping.return_value = True
+
+        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+            _get_ratelimiter_redis_client()
+
+            # Verify success log contains sanitized URL
+            assert "Rate limiter using dedicated Redis" in caplog.text
+            assert "***@localhost:6380" in caplog.text
+            assert "password" not in caplog.text
+
+
+def test_get_ratelimiter_redis_backoff_expiry_retry():
+    """Test reconnection attempt after backoff expires."""
+    import mcpgateway.auth as auth_module
+
+    with patch("mcpgateway.auth.settings") as mock_settings:
+        mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
+        mock_settings.ratelimiter_redis_max_connections = 10
+        mock_settings.ratelimiter_redis_socket_timeout = 5
+        mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+
+        mock_client = MagicMock()
+        mock_client.ping.return_value = True
+
+        # Set failure time to 31 seconds ago (past backoff window)
+        with patch("time.time", return_value=1000.0):
+            auth_module._RATELIMITER_REDIS_FAILURE_TIME = 969.0  # 31 seconds ago
+
+            with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+                result = _get_ratelimiter_redis_client()
+
+                # Should retry and succeed
+                assert result is mock_client
+                assert auth_module._RATELIMITER_REDIS_FAILURE_TIME is None
 
 # Made with Bob

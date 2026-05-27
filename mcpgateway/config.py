@@ -2607,6 +2607,7 @@ class Settings(BaseSettings):
     def validate_ratelimiter_redis_url(cls, v: Optional[str]) -> Optional[str]:
         """Validate rate limiter Redis URL format."""
         if v is not None and v.strip():
+            v = v.strip()
             if not (v.startswith("redis://") or v.startswith("rediss://")):
                 raise ValueError("RATELIMITER_REDIS_URL must start with redis:// or rediss://")
         return v

@@ -69,6 +69,7 @@ import logging
 import threading
 import time
 from typing import Any, Dict, Generator, List, Never, Optional
+from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -786,6 +787,14 @@ def _get_ratelimiter_redis_client():
     Falls back to main Redis (_get_sync_redis_client) when
     ratelimiter_redis_url is not configured.
 
+    Known limitation: Once successfully initialized, the client is cached
+    globally. If the Redis instance restarts mid-runtime, subsequent operations
+    will fail and fall back to in-memory rate limiting without reconnection
+    attempts. The 30-second backoff only applies during initialization.
+
+    Consider: Reset _RATELIMITER_REDIS_CLIENT = None in middleware exception
+    handler to trigger re-initialization on next request.
+
     Returns:
         Redis client or None if unavailable.
     """
@@ -830,9 +839,6 @@ def _get_ratelimiter_redis_client():
             _RATELIMITER_REDIS_FAILURE_TIME = None
 
             # Sanitize URL for logging (strip credentials)
-            # Standard
-            from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
             parsed = urlparse(redis_url)
             safe_url = parsed._replace(netloc=f"***@{parsed.hostname}:{parsed.port}" if parsed.password else parsed.netloc).geturl()
             logger.info(f"Rate limiter using dedicated Redis: {safe_url}")
@@ -842,7 +848,7 @@ def _get_ratelimiter_redis_client():
             _RATELIMITER_REDIS_CLIENT = None
             return None
         except Exception as e:
-            logger.debug(f"Rate limiter Redis unavailable: {e}")
+            logger.warning(f"Rate limiter Redis unavailable: {e}")
             _RATELIMITER_REDIS_CLIENT = None
             _RATELIMITER_REDIS_FAILURE_TIME = time.time()
 
