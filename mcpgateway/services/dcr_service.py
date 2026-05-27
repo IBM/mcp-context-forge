@@ -106,6 +106,8 @@ class DcrService:
         try:
             client = await self._get_client()
             response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
+            if 300 <= response.status_code < 400:
+                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
             if response.status_code == 200:
                 metadata = response.json()
 
@@ -128,6 +130,8 @@ class DcrService:
         try:
             client = await self._get_client()
             response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
+            if 300 <= response.status_code < 400:
+                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
             if response.status_code == 200:
                 metadata = response.json()
 

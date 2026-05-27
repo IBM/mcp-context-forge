@@ -961,7 +961,8 @@ class TestAdminGatewayAPIs:
     async def test_gateway_test_endpoint_registered_only_mode(self, client: AsyncClient, mock_settings):
         """Test gateway test endpoint in registered-only mode."""
         # Configure to only allow registered gateways
-        mock_settings.gateway_test_allow_registered_only = True
+        settings.gateway_test_allow_registered_only = True
+        settings.gateway_test_allowed_hosts = []
 
         # Test: Cannot test ANY gateway when no gateways are registered
         with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:

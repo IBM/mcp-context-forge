@@ -27,7 +27,7 @@ Intended to be used with Pydantic or similar schema-driven systems to validate a
 user input in a consistent, centralized way.
 
 Dependencies:
-- Standard Library: re, html, logging, urllib.parse
+- Standard Library: asyncio, re, html, logging, urllib.parse
 - First-party: `settings` from `mcpgateway.config`
 
 Example usage:
@@ -48,6 +48,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from functools import lru_cache
 from html.parser import HTMLParser
 import ipaddress
@@ -1524,7 +1525,7 @@ class SecurityValidator:
                         raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
-    def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> str:
+    async def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> dict[str, str]:
         """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
 
         This method implements strict validation for the gateway test endpoint to prevent
@@ -1533,14 +1534,14 @@ class SecurityValidator:
         2. Allowlist enforcement against provided host patterns
         3. Unconditional blocking of private IPs, loopback, and link-local addresses
         4. Standard URL validation (scheme, structure, XSS patterns)
+        5. DNS resolution capture for outbound IP pinning
 
-        **Security Note - DNS TOCTOU Limitation:**
-        This validation resolves DNS at validation time to check for private IPs, but the
-        HTTP client will re-resolve DNS at connection time. An attacker controlling DNS can
-        return a public IP during validation and a private IP during connection (DNS rebinding).
-        True mitigation requires pinning the validated IP into the connection (custom resolver/
-        transport, or IP allowlist check at connect callback). This is tracked as a known
-        limitation for future improvement.
+        **Security Note - DNS Rebinding Mitigation:**
+        This validation resolves DNS at validation time, verifies all resolved addresses are
+        safe, and returns the validated hostname plus a pinned resolved IP. Callers must use
+        the pinned IP for the outbound connection while preserving the original hostname in the
+        HTTP Host header and TLS SNI context. This closes the validation-time vs connection-time
+        DNS rebinding gap for the gateway test flow.
 
         Args:
             value (str): The URL to validate
@@ -1551,7 +1552,10 @@ class SecurityValidator:
             field_name (str): Name of field being validated (for error messages)
 
         Returns:
-            str: The validated URL if acceptable
+            dict[str, str]: Validation metadata containing:
+                - validated_url: Original validated URL string
+                - hostname: Original parsed hostname
+                - resolved_ip: Safe resolved IP string pinned for outbound connections
 
         Raises:
             ValueError: If URL fails validation (generic message, no internal details)
@@ -1559,27 +1563,28 @@ class SecurityValidator:
         Examples:
             Valid URL matching allowlist:
 
-            >>> SecurityValidator.validate_gateway_test_url(
+            >>> result = await SecurityValidator.validate_gateway_test_url(
             ...     'https://api.example.com/test',
             ...     ['*.example.com'],
             ...     'Gateway URL'
             ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
             'https://api.example.com/test'
 
             Trailing dot bypass attempt (blocked):
 
-            >>> SecurityValidator.validate_gateway_test_url(
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
             ...     'https://evil.com./bypass',
             ...     ['trusted.com'],
             ...     'Gateway URL'
-            ... )  # doctest: +SKIP
+            ... )
             Traceback (most recent call last):
                 ...
             ValueError: Gateway URL is not allowed
 
             Private IP address (blocked unconditionally):
 
-            >>> SecurityValidator.validate_gateway_test_url(
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
             ...     'https://192.168.1.1/',
             ...     ['192.168.1.1'],
             ...     'Gateway URL'
@@ -1590,7 +1595,7 @@ class SecurityValidator:
 
             Loopback address (blocked unconditionally):
 
-            >>> SecurityValidator.validate_gateway_test_url(
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
             ...     'https://127.0.0.1/',
             ...     ['127.0.0.1'],
             ...     'Gateway URL'
@@ -1653,9 +1658,19 @@ class SecurityValidator:
                 raise
             # Otherwise it's not a valid IP, continue to hostname check
 
-        # Resolve hostname to check for private IPs (prevent DNS rebinding)
+        # Resolve hostname to check for private IPs and capture a safe IP for outbound pinning.
+        # Run DNS resolution in an executor to avoid blocking the event loop and bound it
+        # with a timeout because this validator is used from async request handlers.
+        resolved_ips: list[str] = []
         try:
-            addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            loop = asyncio.get_running_loop()
+            addr_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                ),
+                timeout=float(settings.gateway_test_dns_timeout),
+            )
             for _, _, _, _, sockaddr in addr_info:
                 try:
                     resolved_ip = ipaddress.ip_address(sockaddr[0])
@@ -1671,12 +1686,17 @@ class SecurityValidator:
 
                     if resolved_ip.is_private or resolved_ip.is_loopback or resolved_ip.is_link_local or resolved_ip.is_unspecified or resolved_ip.is_multicast or resolved_ip.is_reserved or is_cgnat:
                         raise ValueError(f"{field_name} is not allowed")
+
+                    resolved_ips.append(str(resolved_ip))
                 except ValueError as e:
                     if "is not allowed" in str(e):
                         raise
                     continue
-        except (socket.gaierror, socket.herror):
+        except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror):
             # DNS resolution failed - reject with generic message
+            raise ValueError(f"{field_name} is not allowed")
+
+        if not resolved_ips:
             raise ValueError(f"{field_name} is not allowed")
 
         # Check against allowlist
@@ -1707,7 +1727,11 @@ class SecurityValidator:
             # Use generic message to prevent allowlist enumeration
             raise ValueError(f"{field_name} is not allowed")
 
-        return validated_url
+        return {
+            "validated_url": validated_url,
+            "hostname": hostname,
+            "resolved_ip": resolved_ips[0],
+        }
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:
