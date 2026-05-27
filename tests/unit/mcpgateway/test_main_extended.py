@@ -5644,6 +5644,7 @@ class TestUtilityFunctions:
         monkeypatch.setattr(main_mod, "get_token_teams_from_request", lambda _req: [])
 
         monkeypatch.setattr(main_mod.session_registry, "add_session", AsyncMock())
+        monkeypatch.setattr(main_mod.session_registry, "set_session_owner", AsyncMock())
         monkeypatch.setattr(main_mod.session_registry, "respond", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.session_registry, "register_respond_task", MagicMock())
         monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=MagicMock()))

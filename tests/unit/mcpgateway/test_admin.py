@@ -3679,16 +3679,19 @@ class TestAdminGatewayTestRoute:
                 mock_client.request.assert_called_once()
                 call_args = mock_client.request.call_args
                 assert call_args[1]["method"] == method
+                assert call_args[1]["url"] == "http://8.8.8.8/api/test"
+                assert call_args[1]["headers"]["Host"] == "example.com"
+                assert call_args[1]["extensions"]["sni_hostname"] == "example.com"
 
     async def test_admin_test_gateway_url_construction(self):
         """Test gateway testing with various URL constructions."""
         test_cases = [
-            ("http://example.com", "/api/test", "http://example.com/api/test"),
-            ("http://example.com/", "/api/test", "http://example.com/api/test"),
-            ("http://example.com", "api/test", "http://example.com/api/test"),
-            ("http://example.com/", "api/test", "http://example.com/api/test"),
-            ("http://example.com/base", "/api/test", "http://example.com/base/api/test"),
-            ("http://example.com/base/", "/api/test/", "http://example.com/base/api/test"),
+            ("http://example.com", "/api/test", "http://8.8.8.8/api/test"),
+            ("http://example.com/", "/api/test", "http://8.8.8.8/api/test"),
+            ("http://example.com", "api/test", "http://8.8.8.8/api/test"),
+            ("http://example.com/", "api/test", "http://8.8.8.8/api/test"),
+            ("http://example.com/base", "/api/test", "http://8.8.8.8/base/api/test"),
+            ("http://example.com/base/", "/api/test/", "http://8.8.8.8/base/api/test"),
         ]
 
         for base_url, path, expected_url in test_cases:
@@ -3718,6 +3721,8 @@ class TestAdminGatewayTestRoute:
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
+                assert call_args[1]["headers"]["Host"] == "example.com"
+                assert call_args[1]["extensions"]["sni_hostname"] == "example.com"
 
     async def test_admin_test_gateway_timeout_handling(self):
         """Test gateway testing with timeout."""
@@ -4047,6 +4052,10 @@ class TestAdminGatewayTestRoute:
 
             result = await admin_test_gateway(request, team_id=None, user={"email": "test@example.com", "db": mock_db}, db=mock_db)
             assert result.status_code == 200
+            call_args = mock_client.request.call_args
+            assert call_args[1]["url"] == "https://8.8.8.8/test"
+            assert call_args[1]["headers"]["Host"] == "allowed.example.com"
+            assert call_args[1]["extensions"]["sni_hostname"] == "allowed.example.com"
 
 
 class TestNormalizeUiHideValues:
@@ -14972,9 +14981,19 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
     assert response.status_code == 200
     assert response.body == {"message": "ok"}
 
+    captured_text: dict = {}
+
+    class MockClientText(MockClient):
+        async def request(self, **kwargs):
+            captured_text.update(kwargs)
+            return MockResponseText()
+
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClientText())
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.body.get("details") == "plain text"
+    assert captured_text["url"] == "https://8.8.8.8/test"
+    assert captured_text["headers"]["Host"] == "api.example.com"
+    assert captured_text["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15083,7 +15102,10 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert captured["headers"]["Authorization"] == "Bearer tok"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15144,7 +15166,10 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert captured["headers"]["Authorization"] == "Bearer tok"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15228,8 +15253,11 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
     )
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert captured["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
     assert captured["data"] == expected_data
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15269,7 +15297,10 @@ async def test_admin_test_gateway_basic_auth_dict_value(monkeypatch, mock_db):
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert captured["headers"]["Authorization"] == "Bearer my-token"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15310,7 +15341,10 @@ async def test_admin_test_gateway_bearer_auth_str_value(monkeypatch, mock_db):
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert captured["headers"]["Authorization"] == "Basic decoded"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15350,7 +15384,10 @@ async def test_admin_test_gateway_no_auth_skips_decode(monkeypatch, mock_db):
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
+    assert captured["headers"]["Host"] == "api.example.com"
     assert "Authorization" not in captured["headers"]
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
 
 
 @pytest.mark.asyncio
@@ -15396,10 +15433,112 @@ async def test_admin_test_gateway_preserves_caller_headers(monkeypatch, mock_db)
     )
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8/test"
     # Caller custom header is preserved
     assert captured["headers"]["X-Custom"] == "keep-me"
+    assert captured["headers"]["Host"] == "api.example.com"
     # Stored gateway auth takes precedence over caller-supplied Authorization
     assert captured["headers"]["Authorization"] == "Bearer stored-token"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db):
+    """IPv6 pinned addresses should be bracketed in the outbound URL and host header should stay normalized."""
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "ok"}
+
+        @property
+        def text(self):
+            return "ok"
+
+    captured: dict = {}
+
+    class MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **kwargs):
+            captured.update(kwargs)
+            return MockResponse()
+
+    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+        return {
+            "validated_url": value,
+            "hostname": "api.example.com",
+            "resolved_ip": "2001:4860:4860::8888",
+        }
+
+    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+
+    request = GatewayTestRequest(base_url="https://api.example.com:8443", path="/test", method="GET", headers={}, body=None)
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://[2001:4860:4860::8888]:8443/test"
+    assert captured["headers"]["Host"] == "api.example.com:8443"
+    assert captured["extensions"]["sni_hostname"] == "api.example.com"
+
+
+@pytest.mark.asyncio
+async def test_admin_test_gateway_direct_ip_preserves_literal_target(monkeypatch, mock_db):
+    """Direct public IP base URLs should be sent to the same literal IP and preserve the Host header."""
+
+    class MockResponse:
+        status_code = 200
+
+        def json(self):
+            return {"message": "ok"}
+
+        @property
+        def text(self):
+            return "ok"
+
+    captured: dict = {}
+
+    class MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, **kwargs):
+            captured.update(kwargs)
+            return MockResponse()
+
+    monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
+    monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+        return {
+            "validated_url": value,
+            "hostname": "8.8.8.8",
+            "resolved_ip": "8.8.8.8",
+        }
+
+    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+
+    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+
+    request = GatewayTestRequest(base_url="https://8.8.8.8:9443", path="/health", method="GET", headers={}, body=None)
+    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://8.8.8.8:9443/health"
+    assert captured["headers"]["Host"] == "8.8.8.8:9443"
+    assert captured["extensions"]["sni_hostname"] == "8.8.8.8"
 
 
 @pytest.mark.asyncio
@@ -15428,7 +15567,18 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
-    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+    async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
+        return {
+            "validated_url": value,
+            "hostname": "api.example.com",
+            "resolved_ip": "8.8.8.8",
+        }
+
+    monkeypatch.setattr("mcpgateway.admin.SecurityValidator.validate_gateway_test_url", mock_validate_gateway_test_url)
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = ["https://api.example.com"]
+    execute_result.scalars.return_value.first.return_value = None
+    mock_db.execute.return_value = execute_result
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -15443,7 +15593,10 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
 
     # Also verify team_id filter is applied when provided.
     mock_db.reset_mock()
-    mock_db.execute.return_value.scalars.return_value.first.return_value = None
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = ["https://api.example.com"]
+    execute_result.scalars.return_value.first.return_value = None
+    mock_db.execute.return_value = execute_result
     await admin_test_gateway(request, "team-123", user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     execute_call = mock_db.execute.call_args
     query = execute_call[0][0]

@@ -2226,71 +2226,76 @@ class TestGatewayTestEndpointSecurity:
                 assert "blocked" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
                 logger.debug(f"Trailing-dot URL blocked: {url}")
 
-    def test_allowlist_exact_match(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_exact_match(self):
         """Test allowlist validation with exact hostname match."""
         from mcpgateway.common.validators import SecurityValidator
 
         allowed_hosts = ["api.example.com", "test.example.com"]
 
         # Should pass
-        SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
-        SecurityValidator.validate_gateway_test_url("https://test.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://test.example.com/", allowed_hosts)
 
         # Should fail
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://evil.com/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://evil.com/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
-    def test_allowlist_wildcard_match(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_wildcard_match(self):
         """Test allowlist validation with wildcard subdomain patterns."""
         from mcpgateway.common.validators import SecurityValidator
 
         allowed_hosts = ["*.example.com"]
 
         # Should pass - subdomains only (per DNS conventions)
-        SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
-        SecurityValidator.validate_gateway_test_url("https://test.api.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://test.api.example.com/", allowed_hosts)
 
         # Should fail - base domain NOT matched by wildcard
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://example.com/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://example.com/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
         # Should fail - different domain
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://example.org/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://example.org/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://evilexample.com/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://evilexample.com/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
-    def test_allowlist_trailing_dot_normalization(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_trailing_dot_normalization(self):
         """Test that trailing dots are normalized in allowlist matching."""
         from mcpgateway.common.validators import SecurityValidator
 
         allowed_hosts = ["api.example.com"]
 
         # Trailing dot on hostname should be normalized and match
-        SecurityValidator.validate_gateway_test_url("https://api.example.com./", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com./", allowed_hosts)
 
         # Trailing dot on pattern should also work
         allowed_hosts_with_dot = ["api.example.com."]
-        SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts_with_dot)
-        SecurityValidator.validate_gateway_test_url("https://api.example.com./", allowed_hosts_with_dot)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts_with_dot)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com./", allowed_hosts_with_dot)
 
-    def test_allowlist_case_insensitive(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_case_insensitive(self):
         """Test that allowlist matching is case-insensitive."""
         from mcpgateway.common.validators import SecurityValidator
 
         allowed_hosts = ["API.Example.COM"]
 
         # Different cases should all match
-        SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
-        SecurityValidator.validate_gateway_test_url("https://Api.Example.Com/", allowed_hosts)
-        SecurityValidator.validate_gateway_test_url("https://API.EXAMPLE.COM/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://Api.Example.Com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://API.EXAMPLE.COM/", allowed_hosts)
 
-    def test_allowlist_empty_rejects_all(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_empty_rejects_all(self):
         """Test that empty allowlist rejects all URLs (secure default)."""
         from mcpgateway.common.validators import SecurityValidator
 
@@ -2298,14 +2303,15 @@ class TestGatewayTestEndpointSecurity:
 
         # Any URL should be rejected with empty allowlist
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://any.host.com/", empty_allowlist)
+            await SecurityValidator.validate_gateway_test_url("https://any.host.com/", empty_allowlist)
         assert "not allowed" in str(exc_info.value).lower()
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://evil.com/", empty_allowlist)
+            await SecurityValidator.validate_gateway_test_url("https://evil.com/", empty_allowlist)
         assert "not allowed" in str(exc_info.value).lower()
 
-    def test_allowlist_ipv6_handling(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_ipv6_handling(self):
         """Test that IPv6 literal URLs are rejected at URL validation level (not supported)."""
         from mcpgateway.common.validators import SecurityValidator
 
@@ -2313,20 +2319,20 @@ class TestGatewayTestEndpointSecurity:
 
         # IPv6 literal URLs are rejected by validate_url before allowlist checking
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("http://[::1]/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("http://[::1]/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("http://[2001:db8::1]/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("http://[2001:db8::1]/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("http://[::2]/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("http://[::2]/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
         assert "IDN" not in str(exc_info.value)
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("http://[fe80::1]/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("http://[fe80::1]/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
 
         logger.debug("IPv6 literal URLs correctly rejected at URL validation level")
@@ -2373,7 +2379,8 @@ class TestGatewayTestEndpointSecurity:
                     assert "localhost" in str(exc_info.value).lower() or "loopback" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
                     logger.debug(f"Loopback URL blocked: {url} - {exc_info.value}")
 
-    def test_allowlist_does_not_bypass_ssrf_protection(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_does_not_bypass_ssrf_protection(self):
         """Test that allowlist with private IP still triggers SSRF block (ICACF-15 Issue #1)."""
         from mcpgateway.common.validators import SecurityValidator
         from mcpgateway.config import settings
@@ -2384,7 +2391,7 @@ class TestGatewayTestEndpointSecurity:
                 with patch.object(settings, "ssrf_allow_private_networks", False):
                     # Gateway test URL validation should fail because private IPs are blocked unconditionally
                     with pytest.raises(ValueError) as exc_info:
-                        SecurityValidator.validate_gateway_test_url("http://192.168.1.1/", ["192.168.1.1"])
+                        await SecurityValidator.validate_gateway_test_url("http://192.168.1.1/", ["192.168.1.1"])
                     assert "not allowed" in str(exc_info.value).lower()
                     logger.debug(f"Gateway test correctly blocked private IP in allowlist: {exc_info.value}")
 
@@ -2394,7 +2401,8 @@ class TestGatewayTestEndpointSecurity:
                     assert "private" in str(exc_info.value).lower()
                     logger.debug(f"SSRF correctly blocked private IP in allowlist: {exc_info.value}")
 
-    def test_allowlist_idn_normalization(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_idn_normalization(self):
         """Test that IDN/Punycode domains are handled in allowlist (ICACF-15 Issue #3).
 
         Note: validate_gateway_test_url uses simple lowercase normalization without
@@ -2404,21 +2412,22 @@ class TestGatewayTestEndpointSecurity:
 
         # Allowlist contains ASCII Punycode version - exact match works
         allowed_hosts = ["xn--mnchen-3ya.de"]
-        SecurityValidator.validate_gateway_test_url("https://xn--mnchen-3ya.de/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://xn--mnchen-3ya.de/", allowed_hosts)
         logger.debug("Punycode hostname matched Punycode allowlist")
 
         # IDN hostname does NOT auto-convert to Punycode in current implementation
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://münchen.de/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://münchen.de/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
         logger.debug("IDN hostname rejected when allowlist has Punycode (no auto-conversion)")
 
         # Wildcard with Punycode works for Punycode subdomains
         allowed_hosts_wildcard = ["*.xn--mnchen-3ya.de"]
-        SecurityValidator.validate_gateway_test_url("https://api.xn--mnchen-3ya.de/", allowed_hosts_wildcard)
+        await SecurityValidator.validate_gateway_test_url("https://api.xn--mnchen-3ya.de/", allowed_hosts_wildcard)
         logger.debug("Punycode subdomain matched wildcard Punycode allowlist")
 
-    def test_allowlist_wildcard_excludes_base_domain(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_wildcard_excludes_base_domain(self):
         """Test that wildcard excludes base domain (ICACF-15 Issue #4)."""
         from mcpgateway.common.validators import SecurityValidator
 
@@ -2426,59 +2435,62 @@ class TestGatewayTestEndpointSecurity:
         allowed_hosts = ["*.example.com"]
 
         # Should match subdomain
-        SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.example.com/", allowed_hosts)
         logger.debug("Subdomain api.example.com matched wildcard *.example.com")
 
         # Should NOT match base domain (per DNS conventions)
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://example.com/", allowed_hosts)
+            await SecurityValidator.validate_gateway_test_url("https://example.com/", allowed_hosts)
         assert "not allowed" in str(exc_info.value).lower()
         logger.debug(f"Base domain example.com correctly rejected by wildcard: {exc_info.value}")
 
         # Should match nested subdomains
-        SecurityValidator.validate_gateway_test_url("https://api.staging.example.com/", allowed_hosts)
+        await SecurityValidator.validate_gateway_test_url("https://api.staging.example.com/", allowed_hosts)
         logger.debug("Nested subdomain api.staging.example.com matched wildcard *.example.com")
 
-    def test_allowlist_rejects_empty_url(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_rejects_empty_url(self):
         """Test that empty/None URL raises clean error."""
         from mcpgateway.common.validators import SecurityValidator
 
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("", ["example.com"])
+            await SecurityValidator.validate_gateway_test_url("", ["example.com"])
         assert "empty" in str(exc_info.value).lower()
 
-    def test_allowlist_defends_against_percent_encoding(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_defends_against_percent_encoding(self):
         """Test that percent-encoded hostnames are treated literally (not decoded)."""
         from mcpgateway.common.validators import SecurityValidator
 
         # Percent-encoded hostnames are treated literally and won't match decoded patterns
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://evil%2ecom/", ["example.com"])
+            await SecurityValidator.validate_gateway_test_url("https://evil%2ecom/", ["example.com"])
         assert "not allowed" in str(exc_info.value).lower()
 
         # Percent-encoded hostname does NOT match the decoded allowlist entry
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://api%2eexample%2ecom/", ["api.example.com"])
+            await SecurityValidator.validate_gateway_test_url("https://api%2eexample%2ecom/", ["api.example.com"])
         assert "not allowed" in str(exc_info.value).lower()
 
-    def test_allowlist_rejects_malformed_patterns(self):
+    @pytest.mark.asyncio
+    async def test_allowlist_rejects_malformed_patterns(self):
         """Test that malformed allowlist patterns are handled correctly."""
         from mcpgateway.common.validators import SecurityValidator
 
         # Single "*" is treated as an exact hostname pattern (no special wildcard handling)
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://example.com/", ["*"])
+            await SecurityValidator.validate_gateway_test_url("https://example.com/", ["*"])
         assert "not allowed" in str(exc_info.value).lower()
 
         # "*." without a domain is treated as a wildcard with empty suffix - won't match anything
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://example.com/", ["*."])
+            await SecurityValidator.validate_gateway_test_url("https://example.com/", ["*."])
         assert "not allowed" in str(exc_info.value).lower()
 
         # A list with one valid and one invalid pattern: the invalid pattern is
         # reached when the hostname does not match the valid one, so it raises
         with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.validate_gateway_test_url("https://evil.com/", ["*.example.com", "*"])
+            await SecurityValidator.validate_gateway_test_url("https://evil.com/", ["*.example.com", "*"])
         assert "not allowed" in str(exc_info.value).lower()
 
 
