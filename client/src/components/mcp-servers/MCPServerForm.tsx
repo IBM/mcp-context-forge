@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { ChevronDown, CircleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MCPIcon } from "@/components/icons/MCPIcon";
 import { AdvancedSettings } from "@/components/mcp-servers/AdvancedSettings";
+import { ExposeComponentsForm } from "@/components/gateways/ExposeComponentsForm";
 import { useRouter } from "@/router";
 import { useMCPServerForm, type TransportType } from "@/hooks/useMCPServerForm";
 
@@ -14,8 +16,14 @@ interface MCPServerFormProps {
   onSuccess?: () => void;
 }
 
+interface CreatedGatewayInfo {
+  id: string;
+  name: string;
+}
+
 export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServerFormProps) {
   const { navigate } = useRouter();
+  const [createdGateway, setCreatedGateway] = useState<CreatedGatewayInfo | null>(null);
   const {
     fetchError,
     name,
@@ -82,31 +90,61 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
   } = useMCPServerForm(serverId);
 
   const handleCancel = () => {
+    setCreatedGateway(null);
     onToggle();
   };
 
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    handleSubmit(event, () => {
-      if (onSuccess) {
-        onSuccess();
+    handleSubmit(event, (response) => {
+      // After successful creation, show the expose components form
+      if (!serverId && response) {
+        const gatewayId = (response as { id?: string })?.id;
+        if (!gatewayId) {
+          // Gateway ID is missing - this should not happen, but guard against it
+          console.error("Gateway created but ID is missing from response");
+          onToggle();
+          return;
+        }
+        const gatewayInfo: CreatedGatewayInfo = {
+          id: gatewayId,
+          name: name,
+        };
+        setCreatedGateway(gatewayInfo);
       } else {
-        onToggle();
+        // For edit mode, just close the form
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          onToggle();
+        }
       }
     });
   };
 
   if (!isOpen) return null;
 
+  // Show expose components form after successful creation
+  if (createdGateway) {
+    return (
+      <ExposeComponentsForm
+        gatewayId={createdGateway.id}
+        gatewayName={createdGateway.name}
+        oauthNotification={oauthNotification}
+        clearOAuthNotification={clearOAuthNotification}
+      />
+    );
+  }
+
   return (
     <>
       <div className="mx-auto mt-6 w-full max-w-3xl rounded-xl border border-neutral-200 bg-inherit p-0 shadow-[0_12px_40px_rgba(15,23,42,0.12)] dark:border-neutral-800">
         <div className="flex flex-col gap-8 p-6 sm:p-8">
           <div className="flex flex-col gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm bg-orange-500 text-white shadow-sm">
-                <MCPIcon className="h-5 w-5" />
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-orange-500 text-neutral-950 shadow-sm">
+                <MCPIcon className="h-4 w-4" />
               </div>
-              <h2 className="text-2xl font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
+              <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
                 {serverId ? "Edit MCP server" : "Connect MCP server"}
               </h2>
             </div>
@@ -382,5 +420,3 @@ export function MCPServerForm({ isOpen, onToggle, serverId, onSuccess }: MCPServ
     </>
   );
 }
-
-// Made with Bob
