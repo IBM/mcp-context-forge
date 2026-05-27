@@ -1,7 +1,8 @@
 """Experimental Dataplane publisher service for periodically exporting user configuration to Redis.
-    NOTE: This publisher backs dataplane wip feature and it is disabled by default.
-    Be careful not to overfit production-grade assumptions onto the design.
+NOTE: This publisher backs dataplane wip feature and it is disabled by default.
+Be careful not to overfit production-grade assumptions onto the design.
 """
+
 import asyncio
 from collections import defaultdict
 import logging
@@ -24,6 +25,7 @@ from mcpgateway.db import (
     server_tool_association,
 )
 from mcpgateway.utils.redis_client import get_redis_client
+
 logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
@@ -90,8 +92,7 @@ class DataplanePublisherService:
         try:
             await asyncio.wait_for(self.task, timeout=5)
         except asyncio.TimeoutError:
-            logger.warning(
-                "Dataplane publisher shutdown timed out; cancelling task.")
+            logger.warning("Dataplane publisher shutdown timed out; cancelling task.")
             self.task.cancel()
             try:
                 await self.task
@@ -113,8 +114,7 @@ class DataplanePublisherService:
         while not self._shutdown_event.is_set():
             redis = await get_redis_client()
             if redis is None:
-                logger.error(
-                    f"Redis client is unavailable; retrying in {REDIS_PUBLISHER_TIME} seconds.")
+                logger.error(f"Redis client is unavailable; retrying in {REDIS_PUBLISHER_TIME} seconds.")
                 await asyncio.sleep(REDIS_PUBLISHER_TIME)
                 continue
 
@@ -131,24 +131,20 @@ class DataplanePublisherService:
 
                 if not acquired:
                     # Another worker holds the lock - skip this cycle
-                    logger.debug(
-                        "Another worker holds publisher lock, skipping cycle")
+                    logger.debug("Another worker holds publisher lock, skipping cycle")
                     await asyncio.sleep(REDIS_PUBLISHER_TIME)
                     continue
 
                 # We hold the lock - publish data
-                logger.info(
-                    f"Worker {WORKER_ID} publishing dataplane payload...")
+                logger.info(f"Worker {WORKER_ID} publishing dataplane payload...")
                 payload = await self.fetch_payload()
 
                 if payload is None:
-                    logger.warning(
-                        "Skipping publish cycle due to data fetch failure - keeping existing Redis data")
+                    logger.warning("Skipping publish cycle due to data fetch failure - keeping existing Redis data")
                 else:
                     pipe = redis.pipeline()
                     for key, config in payload.items():
-                        key = msgpack.dumps(
-                            (USER_CONFIG_KEY, key), use_bin_type=True)
+                        key = msgpack.dumps((USER_CONFIG_KEY, key), use_bin_type=True)
                         pipe.set(
                             key,
                             msgpack.dumps(config, use_bin_type=True),
@@ -158,8 +154,7 @@ class DataplanePublisherService:
                         await pipe.execute()
                         logger.info(f"Published {len(payload)} user configs")
                     except Exception as e:
-                        logger.error(
-                            f"Could not write dataplane payload to Redis: {e}")
+                        logger.error(f"Could not write dataplane payload to Redis: {e}")
             except Exception as e:
                 logger.error(f"Error during publish: {e}")
             finally:
@@ -200,15 +195,9 @@ class DataplanePublisherService:
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
             resources = user_data["resources"]
-            resource_map = {
-                resource["id"]: resource["name"]
-                for resource in resources
-            }
+            resource_map = {resource["id"]: resource["name"] for resource in resources}
 
-            prompt_map = {
-                prompt["id"]: prompt["name"]
-                for prompt in prompts
-            }
+            prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
             gateway_base = {
                 gateway["id"]: {
@@ -231,16 +220,8 @@ class DataplanePublisherService:
                     if gateway_config is None:
                         continue
 
-                    allowed_resource_names = [
-                        resource_map[resource_id]
-                        for resource_id in backend_items["resources"]
-                        if resource_id in resource_map
-                    ]
-                    allowed_prompt_names = [
-                        prompt_map[prompt_id]
-                        for prompt_id in backend_items["prompts"]
-                        if prompt_id in prompt_map
-                    ]
+                    allowed_resource_names = [resource_map[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_map]
+                    allowed_prompt_names = [prompt_map[prompt_id] for prompt_id in backend_items["prompts"] if prompt_id in prompt_map]
                     if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
                         continue
 
@@ -251,13 +232,9 @@ class DataplanePublisherService:
                         "allowed_prompt_names": allowed_prompt_names,
                     }
 
-                virtual_hosts[server["id"]] = {
-                    "backends": backends
-                }
+                virtual_hosts[server["id"]] = {"backends": backends}
 
-            result[user_email] = {
-                "virtual_hosts": virtual_hosts
-            }
+            result[user_email] = {"virtual_hosts": virtual_hosts}
 
         return result
 
@@ -265,19 +242,13 @@ class DataplanePublisherService:
         """Fetch active users and dataplane data with bulk minimal-column queries."""
         with fresh_db_session() as db:
             try:
-                user_rows = db.execute(
-                    select(EmailUser.email, EmailUser.is_admin).where(
-                        EmailUser.is_active.is_(True))
-                ).all()
-                userteam_rows = db.execute(
-                    select(EmailTeamMember.user_email, EmailTeamMember.team_id).where(
-                        EmailTeamMember.is_active.is_(True))
-                ).all()
+                user_rows = db.execute(select(EmailUser.email, EmailUser.is_admin).where(EmailUser.is_active.is_(True))).all()
+                userteam_rows = db.execute(select(EmailTeamMember.user_email, EmailTeamMember.team_id).where(EmailTeamMember.is_active.is_(True))).all()
 
                 user_teams_map: dict[str, set[str]] = defaultdict(set)
                 user_admin_map: dict[str, bool] = {}
                 for user_email, is_admin in user_rows:
-                    user_teams_map[user_email]
+                    user_teams_map.setdefault(user_email, set())
                     user_admin_map[user_email] = is_admin
 
                 for user_email, team_id in userteam_rows:
@@ -287,10 +258,7 @@ class DataplanePublisherService:
                 if not user_teams_map:
                     return {}
 
-                server_rows = db.execute(
-                    select(DbServer.id, DbServer.owner_email, DbServer.team_id,
-                           DbServer.visibility).where(DbServer.enabled.is_(True))
-                ).all()
+                server_rows = db.execute(select(DbServer.id, DbServer.owner_email, DbServer.team_id, DbServer.visibility).where(DbServer.enabled.is_(True))).all()
                 gateway_rows = db.execute(
                     select(
                         DbGateway.id,
@@ -303,20 +271,14 @@ class DataplanePublisherService:
                         DbGateway.visibility,
                     ).where(DbGateway.enabled.is_(True))
                 ).all()
-                prompt_rows = db.execute(
-                    select(DbPrompt.id, DbPrompt.name, DbPrompt.owner_email, DbPrompt.team_id,
-                           DbPrompt.visibility).where(DbPrompt.enabled.is_(True))
-                ).all()
+                prompt_rows = db.execute(select(DbPrompt.id, DbPrompt.name, DbPrompt.owner_email, DbPrompt.team_id, DbPrompt.visibility).where(DbPrompt.enabled.is_(True))).all()
                 resource_rows = db.execute(
                     select(DbResource.id, DbResource.name, DbResource.owner_email, DbResource.team_id, DbResource.visibility).where(
                         DbResource.enabled.is_(True),
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(
-                    select(DbTool.id, DbTool.name, DbTool.owner_email, DbTool.team_id,
-                           DbTool.visibility).where(DbTool.enabled.is_(True))
-                ).all()
+                tool_rows = db.execute(select(DbTool.id, DbTool.name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -335,8 +297,7 @@ class DataplanePublisherService:
                 }
 
             except Exception as err:
-                logger.error(
-                    f"Could not build dataplane payload data from the database: {err}")
+                logger.error(f"Could not build dataplane payload data from the database: {err}")
                 return None
 
     def _build_user_data(
@@ -352,11 +313,7 @@ class DataplanePublisherService:
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        tool_name_by_id = {
-            tool.id: tool.name
-            for tool in tool_rows
-            if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)
-        }
+        tool_name_by_id = {tool.id: tool.name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
 
         return {
             "servers": [
@@ -378,16 +335,8 @@ class DataplanePublisherService:
                 for gateway in gateway_rows
                 if self._filter_for_user(gateway, user_email, team_ids, is_admin=is_admin)
             ],
-            "prompts": [
-                {"id": prompt.id, "name": prompt.name}
-                for prompt in prompt_rows
-                if self._filter_for_user(prompt, user_email, team_ids, is_admin=is_admin)
-            ],
-            "resources": [
-                {"id": resource.id, "name": resource.name}
-                for resource in resource_rows
-                if self._filter_for_user(resource, user_email, team_ids, is_admin=is_admin)
-            ],
+            "prompts": [{"id": prompt.id, "name": prompt.name} for prompt in prompt_rows if self._filter_for_user(prompt, user_email, team_ids, is_admin=is_admin)],
+            "resources": [{"id": resource.id, "name": resource.name} for resource in resource_rows if self._filter_for_user(resource, user_email, team_ids, is_admin=is_admin)],
         }
 
     @staticmethod
@@ -407,11 +356,7 @@ class DataplanePublisherService:
         """Filter backend tool IDs for one user and convert visible tools to names."""
         return {
             gateway_id: {
-                "tools": [
-                    tool_name_by_id[tool_id]
-                    for tool_id in backend_items["tools"]
-                    if tool_id in tool_name_by_id
-                ],
+                "tools": [tool_name_by_id[tool_id] for tool_id in backend_items["tools"] if tool_id in tool_name_by_id],
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }
@@ -428,45 +373,33 @@ class DataplanePublisherService:
 
     def _add_tools_to_backends(self, db: Any, backend_items_by_server: BackendItemsByServer) -> None:
         """Add active server tools to their backend gateway buckets."""
-        rows = db.execute(
-            select(server_tool_association.c.server_id,
-                   DbTool.id, DbTool.gateway_id)
-            .join(DbTool, DbTool.id == server_tool_association.c.tool_id)
-            .where(DbTool.enabled.is_(True))
-        ).all()
+        rows = db.execute(select(server_tool_association.c.server_id, DbTool.id, DbTool.gateway_id).join(DbTool, DbTool.id == server_tool_association.c.tool_id).where(DbTool.enabled.is_(True))).all()
         for server_id, tool_id, gateway_id in rows:
             if gateway_id is None:
                 continue
-            backend_items = backend_items_by_server[server_id].setdefault(
-                gateway_id, {"tools": [], "resources": [], "prompts": []})
+            backend_items = backend_items_by_server[server_id].setdefault(gateway_id, {"tools": [], "resources": [], "prompts": []})
             backend_items["tools"].append(tool_id)
 
     def _add_resources_to_backends(self, db: Any, backend_items_by_server: BackendItemsByServer) -> None:
         """Add active server resources to their backend gateway buckets."""
         rows = db.execute(
-            select(server_resource_association.c.server_id,
-                   DbResource.id, DbResource.gateway_id)
+            select(server_resource_association.c.server_id, DbResource.id, DbResource.gateway_id)
             .join(DbResource, DbResource.id == server_resource_association.c.resource_id)
             .where(DbResource.enabled.is_(True))
         ).all()
         for server_id, resource_id, gateway_id in rows:
             if gateway_id is None:
                 continue
-            backend_items = backend_items_by_server[server_id].setdefault(
-                gateway_id, {"tools": [], "resources": [], "prompts": []})
+            backend_items = backend_items_by_server[server_id].setdefault(gateway_id, {"tools": [], "resources": [], "prompts": []})
             backend_items["resources"].append(resource_id)
 
     def _add_prompts_to_backends(self, db: Any, backend_items_by_server: BackendItemsByServer) -> None:
         """Add active server prompts to their backend gateway buckets."""
         rows = db.execute(
-            select(server_prompt_association.c.server_id,
-                   DbPrompt.id, DbPrompt.gateway_id)
-            .join(DbPrompt, DbPrompt.id == server_prompt_association.c.prompt_id)
-            .where(DbPrompt.enabled.is_(True))
+            select(server_prompt_association.c.server_id, DbPrompt.id, DbPrompt.gateway_id).join(DbPrompt, DbPrompt.id == server_prompt_association.c.prompt_id).where(DbPrompt.enabled.is_(True))
         ).all()
         for server_id, prompt_id, gateway_id in rows:
             if gateway_id is None:
                 continue
-            backend_items = backend_items_by_server[server_id].setdefault(
-                gateway_id, {"tools": [], "resources": [], "prompts": []})
+            backend_items = backend_items_by_server[server_id].setdefault(gateway_id, {"tools": [], "resources": [], "prompts": []})
             backend_items["prompts"].append(prompt_id)
