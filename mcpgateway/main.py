@@ -2647,10 +2647,10 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
 
     Exempts login-related paths and static assets:
-    - /admin/login - login page
-    - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
+    - /v1/admin/login - login page
+    - /v1/admin/logout - logout action
+    - /v1/admin/forgot-password - self-service password reset request page
+    - /v1/admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -2663,12 +2663,31 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     # Public paths under /admin that do not require prior authentication.
     EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
+        "/v1/admin/login",
+        "/v1/admin/logout",
+        "/v1/admin/forgot-password",
+        "/v1/admin/reset-password",
+        "/admin/static",  # Legacy path
+        "/v1/admin/static",  # Versioned path
     ]
+
+    @staticmethod
+    def _strip_v1(path: str) -> str:
+        """Strip /v1 prefix from path for normalization.
+
+        Args:
+            path: Path to normalize.
+
+        Returns:
+            Path with /v1 prefix removed if present.
+
+        Examples:
+            >>> AdminAuthMiddleware._strip_v1("/v1/admin/login")
+            '/admin/login'
+            >>> AdminAuthMiddleware._strip_v1("/admin/login")
+            '/admin/login'
+        """
+        return path[3:] if path.startswith("/v1") else path
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -2732,14 +2751,19 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin")
+        # Check if this is an admin route (versioned /v1/admin/* or legacy /admin/*)
+        is_admin_route = scope_path.startswith("/admin") or scope_path.startswith("/v1/admin")
 
         if not is_admin_route:
             return await call_next(request)
 
+        # Normalize to unversioned path for exempt/permission checks so that
+        # both direct (/v1/admin/login) and proxy-prefixed (/qa/gateway/admin/login)
+        # paths are handled uniformly.
+        check_path = self._strip_v1(scope_path)
+
         # Check if path is exempt (login, logout, static)
-        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        is_exempt = any(check_path.startswith(self._strip_v1(p)) for p in self.EXEMPT_PATHS)
         if is_exempt:
             return await call_next(request)
 
@@ -12088,44 +12112,88 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
 # Mount static files
 # app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
 
-# Include routers
+# ---------------------------------------------------------------------------
+# Router assembly — centralized /v1 prefix
+# ---------------------------------------------------------------------------
+# All versioned API routes are registered once under /v1 via build_v1_router.
+# Unversioned routes (RFC well-known, OAuth, health, utility, LLM proxy) are
+# mounted directly on `app` below.
+
+# First-Party
+from mcpgateway.api.v1 import build_v1_router  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+v1_router = build_v1_router(
+    settings,
+    protocol_router=protocol_router,
+    tool_router=tool_router,
+    resource_router=resource_router,
+    prompt_router=prompt_router,
+    gateway_router=gateway_router,
+    root_router=root_router,
+    server_router=server_router,
+    metrics_router=metrics_router,
+    tag_router=tag_router,
+    export_import_router=export_import_router,
+    a2a_router=a2a_router,
+)
+app.include_router(v1_router)
+
+# ---------------------------------------------------------------------------
+# Backward-compatible legacy routes (deprecated unversioned aliases for /v1/*)
+# ---------------------------------------------------------------------------
+# Each endpoint now served at /v1/<path> is also mounted at /<path> so that
+# existing clients continue to work.  Responses from these routes receive
+# Sunset / Deprecation / Link headers via DeprecationHeadersMiddleware below.
+if settings.legacy_api_enabled:
+    # First-Party
+    from mcpgateway.api.v1 import build_legacy_router  # pylint: disable=import-outside-toplevel  # noqa: E402
+    from mcpgateway.middleware.deprecation import DeprecationHeadersMiddleware  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+    legacy_router = build_legacy_router(
+        settings,
+        protocol_router=protocol_router,
+        tool_router=tool_router,
+        resource_router=resource_router,
+        prompt_router=prompt_router,
+        gateway_router=gateway_router,
+        root_router=root_router,
+        server_router=server_router,
+        metrics_router=metrics_router,
+        tag_router=tag_router,
+        export_import_router=export_import_router,
+        a2a_router=a2a_router,
+    )
+    app.include_router(legacy_router)
+    app.add_middleware(DeprecationHeadersMiddleware, sunset_date=settings.legacy_api_sunset_date)
+    logger.info("Legacy (unversioned) route shims mounted — sunset: %s", settings.legacy_api_sunset_date)
+else:  # pragma: no cover
+    logger.info("Legacy route shims disabled (LEGACY_API_ENABLED=false)")
+
+# ---------------------------------------------------------------------------
+# Unversioned routes — mounted directly on app (no /v1 prefix)
+# ---------------------------------------------------------------------------
+
+# Version info endpoint (diagnostic, not a resource)
 app.include_router(version_router)
-app.include_router(protocol_router)
-app.include_router(tool_router)
-app.include_router(resource_router)
-app.include_router(prompt_router)
-app.include_router(gateway_router)
-app.include_router(root_router)
+
+# Internal utility routes (/_internal/*) — must stay at root
 app.include_router(utility_router)
-app.include_router(server_router)
+
+# RFC well-known endpoints (/.well-known/*)
+app.include_router(well_known_router)
+
+# Per-server well-known endpoints (/servers/{id}/.well-known/*)
 app.include_router(server_well_known_router, prefix="/servers")
-app.include_router(metrics_router)
-app.include_router(tag_router)
-app.include_router(export_import_router)
-app.include_router(openapi_schema_router)
 
-# Compliance report router (admin API)
-if settings.mcpgateway_admin_api_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.compliance_router import router as compliance_router
-
-        app.include_router(compliance_router)
-        logger.info("Compliance router included")
-    except ImportError as e:  # pragma: no cover - optional import guard
-        logger.warning(f"Compliance router not available: {e}")
-else:
-    logger.info("Compliance router not included - admin API disabled")
-
-# Tool plugin bindings router
+# OAuth 2.0 protocol (/oauth/*) — standard location, not versioned
 try:
     # First-Party
-    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+    from mcpgateway.routers.oauth_router import oauth_router  # pylint: disable=import-outside-toplevel
 
-    app.include_router(tool_plugin_bindings_router)
-    logger.info("Tool plugin bindings router included")
-except ImportError as e:
-    logger.error(f"Tool plugin bindings router not available: {e}")
+    app.include_router(oauth_router)
+    logger.info("OAuth router included")
+except ImportError:
+    logger.debug("OAuth router not available")
 
 # A2A agent plugin bindings router
 try:
@@ -12141,7 +12209,7 @@ except ImportError as e:
 if getattr(settings, "structured_logging_enabled", True):
     try:
         # First-Party
-        from mcpgateway.routers.log_search import router as log_search_router
+        from mcpgateway.routers.log_search import router as log_search_router  # pylint: disable=import-outside-toplevel
 
         app.include_router(log_search_router)
         logger.info("Log search router included - structured logging enabled")
@@ -12177,187 +12245,28 @@ else:
 # Conditionally include metrics maintenance router if cleanup or rollup is enabled
 if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
     # First-Party
-    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router
+    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router  # pylint: disable=import-outside-toplevel
 
     app.include_router(metrics_maintenance_router)
     logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
 
-# Conditionally include A2A router if A2A features are enabled
-if settings.mcpgateway_a2a_enabled:
-    app.include_router(a2a_router)
-    logger.info("A2A router included - A2A features enabled")
-else:
-    logger.info("A2A router not included - A2A features disabled")
-
-app.include_router(well_known_router)
-
-# Include Email Authentication router if enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.auth import auth_router
-        from mcpgateway.routers.email_auth import email_auth_router
-
-        app.include_router(email_auth_router, prefix="/auth/email", tags=["Email Authentication"])
-        app.include_router(auth_router, tags=["Main Authentication"])
-        logger.info("Authentication routers included - Auth enabled")
-
-        # Include SSO router if enabled
-        if settings.sso_enabled:
-            try:
-                # First-Party
-                from mcpgateway.routers.sso import sso_router
-
-                app.include_router(sso_router, tags=["SSO Authentication"])
-                logger.info("SSO router included - SSO authentication enabled")
-            except ImportError as e:
-                logger.error(f"SSO router not available: {e}")
-        else:
-            logger.info("SSO router not included - SSO authentication disabled")
-    except ImportError as e:
-        logger.error(f"Authentication routers not available: {e}")
-else:
-    logger.info("Email authentication router not included - Email auth disabled")
-
-# Include Team Management router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.teams import teams_router
-
-        app.include_router(teams_router, prefix="/teams", tags=["Teams"])
-        logger.info("Team management router included - Teams enabled with email auth")
-    except ImportError as e:
-        logger.error(f"Team management router not available: {e}")
-else:
-    logger.info("Team management router not included - Email auth disabled")
-
-# Include JWT Token Catalog router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.tokens import router as tokens_router
-
-        app.include_router(tokens_router, tags=["JWT Token Catalog"])
-        logger.info("JWT Token Catalog router included - Token management enabled with email auth")
-    except ImportError as e:
-        logger.error(f"JWT Token Catalog router not available: {e}")
-else:
-    logger.info("JWT Token Catalog router not included - Email auth disabled")
-
-# Include RBAC router if email auth is enabled
-if settings.email_auth_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.rbac import router as rbac_router
-
-        app.include_router(rbac_router, tags=["RBAC"])
-        logger.info("RBAC router included - Role-based access control enabled")
-    except ImportError as e:
-        logger.error(f"RBAC router not available: {e}")
-else:
-    logger.info("RBAC router not included - Email auth disabled")
-
-# Include OAuth router
-try:
-    # First-Party
-    from mcpgateway.routers.oauth_router import oauth_router
-
-    app.include_router(oauth_router)
-    logger.info("OAuth router included")
-except ImportError:
-    logger.debug("OAuth router not available")
-
-# Include reverse proxy router if enabled
-if settings.mcpgateway_reverse_proxy_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import router as reverse_proxy_router
-
-        app.include_router(reverse_proxy_router)
-        logger.info("Reverse proxy router included")
-    except ImportError:
-        logger.debug("Reverse proxy router not available")
-else:
-    logger.info("Reverse proxy router not included - feature disabled")
-
-# Include LLMChat router
+# LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
+# cannot be nested inside the v1_router prefix
 if settings.llmchat_enabled:
     try:
         # First-Party
-        from mcpgateway.routers.llmchat_router import llmchat_router
+        from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
 
-        app.include_router(llmchat_router)
-        logger.info("LLM Chat router included")
-    except ImportError:
-        logger.debug("LLM Chat router not available")
-
-    # Include LLM configuration and proxy routers (internal API)
-    try:
-        # First-Party
-        from mcpgateway.admin import enforce_admin_csrf  # pylint: disable=import-outside-toplevel
-        from mcpgateway.routers.llm_admin_router import llm_admin_router
-        from mcpgateway.routers.llm_config_router import llm_config_router
-        from mcpgateway.routers.llm_proxy_router import llm_proxy_router
-
-        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
-        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"], dependencies=[Depends(enforce_admin_csrf)])
-        logger.info("LLM configuration, proxy, and admin routers included")
+        logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
     except ImportError as e:
-        logger.debug(f"LLM routers not available: {e}")
+        logger.debug(f"LLM proxy router not available: {e}")
 
-# Include Toolops router
-if settings.toolops_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.toolops_router import toolops_router
-
-        app.include_router(toolops_router)
-        logger.info("Toolops router included")
-    except ImportError:
-        logger.debug("Toolops router not available")
-
-# Cancellation router (tool cancellation endpoints)
-if settings.mcpgateway_tool_cancellation_enabled:
-    try:
-        # First-Party
-        from mcpgateway.routers.cancellation_router import router as cancellation_router
-
-        app.include_router(cancellation_router)
-        logger.info("Cancellation router included (tool cancellation enabled)")
-    except ImportError:
-        logger.debug("Orchestrate router not available")
-else:
-    logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
-
-# Feature flags for admin UI and API
+# Feature flags for admin UI (logged for visibility; admin router is inside v1_router)
 UI_ENABLED = settings.mcpgateway_ui_enabled
 ADMIN_API_ENABLED = settings.mcpgateway_admin_api_enabled
 logger.info(f"Admin UI enabled: {UI_ENABLED}")
 logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
-
-# Conditional UI and admin API handling
-if ADMIN_API_ENABLED:
-    logger.info("Including admin_router - Admin API enabled")
-    # Lazy import: mcpgateway.admin is a large module (~19k lines, ~120ms cold).
-    # Only load it when the admin API is actually mounted.
-    # First-Party
-    from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
-
-    set_logging_service(logging_service)
-    app.include_router(admin_router)  # Admin routes imported from admin.py
-
-    # Validate section-to-permission mapping consistency at startup
-    validate_section_permissions(admin_router)
-
-    # Runtime-mode admin endpoints (GET/PATCH /admin/runtime/{mcp,a2a}-mode).
-    # First-Party
-    from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
-else:
-    logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 
 
 class MCPRuntimeHeaderTransportWrapper:
@@ -12638,7 +12547,7 @@ if UI_ENABLED:
 
     # Redirect root path to admin UI
     @app.get("/")
-    async def root_redirect():
+    async def root_redirect():  # pragma: no cover
         """
         Redirects the root path ("/") to "/admin/".
 

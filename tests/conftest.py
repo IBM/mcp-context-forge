@@ -395,7 +395,7 @@ def main_app_with_admin_api():
     # not support reliable route removal, and the fixture is session-
     # scoped so any downstream test that imported ``main.app`` already
     # expects admin routes to be present.
-    admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
+    admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/v1/admin/") and not getattr(r, "path", "").startswith("/v1/admin/well-known")]
     if not admin_routes:
         # First-Party
         from mcpgateway.admin import (  # noqa: E402
@@ -405,8 +405,17 @@ def main_app_with_admin_api():
         )
 
         set_logging_service(main_mod.logging_service)
-        main_mod.app.include_router(admin_router)
+        main_mod.app.include_router(admin_router, prefix="/v1")
         validate_section_permissions(admin_router)
+
+    # Ensure /v1/admin/well-known is mounted. When main was imported with
+    # admin disabled, build_v1_router() skips well_known_router, so the
+    # /v1/admin/well-known route is absent. Mount it now if missing.
+    well_known_admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "") == "/v1/admin/well-known"]
+    if not well_known_admin_routes:
+        from mcpgateway.routers.well_known import router as _well_known_router  # noqa: E402
+
+        main_mod.app.include_router(_well_known_router, prefix="/v1")
 
     yield main_mod.app
 
@@ -437,7 +446,7 @@ def main_app_with_a2a_router():
     # First-Party
     import mcpgateway.main as main_mod  # noqa: E402
 
-    a2a_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/a2a")]
+    a2a_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/v1/a2a")]
     if not a2a_routes:
         # ``a2a_router`` is defined inline inside ``mcpgateway.main``.
         main_mod.app.include_router(main_mod.a2a_router)
