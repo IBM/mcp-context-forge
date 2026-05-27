@@ -50,29 +50,44 @@ def upgrade() -> None:
                 "WHERE email_users.email = subquery.email"
             )
         )
-    else:  # SQLite
-        # SQLite doesn't support window functions in UPDATE, use a different approach
-        bind.execute(
-            text(
-                "UPDATE email_users SET id = ("
-                "  SELECT COUNT(*) FROM email_users AS e2 "
-                "  WHERE e2.created_at < email_users.created_at "
-                "     OR (e2.created_at = email_users.created_at AND e2.email <= email_users.email)"
-                ") + 1"
+    elif bind.dialect.name == "sqlite":
+        bind.execute(text("""
+            UPDATE email_users
+            SET id = (
+                SELECT COUNT(*)
+                FROM email_users AS e2
+                WHERE e2.created_at < email_users.created_at
+                   OR (
+                       e2.created_at = email_users.created_at
+                       AND e2.email <= email_users.email
+                   )
             )
-        )
+        """))
 
     # Make column non-nullable (SQLite requires batch mode)
     if bind.dialect.name == "sqlite":
-        # SQLite: Use batch mode to alter column
-        with op.batch_alter_table("email_users") as batch_op:
-            batch_op.alter_column("id", nullable=False)
+        with op.batch_alter_table("email_users", recreate="always") as batch_op:
+            batch_op.alter_column(
+                "id",
+                existing_type=sa.Integer(),
+                nullable=False,
+            )
+            batch_op.create_unique_constraint(
+                "uq_email_users_id",
+                ["id"],
+            )
     else:
-        # PostgreSQL: Direct ALTER
-        op.alter_column("email_users", "id", nullable=False)
-
-    op.create_unique_constraint("uq_email_users_id", "email_users", ["id"])
-    op.create_index("ix_email_users_id", "email_users", ["id"])
+        op.alter_column(
+            "email_users",
+            "id",
+            existing_type=sa.Integer(),
+            nullable=False,
+        )
+        op.create_unique_constraint(
+            "uq_email_users_id",
+            "email_users",
+            ["id"],
+        )
 
 
 def downgrade() -> None:
@@ -89,7 +104,10 @@ def downgrade() -> None:
     if "id" not in columns:
         return
 
-    # Drop index and constraint first
-    op.drop_index("ix_email_users_id", table_name="email_users")
-    op.drop_constraint("uq_email_users_id", "email_users", type_="unique")
-    op.drop_column("email_users", "id")
+    if bind.dialect.name == "postgresql":
+        op.drop_constraint("uq_email_users_id", "email_users", type_="unique")
+        op.drop_column("email_users", "id")
+
+    elif bind.dialect.name == "sqlite":
+        with op.batch_alter_table("email_users", recreate="always") as batch_op:
+            batch_op.drop_column("id")
