@@ -1,8 +1,33 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
 import { MCPServerForm } from "./MCPServerForm";
 import { RouterProvider } from "@/router";
+import { I18nProvider } from "@/i18n";
+
+// Mock API responses for ExposeComponentsForm and gateway creation
+const server = setupServer(
+  // Mock gateway creation
+  http.post("/gateways", () => {
+    return HttpResponse.json({ id: "test-gateway-123", name: "Test Server" });
+  }),
+  // Mock ExposeComponentsForm API calls
+  http.get("/tools", () => {
+    return HttpResponse.json([]);
+  }),
+  http.get("/resources", () => {
+    return HttpResponse.json([]);
+  }),
+  http.get("/prompts", () => {
+    return HttpResponse.json([]);
+  }),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: "warn" }));
+afterAll(() => server.close());
+afterEach(() => server.resetHandlers());
 
 describe("MCPServerForm", () => {
   const defaultProps = {
@@ -10,9 +35,13 @@ describe("MCPServerForm", () => {
     onToggle: vi.fn(),
   };
 
-  // Helper to render with router
+  // Helper to render with router and i18n
   const renderWithRouter = (ui: React.ReactElement) => {
-    return render(<RouterProvider>{ui}</RouterProvider>);
+    return render(
+      <I18nProvider>
+        <RouterProvider>{ui}</RouterProvider>
+      </I18nProvider>,
+    );
   };
 
   beforeEach(() => {
@@ -339,7 +368,7 @@ describe("MCPServerForm", () => {
   });
 
   describe("Form Submission", () => {
-    it("should call onToggle when form is submitted", async () => {
+    it("should show ExposeComponentsForm after successful submission", async () => {
       const user = userEvent.setup();
       const onToggle = vi.fn();
       renderWithRouter(<MCPServerForm isOpen={true} onToggle={onToggle} />);
@@ -353,12 +382,16 @@ describe("MCPServerForm", () => {
       const submitButton = screen.getByRole("button", { name: /Connect server/i });
       await user.click(submitButton);
 
+      // Should show ExposeComponentsForm instead of calling onToggle
       await waitFor(() => {
-        expect(onToggle).toHaveBeenCalledTimes(1);
+        expect(screen.getByText("Expose MCP tools, resources, and prompts")).toBeInTheDocument();
       });
+
+      // onToggle should NOT be called immediately after submission
+      expect(onToggle).not.toHaveBeenCalled();
     });
 
-    it("should reset form fields after submission", async () => {
+    it("should show ExposeComponentsForm with Skip and Expose buttons", async () => {
       const user = userEvent.setup();
       renderWithRouter(<MCPServerForm {...defaultProps} />);
 
@@ -372,8 +405,11 @@ describe("MCPServerForm", () => {
       const submitButton = screen.getByRole("button", { name: /Connect server/i });
       await user.click(submitButton);
 
-      // Fields should be cleared (component would re-render with empty state)
-      expect(defaultProps.onToggle).toHaveBeenCalled();
+      // Should show ExposeComponentsForm with action buttons
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /skip/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /expose components/i })).toBeInTheDocument();
+      });
     });
 
     it("should prevent default form submission", async () => {

@@ -238,7 +238,10 @@ export interface UseMCPServerFormReturn {
   // Actions
   resetForm: () => void;
   validateForm: () => boolean;
-  handleSubmit: (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => Promise<void>;
+  handleSubmit: (
+    event: FormEvent<HTMLFormElement>,
+    onSuccess?: (response?: unknown) => void,
+  ) => Promise<void>;
   getFormData: () => MCPServerFormData;
 }
 
@@ -638,7 +641,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
   }, []);
 
   const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>, onSuccess?: () => void) => {
+    async (event: FormEvent<HTMLFormElement>, onSuccess?: (response?: unknown) => void) => {
       event.preventDefault();
 
       if (validateForm()) {
@@ -648,18 +651,21 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
 
           // Call the appropriate API based on mode (create or update)
           let responseGatewayId: string | undefined;
+          let response: unknown;
           if (isEditMode) {
             if (!gatewayId) {
               setErrors({ submit: "Cannot update: gateway ID is missing." });
               return;
             }
-            await updateGateway(formData);
+            response = await updateGateway(formData);
             responseGatewayId = gatewayId;
           } else if (authType === "oauth" && pendingOAuthGatewayId) {
             // Reuse the gateway created in a previous OAuth attempt to avoid duplicates.
             responseGatewayId = pendingOAuthGatewayId;
+            // Create a response object with the pending gateway ID so the expose step works
+            response = { id: pendingOAuthGatewayId };
           } else {
-            const response = await createGateway(formData);
+            response = await createGateway(formData);
             // Extract gateway ID from response
             responseGatewayId = (response as { id?: string })?.id;
             if (authType === "oauth" && responseGatewayId) {
@@ -680,7 +686,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
               });
               // Delay closing so the success notification is visible before the form unmounts.
               successCloseTimeoutRef.current = setTimeout(() => {
-                if (onSuccess) onSuccess();
+                if (onSuccess) onSuccess(response);
                 resetForm();
               }, 2000);
             } catch (oauthError) {
@@ -696,7 +702,7 @@ export function useMCPServerForm(gatewayId?: string): UseMCPServerFormReturn {
           } else {
             // Call success callback if provided
             if (onSuccess) {
-              onSuccess();
+              onSuccess(response);
             }
 
             // Reset form after successful submission
