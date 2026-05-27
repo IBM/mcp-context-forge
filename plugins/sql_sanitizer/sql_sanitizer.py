@@ -241,7 +241,7 @@ class SQLSanitizerPlugin(Plugin):
             config: Plugin configuration.
         """
         super().__init__(config)
-        logger.debug(f"SQL-SANITIZER config: {config}")
+        logger.debug("SQL-SANITIZER initialized")
         self._cfg = SQLSanitizerConfig(**(config.config or {}))
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -254,7 +254,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
-        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
+        logger.debug("SQL-SANITIZER scanning prompt args")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return PromptPrehookResult(
@@ -281,7 +281,7 @@ class SQLSanitizerPlugin(Plugin):
         Returns:
             Result indicating SQL issues found or sanitized.
         """
-        logger.debug(f"SQL-SANITIZER payload: {payload.args} config: {self._cfg}")
+        logger.debug("SQL-SANITIZER scanning tool args")
         issues, scanned = _scan_args(payload.args or {}, self._cfg)
         if issues and self._cfg.block_on_violation:
             return ToolPreInvokeResult(
