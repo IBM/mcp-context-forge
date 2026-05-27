@@ -14080,9 +14080,10 @@ async def admin_test_gateway(
 
     allowed_hosts = list(allowed_hosts_set)
 
-    # Validate URL with allowlist enforcement
+    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
+    # the DNS rebinding gap between validation-time and connection-time resolution.
     try:
-        validated_base_url = SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
+        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
     except ValueError as e:
         # Log the actual error for security monitoring, but return generic message
         safe_url = sanitize_url_for_logging(str(request.base_url))
@@ -14096,17 +14097,33 @@ async def admin_test_gateway(
         # Generic error message - don't expose allowlist or validation details
         return GatewayTestResponse(status_code=400, latency_ms=latency_ms, body={"error": "Invalid gateway URL"})
 
-    full_url = validated_base_url.rstrip("/") + "/" + request.path.lstrip("/")
+    validated_base_url = validated_gateway_target["validated_url"]
+    validated_hostname = validated_gateway_target["hostname"]
+    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
+
+    parsed_validated_base_url = urllib.parse.urlparse(validated_base_url)
+    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
+    if parsed_validated_base_url.port is not None:
+        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
+        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
+    else:
+        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
+        original_authority = validated_hostname
+
+    pinned_base_url = urllib.parse.urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
+    full_url = pinned_base_url.rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
     safe_validated_url = sanitize_url_for_logging(validated_base_url)
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {safe_validated_url}.")
+    LOGGER.info(
+        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
+        get_user_email(user),
+        safe_validated_url,
+        validated_hostname,
+        pinned_resolved_ip,
+    )
 
-    # TODO(ICACF-15): DNS rebinding risk — allowlist and SSRF checks resolve DNS, but the
-    # actual ResilientHttpClient request resolves DNS a third time. An attacker-controlled DNS
-    # server could return a public IP during validation and a private IP during the actual
-    # request. Consider pinning the resolved IP for outbound requests (custom transport) or
-    # caching DNS resolution across validation and request phases.
-    headers = request.headers or {}
+    headers = dict(request.headers or {})
+    headers["Host"] = original_authority
 
     # Attempt to find a registered gateway matching this URL and team.
     # Query the raw DB object directly so we get the unmasked auth_value
@@ -14172,7 +14189,12 @@ async def admin_test_gateway(
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
-        request_kwargs = {"method": request.method.upper(), "url": full_url, "headers": headers}
+        request_kwargs = {
+            "method": request.method.upper(),
+            "url": full_url,
+            "headers": headers,
+            "extensions": {"sni_hostname": validated_hostname},
+        }
 
         if request.body is not None:
             if content_type == "application/x-www-form-urlencoded":

@@ -749,6 +749,12 @@ class Settings(BaseSettings):
             "Default true for maximum security (test only what's already registered)."
         ),
     )
+    gateway_test_dns_timeout: float = Field(
+        default=5.0,
+        gt=0.0,
+        le=30.0,
+        description="Timeout in seconds for DNS resolution performed during /admin/gateways/test validation.",
+    )
 
     # UAID Cross-Gateway Routing Security
     uaid_allowed_domains: List[str] = Field(
