@@ -20,6 +20,9 @@ export interface CreateServerDetails {
   oauthEnabled: boolean;
   tags?: string[];
   description?: string;
+  associatedTools?: string[];
+  associatedResources?: string[];
+  associatedPrompts?: string[];
 }
 
 export interface DetailComponentItem {
