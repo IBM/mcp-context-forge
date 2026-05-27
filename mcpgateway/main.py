@@ -1663,7 +1663,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 Raises:
                     asyncio.CancelledError: When aggregation is stopped
                 """
-                interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
+                interval_seconds = settings.metrics_aggregation_interval_seconds or max(1, int(settings.metrics_aggregation_window_minutes)) * 60
                 logger.info(
                     "Starting log aggregation loop (window=%s min)",
                     log_aggregator.aggregation_window_minutes,
