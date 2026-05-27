@@ -11122,6 +11122,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
     req_id: Optional[Union[int, str]] = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
+        # Cache this early to avoid duplicate extraction in get_rpc_filter_context
         if hasattr(user, "email"):
             user_id = getattr(user, "email", None)  # RBAC user object
         elif isinstance(user, dict):

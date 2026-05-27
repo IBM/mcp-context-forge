@@ -9808,7 +9808,9 @@ class TestRpcHandling:
         ):
             result = await handle_rpc(request_logging, db=MagicMock(), user={"sub": "user@example.com"})
             assert result["result"] == {}
-            get_user_email.assert_called_once_with({"sub": "user@example.com"})
+            # get_user_email is called twice: once for logging (line 10297) and once in get_rpc_filter_context (auth_context.py:380)
+            assert get_user_email.call_count == 2
+            get_user_email.assert_called_with({"sub": "user@example.com"})
 
     async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}
