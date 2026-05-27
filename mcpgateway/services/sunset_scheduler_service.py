@@ -95,10 +95,15 @@ class SunsetSchedulerService:
 
             except Exception as e:
                 logger.exception(f"Error in sunset scheduler: {e}")
-                structured_logger.log_error(
-                    "sunset_scheduler_error",
-                    error=str(e),
-                    error_type=type(e).__name__,
+                structured_logger.log(
+                    level="ERROR",
+                    message="sunset_scheduler_error",
+                    event_type="sunset_scheduler_error",
+                    component="sunset_scheduler",
+                    custom_fields={
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                    },
                 )
                 self._processing = False
 
@@ -127,9 +132,9 @@ class SunsetSchedulerService:
             # Use index on sunset_date for efficient query
             stmt = select(DbTool).where(
                 and_(
-                    DbTool.deprecated == True,  # noqa: E712
+                    DbTool.deprecated is True,  # noqa: E712
                     DbTool.sunset_date <= now,
-                    DbTool.enabled == True,  # noqa: E712
+                    DbTool.enabled is True,  # noqa: E712
                 )
             )
 
@@ -153,7 +158,7 @@ class SunsetSchedulerService:
                 .where(
                     and_(
                         DbTool.id.in_(tool_ids),
-                        DbTool.enabled == True,  # noqa: E712 - Critical for idempotency
+                        DbTool.enabled is True,  # noqa: E712 - Critical for idempotency
                     )
                 )
                 .values(enabled=False)
