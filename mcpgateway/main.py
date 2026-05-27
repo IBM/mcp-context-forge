@@ -7335,7 +7335,13 @@ async def remove_root(
         Status message indicating result.
     """
     logger.debug(f"User '{SecurityValidator.sanitize_log_message(str(user))}' requested to remove root with URI: {uri}")
-    await root_service.remove_root(uri)
+    try:
+        await root_service.remove_root(uri)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Root not found: {uri}") from e
+    except Exception as e:
+        logger.exception(f"Unexpected error removing root {uri}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}") from e
     return {"status": "success", "message": f"Root {uri} removed"}
 
 
@@ -10573,10 +10579,17 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
                     result = {"contents": [result]}
-            except (ValueError, ResourceNotFoundError):
+            except (ValueError, ResourceNotFoundError) as e:
                 # Resource not found in the gateway
                 logger.error("Resource not found: %s", uri)
-                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri}) from e
+            except ResourceError as e:
+                # Other resource errors (ambiguous URI, proxy failures, path validation, etc.)
+                logger.error("Resource read failed: %s", str(e))
+                raise JSONRPCError(-32000, f"Resource read failed: {str(e)}", {"uri": uri}) from e
+            except Exception as e:
+                logger.exception(f"Unexpected error in resources/read for {uri}: {e}")
+                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"uri": uri}) from e
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -10650,17 +10663,25 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            result = await prompt_service.get_prompt(
-                db,
-                name,
-                arguments,
-                user=auth_user_email,
-                server_id=server_id,
-                token_teams=auth_token_teams,
-                plugin_context_table=plugin_context_table,
-                plugin_global_context=plugin_global_context,
-                _meta_data=meta_data,
-            )
+            try:
+                result = await prompt_service.get_prompt(
+                    db,
+                    name,
+                    arguments,
+                    user=auth_user_email,
+                    server_id=server_id,
+                    token_teams=auth_token_teams,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    _meta_data=meta_data,
+                )
+            except PromptNotFoundError as e:
+                raise JSONRPCError(-32002, str(e), {"name": name}) from e
+            except PromptError as e:
+                raise JSONRPCError(-32000, f"Prompt retrieval failed: {str(e)}", {"name": name}) from e
+            except Exception as e:
+                logger.exception(f"Unexpected error in prompts/get for {name}: {e}")
+                raise JSONRPCError(-32603, f"Internal error: {str(e)}", {"name": name}) from e
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
             # Release transaction after prompts/get completes
@@ -11257,7 +11278,11 @@ async def set_log_level(request: Request, user=Depends(get_current_user_with_per
     """
     logger.debug(f"User {SecurityValidator.sanitize_log_message(str(user))} requested to set log level")
     body = await _read_request_json(request)
-    level = LogLevel(body["level"])
+    try:
+        # Normalize to lowercase before enum construction
+        level = LogLevel(body["level"].lower())
+    except (ValueError, KeyError, AttributeError) as e:
+        raise HTTPException(status_code=422, detail=f"Invalid log level: {body.get('level', 'missing')}") from e
     await logging_service.set_level(level)
 
 

@@ -2350,6 +2350,25 @@ class TestRootEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_not_found_error(self, mock_remove, test_client, auth_headers):
+        """Test DELETE /roots/{uri} returns 404 when RootServiceNotFoundError is raised."""
+        from mcpgateway.services.root_service import RootServiceNotFoundError
+
+        mock_remove.side_effect = RootServiceNotFoundError("Root not found: /missing")
+        response = test_client.delete("/roots/%2Fmissing", headers=auth_headers)
+        assert response.status_code == 404
+        assert "Root not found" in response.json()["detail"]
+
+    @patch("mcpgateway.main.root_service.remove_root")
+    def test_remove_root_generic_exception(self, mock_remove, test_client, auth_headers):
+        """Test DELETE /roots/{uri} returns 500 when generic Exception is raised."""
+        mock_remove.side_effect = RuntimeError("Unexpected filesystem error")
+        response = test_client.delete("/roots/%2Ferror", headers=auth_headers)
+        assert response.status_code == 500
+        assert "Internal error" in response.json()["detail"]
+
+
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
@@ -2591,6 +2610,46 @@ class TestRPCEndpoints:
         assert body["error"]["code"] == -32002
         assert "Resource not found" in body["error"]["message"]
         assert body["error"]["message"] != "Internal error"
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_resource_error(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32000 when ResourceError is raised."""
+        from mcpgateway.services.resource_service import ResourceError
+
+        mock_read.side_effect = ResourceError("Ambiguous URI or proxy failure")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "res://ambiguous"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32000
+        assert "Resource read failed" in body["error"]["message"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    def test_rpc_resources_read_generic_exception(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns -32603 when generic Exception is raised."""
+        mock_read.side_effect = RuntimeError("Unexpected database error")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "res://error"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32603
+        assert "Internal error" in body["error"]["message"]
+
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -2682,6 +2741,67 @@ class TestRPCEndpoints:
         body = response.json()["result"]
         assert body["nextCursor"] == "next-cursor"
         assert body["prompts"][0]["name"] == "prompt-1"
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_not_found_error(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32002 when PromptNotFoundError is raised."""
+        from mcpgateway.services.prompt_service import PromptNotFoundError
+
+        mock_get.side_effect = PromptNotFoundError("Prompt 'missing-prompt' not found")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "missing-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32002
+        assert "not found" in body["error"]["message"].lower()
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_prompt_error(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32000 when PromptError is raised."""
+        from mcpgateway.services.prompt_service import PromptError
+
+        mock_get.side_effect = PromptError("Prompt retrieval failed due to validation")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "error-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32000
+        assert "Prompt retrieval failed" in body["error"]["message"]
+
+    @patch("mcpgateway.main.prompt_service.get_prompt", new_callable=AsyncMock)
+    def test_rpc_prompts_get_generic_exception(self, mock_get, test_client, auth_headers):
+        """Test prompts/get returns -32603 when generic Exception is raised."""
+        mock_get.side_effect = RuntimeError("Unexpected database error")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/get",
+            "params": {"name": "crash-prompt"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32603
+        assert "Internal error" in body["error"]["message"]
+
 
     @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
     def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
@@ -2941,6 +3061,32 @@ class TestRPCEndpoints:
 
         assert response.status_code == 200
         assert response.json()["result"] == {}
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_invalid_value(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel returns 422 for invalid log level."""
+        req = {"level": "INVALID_LEVEL"}
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        assert "Invalid log level" in response.json()["detail"]
+        mock_set_level.assert_not_called()
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_missing_level(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel returns 422 when level is missing."""
+        req = {}
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 422
+        assert "Invalid log level" in response.json()["detail"]
+        mock_set_level.assert_not_called()
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_set_log_level_uppercase(self, mock_set_level, test_client, auth_headers):
+        """Test POST /logging/setLevel accepts uppercase level values."""
+        req = {"level": "INFO"}  # uppercase
+        response = test_client.post("/logging/setLevel", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_set_level.assert_called_once()
 
     @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
     def test_rpc_roots_list_method(self, mock_list_roots, test_client, auth_headers):

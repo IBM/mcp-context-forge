@@ -6303,7 +6303,7 @@ async def admin_update_team(
         is_htmx = request.headers.get("HX-Request") == "true"
 
         if is_htmx:
-            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
+            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=500)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
         return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
@@ -6342,7 +6342,7 @@ async def admin_delete_team(
         deleted = await team_service.delete_team(team_id, deleted_by=user_email)
 
         if not deleted:
-            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Team cannot be deleted due to business constraints</div>', status_code=409)
 
         # Return success message with script to refresh teams list
         safe_team_name = html.escape(team_name)

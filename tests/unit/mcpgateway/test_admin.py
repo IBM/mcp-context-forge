@@ -8403,7 +8403,7 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
     response = await admin_update_team("team-1", request=htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
-    assert response.status_code == 400
+    assert response.status_code == 500
     assert "Error updating team" in response.body.decode()
 
     non_htmx_request = MagicMock(spec=Request)
@@ -8985,7 +8985,7 @@ async def test_admin_delete_team_rejected_personal_team(monkeypatch, mock_db, al
 
     response = await admin_delete_team("team-personal", request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert "cannot be deleted" in response.body.decode().lower()
 
 
