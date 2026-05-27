@@ -127,6 +127,10 @@ RUN chown -R 1001:0 /app && \
 # FedRAMP compliance block — only active when ENABLE_FIPS=true
 # Resolves findings: 1 (FIPS policy), 2+3 (SSH ciphers/MACs via FIPS), 7 (init perms), 8 (rootfiles), 9 (SSH RekeyLimit)
 RUN if [ "$ENABLE_FIPS" = "true" ]; then \
+        if ! grep -q "release 9" /etc/redhat-release 2>/dev/null; then \
+            echo "ERROR: ENABLE_FIPS=true requires UBI 9 base images (UBI_MINIMAL must be ubi9/ubi-minimal)" >&2; \
+            exit 1; \
+        fi; \
         microdnf install -y crypto-policies crypto-policies-scripts rootfiles \
         && microdnf clean all \
         && update-crypto-policies --set FIPS \
@@ -139,10 +143,9 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
             'C /root/.cshrc        0740 root root - /usr/share/rootfiles/.cshrc' \
             'C /root/.tcshrc       0740 root root - /usr/share/rootfiles/.tcshrc' \
             > /etc/tmpfiles.d/rootfiles.conf \
-        && printf '' >> /root/.bash_profile \
-        && printf '' >> /root/.bashrc \
-        && printf '' >> /root/.bash_logout \
-        && chmod 0740 /root/.bash_profile /root/.bashrc /root/.bash_logout; \
+        && install -m 0740 /dev/null /root/.bash_profile \
+        && install -m 0740 /dev/null /root/.bashrc \
+        && install -m 0740 /dev/null /root/.bash_logout; \
     else \
         echo "ENABLE_FIPS=false — skipping FedRAMP compliance block"; \
     fi

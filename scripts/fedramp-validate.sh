@@ -52,6 +52,10 @@ check "root .bashrc permissions 0740 (finding 7)" \
     "stat -c '%a' /root/.bashrc" \
     "740"
 
+check "root .bash_logout permissions 0740 (finding 7)" \
+    "stat -c '%a' /root/.bash_logout" \
+    "740"
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 
