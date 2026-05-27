@@ -10,6 +10,22 @@ from fastapi.testclient import TestClient
 from mcpgateway.db import Gateway
 from mcpgateway.main import app
 from mcpgateway.services.gateway_worker import GatewayWorker
+from tests.helpers.auth import make_auth_headers, make_legacy_test_jwt  # noqa: E402
+
+
+# -------------------------
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
+
+TEST_JWT_TOKEN = make_legacy_test_jwt(
+    "admin@example.com",
+    teams=[],
+    expires_in_minutes=60,
+    secret=TEST_JWT_SECRET,
+    algorithm="HS256",
+    include_email_claim=True,
+    extra_payload={"iss": "mcpgateway", "aud": "mcpgateway-api"},
+)
+TEST_AUTH_HEADER = make_auth_headers(TEST_JWT_TOKEN)
 
 
 @pytest.fixture
@@ -110,7 +126,7 @@ class TestGatewayAsyncLifecycle:
         response = client.post(
             "/gateways",
             json={"name": "test-gateway-202", "url": "http://localhost:9000/mcp"},
-            headers={"Authorization": "Bearer test-token"},
+            headers=TEST_AUTH_HEADER,
         )
 
         assert response.status_code == 202
@@ -125,27 +141,59 @@ class TestGatewayAsyncLifecycle:
         assert gateway.status == "pending"
 
     @pytest.mark.asyncio
-    async def test_retry_with_same_name_returns_existing(self, client, session, mock_mcp_init):
-        """Retry with same name returns existing gateway (409 conflict for now)."""
-        # First request
+    async def test_retry_pending_name_returns_existing_202(self, client, session, mock_mcp_init):
+        """Retry create with same name while pending returns existing gateway with 202."""
+        # First request creates pending gateway
         response1 = client.post(
             "/gateways",
-            json={"name": "test-retry-unique", "url": "http://localhost:9001/mcp"},
-            headers={"Authorization": "Bearer test-token"},
+            json={"name": "test-retry-pending", "url": "http://localhost:9001/mcp"},
+            headers=TEST_AUTH_HEADER,
         )
         assert response1.status_code == 202
-        gateway_id = response1.json()["id"]
+        data1 = response1.json()
+        assert data1["status"] == "pending"
+        gateway_id = data1["id"]
 
-        # Retry with same name - currently returns 409 (duplicate detection)
-        # TODO: Implement idempotent retry logic to return existing pending gateway
+        # Retry with same name while still pending - should return existing
         response2 = client.post(
             "/gateways",
-            json={"name": "test-retry-unique", "url": "http://localhost:9001/mcp"},
-            headers={"Authorization": "Bearer test-token"},
+            json={"name": "test-retry-pending", "url": "http://localhost:9001/mcp"},
+            headers=TEST_AUTH_HEADER,
         )
 
-        # For now, expect 409 conflict (duplicate detection working)
-        assert response2.status_code == 409
+        assert response2.status_code == 202
+        data2 = response2.json()
+        assert data2["id"] == gateway_id  # Same gateway
+        assert data2["status"] == "pending"
+        assert data2["name"] == "test-retry-pending"
+
+        # Verify no duplicate row created
+        count = session.query(Gateway).filter(Gateway.name == "test-retry-pending").count()
+        assert count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_active_name_returns_409(self, client, session, mock_mcp_init):
+        """Retry create with same name while active returns 409 conflict."""
+        # Create active gateway
+        gateway = Gateway(
+            name="test-retry-active",
+            url="http://localhost:9002/mcp",
+            status="active",
+            capabilities={},
+            owner_email="test@example.com",
+        )
+        session.add(gateway)
+        session.commit()
+
+        # Attempt create with same name
+        response = client.post(
+            "/gateways",
+            json={"name": "test-retry-active", "url": "http://localhost:9002/mcp"},
+            headers=TEST_AUTH_HEADER,
+        )
+
+        assert response.status_code == 409
+        assert "already exists" in response.json()["message"].lower()
 
     @pytest.mark.asyncio
     async def test_worker_retries_until_success(self, session, mock_mcp_init):
@@ -205,7 +253,7 @@ class TestGatewayAsyncLifecycle:
         # Delete
         response = client.delete(
             f"/gateways/{gateway.id}",
-            headers={"Authorization": "Bearer test-token"},
+            headers=TEST_AUTH_HEADER,
         )
 
         assert response.status_code == 202
@@ -234,7 +282,7 @@ class TestGatewayAsyncLifecycle:
         response = client.put(
             f"/gateways/{gateway.id}",
             json={"url": "http://localhost:9001/mcp"},
-            headers={"Authorization": "Bearer test-token"},
+            headers=TEST_AUTH_HEADER,
         )
 
         assert response.status_code == 202
@@ -261,7 +309,7 @@ class TestGatewayAsyncLifecycle:
         # Get gateway
         response = client.get(
             f"/gateways/{gateway.id}",
-            headers={"Authorization": "Bearer test-token"},
+            headers=TEST_AUTH_HEADER,
         )
 
         assert response.status_code == 200
@@ -299,3 +347,88 @@ class TestGatewayAsyncLifecycle:
         # Gateway should be removed by cleanup
         remaining = session.query(Gateway).filter(Gateway.id == gateway.id).first()
         assert remaining is None
+
+    @pytest.mark.asyncio
+    async def test_poll_gateway_by_name(self, client, session):
+        """GET /gateways/{name} retrieves gateway by name."""
+        # Create gateway with retry metadata
+        gateway = Gateway(
+            name="test-poll-by-name",
+            url="http://localhost:9000/mcp",
+            status="pending",
+            registration_attempts=2,
+            next_retry_at=datetime.now() + timedelta(seconds=8),
+            last_error="Connection refused",
+            capabilities={},
+        )
+        session.add(gateway)
+        session.commit()
+
+        # Poll by name (not ID)
+        response = client.get(
+            f"/gateways/{gateway.name}",
+            headers=TEST_AUTH_HEADER,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "test-poll-by-name"
+        assert data["status"] == "pending"
+        assert data["registrationAttempts"] == 2
+        assert data["lastError"] == "Connection refused"
+
+    @pytest.mark.asyncio
+    async def test_poll_gateway_by_id_still_works(self, client, session):
+        """GET /gateways/{id} still works (backward compat)."""
+        gateway = Gateway(
+            name="test-poll-by-id",
+            url="http://localhost:9000/mcp",
+            status="active",
+            capabilities={},
+        )
+        session.add(gateway)
+        session.commit()
+
+        # Poll by ID
+        response = client.get(
+            f"/gateways/{gateway.id}",
+            headers=TEST_AUTH_HEADER,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == gateway.id
+        assert data["name"] == "test-poll-by-id"
+
+    @pytest.mark.asyncio
+    async def test_retry_metadata_visible_during_pending(self, client, session):
+        """Retry metadata fields visible while gateway pending."""
+        next_retry = datetime.now() + timedelta(seconds=32)
+        gateway = Gateway(
+            name="test-retry-metadata",
+            url="http://localhost:9000/mcp",
+            status="pending",
+            registration_attempts=6,
+            next_retry_at=next_retry,
+            last_error="Timeout after 30s",
+            capabilities={},
+        )
+        session.add(gateway)
+        session.commit()
+
+        # Get gateway
+        response = client.get(
+            f"/gateways/{gateway.name}",
+            headers=TEST_AUTH_HEADER,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "pending"
+        assert data["registrationAttempts"] == 6
+        assert data["nextRetryAt"] is not None
+        assert data["lastError"] == "Timeout after 30s"
+        # Verify retry metadata persists across polling
+        assert "registrationAttempts" in data
+        assert "nextRetryAt" in data
+        assert "lastError" in data

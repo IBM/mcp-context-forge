@@ -9,8 +9,9 @@ This guide covers operational procedures for managing gateway lifecycle with asy
 Gateway registration follows an async pattern:
 - API returns 202 Accepted immediately
 - Background worker processes registration with retry logic
-- Status transitions: `pending` → `active` or `failed`
-- Exponential backoff: 2s, 4s, 8s, 16s, 32s (max 5 attempts)
+- Status transitions: `pending` → `active` (never fails terminally)
+- Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s, capped at 300s (5 minutes)
+- Worker retries indefinitely until success or explicit DELETE
 
 ## Monitoring
 
@@ -107,9 +108,9 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 **Diagnosis**:
 ```bash
-# Find failing gateways
+# Find gateways with high retry counts
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/gateways | \
-  jq '.[] | select(.status=="failed") | {id, url, status_message, registration_attempts}'
+  jq '.[] | select(.status=="pending" and .registration_attempts > 5) | {id, name, url, status_message, registration_attempts, last_error}'
 
 # Check error patterns in logs
 kubectl logs -l app=mcpgateway --tail=500 | grep "gateway_registration_failure"
@@ -163,25 +164,26 @@ kubectl logs -l app=mcpgateway --tail=20 | grep "Gateway worker started"
 -- Connect to database
 psql $DATABASE_URL
 
--- List failed gateways older than 24 hours
-SELECT id, url, status_message, created_at, registration_attempts
-FROM gateways
-WHERE status = 'failed' AND created_at < NOW() - INTERVAL '24 hours';
+-- List pending gateways with high retry counts
+SELECT id, name, url, status_message, created_at, registration_attempts, next_retry_at, last_error
+FROM gateway
+WHERE status = 'pending' AND registration_attempts > 10;
 
--- Delete old failed gateways (after verification)
-DELETE FROM gateways
-WHERE status = 'failed' AND created_at < NOW() - INTERVAL '7 days';
+-- Delete stuck gateways (after verification - triggers async cleanup)
+DELETE FROM gateway
+WHERE status = 'pending' AND created_at < NOW() - INTERVAL '7 days';
 ```
 
-### Reset Gateway to Pending
+### Reset Gateway Retry State
 
 ```sql
--- Reset a failed gateway to retry
-UPDATE gateways
+-- Reset a pending gateway's retry counter
+UPDATE gateway
 SET status = 'pending',
     status_message = NULL,
     registration_attempts = 0,
-    last_attempt_at = NULL
+    next_retry_at = NULL,
+    last_error = NULL
 WHERE id = '<gateway_id>';
 ```
 
@@ -240,23 +242,24 @@ kubectl logs -l app=mcpgateway | grep "Gateway worker started"
 
 ### Worker Interval
 
-Default: 10 seconds. Adjust for higher/lower throughput:
+Default: 5 seconds. Configured in `mcpgateway/services/gateway_worker.py`:
 
 ```python
-# In mcpgateway/main.py
-worker_interval = 5  # Process every 5 seconds (higher throughput)
-# or
-worker_interval = 30  # Process every 30 seconds (lower load)
+# In gateway_worker.py run_forever() method
+await asyncio.sleep(5)  # Poll interval
 ```
 
 ### Retry Configuration
 
-Modify retry behavior in `mcpgateway/services/gateway_worker.py`:
+Retry behavior in `mcpgateway/services/gateway_worker.py`:
 
 ```python
-MAX_ATTEMPTS = 5  # Increase for more retries
-BASE_BACKOFF = 2  # Increase for longer backoff
+def calculate_backoff(self, attempt: int) -> int:
+    """Exponential backoff: 2^attempt, capped at 300s"""
+    return min(2**attempt, 300)
 ```
+
+**Note**: Worker retries indefinitely (no max attempts). Only DELETE stops retry loop.
 
 ### Database Connection Pool
 
@@ -294,10 +297,10 @@ curl -X POST http://localhost:4444/gateways \
 ### Poll Gateway Status
 
 ```bash
-# Poll until status is 'active' or 'failed'
+# Poll by gateway name until status is 'active'
 while true; do
   STATUS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-    http://localhost:4444/gateways/gw-123 | jq -r '.status')
+    http://localhost:4444/gateways/My-Gateway | jq -r '.status')
   echo "Status: $STATUS"
   [[ "$STATUS" == "active" ]] && break
   [[ "$STATUS" == "failed" ]] && break

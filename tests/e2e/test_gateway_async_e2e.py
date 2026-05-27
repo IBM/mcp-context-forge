@@ -72,9 +72,9 @@ def session(app_with_temp_db):
 def mock_mcp_init_success():
     """Mock successful MCP init."""
     async def mock_init(*args, **kwargs):
-        return ({"tools": []}, [], [], [])
+        return ({"tools": []}, [], [], [], [])  # Added 5th element (validation_errors)
 
-    with patch("mcpgateway.services.gateway_service.GatewayService._initialize_gateway", new=mock_init) as mock:
+    with patch("mcpgateway.services.gateway_worker.GatewayService._initialize_gateway", new=mock_init) as mock:
         yield mock
 
 
@@ -88,9 +88,9 @@ def mock_mcp_init_fail_then_succeed():
         call_count += 1
         if call_count <= 2:
             raise ConnectionError("Connection refused")
-        return ({"tools": []}, [], [], [])
+        return ({"tools": []}, [], [], [], [])  # Added 5th element (validation_errors)
 
-    with patch("mcpgateway.services.gateway_service.GatewayService._initialize_gateway", new=side_effect) as mock:
+    with patch("mcpgateway.services.gateway_worker.GatewayService._initialize_gateway", new=side_effect) as mock:
         yield mock
 
 
