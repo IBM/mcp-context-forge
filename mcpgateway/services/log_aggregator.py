@@ -27,6 +27,8 @@ from mcpgateway.db import engine, PerformanceMetric, SessionLocal, StructuredLog
 
 logger = logging.getLogger(__name__)
 
+_AGGREGATE_LOCK_ID = 6283185307179  # advisory lock for background aggregation; distinct from bootstrap_db.py (42424242424242)
+
 
 def _is_postgresql() -> bool:
     """Check if the database backend is PostgreSQL.
@@ -35,6 +37,34 @@ def _is_postgresql() -> bool:
         True if using PostgreSQL, False otherwise.
     """
     return engine.dialect.name == "postgresql"
+
+
+def _try_aggregate_pg_lock(db: Session) -> bool:
+    """Non-blocking pg_try_advisory_lock. Returns True if acquired (or non-PostgreSQL). Fail-open on errors."""
+    if not _is_postgresql():
+        return True
+    try:
+        result = db.execute(text("SELECT pg_try_advisory_lock(:lock_id)").bindparams(lock_id=_AGGREGATE_LOCK_ID))
+        return bool(result.scalar())
+    except Exception as exc:
+        logger.warning("Advisory lock acquire failed (%s); proceeding without lock", exc)
+        return True
+
+
+def _release_aggregate_pg_lock(db: Session) -> None:
+    """Release advisory lock. No-op on non-PostgreSQL.
+
+    Note: this is a session-level lock (pg_advisory_lock, not pg_advisory_xact_lock). If
+    pg_advisory_unlock fails silently on a pooled connection, the lock persists until that
+    connection is physically closed or the backend session ends. In the worst case this can
+    delay the next aggregation run by one interval until the pool recycles the connection.
+    """
+    if not _is_postgresql():
+        return
+    try:
+        db.execute(text("SELECT pg_advisory_unlock(:lock_id)").bindparams(lock_id=_AGGREGATE_LOCK_ID))
+    except Exception as exc:
+        logger.debug("Advisory lock release failed (ignored): %s", exc)
 
 
 class LogAggregator:
@@ -408,6 +438,13 @@ class LogAggregator:
             db = SessionLocal()
             should_close = True
 
+        lock_acquired = _try_aggregate_pg_lock(db) if should_close else True
+        if not lock_acquired:
+            logger.debug("Skipping aggregate_all_components: lock held by another worker")
+            if should_close:
+                db.close()
+            return []
+
         try:
             window_start, window_end = self._resolve_window_bounds(window_start, window_end)
 
@@ -443,6 +480,8 @@ class LogAggregator:
             raise
 
         finally:
+            if should_close and lock_acquired:
+                _release_aggregate_pg_lock(db)
             if should_close:
                 db.close()
 
