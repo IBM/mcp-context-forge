@@ -88,9 +88,6 @@ plugins:
   # PII Filter Plugin - Run first with highest priority for security
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
-    description: "Detects and masks Personally Identifiable Information"
-    version: "0.2.0"
-    author: "Mihai Criveti"
     hooks:
       [
         "prompt_pre_fetch",
@@ -283,9 +280,6 @@ plugins:
   # Rate limiter (cpex-rate-limiter package)
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
-    description: "Per-user/tenant/tool rate limits"
-    version: "0.0.6"
-    author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
     mode: "disabled"
@@ -369,9 +363,6 @@ plugins:
   # URL reputation static checks
   - name: "URLReputationPlugin"
     kind: "cpex_url_reputation.URLReputationPlugin"
-    description: "Blocks known-bad domains or patterns before fetch"
-    version: "0.1.1"
-    author: "Mihai Criveti"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
     mode: "disabled"
@@ -401,9 +392,6 @@ plugins:
   # Retry with exponential backoff — triggers real gateway re-invocation
   - name: "RetryWithBackoffPlugin"
     kind: "cpex_retry_with_backoff.RetryWithBackoffPlugin"
-    description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
-    version: "0.1.0"
-    author: "Mihai Criveti"
     hooks: ["tool_post_invoke"]
     tags: ["retry", "backoff", "resilience"]
     mode: "disabled"
@@ -776,9 +764,6 @@ plugins:
   # Secrets Detection - regex-based detector for common secrets/keys
   - name: "SecretsDetection"
     kind: "cpex_secrets_detection.SecretsDetectionPlugin"
-    description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
-    version: "0.1.0"
-    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
     mode: "disabled"
@@ -802,9 +787,6 @@ plugins:
   # Encoded Exfil Detector - detect suspicious encoded payloads in prompts, tool outputs, and resources
   - name: "EncodedExfilDetector"
     kind: "cpex_encoded_exfil_detection.EncodedExfilDetectorPlugin"
-    description: "Detects suspicious encoded exfiltration patterns in prompts, tool outputs, and resources"
-    version: "0.2.0"
-    author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
     # mode: "sequential"
