@@ -166,22 +166,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             logger.warning(f"CSRF cookie missing for {request.method} {request.url.path}")
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
-        logger.info(f"CSRF validation starting: user={user_id}, session={session_id}, csrf_token_len={len(csrf_token)}, cookie_token_len={len(cookie_token)}, token={csrf_token}")
-
         # Constant-time comparison to prevent timing attacks
         if not hmac.compare_digest(csrf_token, cookie_token):
-            logger.warning(f"CSRF double-submit validation failed: tokens do not match (header={csrf_token}, cookie={cookie_token})")
+            logger.debug("CSRF double-submit validation failed: cookie and header/form tokens do not match")
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
-
-        logger.info("CSRF double-submit validation passed")
 
         # 8. Validate CSRF token HMAC
         csrf_service = get_csrf_service()
         if not csrf_service.validate_csrf_token(csrf_token, user_id, session_id):
-            logger.warning(f"CSRF token HMAC validation failed for user {user_id}, session={session_id}")
+            logger.debug(f"CSRF token HMAC validation failed for user {user_id}")
             return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
-
-        logger.info("CSRF token HMAC validation passed")
 
         # 9. Check Referer/Origin if configured (fail-closed: reject if missing)
         if settings.csrf_check_referer:
