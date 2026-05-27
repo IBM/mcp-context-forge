@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.services.log_aggregator import _is_postgresql, LogAggregator
+from mcpgateway.services.log_aggregator import _is_postgresql, _try_aggregate_pg_lock, _release_aggregate_pg_lock, LogAggregator
 
 
 class TestIsPostgresql:
@@ -1060,3 +1060,105 @@ class TestUpsertMetric:
 
         assert result == metric
         mock_db.delete.assert_called_once_with(duplicate)
+
+
+class TestAggregateAdvisoryLock:
+    """Tests for advisory lock guard in aggregate_all_components."""
+
+    def test_skips_when_lock_not_acquired(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", return_value=False):
+                result = aggregator.aggregate_all_components(db=None)
+        assert result == []
+        mock_db.execute.assert_not_called()
+        mock_db.close.assert_called_once()
+
+    def test_proceeds_when_lock_acquired(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.all.return_value = [("comp", "op")]
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", return_value=True):
+                with patch("mcpgateway.services.log_aggregator._release_aggregate_pg_lock"):
+                    with patch.object(aggregator, "aggregate_performance_metrics", return_value=MagicMock()):
+                        result = aggregator.aggregate_all_components(db=None)
+        assert len(result) == 1
+        mock_db.commit.assert_called_once()
+
+    def test_lock_released_on_success(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.all.return_value = []
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", return_value=True):
+                with patch("mcpgateway.services.log_aggregator._release_aggregate_pg_lock") as mock_release:
+                    aggregator.aggregate_all_components(db=None)
+        mock_release.assert_called_once_with(mock_db)
+
+    def test_lock_released_on_exception(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = RuntimeError("db error")
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock", return_value=True):
+                with patch("mcpgateway.services.log_aggregator._release_aggregate_pg_lock") as mock_release:
+                    with pytest.raises(RuntimeError):
+                        aggregator.aggregate_all_components(db=None)
+        mock_release.assert_called_once_with(mock_db)
+        mock_db.rollback.assert_called_once()
+
+    def test_no_lock_when_db_provided(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.all.return_value = []
+        with patch("mcpgateway.services.log_aggregator._try_aggregate_pg_lock") as mock_try:
+            aggregator.aggregate_all_components(db=mock_db)
+        mock_try.assert_not_called()
+
+    def test_sqlite_falls_through(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            mock_db = MagicMock()
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is True
+        mock_db.execute.assert_not_called()
+
+    def test_release_is_noop_on_sqlite(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            mock_db = MagicMock()
+            _release_aggregate_pg_lock(mock_db)
+        mock_db.execute.assert_not_called()
+
+    def test_try_lock_fail_open_on_db_error(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = Exception("connection error")
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is True
+
+    def test_try_lock_returns_scalar_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.return_value.scalar.return_value = True
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is True
+
+    def test_try_lock_returns_false_when_lock_not_available(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.return_value.scalar.return_value = False
+            result = _try_aggregate_pg_lock(mock_db)
+        assert result is False
+
+    def test_release_executes_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            _release_aggregate_pg_lock(mock_db)
+        mock_db.execute.assert_called_once()
+
+    def test_release_swallows_exception_on_postgresql(self):
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = Exception("unlock error")
+            _release_aggregate_pg_lock(mock_db)

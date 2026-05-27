@@ -319,6 +319,29 @@ def test_log_audit_builds_context_from_description(monkeypatch):
     assert captured["context"]["description"] == "ran tool"
 
 
+def test_log_action_identity_context_exception_is_swallowed(monkeypatch):
+    """If user_identity_var.get() raises, the exception is logged at DEBUG and log_action completes normally."""
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+    monkeypatch.setattr(svc, "AuditTrail", lambda **_kwargs: MagicMock())
+
+    mock_var = MagicMock()
+    mock_var.get.side_effect = RuntimeError("context var unavailable")
+
+    monkeypatch.setattr("mcpgateway.transports.context.user_identity_var", mock_var)
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert result is not None
+    assert dummy_session.committed is True
+
+
 def test_get_audit_trail_applies_filters(monkeypatch):
     monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
     dummy_session = DummySession()
