@@ -6470,8 +6470,8 @@ class ToolService(BaseService):
                 tool.deprecated = tool_update.deprecated
 
             # Update sunset_date if provided
-            if tool_update.sunsetDate is not None:
-                tool.sunset_date = tool_update.sunsetDate
+            if tool_update.sunset_date is not None:
+                tool.sunset_date = tool_update.sunset_date
 
             # Update modification metadata
             if modified_by is not None:

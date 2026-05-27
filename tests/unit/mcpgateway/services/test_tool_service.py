@@ -10760,8 +10760,8 @@ class TestToolLifecycleSerialization:
         )
 
         # Verify sunset_date is mapped to sunsetDate (line 1334)
-        assert hasattr(result, "sunsetDate")
-        assert result.sunsetDate == datetime(2026, 12, 31, tzinfo=timezone.utc)
+        assert hasattr(result, "sunset_date")
+        assert result.sunset_date == datetime(2026, 12, 31, tzinfo=timezone.utc)
 
     def test_convert_tool_to_read_sunset_lifecycle_state(self, tool_service):
         """Test that sunset tools (disabled, deprecated, with sunset_date) get lifecycle_state='sunset' (lines 1339-1340)."""

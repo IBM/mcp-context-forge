@@ -224,7 +224,7 @@ def _make_tool_update(**overrides) -> MagicMock:
         auth=None,
         tags=None,
         deprecated=None,
-        sunsetDate=None,
+        sunset_date=None,
     )
     defaults.update(overrides)
     for attr, value in defaults.items():
@@ -3833,6 +3833,7 @@ class TestToolNotificationMethods:
         tool.description = "A test tool"
         tool.enabled = True
         tool.reachable = True
+        tool.sunset_date = None
         return tool
 
     @pytest.mark.asyncio
@@ -5529,7 +5530,7 @@ class TestUpdateToolBranches:
         tool_update.auth = None
         tool_update.tags = ["api", "v2"]
         tool_update.deprecated = None
-        tool_update.sunsetDate = None
+        tool_update.sunset_date = None
 
         db = MagicMock()
 
@@ -5592,7 +5593,7 @@ class TestUpdateToolBranches:
         tool_update.auth = None
         tool_update.tags = None
         tool_update.deprecated = None
-        tool_update.sunsetDate = None
+        tool_update.sunset_date = None
 
         db = MagicMock()
         with (
@@ -5634,7 +5635,7 @@ class TestUpdateToolBranches:
         tool_update.auth = None
         tool_update.tags = None
         tool_update.deprecated = None
-        tool_update.sunsetDate = None
+        tool_update.sunset_date = None
 
         existing = MagicMock()
         existing.custom_name = "conflict_name"

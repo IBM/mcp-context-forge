@@ -38,7 +38,7 @@ class TestToolCreateSunsetValidation:
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate is None
+        assert tool.sunset_date is None
 
     def test_create_deprecated_tool_without_sunset_date_fails(self):
         """Test creating deprecated tool without sunset_date raises ValidationError."""
@@ -68,8 +68,8 @@ class TestToolCreateSunsetValidation:
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is True
-        assert tool.sunsetDate == future_date
-        assert tool.sunsetDate.tzinfo is not None  # Timezone-aware
+        assert tool.sunset_date == future_date
+        assert tool.sunset_date.tzinfo is not None  # Timezone-aware
 
     def test_create_deprecated_tool_with_past_sunset_date_fails(self):
         """Test creating deprecated tool with past sunset_date raises ValidationError."""
@@ -120,9 +120,9 @@ class TestToolCreateSunsetValidation:
         tool = ToolCreate(**tool_data)
 
         # Verify sunsetDate has timezone info (UTC)
-        assert tool.sunsetDate is not None
-        assert tool.sunsetDate.tzinfo is not None
-        assert tool.sunsetDate.tzinfo == timezone.utc
+        assert tool.sunset_date is not None
+        assert tool.sunset_date.tzinfo is not None
+        assert tool.sunset_date.tzinfo == timezone.utc
 
     def test_create_active_tool_with_sunset_date_succeeds(self):
         """Test creating active tool with sunset_date succeeds (for pre-planning)."""
@@ -136,7 +136,7 @@ class TestToolCreateSunsetValidation:
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
 
 class TestToolUpdateSunsetValidation:
@@ -164,7 +164,7 @@ class TestToolUpdateSunsetValidation:
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is True
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
     def test_update_to_deprecated_with_past_sunset_date_fails(self):
         """Test updating tool to deprecated with past sunset_date raises ValidationError."""
@@ -188,7 +188,7 @@ class TestToolUpdateSunsetValidation:
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate is None
+        assert tool.sunset_date is None
 
     def test_update_to_active_with_sunset_date_succeeds(self):
         """Test updating to active while keeping sunset_date succeeds (for pre-planning)."""
@@ -199,7 +199,7 @@ class TestToolUpdateSunsetValidation:
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
     def test_update_only_sunset_date_without_deprecated_succeeds(self):
         """Test updating only sunset_date without changing deprecated status succeeds."""
@@ -209,7 +209,7 @@ class TestToolUpdateSunsetValidation:
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is None  # Not being updated
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
     def test_update_with_naive_datetime_converts_to_utc(self):
         """Test updating with timezone-naive datetime auto-converts to UTC."""
@@ -222,9 +222,9 @@ class TestToolUpdateSunsetValidation:
         tool_update = ToolUpdate(**update_data)
 
         # Verify sunsetDate has timezone info (UTC)
-        assert tool_update.sunsetDate is not None
-        assert tool_update.sunsetDate.tzinfo is not None
-        assert tool_update.sunsetDate.tzinfo == timezone.utc
+        assert tool_update.sunset_date is not None
+        assert tool_update.sunset_date.tzinfo is not None
+        assert tool_update.sunset_date.tzinfo == timezone.utc
 
     def test_update_deprecated_false_with_null_sunset_date_succeeds(self):
         """Test explicitly setting deprecated=False and sunsetDate=None succeeds."""
@@ -234,7 +234,7 @@ class TestToolUpdateSunsetValidation:
         }
         tool = ToolUpdate(**update_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate is None
+        assert tool.sunset_date is None
 
 
 class TestToolLifecycleEdgeCases:
@@ -251,7 +251,7 @@ class TestToolLifecycleEdgeCases:
             "sunsetDate": future_date,
         }
         tool = ToolCreate(**tool_data)
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
     def test_sunset_date_far_future_succeeds(self):
         """Test sunset_date far in future (1 year) succeeds."""
@@ -264,7 +264,7 @@ class TestToolLifecycleEdgeCases:
             "sunsetDate": future_date,
         }
         tool = ToolCreate(**tool_data)
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date
 
     def test_different_timezone_future_date_succeeds(self):
         """Test sunset_date with different timezone (but still future) succeeds."""
@@ -279,7 +279,7 @@ class TestToolLifecycleEdgeCases:
             "sunsetDate": future_date,
         }
         tool = ToolCreate(**tool_data)
-        assert tool.sunsetDate.tzinfo is not None
+        assert tool.sunset_date.tzinfo is not None
 
     def test_update_only_deprecated_to_true_without_existing_sunset_fails(self):
         """Test updating only deprecated to True (without sunset_date) fails."""
@@ -305,4 +305,4 @@ class TestToolLifecycleEdgeCases:
         }
         tool = ToolCreate(**tool_data)
         assert tool.deprecated is False
-        assert tool.sunsetDate == future_date
+        assert tool.sunset_date == future_date

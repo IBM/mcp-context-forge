@@ -594,7 +594,7 @@ class ToolCreate(BaseModel):
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(default=False, description="Whether the tool is deprecated (visible but non-executable)")
-    sunsetDate: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
@@ -1141,18 +1141,18 @@ class ToolCreate(BaseModel):
             ValueError: If validation rules are violated
         """
         if self.deprecated is True:
-            if self.sunsetDate is None:
+            if self.sunset_date is None:
                 raise ValueError("sunsetDate is required when deprecated=True. Please provide a future date when this tool will be sunset.")
 
             # Ensure sunsetDate is in the future
             now = datetime.now(timezone.utc)
 
             # Make sunsetDate timezone-aware if it isn't already
-            sunset_date = self.sunsetDate
+            sunset_date = self.sunset_date
             if sunset_date.tzinfo is None:
                 # Assume UTC if no timezone provided
                 sunset_date = sunset_date.replace(tzinfo=timezone.utc)
-                self.sunsetDate = sunset_date
+                self.sunset_date = sunset_date
 
             if sunset_date <= now:
                 raise ValueError(f"sunsetDate must be in the future. Provided: {sunset_date.isoformat()}, Current time: {now.isoformat()}")
@@ -1195,7 +1195,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
-    sunsetDate: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled). Required when deprecated=True")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
@@ -1453,18 +1453,18 @@ class ToolUpdate(BaseModelWithConfigDict):
         # Only validate if deprecated is explicitly being set in this update
         if self.deprecated is not None:
             if self.deprecated is True:
-                if self.sunsetDate is None:
+                if self.sunset_date is None:
                     raise ValueError("sunsetDate is required when setting deprecated=True. Please provide a future date when this tool will be sunset.")
 
                 # Ensure sunsetDate is in the future
                 now = datetime.now(timezone.utc)
 
                 # Make sunsetDate timezone-aware if it isn't already
-                sunset_date = self.sunsetDate
+                sunset_date = self.sunset_date
                 if sunset_date.tzinfo is None:
                     # Assume UTC if no timezone provided
                     sunset_date = sunset_date.replace(tzinfo=timezone.utc)
-                    self.sunsetDate = sunset_date
+                    self.sunset_date = sunset_date
 
                 if sunset_date <= now:
                     raise ValueError(f"sunsetDate must be in the future. Provided: {sunset_date.isoformat()}, Current time: {now.isoformat()}")
@@ -1679,7 +1679,7 @@ class ToolRead(BaseModelWithConfigDict):
     updated_at: datetime
     enabled: bool
     deprecated: bool
-    sunsetDate: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled)")
+    sunset_date: Optional[datetime] = Field(None, alias="sunsetDate", description="Date when deprecated tool will be sunset (disabled)")
 
     # Computed lifecycle fields
     lifecycle_state: Optional[Literal["active", "deprecated", "sunset"]] = Field(
