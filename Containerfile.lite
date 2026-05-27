@@ -220,7 +220,7 @@ ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
     && dnf upgrade -y \
-    && dnf install -y \
+    && dnf install -y --allowerasing \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-devel \
         binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
