@@ -2193,6 +2193,64 @@ class TestGatewayEndpoints:
         db.refresh(gateway_obj)
         assert gateway_obj.status == "pending"
 
+    def test_update_gateway_with_transport(self, test_client, auth_headers):
+        """Test updating gateway with transport field (line 7033)."""
+        from mcpgateway.db import Gateway
+        from mcpgateway.main import get_db
+
+        db = next(get_db())
+        gateway_obj = Gateway(
+            id="transport-test",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://example.com",
+            transport="SSE",
+            enabled=True,
+            status="active",
+            capabilities={},
+        )
+        db.add(gateway_obj)
+        db.commit()
+
+        # Update with new transport
+        req = {"transport": "WebSocket"}
+        response = test_client.put("/gateways/transport-test", json=req, headers=auth_headers)
+        assert response.status_code == 202
+
+        db.refresh(gateway_obj)
+        assert gateway_obj.transport == "WebSocket"
+        assert gateway_obj.status == "pending"
+
+    def test_update_gateway_not_found(self, test_client, auth_headers):
+        """Test updating non-existent gateway raises 404."""
+        req = {"description": "Updated"}
+        response = test_client.put("/gateways/nonexistent-id", json=req, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_race_condition(self, mock_get, test_client, auth_headers):
+        """Test delete gateway race condition (line 7118) - gateway exists in get_gateway but not in DB query."""
+        from mcpgateway.db import Gateway
+
+        # Mock get_gateway to succeed (gateway exists and user has permission)
+        mock_gateway = Gateway(
+            id="race-test",
+            name="test",
+            slug="test",
+            url="http://example.com",
+            transport="SSE",
+            status="active",
+            capabilities={},
+        )
+        mock_get.return_value = mock_gateway
+
+        # But DB query will return None (simulating race condition where gateway was deleted between checks)
+        # This happens naturally because the gateway doesn't actually exist in the test DB
+        response = test_client.delete("/gateways/race-test", headers=auth_headers)
+
+        # Should raise GatewayNotFoundError from line 7118
+        assert response.status_code == 404
+
     @patch("mcpgateway.main.gateway_service.get_gateway")
     def test_delete_gateway_endpoint(self, mock_get, test_client, auth_headers):
         """Test deleting a gateway."""

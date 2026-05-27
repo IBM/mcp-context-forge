@@ -17,10 +17,13 @@ from typing import Optional
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import SessionLocal
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.services.gateway_service import GatewayService, gateway_service, _evict_upstream_sessions_for_gateway, _get_registry_cache, _get_tool_lookup_cache
 from mcpgateway.services.metrics import gateway_pending_duration, gateway_registration_attempts, gateway_registration_errors, gateway_retry_backoff, gateway_status_total
+from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +81,10 @@ class GatewayWorker:
                     set_span_attribute(span, "gateway.status", "deleting")
                     return
 
-                # Import here to avoid circular dependency
-                from mcpgateway.services.gateway_service import GatewayService
-
                 gateway_service = GatewayService()
 
                 # Attempt MCP initialization
-                capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+                capabilities, tools, resources, prompts, _ = await gateway_service._initialize_gateway(
                     gateway.url,
                     None,  # auth headers handled internally
                     gateway.transport,
@@ -118,7 +118,7 @@ class GatewayWorker:
                 # Record pending duration
                 if gateway.created_at:
                     pending_duration = (datetime.now(timezone.utc) - gateway.created_at).total_seconds()
-                    gateway_pending_duration.labels(gateway_name=gateway.name).set(pending_duration)
+                    gateway_pending_duration.labels(gateway_name=gateway.name).observe(pending_duration)
 
                 # Clear backoff gauge
                 gateway_retry_backoff.labels(gateway_name=gateway.name).set(0)
@@ -201,8 +201,37 @@ class GatewayWorker:
                         "status": "deleting",
                     },
                 )
+
+
+                gateway_id = gateway.id
+                gateway_url = gateway.url
+
+                # Delete from DB first
                 db.delete(gateway)
                 db.commit()
+
+                # Evict upstream sessions (#4205)
+                try:
+                    await _evict_upstream_sessions_for_gateway(str(gateway_id))
+                except Exception as e:
+                    logger.warning(f"Failed to evict upstream sessions: {e}")
+
+                # Invalidate caches
+                try:
+                    cache = _get_registry_cache()
+                    await cache.invalidate_gateways()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    await tool_lookup_cache.invalidate_gateway(str(gateway_id))
+
+                    await admin_stats_cache.invalidate_tags()
+
+                    invalidate_passthrough_header_caches()
+                except Exception as e:
+                    logger.warning(f"Failed to invalidate caches: {e}")
+
+                # Update tracking
+                if hasattr(gateway_service, '_active_gateways'):
+                    gateway_service._active_gateways.discard(gateway_url)
 
                 # Metrics: deletion complete
                 gateway_status_total.labels(status="deleted").inc()

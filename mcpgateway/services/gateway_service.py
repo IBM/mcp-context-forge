@@ -990,15 +990,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
-            # # Check for name conflicts (both active and inactive)
-            # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
+            # ASYNC LIFECYCLE: Check for existing gateway by name (issue #4565 dedup requirement)
+            # If pending: return existing with 202
+            # If active: return 409
+            existing_by_name = db.query(DbGateway).filter(DbGateway.name == gateway.name).first()
+            if existing_by_name:
+                if existing_by_name.status == "pending":
+                    logger.info(f"Gateway {gateway.name} already exists with status=pending, returning existing")
+                    return GatewayRead.model_validate(existing_by_name)
+                elif existing_by_name.status == "active":
+                    raise GatewayDuplicateConflictError(duplicate_gateway=existing_by_name)
+                # If deleting, allow recreation (will be cleaned up by worker)
 
-            # if existing_gateway:
-            #     raise GatewayNameConflictError(
-            #         gateway.name,
-            #         enabled=existing_gateway.enabled,
-            #         gateway_id=existing_gateway.id,
-            #     )
             # Check for existing gateway with the same slug and visibility
             slug_name = slugify(gateway.name)
             if visibility.lower() == "public":
@@ -1034,7 +1037,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 elif isinstance(gateway.auth_value, dict):
                     decoded_auth_value = gateway.auth_value
 
-            # Check for duplicate gateway
+
+            # Check for duplicate gateway (URL/auth based)
             if not gateway.one_time_auth:
                 duplicate_gateway = self._check_gateway_uniqueness(
                     db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
@@ -2745,11 +2749,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
     ) -> GatewayRead:
-        """Get a gateway by its ID with access control.
+        """Get a gateway by its ID or name with access control.
 
         Args:
             db: Database session
-            gateway_id: Gateway ID
+            gateway_id: Gateway ID (UUID) or gateway name
             include_inactive: Whether to include inactive gateways
             user_email: Email of the requesting user. ``None`` paired with ``token_teams=None`` means admin bypass.
             token_teams: JWT-scoped team list used for Layer 1 visibility checks.
@@ -2803,16 +2807,32 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> asyncio.run(service._http_client.aclose())
         """
         # Use eager loading to avoid N+1 queries for relationships and team name
-        gateway = db.execute(
-            select(DbGateway)
-            .options(
-                selectinload(DbGateway.tools),
-                selectinload(DbGateway.resources),
-                selectinload(DbGateway.prompts),
-                joinedload(DbGateway.email_team),
-            )
-            .where(DbGateway.id == gateway_id)
-        ).scalar_one_or_none()
+        # Try UUID lookup first, then name fallback (issue #4565 poll-by-name requirement)
+        try:
+            SecurityValidator.validate_uuid(gateway_id, "gateway_id")
+            # Valid UUID - lookup by ID
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                    joinedload(DbGateway.email_team),
+                )
+                .where(DbGateway.id == gateway_id)
+            ).scalar_one_or_none()
+        except ValueError:
+            # Not a UUID - try name lookup
+            gateway = db.execute(
+                select(DbGateway)
+                .options(
+                    selectinload(DbGateway.tools),
+                    selectinload(DbGateway.resources),
+                    selectinload(DbGateway.prompts),
+                    joinedload(DbGateway.email_team),
+                )
+                .where(DbGateway.name == gateway_id)
+            ).scalar_one_or_none()
 
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
@@ -3287,37 +3307,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             logger.info(f"Gateway {gateway.name} marked for deletion (async cleanup)")
             return
-
-            # #4205: close any upstream MCP sessions bound to this gateway
-            # so in-flight downstream sessions can't keep talking to the
-            # deleted gateway's URL. Best-effort — registry may not be
-            # initialized in some test paths.
-            await _evict_upstream_sessions_for_gateway(str(gateway_id))
-
-            # Invalidate cache after successful deletion
-            cache = _get_registry_cache()
-            await cache.invalidate_gateways()
-            tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate_gateway(str(gateway_id))
-            # Also invalidate tags cache since gateway tags may have changed
-            # First-Party
-            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
-
-            await admin_stats_cache.invalidate_tags()
-
-            # Invalidate loopback passthrough cache when a gateway is deleted (#3640)
-            # First-Party
-            from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
-
-            invalidate_passthrough_header_caches()
-
-            # Update tracking
-            self._active_gateways.discard(gateway_url)
-
-            # Notify subscribers
-            await self._notify_gateway_deleted(gateway_info)
-
-            logger.info(f"Permanently deleted gateway: {gateway_name}")
 
             # Structured logging: Audit trail for gateway deletion
             audit_trail.log_action(

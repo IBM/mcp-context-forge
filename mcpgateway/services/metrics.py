@@ -205,7 +205,7 @@ gateway_registration_attempts = Counter(
     ["gateway_name", "outcome"],
 )
 
-gateway_pending_duration = Gauge(
+gateway_pending_duration = Histogram(
     "gateway_pending_duration_seconds",
     "Time gateway spent in pending state",
     ["gateway_name"],
