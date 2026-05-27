@@ -260,7 +260,8 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
             return email.strip().lower()
     if isinstance(current_user, dict):
         email = get_user_email(current_user)
-        if isinstance(email, str) and email.strip():
+        # Filter out "unknown" sentinel - treat as missing email
+        if isinstance(email, str) and email.strip() and email != "unknown":
             return email.strip().lower()
     return None
 
