@@ -11,7 +11,7 @@
 # Base image overrides — defaults to UBI 10; pass UBI 9 values for FedRAMP builds
 #
 # FedRAMP/Dreadnought deployments MUST override these with images pulled from
-# an approved internal registry (issue WatsonOrchestrate/wo-tracker#68373).
+# an approved internal registry.
 # Public registry defaults (registry.access.redhat.com) are for standard builds only.
 #
 # Example (Dreadnought):
@@ -133,11 +133,11 @@ RUN if [ "$ENABLE_FIPS" = "true" ]; then \
         && mkdir -p /etc/ssh/ssh_config.d /etc/tmpfiles.d \
         && echo "RekeyLimit 512M 1h" > /etc/ssh/ssh_config.d/02-rekey-limit.conf \
         && printf '%s\n' \
-            'C /root/.bash_logout  600 root root - /usr/share/rootfiles/.bash_logout' \
-            'C /root/.bash_profile 600 root root - /usr/share/rootfiles/.bash_profile' \
-            'C /root/.bashrc       600 root root - /usr/share/rootfiles/.bashrc' \
-            'C /root/.cshrc        600 root root - /usr/share/rootfiles/.cshrc' \
-            'C /root/.tcshrc       600 root root - /usr/share/rootfiles/.tcshrc' \
+            'C /root/.bash_logout  0740 root root - /usr/share/rootfiles/.bash_logout' \
+            'C /root/.bash_profile 0740 root root - /usr/share/rootfiles/.bash_profile' \
+            'C /root/.bashrc       0740 root root - /usr/share/rootfiles/.bashrc' \
+            'C /root/.cshrc        0740 root root - /usr/share/rootfiles/.cshrc' \
+            'C /root/.tcshrc       0740 root root - /usr/share/rootfiles/.tcshrc' \
             > /etc/tmpfiles.d/rootfiles.conf \
         && printf '' >> /root/.bash_profile \
         && printf '' >> /root/.bashrc \
