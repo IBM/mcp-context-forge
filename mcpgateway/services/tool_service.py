@@ -4786,6 +4786,7 @@ class ToolService(BaseService):
         a2a_agent_auth_type: Optional[str] = None
         a2a_agent_auth_value: Optional[str] = None
         a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
+        a2a_agent_passthrough_headers: Optional[List[str]] = None
 
         if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
             a2a_agent_id = tool_annotations.get("a2a_agent_id")
@@ -4810,6 +4811,7 @@ class ToolService(BaseService):
             a2a_agent_auth_type = a2a_agent.auth_type
             a2a_agent_auth_value = a2a_agent.auth_value
             a2a_agent_auth_query_params = a2a_agent.auth_query_params
+            a2a_agent_passthrough_headers = a2a_agent.passthrough_headers
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -5825,6 +5827,14 @@ class ToolService(BaseService):
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
                     headers = {"Content-Type": "application/json"}
+                    if request_headers:
+                        headers = compute_passthrough_headers_cached(
+                            request_headers,
+                            headers,
+                            passthrough_allowed,
+                            gateway_auth_type=None,
+                            gateway_passthrough_headers=a2a_agent_passthrough_headers,
+                        )
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
