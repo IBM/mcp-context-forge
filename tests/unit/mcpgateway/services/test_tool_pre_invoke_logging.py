@@ -14,7 +14,7 @@ from mcpgateway.services.tool_service import _log_tool_pre_invoke_result
 
 def test_tool_pre_invoke_logging_without_modified_payload_logs_only_keys(caplog):
     """No modified payload should be logged without argument or header values."""
-    original_args = {"normal\nkey": "visible-value", "wxo_auth": "secret-token"}
+    original_args = {"normal\nkey": "visible-value", "wxo_auth": "secret-token"}  # pragma: allowlist secret
     original_headers = HttpHeaderPayload(root={"Authorization": "Bearer secret", "x-wxo-access-token": "secret"})
     pre_result = SimpleNamespace(modified_payload=None)
 
@@ -34,7 +34,7 @@ def test_tool_pre_invoke_logging_with_modified_payload_logs_key_diffs(caplog):
     """Modified payload diagnostics should show added/removed keys, not values."""
     original_args = {
         "real_arg": "keep-me",
-        "wxo_auth": "secret-token",
+        "wxo_auth": "secret-token",  # pragma: allowlist secret
         "wxo_connection_id": "",
         "wxo_environment_id": "draft",
     }
