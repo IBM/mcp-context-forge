@@ -2074,11 +2074,11 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
 
 
 async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]:
-    """Resolve user email from JWT payload (supports both ID and email in sub).
+    """Resolve user email from JWT payload (supports both UUID and email in sub).
 
     This helper enables backward-compatible token migration from email-based
-    to user-ID-based tokens. It checks if the 'sub' claim contains a numeric
-    user ID (new format) or an email address (legacy format).
+    to user-ID-based tokens. It checks if the 'sub' claim contains a UUID
+    (new format) or an email address (legacy format).
 
     Args:
         payload: JWT payload dictionary containing 'sub' claim
@@ -2088,8 +2088,8 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
         User email string if found, None otherwise
 
     Examples:
-        >>> # New format: sub contains user ID
-        >>> payload = {"sub": "12345"}
+        >>> # New format: sub contains UUID
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
         >>> email = await get_user_email_from_token(payload, db)
         >>> email
         'user@example.com'
@@ -2100,21 +2100,28 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
         >>> email
         'user@example.com'
 
-        >>> # Invalid user ID
-        >>> payload = {"sub": "99999"}
+        >>> # Unknown UUID returns None
+        >>> payload = {"sub": "00000000-0000-0000-0000-000000000000"}
         >>> email = await get_user_email_from_token(payload, db)
         >>> email is None
         True
     """
+    import uuid as _uuid
+
     sub = payload.get("sub")
     if not sub:
         return None
 
-    # Try as user ID first (new format)
-    if isinstance(sub, str) and sub.isdigit():
-        user_id = int(sub)
-        user = db.query(EmailUser).filter(EmailUser.id == user_id).first()
+    if not isinstance(sub, str):
+        return None
+
+    # Try as UUID (new format)
+    try:
+        _uuid.UUID(sub)
+        user = db.query(EmailUser).filter(EmailUser.id == sub).first()
         return user.email if user else None
+    except ValueError:
+        pass
 
     # Fall back to email (legacy format)
-    return sub if isinstance(sub, str) else None
+    return sub

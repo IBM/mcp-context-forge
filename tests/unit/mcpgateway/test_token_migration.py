@@ -10,6 +10,9 @@ from mcpgateway.auth import get_user_email_from_token
 from mcpgateway.auth_context import set_user_context_from_token
 from mcpgateway.db import EmailUser
 
+TEST_UUID = "550e8400-e29b-41d4-a716-446655440000"
+UNKNOWN_UUID = "00000000-0000-0000-0000-000000000000"
+
 
 @pytest.mark.asyncio
 async def test_get_user_email_from_token_with_email():
@@ -26,8 +29,8 @@ async def test_get_user_email_from_token_with_email():
 
 @pytest.mark.asyncio
 async def test_get_user_email_from_token_with_user_id():
-    """Test new token format with user ID in sub claim."""
-    payload = {"sub": "12345"}
+    """Test new token format with UUID in sub claim."""
+    payload = {"sub": TEST_UUID}
 
     # Mock database query
     db = MagicMock()
@@ -38,14 +41,14 @@ async def test_get_user_email_from_token_with_user_id():
     email = await get_user_email_from_token(payload, db)
 
     assert email == "user@example.com"
-    # Should query database for user ID
+    # Should query database for UUID
     db.query.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_get_user_email_from_token_with_invalid_user_id():
-    """Test invalid user ID returns None."""
-    payload = {"sub": "99999"}
+async def test_get_user_email_from_token_with_unknown_uuid():
+    """Test unknown UUID returns None."""
+    payload = {"sub": UNKNOWN_UUID}
 
     # Mock database query returning no user
     db = MagicMock()
@@ -107,10 +110,10 @@ async def test_set_user_context_from_token_with_email():
 
 @pytest.mark.asyncio
 async def test_set_user_context_from_token_with_user_id():
-    """Test setting user context from new token with user ID."""
+    """Test setting user context from new token with UUID."""
     request = MagicMock()
     request.state = MagicMock()
-    payload = {"sub": "12345", "is_admin": False, "auth_provider": "local"}
+    payload = {"sub": TEST_UUID, "is_admin": False, "auth_provider": "local"}
 
     # Mock database query
     db = MagicMock()
@@ -121,7 +124,7 @@ async def test_set_user_context_from_token_with_user_id():
     await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
-    assert request.state.user_id == "12345"
+    assert request.state.user_id == TEST_UUID
     assert request.state.is_admin is False
     assert request.state.auth_provider == "local"
 
@@ -150,7 +153,7 @@ async def test_flattened_token_structure():
 
     # Create mock user
     user = MagicMock(spec=EmailUser)
-    user.id = 12345
+    user.id = TEST_UUID
     user.email = "user@example.com"
     user.is_admin = True
     user.auth_provider = "local"
@@ -169,8 +172,7 @@ async def test_flattened_token_structure():
     assert payload["auth_provider"] == "local"  # Flattened
     assert "full_name" not in payload  # PII removed
 
-    # Phase 2: sub now contains user ID instead of email
-    assert payload["sub"] == "12345"
+    assert payload["sub"] == TEST_UUID
 
 
 @pytest.mark.asyncio
@@ -181,7 +183,7 @@ async def test_legacy_token_structure():
 
     # Create mock user
     user = MagicMock(spec=EmailUser)
-    user.id = 12345
+    user.id = TEST_UUID
     user.email = "user@example.com"
     user.is_admin = False
     user.auth_provider = "oauth"
@@ -200,5 +202,4 @@ async def test_legacy_token_structure():
     assert "full_name" not in payload  # PII removed
     assert "email" not in payload  # Duplicate removed
 
-    # Phase 2: sub now contains user ID instead of email
-    assert payload["sub"] == "12345"
+    assert payload["sub"] == TEST_UUID

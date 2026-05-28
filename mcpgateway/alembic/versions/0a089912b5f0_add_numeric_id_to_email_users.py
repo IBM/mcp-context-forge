@@ -1,4 +1,4 @@
-"""add_numeric_id_to_email_users
+"""add_uuid_id_to_email_users
 
 Revision ID: 0a089912b5f0
 Revises: e28566875fa4
@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add numeric id column to email_users table for Phase 1 token migration.
+    """Add UUID id column to email_users table for Phase 1 token migration.
 
     This enables future migration from email-based to user-ID-based JWT tokens
     while maintaining backward compatibility with email as primary key.
@@ -38,47 +38,25 @@ def upgrade() -> None:
         return
 
     # Add id column as nullable first (for existing rows).
-    # For PostgreSQL, create a named sequence so that new INSERTs without an
-    # explicit id auto-generate a value (avoids NotNullViolation on bootstrap).
-    if bind.dialect.name == "postgresql":
-        op.execute(sa.text("CREATE SEQUENCE IF NOT EXISTS email_users_id_seq"))
-        op.add_column(
-            "email_users",
-            sa.Column(
-                "id",
-                sa.Integer(),
-                server_default=sa.text("nextval('email_users_id_seq')"),
-                nullable=True,
-            ),
-        )
-    else:
-        op.add_column("email_users", sa.Column("id", sa.Integer(), nullable=True))
+    op.add_column(
+        "email_users",
+        sa.Column("id", sa.String(36), nullable=True),
+    )
 
-    # Populate id for existing users with sequential values
-    # Use a window function to assign sequential IDs based on created_at
+    # Backfill existing rows with UUIDs
     if bind.dialect.name == "postgresql":
-        bind.execute(
-            text(
-                "UPDATE email_users SET id = subquery.row_num "
-                "FROM (SELECT email, ROW_NUMBER() OVER (ORDER BY created_at, email) as row_num FROM email_users) AS subquery "
-                "WHERE email_users.email = subquery.email"
-            )
-        )
-        # Advance the sequence past any IDs assigned by the backfill above so
-        # future auto-generated values don't collide with existing rows.
-        bind.execute(text("SELECT setval('email_users_id_seq', " "COALESCE((SELECT MAX(id) FROM email_users), 0) + 1, false)"))
-    elif bind.dialect.name == "sqlite":
+        bind.execute(text("UPDATE email_users SET id = gen_random_uuid()::text WHERE id IS NULL"))
+    else:
+        # SQLite: use Python-generated UUIDs via a subquery isn't possible,
+        # so we use a single UPDATE with a hex() + randomblob() approach.
         bind.execute(text("""
             UPDATE email_users
-            SET id = (
-                SELECT COUNT(*)
-                FROM email_users AS e2
-                WHERE e2.created_at < email_users.created_at
-                   OR (
-                       e2.created_at = email_users.created_at
-                       AND e2.email <= email_users.email
-                   )
-            )
+            SET id = lower(hex(randomblob(4))) || '-'
+                  || lower(hex(randomblob(2))) || '-'
+                  || '4' || substr(lower(hex(randomblob(2))), 2) || '-'
+                  || substr('89ab', abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))), 2) || '-'
+                  || lower(hex(randomblob(6)))
+            WHERE id IS NULL
         """))
 
     # Promote id to primary key and demote email to unique (SQLite requires batch mode)
@@ -86,7 +64,7 @@ def upgrade() -> None:
         with op.batch_alter_table("email_users", recreate="always") as batch_op:
             batch_op.alter_column(
                 "id",
-                existing_type=sa.Integer(),
+                existing_type=sa.String(36),
                 nullable=False,
             )
             batch_op.create_primary_key("pk_email_users", ["id"])
@@ -95,11 +73,10 @@ def upgrade() -> None:
         op.alter_column(
             "email_users",
             "id",
-            existing_type=sa.Integer(),
+            existing_type=sa.String(36),
             nullable=False,
         )
         # Drop ALL FK constraints that reference email_users (referencing email as the old PK).
-        # We need to do this before dropping the PK constraint.
         fks_to_recreate = []
         for table_name in inspector.get_table_names():
             if table_name == "email_users":
@@ -133,7 +110,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove numeric id column from email_users table."""
+    """Remove UUID id column from email_users table."""
     bind = op.get_bind()
     inspector = inspect(bind)
 
@@ -161,7 +138,6 @@ def downgrade() -> None:
         op.drop_constraint("pk_email_users", "email_users", type_="primary")
         op.create_primary_key("pk_email_users", "email_users", ["email"])
         op.drop_column("email_users", "id")
-        op.execute(sa.text("DROP SEQUENCE IF EXISTS email_users_id_seq"))
 
         # Recreate all dropped FKs (they reference email, which is now the PK again)
         for table_name, fk in fks_to_recreate:

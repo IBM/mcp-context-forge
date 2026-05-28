@@ -1097,7 +1097,7 @@ async def test_create_legacy_access_token():
     from mcpgateway.routers.email_auth import create_legacy_access_token
 
     user = MagicMock(spec=EmailUser)
-    user.id = 12345
+    user.id = "550e8400-e29b-41d4-a716-446655440000"
     user.email = "user@example.com"
     user.full_name = "User"
     user.is_admin = False
@@ -1118,7 +1118,7 @@ async def test_create_legacy_access_token():
 
     assert token == "legacy_tok"
     assert expires_in == 1800  # 30 minutes * 60
-    assert captured["payload"]["sub"] == "12345"
+    assert captured["payload"]["sub"] == "550e8400-e29b-41d4-a716-446655440000"
     assert captured["payload"]["iss"] == "iss"
     assert "teams" not in captured["payload"]
 
