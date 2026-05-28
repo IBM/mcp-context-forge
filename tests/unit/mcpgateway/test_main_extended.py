@@ -29,7 +29,9 @@ from fastapi.testclient import TestClient
 import orjson
 import pytest
 import sqlalchemy as sa
+from starlette.applications import Starlette
 from starlette.responses import Response as StarletteResponse
+from starlette.routing import Mount
 
 # First-Party
 from mcpgateway.common.models import LogLevel
@@ -2963,6 +2965,180 @@ class TestMCPPathRewriteMiddleware:
     """Cover MCPPathRewriteMiddleware branches."""
 
     @pytest.mark.asyncio
+    async def test_rewrite_exact_mcp_path_prevents_mount_redirect(self):
+        """Exact /mcp is internally normalized so Starlette Mount cannot emit 307."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/mcp"
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    def test_rewrite_exact_mcp_path_avoids_starlette_mount_redirect(self):
+        """Exact /mcp reaches the mounted app without Starlette returning 307."""
+
+        async def mounted_app(scope, receive, send):
+            response = StarletteResponse("ok")
+            await response(scope, receive, send)
+
+        app_with_mount = Starlette(routes=[Mount("/mcp", app=mounted_app)])
+        middleware = MCPPathRewriteMiddleware(app_with_mount)
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            response = TestClient(middleware).get("/mcp", follow_redirects=False)
+
+        assert response.status_code == 200
+        assert response.headers.get("location") is None
+
+    def test_rewrite_exact_mcp_post_avoids_starlette_mount_redirect(self):
+        """POST /mcp is normalized the same way as GET for Streamable HTTP."""
+
+        async def mounted_app(scope, receive, send):
+            response = StarletteResponse("ok")
+            await response(scope, receive, send)
+
+        app_with_mount = Starlette(routes=[Mount("/mcp", app=mounted_app)])
+        middleware = MCPPathRewriteMiddleware(app_with_mount)
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            response = TestClient(middleware).post("/mcp", content=b"{}", follow_redirects=False)
+
+        assert response.status_code == 200
+        assert response.headers.get("location") is None
+
+    @pytest.mark.asyncio
+    async def test_rewrite_exact_mcp_path_updates_raw_path(self):
+        """Exact /mcp normalization keeps raw_path aligned with path."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp", "raw_path": b"/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        assert scope["raw_path"] == b"/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_rewrite_exact_mcp_path_skips_non_latin_raw_path(self, caplog):
+        """Malformed proxy prefixes must not crash raw_path byte alignment."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/中/mcp",
+            "root_path": "/gateway/中",
+            "raw_path": b"/gateway/%E4%B8%AD/mcp",
+            "headers": [],
+        }
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        caplog.set_level("WARNING")
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/gateway/中/mcp/"
+        assert scope["raw_path"] == b"/gateway/%E4%B8%AD/mcp"
+        assert any("non-latin-1 raw_path skipped" in rec.message for rec in caplog.records)
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_exact_mcp_path_with_root_path_preserves_prefix(self):
+        """Exact /mcp normalization preserves reverse-proxy root_path prefixes."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/gateway/mcp", "root_path": "/gateway", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/mcp"
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_exact_mcp_path_with_app_root_path_preserves_prefix(self):
+        """Exact /mcp normalization also works when APP_ROOT_PATH supplies the prefix."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/gateway/mcp", "root_path": "", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.config.settings.app_root_path", "/gateway"):
+            with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+                await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/mcp"
+        assert scope["path"] == "/gateway/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_exact_mcp_with_trailing_slash_passes_through(self):
+        """Exact /mcp/ is already canonical and should not be rewritten again."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp/", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/mcp/"
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_well_known_mcp_suffix_is_not_rewritten(self):
+        """RFC 9728 well-known resource URLs ending in /mcp must not hit the MCP transport."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/.well-known/oauth-protected-resource/servers/123/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/.well-known/oauth-protected-resource/servers/123/mcp"
+        assert scope["path"] == "/.well-known/oauth-protected-resource/servers/123/mcp"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_well_known_mcp_suffix_with_root_path_is_not_rewritten(self):
+        """Root-path-stripped well-known metadata URLs must not hit the MCP transport."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/gateway/.well-known/oauth-protected-resource/servers/123/mcp",
+            "root_path": "/gateway",
+            "headers": [],
+        }
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/.well-known/oauth-protected-resource/servers/123/mcp"
+        assert scope["path"] == "/gateway/.well-known/oauth-protected-resource/servers/123/mcp"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
     async def test_rewrite_mcp_path(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
@@ -2977,6 +3153,22 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once_with(scope, receive, send)
 
     @pytest.mark.asyncio
+    async def test_rewrite_server_mcp_path_updates_raw_path(self):
+        """Server-scoped MCP rewrites keep raw_path aligned with path."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers/123/mcp", "raw_path": b"/servers/123/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        assert scope["raw_path"] == b"/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
     async def test_rewrite_auth_failure(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
@@ -2987,6 +3179,22 @@ class TestMCPPathRewriteMiddleware:
         with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=False)):
             await middleware._call_streamable_http(scope, receive, send)
 
+        app_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exact_mcp_auth_failure_blocks_rewrite(self):
+        """Exact /mcp auth failures return before normalization mutates the scope."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=False)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope.get("path") == "/mcp"
+        assert "modified_path" not in scope
         app_mock.assert_not_called()
 
     @pytest.mark.asyncio
