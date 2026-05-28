@@ -129,7 +129,7 @@ def test_gateway_service_convert_gateway_to_read(monkeypatch):
 
 
 def test_convert_gateway_to_read_capabilities_from_relationships(monkeypatch):
-    """convert_gateway_to_read populates capabilities from eagerly-loaded relationships."""
+    """convert_gateway_to_read populates count fields from eagerly-loaded relationships."""
     service = GatewayService()
 
     # Simulate a gateway whose relationships are already loaded in __dict__
@@ -161,9 +161,8 @@ def test_convert_gateway_to_read_capabilities_from_relationships(monkeypatch):
     service.convert_gateway_to_read(gateway)
 
     assert captured["tool_count"] == 3
-    assert captured["capabilities"]["tools"]["count"] == 3
-    assert captured["capabilities"]["prompts"]["count"] == 1
-    assert captured["capabilities"]["resources"]["count"] == 2
+    assert captured["prompt_count"] == 1
+    assert captured["resource_count"] == 2
 
 
 def test_convert_gateway_to_read_capabilities_absent_relationships(monkeypatch):
@@ -196,9 +195,8 @@ def test_convert_gateway_to_read_capabilities_absent_relationships(monkeypatch):
     service.convert_gateway_to_read(gateway)
 
     assert captured["tool_count"] == 0
-    assert captured["capabilities"]["tools"]["count"] == 0
-    assert captured["capabilities"]["prompts"]["count"] == 0
-    assert captured["capabilities"]["resources"]["count"] == 0
+    assert captured["prompt_count"] == 0
+    assert captured["resource_count"] == 0
 
 
 def test_convert_gateway_to_read_capabilities_empty_relationships(monkeypatch):
@@ -233,11 +231,8 @@ def test_convert_gateway_to_read_capabilities_empty_relationships(monkeypatch):
     service.convert_gateway_to_read(gateway)
 
     assert captured["tool_count"] == 0
-    assert captured["capabilities"] == {
-        "tools": {"count": 0},
-        "prompts": {"count": 0},
-        "resources": {"count": 0},
-    }
+    assert captured["prompt_count"] == 0
+    assert captured["resource_count"] == 0
 
 
 def test_gateway_service_validate_tools_valueerror(monkeypatch):
