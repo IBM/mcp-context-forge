@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
 from mcpgateway.services.grpc_service import (
     GrpcService,
@@ -1553,9 +1554,6 @@ class TestDeleteServiceChunkedBulkDelete:
     @pytest.mark.asyncio
     async def test_delete_service_chunked_bulk_delete(self):
         """Test that delete_service chunks tool deletion when >500 tools exist."""
-        # First-Party
-        from mcpgateway.services.grpc_service import GrpcService
-
         # Create a service with 1200 tools
         sample_db_service = MagicMock(spec=DbGrpcService)
         sample_db_service.id = "svc-1"
@@ -1587,9 +1585,6 @@ class TestInvokeMethodMetadataForwarding:
     @pytest.mark.asyncio
     async def test_invoke_method_metadata_forwarded_to_endpoint(self, monkeypatch):
         """Test that service.grpc_metadata is passed to GrpcEndpoint constructor."""
-        # First-Party
-        from mcpgateway.services.grpc_service import GrpcService
-
         enabled = MagicMock(spec=DbGrpcService)
         enabled.id = "svc-1"
         enabled.name = "svc"
@@ -1632,9 +1627,6 @@ class TestInvokeMethodExceptionWrapping:
     @pytest.mark.asyncio
     async def test_invoke_method_runtime_error_wrapped_as_grpc_service_error(self):
         """Test that RuntimeError during invoke is wrapped as GrpcServiceError."""
-        # First-Party
-        from mcpgateway.services.grpc_service import GrpcService
-
         enabled = MagicMock(spec=DbGrpcService)
         enabled.id = "svc-1"
         enabled.name = "svc"
@@ -1681,9 +1673,6 @@ class TestInvokeMethodFinallyClose:
     @pytest.mark.asyncio
     async def test_invoke_method_finally_close_called_on_exception(self):
         """Test that endpoint.close() is called even when invoke raises."""
-        # First-Party
-        from mcpgateway.services.grpc_service import GrpcService
-
         enabled = MagicMock(spec=DbGrpcService)
         enabled.id = "svc-1"
         enabled.name = "svc"
@@ -1736,10 +1725,6 @@ class TestSyncToolsSchemaChange:
 
     def test_sync_tools_schema_change_increments_tools_updated(self, caplog):
         """Test that changing input_schema increments tools_updated counter."""
-        # First-Party
-        from mcpgateway.db import Tool as DbTool
-        from mcpgateway.services.grpc_service import GrpcService
-
         sample_db_service = MagicMock(spec=DbGrpcService)
         sample_db_service.id = "svc-1"
         sample_db_service.name = "test-service"
@@ -1807,10 +1792,6 @@ class TestSyncToolsUnchanged:
 
     def test_sync_tools_unchanged_does_not_increment_tools_updated(self, caplog):
         """Test that unchanged tool does not increment tools_updated counter."""
-        # First-Party
-        from mcpgateway.db import Tool as DbTool
-        from mcpgateway.services.grpc_service import GrpcService
-
         sample_db_service = MagicMock(spec=DbGrpcService)
         sample_db_service.id = "svc-1"
         sample_db_service.name = "test-service"
