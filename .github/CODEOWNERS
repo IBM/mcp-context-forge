@@ -16,8 +16,5 @@
 /.github/workflows/rust.yml @lucarlig @dawid-nowak
 /.github/workflows/pytest-rust.yml @lucarlig @dawid-nowak
 
-# Ownership for all tests
-/tests/ @crivetimihai @madhav165
-
 # Tests for plugin framework
 /tests/unit/mcpgateway/plugins @araujof @terylt @jonpspri
