@@ -250,8 +250,8 @@ class TestCSRFProtection:
 
         set_cookie_headers = [v.decode() if isinstance(v, bytes) else v for k, v in response.raw_headers if (k.decode() if isinstance(k, bytes) else k).lower() == "set-cookie"]
         assert set_cookie_headers, "No Set-Cookie header found"
-        csrf_cookie = next((h for h in set_cookie_headers if "csrf_token=" in h), "")
-        assert csrf_cookie, "csrf_token cookie not found in Set-Cookie"
+        csrf_cookie = next((h for h in set_cookie_headers if "mcpgateway_csrf_token=" in h), "")
+        assert csrf_cookie, "mcpgateway_csrf_token cookie not found in Set-Cookie"
         assert "samesite=strict" in csrf_cookie.lower()
         assert "httponly" not in csrf_cookie.lower(), "CSRF cookie must not be httpOnly — JS needs to read it"
         assert "path=/" in csrf_cookie.lower()
