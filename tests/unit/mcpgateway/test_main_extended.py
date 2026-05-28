@@ -5365,6 +5365,34 @@ class TestLifespanAdvanced:
             pass
 
     @pytest.mark.asyncio
+    async def test_lifespan_starts_and_stops_dataplane_publisher(self, monkeypatch):
+        """Cover experimental dataplane publisher startup and shutdown wiring."""
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod.settings, "dataplane_publisher", True)
+
+        dataplane_publisher = MagicMock()
+        dataplane_publisher.start = AsyncMock()
+        dataplane_publisher.shutdown = AsyncMock()
+        dataplane_publisher_factory = MagicMock(return_value=dataplane_publisher)
+        monkeypatch.setattr(main_mod, "DataplanePublisherService", dataplane_publisher_factory)
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+        dataplane_publisher_factory.assert_called_once_with()
+        dataplane_publisher.start.assert_awaited_once()
+        dataplane_publisher.shutdown.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
         """Cover shutdown_services exception logging branch."""
         # First-Party

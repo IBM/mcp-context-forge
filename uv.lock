@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-15T14:49:11.458664Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -2985,6 +2985,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "mako" },
     { name = "mcp" },
+    { name = "msgpack" },
     { name = "orjson" },
     { name = "parse" },
     { name = "prometheus-client" },
@@ -3196,6 +3197,7 @@ requires-dist = [
     { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.0.1" },
     { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.0.1" },
     { name = "memray", marker = "extra == 'profiling'", specifier = ">=1.19.3" },
+    { name = "msgpack", specifier = ">=1.1.2" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.42.1" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'observability'", specifier = ">=1.42.1" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'observability'", specifier = ">=1.42.1" },
