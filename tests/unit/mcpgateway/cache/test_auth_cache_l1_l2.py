@@ -658,6 +658,189 @@ async def test_redis_revocation_marker_detected(monkeypatch):
     assert cache_key not in cache._context_cache
 
 
+class TestUserTeamObjectsL1L2:
+    """Test get/set_user_team_objects L1/L2 behavior (Issue #3005)."""
+
+    def _sample_dicts(self):
+        return [
+            {
+                "id": "t1",
+                "name": "Team One",
+                "slug": "team-one",
+                "description": "First team",
+                "created_by": "admin@example.com",
+                "is_personal": False,
+                "visibility": "private",
+                "max_members": 100,
+                "is_active": True,
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-06-01T00:00:00",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_miss(self, auth_cache):
+        """Fresh cache returns None (cache miss)."""
+        auth_cache._teams_list_enabled = True
+        result = await auth_cache.get_user_team_objects("no@example.com:True")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_user_team_objects_l1(self, auth_cache):
+        """Round-trip through L1: set then get returns same dicts."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+
+        await auth_cache.set_user_team_objects(cache_key, team_dicts)
+
+        result = await auth_cache.get_user_team_objects(cache_key)
+        assert result == team_dicts
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_empty_list_cached(self, auth_cache):
+        """Empty list is a valid cached result (user has no teams)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:False"
+
+        await auth_cache.set_user_team_objects(cache_key, [])
+
+        result = await auth_cache.get_user_team_objects(cache_key)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_l2_hit_write_through(self, auth_cache, mock_redis):
+        """Redis hit populates L1 (write-through)."""
+        import orjson
+
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+
+        mock_redis.get = AsyncMock(return_value=orjson.dumps(team_dicts))
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_team_objects(cache_key)
+
+        assert result == team_dicts
+        mock_redis.get.assert_called_once()
+        # Write-through: L1 should now have the entry
+        assert cache_key in auth_cache._team_objects_cache
+        assert auth_cache._team_objects_cache[cache_key].value == team_dicts
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_teams_clears_objects_cache(self, auth_cache, mock_redis):
+        """invalidate_user_teams also evicts _team_objects_cache entries."""
+        email = "user@example.com"
+        auth_cache._teams_list_enabled = True
+        cache_key = f"{email}:True"
+
+        # Seed both caches
+        auth_cache._teams_list_cache[cache_key] = CacheEntry(value=["t1"], expiry=time.time() + 300)
+        auth_cache._team_objects_cache[cache_key] = CacheEntry(value=self._sample_dicts(), expiry=time.time() + 300)
+
+        mock_redis.publish = AsyncMock(return_value=None)
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.invalidate_user_teams(email)
+
+        assert cache_key not in auth_cache._teams_list_cache
+        assert cache_key not in auth_cache._team_objects_cache
+        # Redis delete should include team_objs keys
+        delete_args = mock_redis.delete.call_args[0]
+        assert any("team_objs" in str(a) for a in delete_args)
+
+    def test_invalidate_all_clears_team_objects_cache(self, auth_cache):
+        """invalidate_all() clears _team_objects_cache."""
+        auth_cache._team_objects_cache["user@example.com:True"] = CacheEntry(value=[{"id": "t1"}], expiry=time.time() + 300)
+
+        auth_cache.invalidate_all()
+
+        assert auth_cache._team_objects_cache == {}
+
+    def test_stats_includes_team_objects_cache_size(self, auth_cache):
+        """stats() reports team_objects_cache_size."""
+        auth_cache._team_objects_cache["k"] = CacheEntry(value=[{"id": "t1"}], expiry=time.time() + 300)
+
+        s = auth_cache.stats()
+        assert "team_objects_cache_size" in s
+        assert s["team_objects_cache_size"] == 1
+
+    @pytest.mark.asyncio
+    async def test_disabled_cache_returns_none(self, auth_cache):
+        """Disabled cache always returns None from get_user_team_objects."""
+        auth_cache._enabled = False
+        result = await auth_cache.get_user_team_objects("user@example.com:True")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_teams_list_disabled_returns_none(self, auth_cache):
+        """_teams_list_enabled=False short-circuits get_user_team_objects."""
+        auth_cache._teams_list_enabled = False
+        result = await auth_cache.get_user_team_objects("user@example.com:True")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_redis_miss(self, auth_cache, mock_redis):
+        """Redis client available but data=None increments redis_miss_count (line 859)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        mock_redis.get = AsyncMock(return_value=None)
+
+        before = auth_cache._redis_miss_count
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_team_objects(cache_key)
+
+        assert result is None
+        assert auth_cache._redis_miss_count == before + 1
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_objects_redis_exception(self, auth_cache, mock_redis):
+        """Redis get() exception is caught and logs a warning (lines 860-861)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        mock_redis.get = AsyncMock(side_effect=RuntimeError("Redis timeout"))
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_team_objects(cache_key)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_disabled_returns_early(self, auth_cache):
+        """set_user_team_objects returns immediately when cache is disabled (line 879)."""
+        auth_cache._enabled = False
+        await auth_cache.set_user_team_objects("user@example.com:True", self._sample_dicts())
+        assert auth_cache._team_objects_cache == {}
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_redis_happy_path(self, auth_cache, mock_redis):
+        """Redis available: setex is called with serialised team dicts (lines 884-889)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.set_user_team_objects(cache_key, team_dicts)
+
+        mock_redis.setex.assert_called_once()
+        assert cache_key in auth_cache._team_objects_cache
+
+    @pytest.mark.asyncio
+    async def test_set_user_team_objects_redis_exception(self, auth_cache, mock_redis):
+        """Redis setex() exception is caught and logs a warning (lines 890-891)."""
+        auth_cache._teams_list_enabled = True
+        cache_key = "user@example.com:True"
+        team_dicts = self._sample_dicts()
+        mock_redis.setex = AsyncMock(side_effect=RuntimeError("write error"))
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.set_user_team_objects(cache_key, team_dicts)
+
+        # L1 should still be populated even when Redis write fails
+        assert cache_key in auth_cache._team_objects_cache
+
+
 @pytest.mark.asyncio
 async def test_redis_revocation_check_error_falls_through(monkeypatch):
     """When the Redis revocation check errors, fall through to L1/L2 cache."""
