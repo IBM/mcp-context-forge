@@ -36,6 +36,10 @@ export interface MCPServer extends BaseServer {
   lastSeen?: string;
   tool_count: number;
   toolCount?: number;
+  prompt_count?: number;
+  promptCount?: number;
+  resource_count?: number;
+  resourceCount?: number;
   created_at: string;
   createdAt?: string;
   updated_at: string;
