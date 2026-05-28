@@ -333,16 +333,25 @@ export function ExposeComponentsForm({
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <Wrench className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
+                  <Wrench
+                    className="h-4 w-4 text-neutral-300 dark:text-neutral-300"
+                    aria-hidden="true"
+                  />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {toolCount} {toolCount === 1 ? "tool" : "tools"}
                 </span>
               </div>
               {expandedSection === "tools" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronDown
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronRight
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               )}
             </Button>
 
@@ -372,16 +381,25 @@ export function ExposeComponentsForm({
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <Box className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
+                  <Box
+                    className="h-4 w-4 text-neutral-300 dark:text-neutral-300"
+                    aria-hidden="true"
+                  />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {resourceCount} {resourceCount === 1 ? "resource" : "resources"}
                 </span>
               </div>
               {expandedSection === "resources" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronDown
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronRight
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               )}
             </Button>
             {expandedSection === "resources" && resources.length > 0 && (
@@ -410,16 +428,25 @@ export function ExposeComponentsForm({
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <MessageSquareCode className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
+                  <MessageSquareCode
+                    className="h-4 w-4 text-neutral-300 dark:text-neutral-300"
+                    aria-hidden="true"
+                  />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {promptCount} prompt {promptCount === 1 ? "template" : "templates"}
                 </span>
               </div>
               {expandedSection === "prompts" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronDown
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
+                <ChevronRight
+                  className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+                  aria-hidden="true"
+                />
               )}
             </Button>
             {expandedSection === "prompts" && prompts.length > 0 && (
@@ -443,7 +470,10 @@ export function ExposeComponentsForm({
             <h3 className="text-base font-medium text-neutral-950 dark:text-neutral-50">
               Require OAuth for inbound clients
             </h3>
-            <Info className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-label="OAuth information" />
+            <Info
+              className="h-4 w-4 text-neutral-500 dark:text-neutral-500"
+              aria-label="OAuth information"
+            />
           </div>
           <div className="flex items-start gap-3">
             <Switch
