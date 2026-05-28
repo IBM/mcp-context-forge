@@ -3725,7 +3725,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Prompt count (populated from the prompts relationship; 0 when not loaded)
     prompt_count: int = Field(default=0, description="Number of prompts registered for this gateway")
-    
+
     # Resource count (populated from the resources relationship; 0 when not loaded)
     resource_count: int = Field(default=0, description="Number of resources registered for this gateway")
 
