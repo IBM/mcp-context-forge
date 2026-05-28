@@ -408,6 +408,13 @@ def main_app_with_admin_api():
         main_mod.app.include_router(admin_router, prefix="/v1")
         validate_section_permissions(admin_router)
 
+    # Mount legacy /admin/... shim so tests calling /admin/... still resolve.
+    legacy_admin_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/admin/") and not getattr(r, "path", "").startswith("/admin/well-known")]
+    if not legacy_admin_routes:
+        from mcpgateway.admin import admin_router as _admin_router  # noqa: E402
+
+        main_mod.app.include_router(_admin_router)
+
     # Ensure /v1/admin/well-known is mounted. When main was imported with
     # admin disabled, build_v1_router() skips well_known_router, so the
     # /v1/admin/well-known route is absent. Mount it now if missing.
