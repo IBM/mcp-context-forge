@@ -112,6 +112,7 @@ dependencies = [
     "typer>=0.25.1",
     "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]<=0.47.0",
+    "msgpack>=1.1.2",
 ]
 
 # ----------------------------------------------------------------
