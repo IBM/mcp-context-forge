@@ -26,8 +26,7 @@ def _make_mock_session():
     return session
 
 
-@pytest.mark.asyncio
-async def test_auth_middleware_does_not_create_session_when_observability_provides_one():
+def test_auth_middleware_does_not_create_session_when_observability_provides_one():
     """When ObservabilityMiddleware creates a session, auth middleware must reuse it.
 
     This is the core behavior fix from issue #3622.  We patch SessionLocal
@@ -47,8 +46,7 @@ async def test_auth_middleware_does_not_create_session_when_observability_provid
     assert owned is False, "Auth does not own the session"
 
 
-@pytest.mark.asyncio
-async def test_auth_middleware_creates_temporary_session_when_no_middleware_session():
+def test_auth_middleware_creates_temporary_session_when_no_middleware_session():
     """When no middleware session exists, auth middleware creates a temporary one
     that is NOT stored in request.state.db (to prevent stale reference after close).
     """
