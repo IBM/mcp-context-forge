@@ -176,7 +176,7 @@ endef
 # =============================================================================
 # help: 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # help: uv                   - Ensure uv is installed or install it if needed
-# help: venv                 - Create a fresh virtual environment with uv & friends
+# help: venv                 - Create virtual environment if it doesn't exist
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
@@ -274,10 +274,12 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 
 .PHONY: venv
 venv: uv
-	@rm -Rf "$(VENV_DIR)"
-	@mkdir -p "$(VENV_DIR)"
-	@$(UV_BIN) venv "$(VENV_DIR)"
-	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		$(UV_BIN) venv "$(VENV_DIR)"; \
+		echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"; \
+	else \
+		echo "✅  Virtual env already exists, skipping creation."; \
+	fi
 
 .PHONY: activate
 activate:
