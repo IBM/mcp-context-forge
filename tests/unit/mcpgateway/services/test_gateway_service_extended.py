@@ -714,7 +714,7 @@ class TestGatewayServiceExtended:
         context = "test"
 
         # Call the helper method
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return one new tool
         assert len(result) == 1
@@ -778,7 +778,7 @@ class TestGatewayServiceExtended:
         context = "update"
 
         # Call the helper method (with explicit visibility change)
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
+        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
@@ -836,7 +836,7 @@ class TestGatewayServiceExtended:
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
 
-        result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "update")
+        result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "update")
 
         assert len(result) == 0
         # Custom description should be preserved
@@ -1386,7 +1386,7 @@ class TestGatewayServiceExtended:
         context = "mixed_test"
 
         # Call the helper method
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return one new tool (new_tool)
         assert len(result) == 1
@@ -1417,7 +1417,7 @@ class TestGatewayServiceExtended:
         mock_gateway.id = "test-gateway-id"
 
         # Test with empty lists
-        tools_result = service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
+        tools_result = await service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
         resources_result = service._update_or_create_resources(mock_db, [], mock_gateway, "empty_test")
         prompts_result = service._update_or_create_prompts(mock_db, [], mock_gateway, "empty_test")
 
@@ -1476,7 +1476,7 @@ class TestGatewayServiceExtended:
         mock_prompt.visibility = None  # no override; gateway visibility ("team") should win
 
         # Call helper methods
-        tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
+        tools_result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
         resources_result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "metadata_test")
         prompts_result = service._update_or_create_prompts(mock_db, [mock_prompt], mock_gateway, "metadata_test")
 
@@ -1539,7 +1539,7 @@ class TestGatewayServiceExtended:
         contexts = ["oauth", "update", "rediscovery", "test"]
 
         for context in contexts:
-            tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, context)
+            tools_result = await service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, context)
 
             # Verify the context is used in created_via field
             assert len(tools_result) == 1
@@ -1621,7 +1621,7 @@ class TestGatewayServiceExtended:
         context = "removal_test"
 
         # Call the helper method
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        result = await service._update_or_create_tools(mock_db, tools, mock_gateway, context)
 
         # Should return empty list (no new tools)
         assert len(result) == 0
@@ -1821,7 +1821,7 @@ class TestGatewayServiceExtended:
                     "_connect_to_sse_server_without_validation",
                     new=AsyncMock(return_value=({}, [], [], [prompt_from_server], [])),
                 ),
-                patch.object(service, "_update_or_create_tools", return_value=[]),
+                patch.object(service, "_update_or_create_tools", new_callable=AsyncMock, return_value=[]),
                 patch.object(service, "_update_or_create_resources", return_value=[]),
                 patch.object(service, "_update_or_create_prompts", return_value=[]),
             ):
@@ -1868,7 +1868,7 @@ class TestGatewayServiceExtended:
         context = "complete_removal_test"
 
         # Call helper methods with empty lists
-        tools_result = service._update_or_create_tools(mock_db, empty_tools, mock_gateway, context)
+        tools_result = await service._update_or_create_tools(mock_db, empty_tools, mock_gateway, context)
         resources_result = service._update_or_create_resources(mock_db, empty_resources, mock_gateway, context)
         prompts_result = service._update_or_create_prompts(mock_db, empty_prompts, mock_gateway, context)
 
@@ -1951,7 +1951,7 @@ class TestGatewayServiceExtended:
         mock_db.execute.side_effect = [
             create_mock_result(existing_tool),
         ]
-        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "auto_refresh")
+        await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "auto_refresh")
         assert existing_tool.visibility == "private"
 
         mock_db.execute.side_effect = [
@@ -1973,7 +1973,7 @@ class TestGatewayServiceExtended:
         mock_db.execute.side_effect = [
             create_mock_result(existing_tool),
         ]
-        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
         assert existing_tool.visibility == "private"
 
         mock_db.execute.side_effect = [
@@ -1995,7 +1995,7 @@ class TestGatewayServiceExtended:
         existing_prompt.visibility = "private"
 
         mock_db.execute.side_effect = [create_mock_result(existing_tool)]
-        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=False)
+        await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=False)
         assert existing_tool.visibility == "private"
 
         mock_db.execute.side_effect = [create_mock_result(existing_res)]
@@ -2057,7 +2057,7 @@ class TestGatewayServiceExtended:
         db_tool = service._create_db_tool(tool=tool, gateway=gateway)
         assert db_tool.visibility == "private", "Explicit tool visibility must override gateway visibility"
 
-    def test_update_or_create_tools_applies_explicit_upstream_visibility_on_update(self):
+    async def test_update_or_create_tools_applies_explicit_upstream_visibility_on_update(self):
         """Explicit upstream tool visibility must be written to existing tools when update_visibility=True."""
         service = GatewayService()
         mock_db = MagicMock()
@@ -2096,7 +2096,7 @@ class TestGatewayServiceExtended:
         tool_from_server.jsonpath_filter = None
         tool_from_server.visibility = "team"  # explicit upstream override
 
-        result = service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        result = await service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
         assert len(result) == 0
         assert existing_tool.visibility == "team", "Explicit upstream tool visibility must be applied"
 

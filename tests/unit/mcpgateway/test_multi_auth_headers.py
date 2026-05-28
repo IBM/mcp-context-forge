@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/test_multi_auth_headers.py
-Copyright contributors to the MCP-CONTEXT-FORGE project
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Test multi-header authentication functionality.
 """
@@ -324,8 +325,8 @@ class TestMultiAuthHeaders:
         mock_db.refresh = MagicMock()
         mock_db.query = MagicMock(return_value=MagicMock(filter=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))))
 
-        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [], [])))
-        monkeypatch.setattr(service, "_update_or_create_tools", MagicMock(return_value=[]))
+        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [])))
+        monkeypatch.setattr(service, "_update_or_create_tools", AsyncMock(return_value=[]))
         monkeypatch.setattr(service, "_update_or_create_resources", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_update_or_create_prompts", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_notify_gateway_updated", AsyncMock())

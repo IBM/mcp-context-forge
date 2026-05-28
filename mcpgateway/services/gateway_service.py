@@ -2270,7 +2270,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
-            catalog_sync = self._sync_gateway_catalog(
+            catalog_sync = await self._sync_gateway_catalog(
                 db,
                 gateway=gateway,
                 tools=tools,
@@ -3080,7 +3080,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.oauth_config = None
 
                     _vis_changed = gateway_update.visibility is not None
-                    catalog_sync = self._sync_gateway_catalog(
+                    catalog_sync = await self._sync_gateway_catalog(
                         db,
                         gateway=gateway,
                         tools=tools,
@@ -3570,7 +3570,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             client_cert=act_client_cert,
                             client_key=act_client_key,
                         )
-                        catalog_sync = self._sync_gateway_catalog(
+                        catalog_sync = await self._sync_gateway_catalog(
                             db,
                             gateway=gateway,
                             tools=tools,
@@ -4236,7 +4236,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
             created_via = "update" if gateway.tools or gateway.resources or gateway.prompts else "federation"
-            catalog_sync = self._sync_gateway_catalog(
+            catalog_sync = await self._sync_gateway_catalog(
                 db,
                 gateway=gateway,
                 tools=tools,
@@ -5600,7 +5600,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
+    async def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -5617,6 +5617,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return []
 
         tools_to_add = []
+        # Track tools that were restored from unreachable to reachable for cache invalidation
+        restored_tool_names = []
 
         # Batch fetch all existing tools for this gateway
         tool_names = [tool.name for tool in tools if tool is not None]
@@ -5689,6 +5691,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if not existing_tool.reachable:
                         existing_tool.reachable = True
                         fields_to_update = True
+                        # Track restored tools for cache invalidation (Bug #4915 fix)
+                        restored_tool_names.append(tool.name)
 
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -5725,6 +5729,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.warning("Failed to process tool %s: %s", getattr(tool, "name", "unknown"), e)
                 continue
+
+        # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+        if restored_tool_names:
+            tool_lookup_cache = _get_tool_lookup_cache()
+            for tool_name in restored_tool_names:
+                await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
+            logger.debug(f"Invalidated cache for {len(restored_tool_names)} restored tools: {restored_tool_names}")
 
         return tools_to_add
 
@@ -5925,7 +5936,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return prompts_to_add
 
-    def _sync_gateway_catalog(
+    async def _sync_gateway_catalog(
         self,
         db: Session,
         *,
@@ -5943,7 +5954,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             new_tool_names=[tool.name for tool in tools],
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,
             new_prompt_names=[prompt.name for prompt in prompts] if include_prompts else None,
-            tools_to_add=self._update_or_create_tools(db, tools, gateway, created_via, update_visibility=update_visibility),
+            tools_to_add=await self._update_or_create_tools(db, tools, gateway, created_via, update_visibility=update_visibility),
             resources_to_add=self._update_or_create_resources(db, resources, gateway, created_via, update_visibility=update_visibility) if include_resources else [],
             prompts_to_add=self._update_or_create_prompts(db, prompts, gateway, created_via, update_visibility=update_visibility) if include_prompts else [],
         )
@@ -6278,7 +6289,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             pending_resources_before = {obj for obj in db.dirty if isinstance(obj, DbResource)}
             pending_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
 
-            catalog_sync = self._sync_gateway_catalog(
+            catalog_sync = await self._sync_gateway_catalog(
                 db,
                 gateway=gateway,
                 tools=tools,
