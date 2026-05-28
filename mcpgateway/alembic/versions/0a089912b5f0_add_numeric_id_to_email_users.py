@@ -98,9 +98,38 @@ def upgrade() -> None:
             existing_type=sa.Integer(),
             nullable=False,
         )
-        op.drop_constraint("email_users_pkey", "email_users", type_="primary")
-        op.create_primary_key("email_users_pkey", "email_users", ["id"])
+        # Drop ALL FK constraints that reference email_users (referencing email as the old PK).
+        # We need to do this before dropping the PK constraint.
+        fks_to_recreate = []
+        for table_name in inspector.get_table_names():
+            if table_name == "email_users":
+                continue
+            for fk in inspector.get_foreign_keys(table_name):
+                if fk.get("referred_table") == "email_users":
+                    fks_to_recreate.append((table_name, fk))
+                    op.drop_constraint(fk["name"], table_name, type_="foreignkey")
+
+        # Use introspection to get the actual PK name (avoids hard-coding naming convention)
+        pk_info = inspector.get_pk_constraint("email_users")
+        pk_name = pk_info.get("name")
+        if pk_name:
+            op.drop_constraint(pk_name, "email_users", type_="primary")
+
+        op.create_primary_key("pk_email_users", "email_users", ["id"])
         op.create_unique_constraint("uq_email_users_email", "email_users", ["email"])
+
+        # Recreate all dropped FKs (they still reference email, which is now UNIQUE)
+        for table_name, fk in fks_to_recreate:
+            options = fk.get("options", {})
+            op.create_foreign_key(
+                fk["name"],
+                table_name,
+                "email_users",
+                fk["constrained_columns"],
+                fk["referred_columns"],
+                ondelete=options.get("ondelete"),
+                onupdate=options.get("onupdate"),
+            )
 
 
 def downgrade() -> None:
@@ -118,11 +147,34 @@ def downgrade() -> None:
         return
 
     if bind.dialect.name == "postgresql":
+        # Drop ALL FK constraints that reference email_users before touching its constraints
+        fks_to_recreate = []
+        for table_name in inspector.get_table_names():
+            if table_name == "email_users":
+                continue
+            for fk in inspector.get_foreign_keys(table_name):
+                if fk.get("referred_table") == "email_users":
+                    fks_to_recreate.append((table_name, fk))
+                    op.drop_constraint(fk["name"], table_name, type_="foreignkey")
+
         op.drop_constraint("uq_email_users_email", "email_users", type_="unique")
-        op.drop_constraint("email_users_pkey", "email_users", type_="primary")
-        op.create_primary_key("email_users_pkey", "email_users", ["email"])
+        op.drop_constraint("pk_email_users", "email_users", type_="primary")
+        op.create_primary_key("pk_email_users", "email_users", ["email"])
         op.drop_column("email_users", "id")
         op.execute(sa.text("DROP SEQUENCE IF EXISTS email_users_id_seq"))
+
+        # Recreate all dropped FKs (they reference email, which is now the PK again)
+        for table_name, fk in fks_to_recreate:
+            options = fk.get("options", {})
+            op.create_foreign_key(
+                fk["name"],
+                table_name,
+                "email_users",
+                fk["constrained_columns"],
+                fk["referred_columns"],
+                ondelete=options.get("ondelete"),
+                onupdate=options.get("onupdate"),
+            )
 
     elif bind.dialect.name == "sqlite":
         with op.batch_alter_table("email_users", recreate="always") as batch_op:
