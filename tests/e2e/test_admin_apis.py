@@ -137,10 +137,9 @@ async def client(app_with_temp_db):
     # First-Party
     from mcpgateway.db import EmailUser, Role, UserRole
 
-    if test_db_session.get(EmailUser, "admin@example.com") is None:
+    if test_db_session.execute(select(EmailUser).where(EmailUser.email == "admin@example.com")).scalars().first() is None:
         test_db_session.add(
             EmailUser(
-                id=3,
                 email="admin@example.com",
                 password_hash="not-a-real-hash",
                 full_name="Test Admin",
