@@ -50,13 +50,12 @@ function getToolCount(server: MCPServer): number {
   return server.toolCount ?? server.tool_count ?? 0;
 }
 
-function getCapabilityCount(capability?: Record<string, unknown>): number {
-  if (!capability) return 0;
-  // If capability has a count property, use it; otherwise count keys (backward compatibility)
-  if (typeof capability.count === "number") {
-    return capability.count;
-  }
-  return Object.keys(capability).length;
+function getResourceCount(server: MCPServer): number {
+  return server.resourceCount ?? server.resource_count ?? 0;
+}
+
+function getPromptCount(server: MCPServer): number {
+  return server.promptCount ?? server.prompt_count ?? 0;
 }
 
 function getServerStatus(server: MCPServer): ServerStatus {
@@ -171,8 +170,8 @@ export function ServersTable({
         </TableHeader>
         <TableBody>
           {servers.map((server) => {
-            const resourcesCount = getCapabilityCount(server.capabilities?.resources);
-            const promptsCount = getCapabilityCount(server.capabilities?.prompts);
+            const resourcesCount = getResourceCount(server);
+            const promptsCount = getPromptCount(server);
             const toolCount = getToolCount(server);
             const lastSeen = getLastSeenValue(server);
             const status = getServerStatus(server);
