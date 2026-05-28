@@ -14,7 +14,7 @@ import { safeGetElement } from "./utils.js";
 import { HelpDatabase as GeneratedHelpDatabase } from "./helpDatabase.generated.js";
 
 
-const ManualHelpDatabase  = {
+export const ManualHelpDatabase  = {
   // Server fields
   "edit-server-name": {
     tooltip: "📝 Unique identifier for this MCP server",
