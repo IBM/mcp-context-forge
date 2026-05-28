@@ -175,6 +175,21 @@ class TestMCPTypes:
         assert minimal.text is None
         assert minimal.blob is None
 
+    def test_resource_content_serializes_mcp_mime_type_alias(self):
+        """ResourceContent must serialize MIME type using MCP's camelCase field."""
+        resource = ResourceContent(
+            type="resource",
+            id="res1",
+            uri="file:///example.txt",
+            mime_type="text/plain",
+            text="Example content",
+        )
+
+        payload = resource.model_dump(by_alias=True, exclude_none=True)
+
+        assert payload["mimeType"] == "text/plain"
+        assert "mime_type" not in payload
+
     def test_message(self):
         """Test Message model with different content types."""
         text_message = Message(
@@ -1296,7 +1311,7 @@ class TestSchemaValidators:
     def test_resource_description_truncation(self):
         """ResourceCreate should truncate overly long descriptions."""
         long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
-        resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
+        ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
 
     def test_gateway_create_with_valid_gateway_modes(self):
         """Test GatewayCreate accepts valid gateway_mode values."""
