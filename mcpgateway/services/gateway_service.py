@@ -1695,7 +1695,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
             # Handle tools, resources, and prompts using helper methods
-            tools_to_add = self._update_or_create_tools(db, tools, gateway, "oauth")
+            tools_to_add = await self._update_or_create_tools(db, tools, gateway, "oauth")
             resources_to_add = self._update_or_create_resources(db, resources, gateway, "oauth")
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "oauth")
 
@@ -2476,7 +2476,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update tools using helper method — only propagate visibility
                     # when the user explicitly changed it in this request
                     _vis_changed = gateway_update.visibility is not None
-                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
+                    tools_to_add = await self._update_or_create_tools(db, tools, gateway, "update", update_visibility=_vis_changed)
 
                     # Update resources using helper method
                     resources_to_add = self._update_or_create_resources(db, resources, gateway, "update", update_visibility=_vis_changed)
@@ -3053,7 +3053,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         new_prompt_names = [prompt.name for prompt in prompts]
 
                         # Update tools, resources, and prompts using helper methods
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "rediscovery")
+                        tools_to_add = await self._update_or_create_tools(db, tools, gateway, "rediscovery")
                         resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery")
                         prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery")
 
@@ -3164,6 +3164,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     self._active_gateways.discard(gateway.url)
 
+                # Bulk update tools BEFORE committing gateway state (Bug #4915 fix)
+                # This prevents the consistency window where gateway appears reachable
+                # while tools still show as unreachable
+                now = datetime.now(timezone.utc)
+                if only_update_reachable:
+                    # Only update reachable status, keep enabled as-is
+                    tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
+                else:
+                    # Update both enabled and reachable
+                    tools_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.gateway_id == gateway_id)
+                        .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
+                        .values(enabled=activate, reachable=reachable, updated_at=now)
+                    )
+                tools_updated = tools_result.rowcount
+
+                # Commit gateway and tool updates together atomically
                 db.commit()
                 db.refresh(gateway)
 
@@ -3181,26 +3199,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     # Active (Enabled and Reachable)
                     await self._notify_gateway_activated(gateway)
-
-                # Bulk update tools - single UPDATE statement instead of N FOR UPDATE locks
-                # This prevents lock contention under high concurrent load
-                now = datetime.now(timezone.utc)
-                if only_update_reachable:
-                    # Only update reachable status, keep enabled as-is
-                    tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
-                else:
-                    # Update both enabled and reachable
-                    tools_result = db.execute(
-                        update(DbTool)
-                        .where(DbTool.gateway_id == gateway_id)
-                        .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
-                        .values(enabled=activate, reachable=reachable, updated_at=now)
-                    )
-                tools_updated = tools_result.rowcount
-
-                # Commit tool updates
-                if tools_updated > 0:
-                    db.commit()
 
                 # Invalidate tools cache once after bulk update
                 if tools_updated > 0:
@@ -4691,7 +4689,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             visibility=getattr(tool, "visibility", None) or gateway.visibility,
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
+    async def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, update_visibility: bool = False) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -4708,6 +4706,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return []
 
         tools_to_add = []
+        # Track tools that were restored from unreachable to reachable for cache invalidation
+        restored_tool_names = []
 
         # Batch fetch all existing tools for this gateway
         tool_names = [tool.name for tool in tools if tool is not None]
@@ -4778,6 +4778,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if not existing_tool.reachable:
                         existing_tool.reachable = True
                         fields_to_update = True
+                        # Track this tool for cache invalidation (Bug #4915)
+                        restored_tool_names.append(tool.name)
 
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -4813,6 +4815,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.warning(f"Failed to process tool {getattr(tool, 'name', 'unknown')}: {e}")
                 continue
+
+        # Invalidate negative cache entries for restored tools (Bug #4915 fix)
+        if restored_tool_names:
+            tool_lookup_cache = _get_tool_lookup_cache()
+            for tool_name in restored_tool_names:
+                await tool_lookup_cache.invalidate(tool_name, gateway_id=str(gateway.id))
+            logger.debug(f"Invalidated cache for {len(restored_tool_names)} restored tools: {restored_tool_names}")
 
         return tools_to_add
 
@@ -5240,7 +5249,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             pending_prompts_before = {obj for obj in db.dirty if isinstance(obj, DbPrompt)}
 
             # Update/create tools, resources, and prompts
-            tools_to_add = self._update_or_create_tools(db, tools, gateway, created_via)
+            tools_to_add = await self._update_or_create_tools(db, tools, gateway, created_via)
             resources_to_add = self._update_or_create_resources(db, resources, gateway, created_via) if include_resources else []
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, created_via) if include_prompts else []
 
