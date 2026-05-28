@@ -259,6 +259,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways | jq '.'
       "name": "my-mcp-server",
       "url": "http://localhost:9000/mcp",
       "enabled": true,
+      "tool_count": 5,
+      "prompt_count": 3,
+      "resource_count": 2,
       ...
     }
   ],
