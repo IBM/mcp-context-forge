@@ -252,7 +252,11 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
         >>> call_kwargs['path']
         '/'
     """
+<<<<<<< HEAD
     cookie_name = getattr(settings, "csrf_cookie_name", "mcpgateway_csrf_token")
+=======
+    cookie_name = settings.csrf_cookie_name
+>>>>>>> upstream/epic/ui-rewrite
     response.set_cookie(
         key=cookie_name,
         value=token,
@@ -288,7 +292,11 @@ def clear_csrf_cookie(response: Any, settings: Any) -> None:
         >>> call_kwargs['secure']
         True
     """
+<<<<<<< HEAD
     cookie_name = getattr(settings, "csrf_cookie_name", "mcpgateway_csrf_token")
+=======
+    cookie_name = settings.csrf_cookie_name
+>>>>>>> upstream/epic/ui-rewrite
     response.set_cookie(
         key=cookie_name,
         value="",

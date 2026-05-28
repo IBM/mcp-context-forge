@@ -1,0 +1,28 @@
+# Build outputs
+dist
+build
+../mcpgateway/static/app
+
+# Dependencies
+node_modules
+
+# Generated files
+*.min.js
+*.min.css
+
+# Lock files
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Coverage
+coverage
+.nyc_output
+
+# Logs
+*.log
+
+# Playwright
+playwright-report
+test-results
+.playwright/

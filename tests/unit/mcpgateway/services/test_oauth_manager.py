@@ -1395,6 +1395,66 @@ def test_generate_state_is_opaque_and_no_email_leak(oauth_manager):
     assert "gw-1" not in state
 
 
+def test_generate_state_with_popup_false(oauth_manager):
+    """Test that popup=False generates state without popup prefix."""
+    state = oauth_manager._generate_state("gw-1", "user@test.com", popup=False)
+    assert isinstance(state, str)
+    assert not state.startswith("popup.")
+    assert len(state) > 20
+
+
+def test_generate_state_with_popup_true(oauth_manager):
+    """Test that popup=True generates state with popup. prefix."""
+    state = oauth_manager._generate_state("gw-1", "user@test.com", popup=True)
+    assert isinstance(state, str)
+    assert state.startswith("popup.")
+    # Remove prefix and verify the rest is a valid token
+    token_part = state[6:]  # Remove "popup." prefix
+    assert len(token_part) > 20
+
+
+@pytest.mark.asyncio
+async def test_initiate_authorization_code_flow_with_popup_false(oauth_manager):
+    """Test that initiate_authorization_code_flow with popup=False generates non-prefixed state."""
+    credentials = {
+        "client_id": "test-client",
+        "authorization_url": "https://auth.example.com/authorize",
+        "redirect_uri": "https://app.example.com/callback",
+    }
+    
+    result = await oauth_manager.initiate_authorization_code_flow(
+        "test-gateway",
+        credentials,
+        app_user_email="user@test.com",
+        popup=False
+    )
+    
+    assert "authorization_url" in result
+    assert "state" in result
+    assert not result["state"].startswith("popup.")
+
+
+@pytest.mark.asyncio
+async def test_initiate_authorization_code_flow_with_popup_true(oauth_manager):
+    """Test that initiate_authorization_code_flow with popup=True generates popup-prefixed state."""
+    credentials = {
+        "client_id": "test-client",
+        "authorization_url": "https://auth.example.com/authorize",
+        "redirect_uri": "https://app.example.com/callback",
+    }
+    
+    result = await oauth_manager.initiate_authorization_code_flow(
+        "test-gateway",
+        credentials,
+        app_user_email="user@test.com",
+        popup=True
+    )
+    
+    assert "authorization_url" in result
+    assert "state" in result
+    assert result["state"].startswith("popup.")
+
+
 # ---------- _create_authorization_url_with_pkce ----------
 
 

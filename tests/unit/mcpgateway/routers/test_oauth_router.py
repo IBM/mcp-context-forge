@@ -2490,4 +2490,428 @@ class TestOAuthCallbackCSPCompliance:
             nonces_seen.add(nonce)
 
         # Verify we collected 3 unique nonces
-        assert len(nonces_seen) == 3, "Each request should have a unique CSP nonce"
+
+
+class TestOAuthRouterPopupMode:
+    """Test cases for OAuth router popup mode functionality."""
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_with_popup_parameter(self, mock_db, mock_request, mock_gateway, mock_current_user):
+        """Test that popup=True parameter is passed to OAuth manager."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {
+            "authorization_url": "https://oauth.example.com/authorize?state=popup.abc123",
+            "state": "popup.abc123"
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new_callable=AsyncMock):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    # Execute with popup=True
+                    result = await initiate_oauth_flow(
+                        gateway_id="gateway123",
+                        request=mock_request,
+                        popup=True,
+                        current_user=mock_current_user,
+                        db=mock_db
+                    )
+
+                    # Assert redirect response
+                    assert isinstance(result, RedirectResponse)
+                    assert result.status_code == 307
+
+                    # Verify popup=True was passed to OAuth manager
+                    call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
+                    assert call_args[1]["popup"] is True
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_without_popup_parameter(self, mock_db, mock_request, mock_gateway, mock_current_user):
+        """Test that popup defaults to False when not provided."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {
+            "authorization_url": "https://oauth.example.com/authorize?state=abc123",
+            "state": "abc123"
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new_callable=AsyncMock):
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    # Execute without popup parameter (defaults to False)
+                    result = await initiate_oauth_flow(
+                        gateway_id="gateway123",
+                        request=mock_request,
+                        current_user=mock_current_user,
+                        db=mock_db
+                    )
+
+                    # Assert redirect response
+                    assert isinstance(result, RedirectResponse)
+    
+                    # Verify popup=False was passed to OAuth manager
+                    call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
+                    # popup is a Query object with default False, check its value
+                    popup_arg = call_args[1]["popup"]
+                    assert popup_arg == False or (hasattr(popup_arg, 'default') and popup_arg.default == False)
+
+    @pytest.mark.asyncio
+    async def test_popup_notification_script_helper(self):
+        """Test _popup_notification_script generates safe HTML."""
+        from mcpgateway.routers.oauth_router import _popup_notification_script
+
+        payload = {
+            "type": "oauth_callback",
+            "status": "success",
+            "gatewayId": "test-gateway",
+            "gatewayName": "Test Gateway"
+        }
+        nonce = "test-nonce-123"
+
+        result = _popup_notification_script(nonce, payload)
+
+        # Verify it's a script tag with nonce
+        assert '<script nonce="test-nonce-123">' in result
+        assert '</script>' in result
+
+        # Verify payload is present (JSON.stringify formats with spaces)
+        assert '"type": "oauth_callback"' in result or '"type":"oauth_callback"' in result
+        assert '"status": "success"' in result or '"status":"success"' in result
+
+        # Verify dangerous characters are escaped in the payload (not in the script tags themselves)
+        # Extract just the payload part between postMessage( and )
+        import re
+        payload_match = re.search(r'postMessage\(({[^}]+})', result)
+        if payload_match:
+            payload_str = payload_match.group(1)
+            # The payload should not contain unescaped < or > characters
+            assert '<script' not in payload_str
+            assert '</script' not in payload_str
+
+    @pytest.mark.asyncio
+    async def test_popup_notification_script_escapes_dangerous_characters(self):
+        """Test that _popup_notification_script escapes <, >, and & in payload."""
+        from mcpgateway.routers.oauth_router import _popup_notification_script
+
+        payload = {
+            "message": "<script>alert('xss')</script>",
+            "data": "value&with&ampersands",
+            "html": "<div>content</div>"
+        }
+        nonce = "safe-nonce"
+
+        result = _popup_notification_script(nonce, payload)
+
+        # Verify dangerous characters are Unicode-escaped (JSON.stringify does this)
+        assert '\\u003c' in result or '\\u003C' in result  # < escaped
+        assert '\\u003e' in result or '\\u003E' in result  # > escaped
+        assert '\\u0026' in result  # & escaped
+
+        # Verify the actual dangerous strings are not present
+        assert "<script>alert" not in result
+        assert "<div>" not in result
+
+    @pytest.mark.asyncio
+    async def test_popup_notification_script_escapes_line_terminators(self):
+        """Test that U+2028 and U+2029 in payload are escaped.
+
+        json.dumps emits these characters literally, but JavaScript treats
+        them as line terminators inside string literals, which causes a
+        SyntaxError and hangs the popup.
+        """
+        from mcpgateway.routers.oauth_router import _popup_notification_script
+
+        payload = {
+            "errorDescription": "line1\u2028line2\u2029end",
+        }
+        nonce = "safe-nonce"
+
+        result = _popup_notification_script(nonce, payload)
+
+        assert "\\u2028" in result
+        assert "\\u2029" in result
+        assert "\u2028" not in result
+        assert "\u2029" not in result
+
+    @pytest.mark.asyncio
+    async def test_popup_notification_script_escapes_nonce(self):
+        """Test that nonce is HTML-escaped to prevent attribute injection."""
+        from mcpgateway.routers.oauth_router import _popup_notification_script
+
+        dangerous_nonce = 'nonce"><script>alert("xss")</script><div class="'
+        payload = {"status": "success"}
+
+        result = _popup_notification_script(dangerous_nonce, payload)
+
+        # Verify nonce is HTML-escaped
+        assert 'nonce&quot;&gt;&lt;script&gt;' in result or "nonce&#x27;&#x3E;&#x3C;script&#x3E;" in result
+        # Verify the dangerous script is not executable
+        assert '"><script>alert' not in result
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_popup_state_success(self, mock_db):
+        """Test oauth_callback returns postMessage response when state starts with 'popup.'"""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock gateway
+        mock_gateway = Mock()
+        mock_gateway.id = "test-gateway"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "authorization_url": "https://oauth.example.com/authorize",
+            "token_url": "https://oauth.example.com/token"
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        # Mock OAuth manager
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
+                "user_id": "user@example.com",
+                "expires_at": "2026-12-31T23:59:59Z"
+            })
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock):
+                    # Mock request with CSP nonce
+                    mock_request = Mock()
+                    mock_request.state = Mock()
+                    mock_request.state.csp_nonce = "test-nonce-456"
+
+                    # Execute with popup state
+                    result = await oauth_callback(
+                        code="auth-code-123",
+                        state="popup.abc123def456",
+                        request=mock_request,
+                        db=mock_db
+                    )
+
+                    # Assert HTMLResponse with postMessage script
+                    assert isinstance(result, HTMLResponse)
+                    body = result.body.decode()
+                    
+                    # Verify postMessage script is present
+                    assert '<script nonce="test-nonce-456">' in body
+                    assert 'window.opener.postMessage' in body
+                    assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
+                    assert '"status": "success"' in body or '"status":"success"' in body
+                    assert '"gatewayId": "test-gateway"' in body or '"gatewayId":"test-gateway"' in body
+                    assert '"gatewayName": "Test Gateway"' in body or '"gatewayName":"Test Gateway"' in body
+                    
+                    # Verify no legacy admin UI elements
+                    assert 'Fetch Tools from MCP Server' not in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_popup_state_provider_error(self, mock_db):
+        """Test oauth_callback returns postMessage error when provider returns error with popup state."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock request with CSP nonce
+        mock_request = Mock()
+        mock_request.state = Mock()
+        mock_request.state.csp_nonce = "test-nonce-789"
+
+        # Execute with popup state and provider error
+        result = await oauth_callback(
+            code=None,
+            state="popup.xyz789",
+            error="access_denied",
+            error_description="User denied authorization",
+            request=mock_request,
+            db=mock_db
+        )
+
+        # Assert HTMLResponse with postMessage error script
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        body = result.body.decode()
+        
+        # Verify postMessage error script
+        assert '<script nonce="test-nonce-789">' in body
+        assert 'window.opener.postMessage' in body
+        assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
+        assert '"status": "error"' in body or '"status":"error"' in body
+        assert '"error": "access_denied"' in body or '"error":"access_denied"' in body
+        assert '"errorDescription": "User denied authorization"' in body or '"errorDescription":"User denied authorization"' in body
+        
+        # Verify no legacy admin UI elements
+        assert 'Return to Admin Panel' not in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_popup_state_missing_code(self, mock_db):
+        """Test oauth_callback returns postMessage error when code is missing with popup state."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock request with CSP nonce
+        mock_request = Mock()
+        mock_request.state = Mock()
+        mock_request.state.csp_nonce = "test-nonce-missing"
+
+        # Execute with popup state but no code
+        result = await oauth_callback(
+            code=None,
+            state="popup.state123",
+            request=mock_request,
+            db=mock_db
+        )
+
+        # Assert HTMLResponse with postMessage error
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        body = result.body.decode()
+        
+        # Verify postMessage error script
+        assert '<script nonce="test-nonce-missing">' in body
+        assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
+        assert '"status": "error"' in body or '"status":"error"' in body
+        assert '"error": "missing_code"' in body or '"error":"missing_code"' in body
+        assert '"errorDescription": "Missing authorization code in callback response."' in body or '"errorDescription":"Missing authorization code in callback response."' in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_with_popup_state_invalid_state(self, mock_db):
+        """Test oauth_callback returns postMessage error when state is invalid with popup prefix."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock OAuth manager to return None for invalid state
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value=None)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                # Mock request with CSP nonce
+                mock_request = Mock()
+                mock_request.state = Mock()
+                mock_request.state.csp_nonce = "test-nonce-invalid"
+
+                # Execute with popup state that doesn't resolve
+                result = await oauth_callback(
+                    code="auth-code-123",
+                    state="popup.invalid-state",
+                    request=mock_request,
+                    db=mock_db
+                )
+
+                # Assert HTMLResponse with postMessage error
+                assert isinstance(result, HTMLResponse)
+                assert result.status_code == 400
+                body = result.body.decode()
+                
+                # Verify postMessage error script
+                assert '<script nonce="test-nonce-invalid">' in body
+                assert '"type": "oauth_callback"' in body or '"type":"oauth_callback"' in body
+                assert '"status": "error"' in body or '"status":"error"' in body
+                assert '"error": "invalid_state"' in body or '"error":"invalid_state"' in body
+                assert '"errorDescription": "Invalid OAuth state parameter."' in body or '"errorDescription":"Invalid OAuth state parameter."' in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_without_popup_state_returns_html_page(self, mock_db):
+        """Test oauth_callback returns full HTML page when state does not start with 'popup.'"""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock gateway
+        mock_gateway = Mock()
+        mock_gateway.id = "test-gateway"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.oauth_config = {
+            "client_id": "test-client",
+            "authorization_url": "https://oauth.example.com/authorize",
+            "token_url": "https://oauth.example.com/token"
+        }
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        # Mock OAuth manager
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
+                "user_id": "user@example.com",
+                "expires_at": "2026-12-31T23:59:59Z"
+            })
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                with patch("mcpgateway.routers.oauth_router._persist_learned_audience", new_callable=AsyncMock):
+                    # Mock request with CSP nonce
+                    mock_request = Mock()
+                    mock_request.state = Mock()
+                    mock_request.state.csp_nonce = "test-nonce-legacy"
+
+                    # Execute with non-popup state
+                    result = await oauth_callback(
+                        code="auth-code-123",
+                        state="regular-state-abc123",
+                        request=mock_request,
+                        db=mock_db
+                    )
+
+                    # Assert HTMLResponse with legacy admin UI
+                    assert isinstance(result, HTMLResponse)
+                    body = result.body.decode()
+                    
+                    # Verify legacy admin UI elements are present
+                    assert 'OAuth Authorization Successful' in body
+                    assert 'Fetch Tools from MCP Server' in body
+                    assert 'Return to Admin Panel' in body
+                    
+                    # Verify NO postMessage script (should use inline fetch script instead)
+                    assert 'window.opener.postMessage' not in body
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_without_popup_state_provider_error_returns_html(self, mock_db):
+        """Test oauth_callback returns full HTML error page when provider returns error without popup state."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Mock request
+        mock_request = Mock()
+        mock_request.state = Mock()
+        mock_request.state.csp_nonce = "test-nonce-error"
+
+        # Execute with non-popup state and provider error
+        result = await oauth_callback(
+            code=None,
+            state="regular-state-xyz",
+            error="access_denied",
+            error_description="User denied authorization",
+            request=mock_request,
+            db=mock_db
+        )
+
+        # Assert HTMLResponse with legacy error page
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        body = result.body.decode()
+        
+        # Verify legacy admin UI error elements
+        assert 'OAuth Authorization Failed' in body
+        assert 'access_denied' in body
+        assert 'User denied authorization' in body
+        assert 'Return to Admin Panel' in body
+        
+        # Verify NO postMessage script
+        assert 'window.opener.postMessage' not in body

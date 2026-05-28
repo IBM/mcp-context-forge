@@ -1,0 +1,76 @@
+# ===============================================================
+# ⚛️  Client Lint & Test - React Frontend Quality Gate
+# ===============================================================
+# Authors: Marek Dano
+#   - runs ESLint, Prettier, and Vitest for the React client
+#   - ensures code quality and test coverage for frontend
+#   - runs on PRs and pushes to main
+# ---------------------------------------------------------------
+
+name: Client Lint & Test
+
+on:
+  push:
+    branches: ["main", "epic/ui-rewrite"]
+    paths:
+      - "client/**"
+      - ".github/workflows/client-lint-test.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main", "epic/ui-rewrite"]
+    paths:
+      - "client/**"
+      - ".github/workflows/client-lint-test.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    name: Lint & Test Client
+    runs-on: ubuntu-latest
+    container: node:22-bookworm-slim
+    timeout-minutes: 15
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Install Dependencies
+      # -----------------------------------------------------------
+      - name: 📥  Install client dependencies
+        working-directory: ./client
+        run: npm ci
+
+      # -----------------------------------------------------------
+      # 2️⃣  Run Prettier Check
+      # -----------------------------------------------------------
+      - name: 🎨  Check code formatting with Prettier
+        working-directory: ./client
+        run: npm run format:check
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run ESLint
+      # -----------------------------------------------------------
+      - name: 🔍  Lint code with ESLint
+        working-directory: ./client
+        run: npm run lint
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run Vitest
+      # -----------------------------------------------------------
+      - name: 🧪  Run tests with Vitest
+        working-directory: ./client
+        run: npm run test:run

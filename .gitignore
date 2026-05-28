@@ -48,6 +48,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!client/src/lib/
 parts/
 sdist/
 var/
@@ -101,6 +102,9 @@ test-results/
 tests/playwright/reports/
 tests/playwright/videos/
 tests/playwright/screenshots/
+client/playwright-report/
+client/test-results/
+client/.playwright/
 tests/jmeter/results/
 tests/async/reports/
 tests/async/profiles/
@@ -277,6 +281,8 @@ jwt/
 mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/.vite/
+mcpgateway/static/app/
+mcpgateway/static/css/
 public/
 
 # Generated Tailwind CSS (built during development or container build)

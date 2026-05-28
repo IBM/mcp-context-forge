@@ -6,11 +6,14 @@ Authors: Mihai Criveti
 """
 
 # Standard
+import asyncio
 import os
 import socket
 import sys
 import tempfile
+import uuid
 import warnings
+from typing import Dict, Generator
 from unittest.mock import AsyncMock
 
 # Third-Party
@@ -112,6 +115,8 @@ _force_minimal_main_app_features()
 # First-Party
 import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
 from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
+from mcpgateway.db import EmailUser  # noqa: E402
+from mcpgateway.services.email_auth_service import EmailAuthService  # noqa: E402
 
 # Local
 
@@ -238,11 +243,13 @@ def app():
     # Also patch security_logger and auth_middleware's SessionLocal
     # First-Party
     import mcpgateway.middleware.auth_middleware as auth_middleware_mod
+    import mcpgateway.auth as auth_mod
     import mcpgateway.services.security_logger as sec_logger_mod
     import mcpgateway.services.structured_logger as struct_logger_mod
     import mcpgateway.services.audit_trail_service as audit_trail_mod
     import mcpgateway.services.log_aggregator as log_aggregator_mod
 
+    mp.setattr(auth_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(auth_middleware_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(sec_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
@@ -314,11 +321,13 @@ def app_with_temp_db():
     # Also patch security_logger and auth_middleware's SessionLocal
     # First-Party
     import mcpgateway.middleware.auth_middleware as auth_middleware_mod
+    import mcpgateway.auth as auth_mod
     import mcpgateway.services.security_logger as sec_logger_mod
     import mcpgateway.services.structured_logger as struct_logger_mod
     import mcpgateway.services.audit_trail_service as audit_trail_mod
     import mcpgateway.services.log_aggregator as log_aggregator_mod
 
+    mp.setattr(auth_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(auth_middleware_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(sec_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
     mp.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal, raising=False)
@@ -614,3 +623,63 @@ def clear_jwt_cache_between_tests():
         clear_jwt_caches()
     except ImportError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Shared E2E fixtures for app authentication tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def test_user_credentials() -> Dict[str, str]:
+    """Test user credentials for E2E authentication tests.
+
+    Generates unique email addresses to avoid conflicts between parallel tests.
+    Used by test_app_auth.py, test_app_auth_rate_limiting.py, and
+    test_app_auth_token_expiry.py.
+    """
+    return {
+        "email": f"e2e-test-{uuid.uuid4().hex[:8]}@example.com",
+        "password": "TestPassword123!",  # pragma: allowlist secret
+    }
+
+
+@pytest.fixture
+def setup_test_user(test_user_credentials: Dict[str, str]) -> Generator[EmailUser, None, None]:
+    """Create test user in database for E2E authentication tests.
+
+    Handles cleanup of existing users and ensures proper teardown.
+    Used by test_app_auth.py, test_app_auth_rate_limiting.py, and
+    test_app_auth_token_expiry.py.
+    """
+    db = db_mod.SessionLocal()
+    user = None
+    try:
+        # Clean up any existing test user
+        existing = db.query(EmailUser).filter_by(email=test_user_credentials["email"]).first()
+        if existing:
+            db.delete(existing)
+            db.commit()
+
+        # Create test user
+        auth_service = EmailAuthService(db)
+        user = asyncio.run(
+            auth_service.create_user(
+                email=test_user_credentials["email"],
+                password=test_user_credentials["password"],
+            )
+        )
+        db.commit()
+        yield user
+    finally:
+        # Cleanup — separate try/except so a test failure inside yield doesn't
+        # skip the delete and leave orphaned rows in the test database.
+        try:
+            if user is not None:
+                user_to_delete = db.query(EmailUser).filter_by(email=test_user_credentials["email"]).first()
+                if user_to_delete:
+                    db.delete(user_to_delete)
+                    db.commit()
+        except Exception:
+            db.rollback()
+        db.close()
