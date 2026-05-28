@@ -241,7 +241,7 @@ class BlobResourceContents(ResourceContents):
 
 
 # Legacy ResourceContent for backwards compatibility
-class ResourceContent(BaseModel):
+class ResourceContent(BaseModelWithConfigDict):
     """Resource content that can be embedded (LEGACY - use TextResourceContents or BlobResourceContents).
 
     This class is maintained for backwards compatibility but does not fully comply
@@ -259,7 +259,7 @@ class ResourceContent(BaseModel):
     type: Literal["resource"]
     id: str
     uri: str
-    mime_type: Optional[str] = None
+    mime_type: Optional[str] = Field(None, alias="mimeType")
     text: Optional[str] = None
     blob: Optional[bytes] = None
 

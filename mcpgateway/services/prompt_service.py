@@ -192,6 +192,20 @@ async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: 
     return await session.get_prompt(name, arguments=arguments)
 
 
+def _prompt_result_to_plugin_payload(result: PromptResult) -> dict[str, Any]:
+    """Return a plain payload for CPEX prompt post hooks."""
+    return result.model_dump()
+
+
+def _coerce_plugin_prompt_result(value: Any) -> PromptResult:
+    """Convert CPEX prompt post hook output back to the gateway PromptResult model."""
+    if isinstance(value, PromptResult):
+        return value
+    if hasattr(value, "model_dump"):
+        return PromptResult.model_validate(value.model_dump())
+    return PromptResult.model_validate(value)
+
+
 class PromptError(Exception):
     """Base class for prompt-related errors."""
 
@@ -2091,13 +2105,13 @@ class PromptService(BaseService):
                 if has_post_fetch:
                     post_result, _ = await plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_POST_FETCH,
-                        payload=PromptPosthookPayload(prompt_id=prompt.name, result=result),
+                        payload=PromptPosthookPayload(prompt_id=prompt.name, result=_prompt_result_to_plugin_payload(result)),
                         global_context=global_context,
                         local_contexts=context_table,
                         violations_as_exceptions=True,
                     )
                     # Use modified payload if provided
-                    result = post_result.modified_payload.result if post_result.modified_payload else result
+                    result = _coerce_plugin_prompt_result(post_result.modified_payload.result) if post_result.modified_payload else result
 
                 arguments_supplied = bool(arguments)
 
