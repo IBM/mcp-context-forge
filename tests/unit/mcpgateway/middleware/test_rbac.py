@@ -99,6 +99,7 @@ async def test_get_current_user_with_permissions_cookie_rejected_for_api_request
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
     mock_request.headers = {"user-agent": "python-requests/2.31", "accept": "application/json"}
+    mock_request.url.path = "/tools"
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
@@ -147,6 +148,7 @@ async def test_cookie_auth_rejected_with_cross_origin_oauth_referer():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
     mock_request.headers = {"accept": "application/json", "referer": "https://attacker.example/oauth/callback"}
+    mock_request.url.path = "/tools"
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-xorigin")
@@ -163,9 +165,47 @@ async def test_cookie_auth_rejected_with_unrelated_referer():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
     mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/api/tools"}
+    mock_request.url.path = "/tools"
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req-api")
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Cookie authentication not allowed" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_allowed_for_oauth_fetch_tools_path():
+    """POST /oauth/fetch-tools/{id} is a server-rendered admin-UI action; cookie auth must be accepted
+    even though the Referer is /oauth/callback (not /admin) and the Accept header is application/json.
+    See GH issue #4930."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://localhost:4444/oauth/callback?code=abc&state=xyz"}
+    mock_request.url.path = "/oauth/fetch-tools/gateway-123"
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-fetch-tools", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=True)
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_rejected_for_non_fetch_tools_oauth_path():
+    """The path-based allowance must be narrow: other /oauth/* paths must still reject cookie-only
+    auth when there's no browser signal, so the fix doesn't widen the cookie-auth surface."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.url.path = "/oauth/authorize/gateway-123"
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-oauth-other")
 
     with pytest.raises(HTTPException) as exc:
         await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
@@ -178,6 +218,7 @@ async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}
     mock_request.headers = {}
+    mock_request.url.path = "/tools"
     mock_request.state = MagicMock()
     mock_request.client = None
     # Create proper HTTPAuthorizationCredentials mock
@@ -1638,6 +1679,7 @@ async def test_cookies_without_jwt_token():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"session_id": "abc123"}  # No jwt_token or access_token
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.url.path = "/tools"
     mock_request.state = MagicMock()
     mock_request.client = MagicMock(host="127.0.0.1")
 
