@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -168,63 +168,57 @@ export function ExposeComponentsForm({
 
   const isLoading = toolsLoading || resourcesLoading || promptsLoading;
 
-  const toggleSection = (section: string) => {
-    setExpandedSection(expandedSection === section ? null : section);
-  };
+  const toggleSection = useCallback((section: string) => {
+    setExpandedSection((prev) => (prev === section ? null : section));
+  }, []);
 
-  const toggleAllTools = (checked: boolean) => {
-    if (checked) {
-      setSelectedTools(new Set(tools.map((t) => t.id)));
-    } else {
-      setSelectedTools(new Set());
-    }
-  };
+  const toggleAllTools = useCallback(
+    (checked: boolean) => {
+      setSelectedTools(checked ? new Set(tools.map((t) => t.id)) : new Set());
+    },
+    [tools],
+  );
 
-  const toggleTool = (toolId: string, checked: boolean) => {
-    const newSelected = new Set(selectedTools);
-    if (checked) {
-      newSelected.add(toolId);
-    } else {
-      newSelected.delete(toolId);
-    }
-    setSelectedTools(newSelected);
-  };
+  const toggleTool = useCallback((toolId: string, checked: boolean) => {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(toolId);
+      else next.delete(toolId);
+      return next;
+    });
+  }, []);
 
-  const toggleAllResources = (checked: boolean) => {
-    if (checked) {
-      setSelectedResources(new Set(resources.map((r) => r.id)));
-    } else {
-      setSelectedResources(new Set());
-    }
-  };
+  const toggleAllResources = useCallback(
+    (checked: boolean) => {
+      setSelectedResources(checked ? new Set(resources.map((r) => r.id)) : new Set());
+    },
+    [resources],
+  );
 
-  const toggleResource = (resourceId: string, checked: boolean) => {
-    const newSelected = new Set(selectedResources);
-    if (checked) {
-      newSelected.add(resourceId);
-    } else {
-      newSelected.delete(resourceId);
-    }
-    setSelectedResources(newSelected);
-  };
+  const toggleResource = useCallback((resourceId: string, checked: boolean) => {
+    setSelectedResources((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(resourceId);
+      else next.delete(resourceId);
+      return next;
+    });
+  }, []);
 
-  const toggleAllPrompts = (checked: boolean) => {
-    if (checked) {
-      setSelectedPrompts(new Set(prompts.map((p) => p.id)));
-    } else {
-      setSelectedPrompts(new Set());
-    }
-  };
+  const toggleAllPrompts = useCallback(
+    (checked: boolean) => {
+      setSelectedPrompts(checked ? new Set(prompts.map((p) => p.id)) : new Set());
+    },
+    [prompts],
+  );
 
-  const togglePrompt = (promptId: string, checked: boolean) => {
-    const newSelected = new Set(selectedPrompts);
-    if (checked) {
-      newSelected.add(promptId);
-    } else {
-      newSelected.delete(promptId);
-    }
-    setSelectedPrompts(newSelected);
-  };
+  const togglePrompt = useCallback((promptId: string, checked: boolean) => {
+    setSelectedPrompts((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(promptId);
+      else next.delete(promptId);
+      return next;
+    });
+  }, []);
 
   const handleExposeComponents = async () => {
     setIsCreating(true);
@@ -312,7 +306,7 @@ export function ExposeComponentsForm({
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2">
             <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm bg-purple-500 text-neutral-950 shadow-sm">
-              <Server className="h-4 w-4" />
+              <Server className="h-4 w-4" aria-hidden="true" />
             </div>
             <h2 className="text-lg font-semibold tracking-tight text-neutral-950 dark:text-neutral-50">
               Expose MCP tools, resources, and prompts
@@ -333,32 +327,36 @@ export function ExposeComponentsForm({
               type="button"
               variant="ghost"
               onClick={() => toggleSection("tools")}
+              aria-expanded={expandedSection === "tools"}
+              aria-controls="tools-region"
               className="flex h-auto w-full items-center justify-between rounded-2xl px-6 py-4 text-left hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50"
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <Wrench className="h-4 w-4 text-neutral-300 dark:text-neutral-300" />
+                  <Wrench className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {toolCount} {toolCount === 1 ? "tool" : "tools"}
                 </span>
               </div>
               {expandedSection === "tools" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               )}
             </Button>
 
             {expandedSection === "tools" && tools.length > 0 && (
-              <MCPObjectsTable
-                items={tools}
-                selectedItems={selectedTools}
-                allSelected={allToolsSelected}
-                someSelected={someToolsSelected}
-                onToggleAll={toggleAllTools}
-                onToggleItem={toggleTool}
-              />
+              <div id="tools-region" role="region" aria-label="Tools">
+                <MCPObjectsTable
+                  items={tools}
+                  selectedItems={selectedTools}
+                  allSelected={allToolsSelected}
+                  someSelected={someToolsSelected}
+                  onToggleAll={toggleAllTools}
+                  onToggleItem={toggleTool}
+                />
+              </div>
             )}
           </div>
 
@@ -368,31 +366,35 @@ export function ExposeComponentsForm({
               type="button"
               variant="ghost"
               onClick={() => toggleSection("resources")}
+              aria-expanded={expandedSection === "resources"}
+              aria-controls="resources-region"
               className="flex h-auto w-full items-center justify-between rounded-2xl px-6 py-4 text-left hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50"
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <Box className="h-4 w-4 text-neutral-300 dark:text-neutral-300" />
+                  <Box className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {resourceCount} {resourceCount === 1 ? "resource" : "resources"}
                 </span>
               </div>
               {expandedSection === "resources" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               )}
             </Button>
             {expandedSection === "resources" && resources.length > 0 && (
-              <MCPObjectsTable
-                items={resources}
-                selectedItems={selectedResources}
-                allSelected={allResourcesSelected}
-                someSelected={someResourcesSelected}
-                onToggleAll={toggleAllResources}
-                onToggleItem={toggleResource}
-              />
+              <div id="resources-region" role="region" aria-label="Resources">
+                <MCPObjectsTable
+                  items={resources}
+                  selectedItems={selectedResources}
+                  allSelected={allResourcesSelected}
+                  someSelected={someResourcesSelected}
+                  onToggleAll={toggleAllResources}
+                  onToggleItem={toggleResource}
+                />
+              </div>
             )}
           </div>
 
@@ -402,31 +404,35 @@ export function ExposeComponentsForm({
               type="button"
               variant="ghost"
               onClick={() => toggleSection("prompts")}
+              aria-expanded={expandedSection === "prompts"}
+              aria-controls="prompts-region"
               className="flex h-auto w-full items-center justify-between rounded-2xl px-6 py-4 text-left hover:bg-neutral-200/50 dark:hover:bg-neutral-800/50"
             >
               <div className="flex items-center gap-4">
                 <div className="flex h-8 w-8 items-center justify-center rounded-md bg-neutral-800 dark:bg-neutral-800">
-                  <MessageSquareCode className="h-4 w-4 text-neutral-300 dark:text-neutral-300" />
+                  <MessageSquareCode className="h-4 w-4 text-neutral-300 dark:text-neutral-300" aria-hidden="true" />
                 </div>
                 <span className="text-base font-normal text-neutral-600 dark:text-neutral-400">
                   {promptCount} prompt {promptCount === 1 ? "template" : "templates"}
                 </span>
               </div>
               {expandedSection === "prompts" ? (
-                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronDown className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               ) : (
-                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+                <ChevronRight className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-hidden="true" />
               )}
             </Button>
             {expandedSection === "prompts" && prompts.length > 0 && (
-              <MCPObjectsTable
-                items={prompts}
-                selectedItems={selectedPrompts}
-                allSelected={allPromptsSelected}
-                someSelected={somePromptsSelected}
-                onToggleAll={toggleAllPrompts}
-                onToggleItem={togglePrompt}
-              />
+              <div id="prompts-region" role="region" aria-label="Prompt templates">
+                <MCPObjectsTable
+                  items={prompts}
+                  selectedItems={selectedPrompts}
+                  allSelected={allPromptsSelected}
+                  someSelected={somePromptsSelected}
+                  onToggleAll={toggleAllPrompts}
+                  onToggleItem={togglePrompt}
+                />
+              </div>
             )}
           </div>
         </div>
@@ -437,7 +443,7 @@ export function ExposeComponentsForm({
             <h3 className="text-base font-medium text-neutral-950 dark:text-neutral-50">
               Require OAuth for inbound clients
             </h3>
-            <Info className="h-4 w-4 text-neutral-500 dark:text-neutral-500" />
+            <Info className="h-4 w-4 text-neutral-500 dark:text-neutral-500" aria-label="OAuth information" />
           </div>
           <div className="flex items-start gap-3">
             <Switch
