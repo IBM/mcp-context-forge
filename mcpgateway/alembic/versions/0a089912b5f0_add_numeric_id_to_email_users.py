@@ -37,8 +37,22 @@ def upgrade() -> None:
     if "id" in columns:
         return
 
-    # Add id column as nullable first (for existing rows)
-    op.add_column("email_users", sa.Column("id", sa.Integer(), nullable=True))
+    # Add id column as nullable first (for existing rows).
+    # For PostgreSQL, create a named sequence so that new INSERTs without an
+    # explicit id auto-generate a value (avoids NotNullViolation on bootstrap).
+    if bind.dialect.name == "postgresql":
+        op.execute(sa.text("CREATE SEQUENCE IF NOT EXISTS email_users_id_seq"))
+        op.add_column(
+            "email_users",
+            sa.Column(
+                "id",
+                sa.Integer(),
+                server_default=sa.text("nextval('email_users_id_seq')"),
+                nullable=True,
+            ),
+        )
+    else:
+        op.add_column("email_users", sa.Column("id", sa.Integer(), nullable=True))
 
     # Populate id for existing users with sequential values
     # Use a window function to assign sequential IDs based on created_at
@@ -48,6 +62,14 @@ def upgrade() -> None:
                 "UPDATE email_users SET id = subquery.row_num "
                 "FROM (SELECT email, ROW_NUMBER() OVER (ORDER BY created_at, email) as row_num FROM email_users) AS subquery "
                 "WHERE email_users.email = subquery.email"
+            )
+        )
+        # Advance the sequence past any IDs assigned by the backfill above so
+        # future auto-generated values don't collide with existing rows.
+        bind.execute(
+            text(
+                "SELECT setval('email_users_id_seq', "
+                "COALESCE((SELECT MAX(id) FROM email_users), 0) + 1, false)"
             )
         )
     elif bind.dialect.name == "sqlite":
@@ -107,6 +129,7 @@ def downgrade() -> None:
     if bind.dialect.name == "postgresql":
         op.drop_constraint("uq_email_users_id", "email_users", type_="unique")
         op.drop_column("email_users", "id")
+        op.execute(sa.text("DROP SEQUENCE IF EXISTS email_users_id_seq"))
 
     elif bind.dialect.name == "sqlite":
         with op.batch_alter_table("email_users", recreate="always") as batch_op:

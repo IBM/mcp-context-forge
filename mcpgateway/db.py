@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, Sequence, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -1398,6 +1398,12 @@ class Permissions:
 # Email-based User Authentication Models
 # ---------------------------------------------------------------------------
 
+# Sequence for email_users.id — created by migration 0a089912b5f0.
+# optional=True means it is only used for dialects that support sequences
+# (e.g. PostgreSQL); other dialects (SQLite) fall through to column-level
+# defaults or explicit assignment.
+_email_users_id_seq = Sequence("email_users_id_seq", optional=True)
+
 
 class EmailUser(Base):
     """Email-based user model for authentication.
@@ -1439,7 +1445,7 @@ class EmailUser(Base):
     __tablename__ = "email_users"
 
     # Core identity fields
-    id: Mapped[int] = mapped_column(Integer, unique=True, index=True, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, _email_users_id_seq, unique=True, index=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
