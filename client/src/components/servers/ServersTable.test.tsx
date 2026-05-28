@@ -107,12 +107,10 @@ describe("ServersTable", () => {
     expect(screen.getByText("0 tools")).toBeInTheDocument();
   });
 
-  it("shows capability counts from capabilities.resources and capabilities.prompts using count field", () => {
+  it("shows resource_count and prompt_count from flat fields", () => {
     const server = makeServer({
-      capabilities: {
-        resources: { count: 3 },
-        prompts: { count: 2 },
-      },
+      resource_count: 3,
+      prompt_count: 2,
     });
     renderTable(
       <ServersTable
@@ -127,12 +125,12 @@ describe("ServersTable", () => {
     expect(screen.getByText("2 prompts")).toBeInTheDocument();
   });
 
-  it("falls back to key count for capabilities without a count field (backward compat)", () => {
+  it("prefers camelCase count fields over snake_case", () => {
     const server = makeServer({
-      capabilities: {
-        resources: { resource_a: {}, resource_b: {} },
-        prompts: { prompt_a: {} },
-      },
+      resource_count: 1,
+      resourceCount: 5,
+      prompt_count: 2,
+      promptCount: 8,
     });
     renderTable(
       <ServersTable
@@ -143,14 +141,14 @@ describe("ServersTable", () => {
         onTest={noop}
       />,
     );
-    expect(screen.getByText("2 resources")).toBeInTheDocument();
-    expect(screen.getByText("1 prompts")).toBeInTheDocument();
+    expect(screen.getByText("5 resources")).toBeInTheDocument();
+    expect(screen.getByText("8 prompts")).toBeInTheDocument();
   });
 
-  it("shows 0 resources and 0 prompts when capabilities is undefined", () => {
+  it("shows 0 resources and 0 prompts when count fields are absent", () => {
     renderTable(
       <ServersTable
-        servers={[makeServer({ capabilities: undefined })]}
+        servers={[makeServer({})]}
         isLoading={false}
         onEdit={noop}
         onDelete={noop}
