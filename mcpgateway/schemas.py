@@ -3766,7 +3766,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
     tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
-    
+
     # Prompt count (populated from the prompts relationship; 0 when not loaded)
     prompt_count: int = Field(default=0, description="Number of prompts registered for this gateway")
     
