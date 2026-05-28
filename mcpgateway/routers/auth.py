@@ -121,56 +121,6 @@ class LoginRequest(BaseModel):
             raise ValueError("Either email or username must be provided")
 
 
-@auth_router.get("/csrf-token")
-async def get_csrf_token(request: Request, current_user: "EmailUser" = Depends(get_current_user)):
-    """Get a fresh CSRF token for the current authenticated user.
-
-    This endpoint generates a new CSRF token for the current session and sets it
-    as a cookie. Used by the frontend to refresh expired tokens.
-
-    Args:
-        request: FastAPI request object
-        current_user: Currently authenticated user
-
-    Returns:
-        dict: JSON response with csrf_token field
-
-    Raises:
-        HTTPException: If user authentication fails
-
-    Examples:
-        >>> # GET /auth/csrf-token
-        >>> # Headers: Authorization: Bearer <token>
-        >>> # Response: {"csrf_token": "abc123..."}
-    """
-    # Third-Party
-    from fastapi.responses import JSONResponse
-
-    # First-Party
-    from mcpgateway.config import settings
-    from mcpgateway.services.csrf_service import generate_csrf_token, set_csrf_cookie
-
-    try:
-        session_id = getattr(request.state, "jti", None)
-        if not session_id:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing session identifier")
-
-        # Generate fresh CSRF token
-        csrf_token = generate_csrf_token(user_id=current_user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
-
-        # Create response with CSRF cookie
-        response = JSONResponse(content={"csrf_token": csrf_token})
-        set_csrf_cookie(response, csrf_token, settings)
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating CSRF token for {current_user.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to generate CSRF token")
-
-
 @auth_router.post("/login", response_model=AuthenticationResponse)
 async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
     """Authenticate user and return session JWT token.
@@ -357,3 +307,8 @@ async def logout(request: Request, current_user: EmailUser = Depends(get_current
     except Exception as e:
         logger.error(f"Logout error: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Logout service error")
+
+
+
+
+
