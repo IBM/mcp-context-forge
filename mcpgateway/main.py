@@ -178,6 +178,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -1315,6 +1316,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
+    dataplane_publisher_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1606,6 +1608,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         refresh_slugs_on_startup()
 
+        # Initialize experimental dataplane publisher to send config data to redis
+        if settings.dataplane_publisher:
+            dataplane_publisher_service = DataplanePublisherService()
+            await dataplane_publisher_service.start()
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
             await attempt_to_bootstrap_sso_providers()
@@ -1807,6 +1813,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             metrics_cleanup_service = get_metrics_cleanup_service()
             services_to_shutdown.insert(2, metrics_cleanup_service)
+
+        if dataplane_publisher_service is not None:
+            services_to_shutdown.insert(3, dataplane_publisher_service)
 
         await shutdown_services(services_to_shutdown)
 
