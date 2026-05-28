@@ -464,44 +464,53 @@ class TestUpdateMemberRoleEdge:
 class TestGetUserTeamsCachePaths:
     @pytest.mark.asyncio
     async def test_cache_hit_empty(self, svc, db):
-        """Cached empty list returns [] immediately."""
+        """Cached empty list returns [] immediately without touching DB."""
         mock_cache = MagicMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=[])
+        mock_cache.get_user_team_objects = AsyncMock(return_value=[])
 
         with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
             result = await svc.get_user_teams("u@t.com")
         assert result == []
+        db.query.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cache_hit_with_ids(self, svc, db):
-        """Cached team IDs fetches from DB."""
-        mock_cache = MagicMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=["t1", "t2"])
+    async def test_cache_hit_with_dicts(self, svc, db):
+        """Cached full-object dicts reconstruct teams without touching DB."""
+        from datetime import datetime, timezone
 
-        team1 = _mock_team(id="t1")
-        mock_query = MagicMock()
-        mock_filter = MagicMock()
-        mock_filter.all = MagicMock(return_value=[team1])
-        mock_query.filter = MagicMock(return_value=mock_filter)
-        db.query = MagicMock(return_value=mock_query)
+        team_dict = {
+            "id": "t1",
+            "name": "Team",
+            "slug": "team",
+            "description": "desc",
+            "created_by": "u@t.com",
+            "is_personal": False,
+            "visibility": "public",
+            "max_members": 100,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        mock_cache = MagicMock()
+        mock_cache.get_user_team_objects = AsyncMock(return_value=[team_dict])
 
         with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
             result = await svc.get_user_teams("u@t.com")
-        assert result == [team1]
+        assert len(result) == 1
+        assert result[0].id == "t1"
+        db.query.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_hit_db_failure_falls_through(self, svc, db):
-        """If DB lookup from cached IDs fails, falls through to full query."""
+        """Full DB query failure on cache miss returns [] and rolls back."""
         mock_cache = MagicMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=["t1"])
-        mock_cache.set_user_teams = AsyncMock()
+        mock_cache.get_user_team_objects = AsyncMock(return_value=None)  # cache miss
+        mock_cache.set_user_team_objects = AsyncMock()
 
         mock_query = MagicMock()
-        mock_filter = MagicMock()
-        # First call (from cache) fails, second (full query) succeeds
-        mock_filter.all = MagicMock(side_effect=[Exception("db fail"), []])
-        mock_query.filter = MagicMock(return_value=mock_filter)
         mock_join = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.all = MagicMock(side_effect=Exception("db fail"))
         mock_join.filter = MagicMock(return_value=mock_filter)
         mock_query.join = MagicMock(return_value=mock_join)
         db.query = MagicMock(return_value=mock_query)
@@ -509,13 +518,15 @@ class TestGetUserTeamsCachePaths:
         with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
             result = await svc.get_user_teams("u@t.com")
         assert result == []
+        db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cache_miss_stores_result(self, svc, db):
-        """Cache miss queries DB and stores result."""
+        """Cache miss queries DB and stores full-object dicts in cache."""
         mock_cache = MagicMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=None)  # cache miss
-        mock_cache.set_user_teams = AsyncMock()
+        mock_cache.get_user_team_objects = AsyncMock(return_value=None)  # cache miss
+        mock_cache.set_user_team_objects = AsyncMock()
+        mock_cache.team_to_dict = MagicMock(return_value={"id": "t1"})
 
         team1 = _mock_team(id="t1")
         mock_query = MagicMock()
@@ -529,7 +540,7 @@ class TestGetUserTeamsCachePaths:
         with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
             result = await svc.get_user_teams("u@t.com")
         assert result == [team1]
-        mock_cache.set_user_teams.assert_called_once()
+        mock_cache.set_user_team_objects.assert_called_once()
 
 
 # ===========================================================================

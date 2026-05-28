@@ -174,6 +174,7 @@ class AuthCache:
         self._context_cache: Dict[str, CacheEntry] = {}
         self._role_cache: Dict[str, CacheEntry] = {}
         self._teams_list_cache: Dict[str, CacheEntry] = {}
+        self._team_objects_cache: Dict[str, CacheEntry] = {}
 
         # Known revoked tokens (fast local lookup)
         self._revoked_jtis: Set[str] = set()
@@ -855,6 +856,115 @@ class AuthCache:
                 expiry=time.time() + self._teams_list_ttl,
             )
 
+    @staticmethod
+    def team_to_dict(team: Any) -> Dict[str, Any]:
+        """Serialise an EmailTeam ORM instance to a JSON-safe dict of scalar fields.
+
+        Args:
+            team: EmailTeam ORM instance
+
+        Returns:
+            Dict with scalar fields only (no lazy-loaded relationships)
+        """
+        return {
+            "id": team.id,
+            "name": team.name,
+            "slug": team.slug,
+            "description": team.description,
+            "created_by": team.created_by,
+            "is_personal": team.is_personal,
+            "visibility": team.visibility,
+            "max_members": team.max_members,
+            "is_active": team.is_active,
+            "created_at": team.created_at.isoformat() if team.created_at else None,
+            "updated_at": team.updated_at.isoformat() if team.updated_at else None,
+        }
+
+    async def get_user_team_objects(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get cached full team dicts for a user.
+
+        Returns:
+            - None: Cache miss (caller should query DB)
+            - Empty list: User has no teams (cached result)
+            - List of team dicts: Cached team objects
+
+        Args:
+            cache_key: Cache key in format "email:include_personal"
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user_team_objects("test@example.com:True"))
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled or not self._teams_list_enabled:
+            return None
+
+        # Check L1 in-memory cache first
+        entry = self._team_objects_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value
+
+        # Check L2 Redis cache
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("team_objs", cache_key)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+
+                    team_dicts = orjson.loads(data)
+
+                    # Write-through: populate L1 from Redis hit
+                    with self._lock:
+                        self._team_objects_cache[cache_key] = CacheEntry(
+                            value=team_dicts,
+                            expiry=time.time() + self._teams_list_ttl,
+                        )
+
+                    return team_dicts
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user_team_objects failed: {e}")
+
+        self._miss_count += 1
+        return None
+
+    async def set_user_team_objects(self, cache_key: str, team_dicts: List[Dict[str, Any]]) -> None:
+        """Store full team dicts for a user in cache.
+
+        Args:
+            cache_key: Cache key in format "email:include_personal"
+            team_dicts: List of serialised team dicts
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user_team_objects("test@example.com:True", [{"id": "t1", "name": "T1"}]))
+        """
+        if not self._enabled or not self._teams_list_enabled:
+            return
+
+        # Store in Redis
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("team_objs", cache_key)
+                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_dicts))
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user_team_objects failed: {e}")
+
+        # Store in in-memory cache
+        with self._lock:
+            self._team_objects_cache[cache_key] = CacheEntry(
+                value=team_dicts,
+                expiry=time.time() + self._teams_list_ttl,
+            )
+
     async def invalidate_user_teams(self, email: str) -> None:
         """Invalidate cached teams list for a user.
 
@@ -880,14 +990,20 @@ class AuthCache:
             for key in keys_to_remove:
                 self._teams_list_cache.pop(key, None)
 
+            obj_keys_to_remove = [k for k in self._team_objects_cache if k.startswith(f"{email}:")]
+            for key in obj_keys_to_remove:
+                self._team_objects_cache.pop(key, None)
+
         # Clear Redis
         redis = await self._get_redis_client()
         if redis:
             try:
-                # Delete both variants
+                # Delete both variants (ID-only and full-object buckets)
                 await redis.delete(
                     self._get_redis_key("teams", f"{email}:True"),
                     self._get_redis_key("teams", f"{email}:False"),
+                    self._get_redis_key("team_objs", f"{email}:True"),
+                    self._get_redis_key("team_objs", f"{email}:False"),
                 )
                 # Publish invalidation for other workers
                 await redis.publish("mcpgw:auth:invalidate", f"teams:{email}")
@@ -1223,6 +1339,7 @@ class AuthCache:
             self._context_cache.clear()
             self._role_cache.clear()
             self._teams_list_cache.clear()
+            self._team_objects_cache.clear()
             # Don't clear _revoked_jtis as those are confirmed revocations
 
         logger.info("AuthCache: All caches invalidated")
@@ -1256,6 +1373,7 @@ class AuthCache:
             "context_cache_size": len(self._context_cache),
             "role_cache_size": len(self._role_cache),
             "teams_list_cache_size": len(self._teams_list_cache),
+            "team_objects_cache_size": len(self._team_objects_cache),
             "team_membership_cache_size": len(self._team_cache),
             "user_ttl": self._user_ttl,
             "revocation_ttl": self._revocation_ttl,
