@@ -1413,7 +1413,8 @@ class EmailUser(Base):
     instead of usernames.
 
     Attributes:
-        email (str): Primary key, unique email identifier
+        id (int): Primary key, auto-increment integer
+        email (str): Unique email identifier
         password_hash (str): Argon2id hashed password
         full_name (str): Optional display name for professional appearance
         is_admin (bool): Admin privileges flag
@@ -1445,8 +1446,8 @@ class EmailUser(Base):
     __tablename__ = "email_users"
 
     # Core identity fields
-    id: Mapped[int] = mapped_column(Integer, _email_users_id_seq, unique=True, index=True, nullable=False)
-    email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, _email_users_id_seq, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

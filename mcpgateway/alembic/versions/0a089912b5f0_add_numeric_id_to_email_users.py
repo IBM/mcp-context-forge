@@ -66,12 +66,7 @@ def upgrade() -> None:
         )
         # Advance the sequence past any IDs assigned by the backfill above so
         # future auto-generated values don't collide with existing rows.
-        bind.execute(
-            text(
-                "SELECT setval('email_users_id_seq', "
-                "COALESCE((SELECT MAX(id) FROM email_users), 0) + 1, false)"
-            )
-        )
+        bind.execute(text("SELECT setval('email_users_id_seq', " "COALESCE((SELECT MAX(id) FROM email_users), 0) + 1, false)"))
     elif bind.dialect.name == "sqlite":
         bind.execute(text("""
             UPDATE email_users
@@ -86,7 +81,7 @@ def upgrade() -> None:
             )
         """))
 
-    # Make column non-nullable (SQLite requires batch mode)
+    # Promote id to primary key and demote email to unique (SQLite requires batch mode)
     if bind.dialect.name == "sqlite":
         with op.batch_alter_table("email_users", recreate="always") as batch_op:
             batch_op.alter_column(
@@ -94,10 +89,8 @@ def upgrade() -> None:
                 existing_type=sa.Integer(),
                 nullable=False,
             )
-            batch_op.create_unique_constraint(
-                "uq_email_users_id",
-                ["id"],
-            )
+            batch_op.create_primary_key("pk_email_users", ["id"])
+            batch_op.create_unique_constraint("uq_email_users_email", ["email"])
     else:
         op.alter_column(
             "email_users",
@@ -105,11 +98,9 @@ def upgrade() -> None:
             existing_type=sa.Integer(),
             nullable=False,
         )
-        op.create_unique_constraint(
-            "uq_email_users_id",
-            "email_users",
-            ["id"],
-        )
+        op.drop_constraint("email_users_pkey", "email_users", type_="primary")
+        op.create_primary_key("email_users_pkey", "email_users", ["id"])
+        op.create_unique_constraint("uq_email_users_email", "email_users", ["email"])
 
 
 def downgrade() -> None:
@@ -127,10 +118,14 @@ def downgrade() -> None:
         return
 
     if bind.dialect.name == "postgresql":
-        op.drop_constraint("uq_email_users_id", "email_users", type_="unique")
+        op.drop_constraint("uq_email_users_email", "email_users", type_="unique")
+        op.drop_constraint("email_users_pkey", "email_users", type_="primary")
+        op.create_primary_key("email_users_pkey", "email_users", ["email"])
         op.drop_column("email_users", "id")
         op.execute(sa.text("DROP SEQUENCE IF EXISTS email_users_id_seq"))
 
     elif bind.dialect.name == "sqlite":
         with op.batch_alter_table("email_users", recreate="always") as batch_op:
+            batch_op.drop_constraint("uq_email_users_email", type_="unique")
+            batch_op.create_primary_key("pk_email_users", ["email"])
             batch_op.drop_column("id")
