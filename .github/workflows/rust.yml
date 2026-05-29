@@ -54,7 +54,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.9.2"
+          version: "0.9.30"
 
       - name: Install Rust
         run: |
@@ -232,7 +232,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.9.2"
+          version: "0.9.30"
 
       - name: Install maturin
         run: uv tool install maturin==1.12.6
@@ -359,7 +359,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.9.2"
+          version: "0.9.30"
 
       - name: Install coverage tools
         run: |
@@ -651,7 +651,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
-          version: "0.9.2"
+          version: "0.9.30"
 
       - name: Publish distributions to PyPI
         run: uv publish dist/*

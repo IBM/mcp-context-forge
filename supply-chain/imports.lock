@@ -584,8 +584,8 @@ user-login = "briansmith"
 user-name = "Brian Smith"
 
 [[publisher.rmcp]]
-version = "1.6.0"
-when = "2026-05-01"
+version = "1.7.0"
+when = "2026-05-13"
 user-id = 341684
 user-login = "alexhancock"
 user-name = "Alex Hancock"
