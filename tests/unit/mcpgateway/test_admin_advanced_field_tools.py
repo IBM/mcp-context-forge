@@ -1211,13 +1211,13 @@ async def test_valid_jsonpath_expression():
 
 @pytest.mark.asyncio
 class TestPluginChainValidationWhenDisabled:
-    """Test that plugin chains are rejected when plugins are globally disabled."""
+    """Test that plugin chains can be configured when plugins are globally disabled (for pre-configuration)."""
 
     @patch("mcpgateway.config.settings")
     @patch.object(TeamManagementService, "verify_team_for_user")
     @patch.object(ToolService, "update_tool")
-    async def test_reject_plugin_chain_pre_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
-        """Test that plugin_chain_pre is rejected when plugins are globally disabled."""
+    async def test_allow_plugin_chain_pre_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that plugin_chain_pre is allowed when plugins are globally disabled (for pre-configuration)."""
         # Mock plugins as disabled
         mock_settings.plugins.enabled = False
         mock_verify_team.return_value = None
@@ -1242,18 +1242,17 @@ class TestPluginChainValidationWhenDisabled:
             user={"email": "test@example.com", "db": mock_db},
         )
 
-        assert result.status_code == 422
-        payload = json.loads(result.body.decode())
-        assert payload["success"] is False
-        assert "plugins are globally disabled" in payload["message"]
-        assert "PLUGINS_ENABLED=true" in payload["message"]
-        mock_update_tool.assert_not_called()
+        # Should succeed - plugin chains can be pre-configured even when plugins are disabled
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == ["auth_plugin", "validation_plugin"]
 
     @patch("mcpgateway.config.settings")
     @patch.object(TeamManagementService, "verify_team_for_user")
     @patch.object(ToolService, "update_tool")
-    async def test_reject_plugin_chain_post_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
-        """Test that plugin_chain_post is rejected when plugins are globally disabled."""
+    async def test_allow_plugin_chain_post_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that plugin_chain_post is allowed when plugins are globally disabled (for pre-configuration)."""
         # Mock plugins as disabled
         mock_settings.plugins.enabled = False
         mock_verify_team.return_value = None
@@ -1278,18 +1277,17 @@ class TestPluginChainValidationWhenDisabled:
             user={"email": "test@example.com", "db": mock_db},
         )
 
-        assert result.status_code == 422
-        payload = json.loads(result.body.decode())
-        assert payload["success"] is False
-        assert "plugins are globally disabled" in payload["message"]
-        assert "PLUGINS_ENABLED=true" in payload["message"]
-        mock_update_tool.assert_not_called()
+        # Should succeed - plugin chains can be pre-configured even when plugins are disabled
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_post == ["logging_plugin", "metrics_plugin"]
 
     @patch("mcpgateway.config.settings")
     @patch.object(TeamManagementService, "verify_team_for_user")
     @patch.object(ToolService, "update_tool")
-    async def test_reject_both_plugin_chains_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
-        """Test that both plugin chains are rejected when plugins are globally disabled."""
+    async def test_allow_both_plugin_chains_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that both plugin chains are allowed when plugins are globally disabled (for pre-configuration)."""
         # Mock plugins as disabled
         mock_settings.plugins.enabled = False
         mock_verify_team.return_value = None
@@ -1315,12 +1313,12 @@ class TestPluginChainValidationWhenDisabled:
             user={"email": "test@example.com", "db": mock_db},
         )
 
-        # Should fail on first plugin chain (pre)
-        assert result.status_code == 422
-        payload = json.loads(result.body.decode())
-        assert payload["success"] is False
-        assert "plugins are globally disabled" in payload["message"]
-        mock_update_tool.assert_not_called()
+        # Should succeed - plugin chains can be pre-configured even when plugins are disabled
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == ["auth_plugin"]
+        assert tool_update.plugin_chain_post == ["logging_plugin"]
 
     @patch("mcpgateway.config.settings")
     @patch.object(TeamManagementService, "verify_team_for_user")
