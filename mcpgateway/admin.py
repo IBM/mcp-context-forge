@@ -12082,8 +12082,8 @@ async def admin_edit_tool(
                 status_code=422,
             )
 
-    # Handle expose_passthrough checkbox: always set value (checked -> True, unchecked -> False)
-    # Checkbox not present means unchecked -> explicitly set False
+    # Handle expose_passthrough checkbox: always set explicit boolean value
+    # Checkbox unchecked → field absent from form → explicitly set False
     tool_data["expose_passthrough"] = "expose_passthrough" in form and form.get("expose_passthrough") == "true"
 
     # Handle list fields: allow clearing to empty list
