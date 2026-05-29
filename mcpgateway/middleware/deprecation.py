@@ -40,7 +40,7 @@ from __future__ import annotations
 
 # Standard
 from datetime import datetime
-from email.utils import parsedate_to_datetime
+from email.utils import format_datetime, parsedate_to_datetime
 from typing import Callable
 
 # First-Party
@@ -128,12 +128,15 @@ def _is_legacy_path(path: str) -> bool:
         return False
     if not path.startswith("/"):
         return False
-    if "\x00" in path or any(ord(c) < 32 and c not in ("\t", "\n", "\r") for c in path):
-        logger.warning("Invalid path with control characters rejected: %r", path[:100])
+
+    # Fast-exit for versioned routes — majority of post-migration traffic hits
+    # /v1/** and never needs the O(N) control-char scan below.
+    if path.startswith("/v1"):
         return False
 
-    # Exclude versioned routes
-    if path.startswith("/v1"):
+    # Control-char validation (only runs for unversioned paths)
+    if "\x00" in path or any(ord(c) < 32 and c not in ("\t", "\n", "\r") for c in path):
+        logger.warning("Invalid path with control characters rejected: %r", path[:100])
         return False
 
     # Exclude permanently unversioned routes
@@ -186,11 +189,12 @@ class DeprecationHeadersMiddleware:
                          e.g. ``"Wed, 13 May 2026 00:00:00 GMT"``.
         """
         self.app = app
-        self._sunset_date = sunset_date
 
-        # Parse sunset date and check if enforcement is approaching or overdue
+        # Parse and re-serialise to canonical HTTP-date — strips any CR/LF that
+        # could be injected via a misconfigured env var or secrets-manager value.
         try:
             sunset_dt = parsedate_to_datetime(sunset_date)
+            self._sunset_date = format_datetime(sunset_dt, usegmt=True)
             now = datetime.now(sunset_dt.tzinfo)
             days_until_sunset = (sunset_dt - now).days
 
@@ -198,22 +202,24 @@ class DeprecationHeadersMiddleware:
                 logger.warning(
                     "LEGACY API SUNSET DATE HAS PASSED! Legacy routes are %d days overdue for removal. Set LEGACY_API_ENABLED=false to disable legacy routes. Sunset date: %s",
                     abs(days_until_sunset),
-                    sunset_date,
+                    self._sunset_date,
                 )
             elif days_until_sunset <= 30:
                 logger.warning(
                     "Legacy API sunset approaching: %d days remaining until %s. Prepare to migrate clients to /v1 routes. Set LEGACY_API_ENABLED=false to disable legacy routes now.",
                     days_until_sunset,
-                    sunset_date,
+                    self._sunset_date,
                 )
             else:
                 logger.info(
                     "Legacy API deprecation active. Sunset date: %s (%d days remaining)",
-                    sunset_date,
+                    self._sunset_date,
                     days_until_sunset,
                 )
         except (ValueError, TypeError) as e:
             logger.error("Failed to parse sunset date '%s': %s", sunset_date, e)
+            # Fall back to raw string but strip CR/LF to prevent header injection
+            self._sunset_date = sunset_date.replace("\r", "").replace("\n", "")
 
         logger.debug("DeprecationHeadersMiddleware initialised (sunset=%s)", sunset_date)
 
@@ -256,7 +262,11 @@ class DeprecationHeadersMiddleware:
             """
             if message.get("type") == "http.response.start":
                 headers: list = list(message.get("headers") or [])
-                headers.extend(extra_headers)
+                # Only stamp deprecation headers on non-error responses — a
+                # Sunset header on a 401/403 can mislead clients into thinking
+                # the route exists and is merely deprecated.
+                if message.get("status", 200) < 400:
+                    headers.extend(extra_headers)
                 message = {**message, "headers": headers}
             await send(message)
 

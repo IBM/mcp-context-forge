@@ -2687,7 +2687,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             >>> AdminAuthMiddleware._strip_v1("/admin/login")
             '/admin/login'
         """
-        return path[3:] if path.startswith("/v1") else path
+        return path[len("/v1") :] if path.startswith("/v1/") else path
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -12232,23 +12232,10 @@ if settings.mcpgateway_admin_api_enabled and settings.siem_export_enabled:
 else:
     logger.info("SIEM router not included - admin API or SIEM export disabled")
 
-# Conditionally include observability router if enabled
-if settings.observability_enabled:
-    # First-Party
-    from mcpgateway.routers.observability import router as observability_router
-
-    app.include_router(observability_router)
-    logger.info("Observability router included - observability API endpoints enabled")
-else:
-    logger.info("Observability router not included - observability disabled")
-
-# Conditionally include metrics maintenance router if cleanup or rollup is enabled
-if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
-    # First-Party
-    from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router  # pylint: disable=import-outside-toplevel
-
-    app.include_router(metrics_maintenance_router)
-    logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
+# NOTE: observability_router and metrics_maintenance_router are mounted via
+# _assemble_routers() → build_v1_router / build_legacy_router above.
+# Direct app.include_router() calls were removed to prevent double-registration
+# and to ensure DeprecationHeadersMiddleware covers their legacy (unversioned) paths.
 
 # LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
 # cannot be nested inside the v1_router prefix

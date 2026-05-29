@@ -456,7 +456,7 @@ def main_app_with_a2a_router():
     a2a_routes = [r for r in main_mod.app.routes if getattr(r, "path", "").startswith("/v1/a2a")]
     if not a2a_routes:
         # ``a2a_router`` is defined inline inside ``mcpgateway.main``.
-        main_mod.app.include_router(main_mod.a2a_router)
+        main_mod.app.include_router(main_mod.a2a_router, prefix="/v1")
     yield main_mod.app
 
 

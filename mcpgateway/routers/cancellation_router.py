@@ -102,6 +102,8 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
         except Exception as e:
             # Continue silently if we cannot enumerate sessions
             logger.warning(f"Failed to enumerate sessions for cancellation notification: {e}")
+    else:
+        logger.warning("session_registry not initialised; cancellation broadcast skipped for request_id=%s", request_id)
 
     return CancelResponse(status=("cancelled" if local_cancelled else "queued"), request_id=request_id, reason=reason)
 
