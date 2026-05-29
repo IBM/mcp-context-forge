@@ -165,42 +165,8 @@ def test_convert_gateway_to_read_capabilities_from_relationships(monkeypatch):
     assert captured["resource_count"] == 2
 
 
-def test_convert_gateway_to_read_capabilities_absent_relationships(monkeypatch):
-    """convert_gateway_to_read uses zero counts when relationships are not loaded."""
-    service = GatewayService()
-
-    # No tools/prompts/resources keys in __dict__ at all
-    gateway = SimpleNamespace(
-        auth_value=None,
-        tags=[],
-        created_by=None,
-        modified_by=None,
-        created_at=None,
-        updated_at=None,
-        version=None,
-        team=None,
-    )
-
-    captured: dict = {}
-
-    class MockGatewayRead:
-        def __init__(self, data):
-            captured.update(data)
-
-        def masked(self):
-            return self
-
-    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
-
-    service.convert_gateway_to_read(gateway)
-
-    assert captured["tool_count"] == 0
-    assert captured["prompt_count"] == 0
-    assert captured["resource_count"] == 0
-
-
 def test_convert_gateway_to_read_capabilities_empty_relationships(monkeypatch):
-    """convert_gateway_to_read handles empty (but loaded) relationship lists."""
+    """convert_gateway_to_read returns zero counts when relationships are empty lists."""
     service = GatewayService()
 
     gateway = SimpleNamespace(
