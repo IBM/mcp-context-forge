@@ -6,7 +6,7 @@
 
 FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
 USER root
-RUN dnf install -y git && dnf clean all
+RUN dnf install -y git tzdata ca-certificates && dnf clean all
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 
@@ -19,6 +19,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/b
 FROM scratch
 LABEL org.opencontainers.image.source=https://github.com/contextforge/mcp-context-forge
 
+# Copy CA certificates for HTTPS calls
+COPY --from=builder /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt
+
+# Copy timezone data for time.LoadLocation()
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy binary
 COPY --from=builder /usr/local/bin/{{ cookiecutter.bin_name }} /{{ cookiecutter.bin_name }}
 
 USER 1001:1001

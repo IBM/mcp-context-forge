@@ -16,7 +16,7 @@
 # =============================================================================
 FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
 USER root
-RUN dnf install -y git tzdata && dnf clean all
+RUN dnf install -y git tzdata ca-certificates && dnf clean all
 ENV GOTOOLCHAIN=auto
 
 ARG TARGETARCH
@@ -38,10 +38,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
 FROM scratch
 LABEL org.opencontainers.image.source=https://github.com/IBM/mcp-context-forge
 
-# copy tzdata so time.LoadLocation works
+# Copy CA certificates for HTTPS calls
+COPY --from=builder /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt
+
+# Copy tzdata so time.LoadLocation works
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
-# copy binary
+# Copy binary
 COPY --from=builder /usr/local/bin/slow-time-server /slow-time-server
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
