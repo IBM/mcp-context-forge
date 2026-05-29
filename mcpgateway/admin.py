@@ -11976,7 +11976,6 @@ async def admin_edit_tool(
         "input_schema": input_schema,
         "output_schema": output_schema,
         "annotations": annotations,
-        "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth": auth_obj,
         "tags": tags,
         "visibility": visibility,
@@ -11985,6 +11984,25 @@ async def admin_edit_tool(
     }
 
     # Add optional fields only if present in form
+    # Validate and add JSONPath filter
+    if "jsonpath_filter" in form and form.get("jsonpath_filter"):
+        jsonpath_expr = form.get("jsonpath_filter").strip()
+        if jsonpath_expr:
+            try:
+                from jsonpath_ng import parse as parse_jsonpath
+                parse_jsonpath(jsonpath_expr)  # Validate syntax
+                tool_data["jsonpath_filter"] = jsonpath_expr
+            except Exception as ex:
+                LOGGER.error(f"Invalid JSONPath expression: {str(ex)}")
+                return ORJSONResponse(
+                    content={"message": f"Invalid JSONPath expression: {str(ex)}", "success": False},
+                    status_code=422,
+                )
+        else:
+            tool_data["jsonpath_filter"] = ""
+    else:
+        tool_data["jsonpath_filter"] = ""
+
     if "timeout_ms" in form and form.get("timeout_ms"):
         try:
             tool_data["timeout_ms"] = int(form.get("timeout_ms"))

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcpgateway.admin import admin_edit_tool
+from mcpgateway.db import Tool
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -642,3 +643,234 @@ class TestAdminEditToolAdvancedFields:
         payload = json.loads(result.body.decode())
         assert payload["success"] is False
         assert "must be a positive integer" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_query_mapping_json():
+    """Test that invalid JSON in query_mapping field returns 422 error."""
+    from mcpgateway.admin import admin_edit_tool
+    from unittest.mock import AsyncMock
+
+    mock_db = AsyncMock()
+    mock_request = AsyncMock()
+    mock_request.state = AsyncMock()
+    mock_request.state.user = {"email": "test@example.com", "db": mock_db}
+
+    with patch.object(TeamManagementService, "verify_team_for_user") as mock_verify_team:
+        mock_verify_team.return_value = None  # Pass team verification
+
+        # Mock tool exists
+        mock_tool = Tool(
+            id="550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            original_name="test-tool",
+            custom_name="test-tool",
+            custom_name_slug="test-tool",
+            url="http://example.com",
+            input_schema={},
+            team_id="team-123",
+            visibility="public",
+            integration_type="REST",
+        )
+        mock_db.execute = AsyncMock(return_value=AsyncMock(scalars=lambda: AsyncMock(first=lambda: mock_tool)))
+
+        # Form with invalid JSON in query_mapping
+        form_data = FakeForm(
+            {
+                "name": "test-tool",
+                "customName": "test-tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "input_schema": "{}",
+                "team_id": "team-123",
+                "visibility": "public",
+                "integrationType": "REST",
+                "query_mapping": "{invalid json}",  # Invalid JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid JSON in query_mapping" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_header_mapping_json():
+    """Test that invalid JSON in header_mapping field returns 422 error."""
+    from mcpgateway.admin import admin_edit_tool
+    from unittest.mock import AsyncMock
+
+    mock_db = AsyncMock()
+    mock_request = AsyncMock()
+    mock_request.state = AsyncMock()
+    mock_request.state.user = {"email": "test@example.com", "db": mock_db}
+
+    with patch.object(TeamManagementService, "verify_team_for_user") as mock_verify_team:
+        mock_verify_team.return_value = None  # Pass team verification
+
+        # Mock tool exists
+        mock_tool = Tool(
+            id="550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            original_name="test-tool",
+            custom_name="test-tool",
+            custom_name_slug="test-tool",
+            url="http://example.com",
+            input_schema={},
+            team_id="team-123",
+            visibility="public",
+            integration_type="REST",
+        )
+        mock_db.execute = AsyncMock(return_value=AsyncMock(scalars=lambda: AsyncMock(first=lambda: mock_tool)))
+
+        # Form with invalid JSON in header_mapping
+        form_data = FakeForm(
+            {
+                "name": "test-tool",
+                "customName": "test-tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "input_schema": "{}",
+                "team_id": "team-123",
+                "visibility": "public",
+                "integrationType": "REST",
+                "header_mapping": '{"key": invalid}',  # Invalid JSON
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid JSON in header_mapping" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_jsonpath_expression():
+    """Test that invalid JSONPath expression returns 422 error."""
+    from mcpgateway.admin import admin_edit_tool
+    from unittest.mock import AsyncMock
+
+    mock_db = AsyncMock()
+    mock_request = AsyncMock()
+    mock_request.state = AsyncMock()
+    mock_request.state.user = {"email": "test@example.com", "db": mock_db}
+
+    with patch.object(TeamManagementService, "verify_team_for_user") as mock_verify_team:
+        mock_verify_team.return_value = None  # Pass team verification
+
+        # Mock tool exists
+        mock_tool = Tool(
+            id="550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            original_name="test-tool",
+            custom_name="test-tool",
+            custom_name_slug="test-tool",
+            url="http://example.com",
+            input_schema={},
+            team_id="team-123",
+            visibility="public",
+            integration_type="REST",
+        )
+        mock_db.execute = AsyncMock(return_value=AsyncMock(scalars=lambda: AsyncMock(first=lambda: mock_tool)))
+
+        # Form with invalid JSONPath expression
+        form_data = FakeForm(
+            {
+                "name": "test-tool",
+                "customName": "test-tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "input_schema": "{}",
+                "team_id": "team-123",
+                "visibility": "public",
+                "integrationType": "REST",
+                "jsonpath_filter": "$.[[[invalid",  # Invalid JSONPath
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid JSONPath expression" in payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_valid_jsonpath_expression():
+    """Test that valid JSONPath expression is accepted."""
+    from mcpgateway.admin import admin_edit_tool
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_db = AsyncMock()
+    mock_request = MagicMock()
+    mock_request.headers = {}
+    mock_request.state = AsyncMock()
+    mock_request.state.user = {"email": "test@example.com", "db": mock_db}
+
+    with patch.object(TeamManagementService, "verify_team_for_user") as mock_verify_team, patch.object(ToolService, "update_tool") as mock_tool_service:
+        mock_verify_team.return_value = None  # Pass team verification
+
+        # Mock tool exists
+        mock_tool = Tool(
+            id="550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            original_name="test-tool",
+            custom_name="test-tool",
+            custom_name_slug="test-tool",
+            url="http://example.com",
+            input_schema={},
+            team_id="team-123",
+            visibility="public",
+            integration_type="REST",
+        )
+        mock_db.execute = AsyncMock(return_value=AsyncMock(scalars=lambda: AsyncMock(first=lambda: mock_tool)))
+        mock_tool_service.update_tool = AsyncMock(return_value=mock_tool)
+
+        # Form with valid JSONPath expression
+        form_data = FakeForm(
+            {
+                "name": "test-tool",
+                "customName": "test-tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "input_schema": "{}",
+                "team_id": "team-123",
+                "visibility": "public",
+                "integrationType": "REST",
+                "jsonpath_filter": "$.data[*].result",  # Valid JSONPath
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        # Verify the jsonpath_filter was passed to the service
+        call_args = mock_tool_service.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.jsonpath_filter == "$.data[*].result"
