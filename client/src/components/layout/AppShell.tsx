@@ -9,7 +9,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <AppSidebar />
       <SidebarInset>
         <Header />
-        <div className="flex flex-1 flex-col gap-4 p-6">{children}</div>
+        <div className="relative flex flex-1 flex-col gap-4 overflow-hidden p-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );
