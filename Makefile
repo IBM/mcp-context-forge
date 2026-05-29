@@ -5261,12 +5261,23 @@ container-build:
 	else \
 		PROFILING_ARG="--build-arg ENABLE_PROFILING=false"; \
 	fi; \
+	if [ "$(ENABLE_FIPS_BUILD)" = "true" ] || [ "$(ENABLE_FIPS_BUILD)" = "1" ]; then \
+		echo "🔐 Building container WITH FedRAMP/FIPS compliance (UBI 9 stack)..."; \
+		FIPS_ARG="--build-arg ENABLE_FIPS=true \
+			--build-arg PYTHON_VERSION=3.11 \
+			--build-arg UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest \
+			--build-arg NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest \
+			--build-arg UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest"; \
+	else \
+		FIPS_ARG="--build-arg ENABLE_FIPS=false"; \
+	fi; \
 	$(CONTAINER_RUNTIME) build \
 		--platform=$(PLATFORM) \
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
 		$$RMCP_ARG \
 		$$PROFILING_ARG \
+		$$FIPS_ARG \
 		$(DOCKER_BUILD_ARGS) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.
@@ -5284,6 +5295,16 @@ container-build-rust-lite:
 container-rust: container-build-rust
 	@echo "🦀 Building and running container with Rust plugins..."
 	$(MAKE) container-run
+
+container-build-fips: ## Build FedRAMP-compliant image (ENABLE_FIPS=true) for Dreadnought/FedRAMP deployments
+	@$(MAKE) container-build ENABLE_FIPS_BUILD=true
+
+container-validate-fedramp: container-check-image ## Validate FedRAMP compliance on a locally built FIPS image
+	@echo "Running FedRAMP post-build compliance validation..."
+	@$(CONTAINER_RUNTIME) run --rm \
+		--entrypoint /bin/bash \
+		$(IMAGE_BASE):$(IMAGE_TAG) \
+		-c "$$(cat scripts/fedramp-validate.sh)"
 
 CONTAINER_SSL        ?=
 CONTAINER_HOST_NET   ?=
