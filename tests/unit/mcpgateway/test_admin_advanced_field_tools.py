@@ -1825,3 +1825,152 @@ class TestHostnameExtractionSSRF:
         assert "api.example.com" in hostnames
         assert "localhost" in hostnames
         assert "192.168.1.1" in hostnames
+
+    @patch("urllib.parse.urlparse")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_generic_exception(self, mock_update_tool, mock_verify_team, mock_urlparse, mock_request, mock_db):
+        """Test that generic exceptions in base_url validation are handled."""
+        mock_verify_team.return_value = None
+        # Make urlparse raise a generic exception
+        mock_urlparse.side_effect = RuntimeError("Unexpected error")
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "https://api.example.com",
+                "path_template": "/api/v1/resource",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        content = json.loads(result.body)
+        assert "Invalid base_url" in content["message"]
+        assert "Unexpected error" in content["message"]
+
+    @patch("mcpgateway.admin.settings")
+    @patch("mcpgateway.common.validators.SecurityValidator._validate_ssrf")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allowlist_ssrf_validation_error(self, mock_update_tool, mock_verify_team, mock_validate_ssrf, mock_settings, mock_request, mock_db):
+        """Test that SSRF validation errors in allowlist are properly handled."""
+        mock_verify_team.return_value = None
+        mock_settings.ssrf_protection_enabled = True
+        # Make SSRF validation raise ValueError for blocked IPs
+        mock_validate_ssrf.side_effect = ValueError("IP address blocked by SSRF protection: 169.254.169.254")
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "http://169.254.169.254/latest/meta-data",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 400
+        content = json.loads(result.body)
+        assert "Security violation in allowlist" in content["message"]
+        assert "SSRF protection" in content["message"]
+
+    @patch("urllib.parse.urlparse")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allowlist_generic_exception(self, mock_update_tool, mock_verify_team, mock_urlparse, mock_request, mock_db):
+        """Test that generic exceptions in allowlist validation are handled."""
+        mock_verify_team.return_value = None
+
+        # Make urlparse raise a generic exception when called with allowlist URL
+        def urlparse_side_effect(url):
+            if "api.example.com" in url:
+                raise RuntimeError("Parsing failed unexpectedly")
+            # Return a real parsed result for other URLs (like the tool URL)
+            from urllib.parse import urlparse as real_urlparse
+            return real_urlparse(url)
+
+        mock_urlparse.side_effect = urlparse_side_effect
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api.example.com",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 400
+        content = json.loads(result.body)
+        assert "Invalid URL in allowlist" in content["message"]
+        assert "Parsing failed unexpectedly" in content["message"]
+
+    @patch("mcpgateway.plugins.list_configured_plugin_names")
+    @patch("mcpgateway.admin.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_unknown_plugin_in_chain(self, mock_update_tool, mock_verify_team, mock_settings, mock_list_plugins, mock_request, mock_db):
+        """Test that unknown plugins in plugin chains are rejected."""
+        mock_verify_team.return_value = None
+        mock_settings.plugins.enabled = True
+        # Mock the available plugins list
+        mock_list_plugins.return_value = ["plugin1", "plugin2"]
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "plugin1, unknown_plugin, plugin2",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        content = json.loads(result.body)
+        assert "Unknown plugin" in content["message"]
+        assert "unknown_plugin" in content["message"]
