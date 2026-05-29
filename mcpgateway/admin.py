@@ -12098,22 +12098,33 @@ async def admin_edit_tool(
 
     # Add plugin chain fields: allow clearing to empty list
     # Validate plugin names against configured plugins if plugins are enabled
+    # Reject non-empty plugin chains when plugins are globally disabled
     if "plugin_chain_pre" in form:
         plugin_chain_pre_raw = form.get("plugin_chain_pre")
         if plugin_chain_pre_raw and plugin_chain_pre_raw.strip():
             plugin_list = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
-            if settings.plugins.enabled:
-                # First-Party
-                from mcpgateway.plugins import list_configured_plugin_names
 
-                available_plugins = list_configured_plugin_names()
-                invalid_plugins = [p for p in plugin_list if p not in available_plugins]
-                if invalid_plugins:
-                    error_msg = f"Invalid plugin names in plugin_chain_pre: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
-                    return ORJSONResponse(
-                        content={"message": error_msg, "success": False},
-                        status_code=422,
-                    )
+            # Reject plugin chains when plugins are globally disabled
+            if not settings.plugins.enabled:
+                error_msg = "Cannot configure plugin_chain_pre: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
+                LOGGER.warning(f"Rejected plugin_chain_pre configuration: {plugin_list} (plugins disabled)")
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
+
+            # Validate plugin names against configured plugins
+            # First-Party
+            from mcpgateway.plugins import list_configured_plugin_names
+
+            available_plugins = list_configured_plugin_names()
+            invalid_plugins = [p for p in plugin_list if p not in available_plugins]
+            if invalid_plugins:
+                error_msg = f"Invalid plugin names in plugin_chain_pre: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
             tool_data["plugin_chain_pre"] = plugin_list
         else:
             # Empty field means clear the list
@@ -12123,18 +12134,28 @@ async def admin_edit_tool(
         plugin_chain_post_raw = form.get("plugin_chain_post")
         if plugin_chain_post_raw and plugin_chain_post_raw.strip():
             plugin_list = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
-            if settings.plugins.enabled:
-                # First-Party
-                from mcpgateway.plugins import list_configured_plugin_names
 
-                available_plugins = list_configured_plugin_names()
-                invalid_plugins = [p for p in plugin_list if p not in available_plugins]
-                if invalid_plugins:
-                    error_msg = f"Invalid plugin names in plugin_chain_post: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
-                    return ORJSONResponse(
-                        content={"message": error_msg, "success": False},
-                        status_code=422,
-                    )
+            # Reject plugin chains when plugins are globally disabled
+            if not settings.plugins.enabled:
+                error_msg = "Cannot configure plugin_chain_post: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
+                LOGGER.warning(f"Rejected plugin_chain_post configuration: {plugin_list} (plugins disabled)")
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
+
+            # Validate plugin names against configured plugins
+            # First-Party
+            from mcpgateway.plugins import list_configured_plugin_names
+
+            available_plugins = list_configured_plugin_names()
+            invalid_plugins = [p for p in plugin_list if p not in available_plugins]
+            if invalid_plugins:
+                error_msg = f"Invalid plugin names in plugin_chain_post: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
             tool_data["plugin_chain_post"] = plugin_list
         else:
             # Empty field means clear the list
