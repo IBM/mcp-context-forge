@@ -6360,7 +6360,12 @@ class ToolService(BaseService):
                     custom_name_ref = tool_update.name  # custom_name will track the rename
                 else:
                     custom_name_ref = tool.custom_name  # custom_name stays unchanged
-                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+
+                # Determine which team_id to check against
+                # If team is also changing, check against the NEW team; otherwise use current team
+                team_id_for_check = tool_update.team_id if (tool_update.team_id is not None and tool_update.team_id != tool.team_id) else tool.team_id
+
+                self._check_tool_name_conflict(db, custom_name_ref, tool_visibility_ref, tool.id, team_id=team_id_for_check, owner_email=tool.owner_email)
                 if tool_update.custom_name is None and tool.name == tool.custom_name:
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
