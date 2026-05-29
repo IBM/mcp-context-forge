@@ -452,7 +452,7 @@ class TestAdminEditToolAdvancedFields:
 
     @patch.object(ToolService, "update_tool")
     async def test_edit_tool_with_all_advanced_fields(self, mock_update_tool, mock_request, mock_db):
-        """Test editing tool with all advanced fields together."""
+        """Test editing tool with all advanced fields together (excluding plugin chains which require PLUGINS_ENABLED)."""
         form_data = FakeForm(
             {
                 "name": "test_tool",
@@ -468,8 +468,6 @@ class TestAdminEditToolAdvancedFields:
                 "header_mapping": '{"Authorization": "tokenField"}',
                 "expose_passthrough": "true",
                 "allowlist": "https://api1.example.com,https://api2.example.org",
-                "plugin_chain_pre": "rate_limit,regex_filter",
-                "plugin_chain_post": "resource_filter,pii_filter",
                 "requestType": "GET",
                 "integrationType": "REST",
             }
@@ -497,8 +495,7 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.header_mapping == {"Authorization": "tokenField"}
         assert tool_update.expose_passthrough is True
         assert tool_update.allowlist == ["https://api1.example.com", "https://api2.example.org"]
-        assert tool_update.plugin_chain_pre == ["rate_limit", "regex_filter"]
-        assert tool_update.plugin_chain_post == ["resource_filter", "pii_filter"]
+        # Note: plugin_chain_pre/post are tested separately in test_edit_tool_with_plugin_chains
 
     @patch.object(TeamManagementService, "verify_team_for_user")
     @patch.object(ToolService, "update_tool")
@@ -1479,3 +1476,136 @@ class TestFieldValidationConsistency:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.base_url == "https://api.example.com:8443"
+
+
+# ---------------------------------------------------------------------------
+# Hostname Extraction for SSRF Protection (IPv4 and domain names)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestHostnameExtractionSSRF:
+    """Test that hostname extraction for SSRF validation uses parsed.hostname correctly."""
+
+    @patch("mcpgateway.admin.settings")
+    @patch("mcpgateway.common.validators.SecurityValidator._validate_ssrf")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allowlist_ipv4_with_port(self, mock_update_tool, mock_verify_team, mock_validate_ssrf, mock_settings, mock_request, mock_db):
+        """Test that IPv4 URLs with ports are correctly parsed (hostname without port)."""
+        mock_verify_team.return_value = None
+        mock_settings.ssrf_protection_enabled = True
+        mock_validate_ssrf.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "http://192.168.1.1:8080",  # IPv4 with port
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify SSRF validation was called for allowlist URL with correct hostname (without port)
+        # This verifies parsed.hostname is used, not netloc.split(":")[0]
+        assert mock_validate_ssrf.call_count >= 1
+        # Find the call for the allowlist URL (not the tool URL)
+        allowlist_calls = [call for call in mock_validate_ssrf.call_args_list if "allowlist" in str(call)]
+        assert len(allowlist_calls) == 1
+        hostname_arg = allowlist_calls[0][0][0]
+        assert hostname_arg == "192.168.1.1"
+
+    @patch("mcpgateway.admin.settings")
+    @patch("mcpgateway.common.validators.SecurityValidator._validate_ssrf")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allowlist_hostname_without_port(self, mock_update_tool, mock_verify_team, mock_validate_ssrf, mock_settings, mock_request, mock_db):
+        """Test that regular hostnames without port work correctly."""
+        mock_verify_team.return_value = None
+        mock_settings.ssrf_protection_enabled = True
+        mock_validate_ssrf.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api.example.com",  # No port
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify SSRF validation received correct hostname for allowlist URL
+        assert mock_validate_ssrf.call_count >= 1
+        allowlist_calls = [call for call in mock_validate_ssrf.call_args_list if "allowlist" in str(call)]
+        assert len(allowlist_calls) == 1
+        hostname_arg = allowlist_calls[0][0][0]
+        assert hostname_arg == "api.example.com"
+
+    @patch("mcpgateway.admin.settings")
+    @patch("mcpgateway.common.validators.SecurityValidator._validate_ssrf")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allowlist_multiple_urls_with_ports(self, mock_update_tool, mock_verify_team, mock_validate_ssrf, mock_settings, mock_request, mock_db):
+        """Test that multiple URLs with various formats are all validated correctly."""
+        mock_verify_team.return_value = None
+        mock_settings.ssrf_protection_enabled = True
+        mock_validate_ssrf.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api.example.com, http://localhost:8080, http://192.168.1.1:9000",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify SSRF validation was called for each allowlist URL
+        assert mock_validate_ssrf.call_count >= 3
+        # Filter for allowlist calls only (ignore tool URL validation)
+        allowlist_calls = [call for call in mock_validate_ssrf.call_args_list if "allowlist" in str(call)]
+        assert len(allowlist_calls) == 3
+
+        hostnames = [call[0][0] for call in allowlist_calls]
+        assert "api.example.com" in hostnames
+        assert "localhost" in hostnames
+        assert "192.168.1.1" in hostnames
