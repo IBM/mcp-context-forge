@@ -585,22 +585,22 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
 
     Side Effects:
         Sets the following attributes on request.state:
-        - user_email: Resolved user email (from ID or direct)
-        - user_id: User ID from sub claim (may be email in legacy tokens)
-        - is_admin: Admin flag from payload
+        - user_email: Resolved user email (from UUID lookup or direct if legacy email sub)
+        - user_id: Value of the sub claim (UUID in new tokens, email in legacy tokens)
+        - is_admin: Admin flag resolved from DB (not from JWT)
         - auth_provider: Auth provider from payload
 
     Examples:
-        >>> # New format: sub contains user ID
-        >>> payload = {"sub": "12345", "is_admin": True, "auth_provider": "local"}
+        >>> # New format: sub contains UUID
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "auth_provider": "local"}
         >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
         >>> request.state.user_email  # doctest: +SKIP
         'user@example.com'
         >>> request.state.user_id  # doctest: +SKIP
-        '12345'
+        '550e8400-e29b-41d4-a716-446655440000'
 
         >>> # Legacy format: sub contains email
-        >>> payload = {"sub": "user@example.com", "is_admin": False}
+        >>> payload = {"sub": "user@example.com"}
         >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
         >>> request.state.user_email  # doctest: +SKIP
         'user@example.com'

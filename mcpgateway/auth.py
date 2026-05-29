@@ -1347,7 +1347,7 @@ async def get_current_user(
         # NOTE: Cannot use structural check (scopes dict) because email login JWTs
         # also have scopes dict (see email_auth.py:160)
         user_info = payload.get("user", {})
-        auth_provider = user_info.get("auth_provider")
+        auth_provider = user_info.get("auth_provider") or payload.get("auth_provider")
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
@@ -1889,13 +1889,7 @@ async def get_current_user(
         token_use = payload.get("token_use")
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
-            # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
-            resolved_is_admin = payload.get("is_admin", False)
-            if not resolved_is_admin:
-                user_info_nested = payload.get("user", {})
-                if isinstance(user_info_nested, dict):
-                    resolved_is_admin = user_info_nested.get("is_admin", False)
-            user_info = {"is_admin": resolved_is_admin}
+            user_info = {}  # is_admin resolved from DB inside _resolve_teams_from_db
             normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams

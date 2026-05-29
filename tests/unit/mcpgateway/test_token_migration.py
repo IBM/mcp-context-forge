@@ -5,7 +5,7 @@ from email-based to user-ID-based tokens.
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from mcpgateway.auth import get_user_email_from_token
 from mcpgateway.auth_context import set_user_context_from_token
 from mcpgateway.db import EmailUser
@@ -94,13 +94,17 @@ async def test_get_user_email_from_token_with_non_string_sub():
 
 @pytest.mark.asyncio
 async def test_set_user_context_from_token_with_email():
-    """Test setting user context from legacy token with email."""
+    """Test setting user context from legacy token with email — is_admin from DB."""
     request = MagicMock()
     request.state = MagicMock()
-    payload = {"sub": "user@example.com", "is_admin": True, "auth_provider": "oauth"}
+    payload = {"sub": "user@example.com", "auth_provider": "oauth"}
     db = MagicMock()
 
-    await set_user_context_from_token(request, payload, db)
+    mock_db_user = MagicMock()
+    mock_db_user.is_admin = True
+
+    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+        await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == "user@example.com"
@@ -110,18 +114,22 @@ async def test_set_user_context_from_token_with_email():
 
 @pytest.mark.asyncio
 async def test_set_user_context_from_token_with_user_id():
-    """Test setting user context from new token with UUID."""
+    """Test setting user context from new token with UUID — is_admin from DB."""
     request = MagicMock()
     request.state = MagicMock()
-    payload = {"sub": TEST_UUID, "is_admin": False, "auth_provider": "local"}
+    payload = {"sub": TEST_UUID, "auth_provider": "local"}
 
-    # Mock database query
+    # Mock database query for UUID→email resolution
     db = MagicMock()
     mock_user = MagicMock(spec=EmailUser)
     mock_user.email = "user@example.com"
     db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    await set_user_context_from_token(request, payload, db)
+    mock_db_user = MagicMock()
+    mock_db_user.is_admin = False
+
+    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
+        await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == TEST_UUID
@@ -131,17 +139,18 @@ async def test_set_user_context_from_token_with_user_id():
 
 @pytest.mark.asyncio
 async def test_set_user_context_from_token_defaults():
-    """Test default values when fields are missing."""
+    """Test default values when fields are missing — is_admin False when user not in DB."""
     request = MagicMock()
     request.state = MagicMock()
     payload = {"sub": "user@example.com"}
     db = MagicMock()
 
-    await set_user_context_from_token(request, payload, db)
+    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
+        await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == "user@example.com"
-    assert request.state.is_admin is False  # Default
+    assert request.state.is_admin is False  # Default when no DB user
     assert request.state.auth_provider == "local"  # Default
 
 
@@ -166,10 +175,10 @@ async def test_flattened_token_structure():
 
     payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_signature": False})
 
-    # Should have flattened structure
+    # Should have flattened structure with no user attributes
     assert "user" not in payload  # No nested user object
-    assert payload["is_admin"] is True  # Flattened
-    assert payload["auth_provider"] == "local"  # Flattened
+    assert "is_admin" not in payload  # Not in session tokens; fetched from DB on use
+    assert payload["auth_provider"] == "local"
     assert "full_name" not in payload  # PII removed
 
     assert payload["sub"] == TEST_UUID
@@ -196,10 +205,10 @@ async def test_legacy_token_structure():
 
     payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_signature": False})
 
-    # Should have flattened structure
-    assert payload["is_admin"] is False
+    # Should have no user attributes in session token
+    assert "is_admin" not in payload  # Not in session tokens; fetched from DB on use
     assert payload["auth_provider"] == "oauth"
     assert "full_name" not in payload  # PII removed
-    assert "email" not in payload  # Duplicate removed
+    assert "email" not in payload  # PII removed
 
     assert payload["sub"] == TEST_UUID
