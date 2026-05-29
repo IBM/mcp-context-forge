@@ -12005,7 +12005,15 @@ async def admin_edit_tool(
 
     if "timeout_ms" in form and form.get("timeout_ms"):
         try:
-            tool_data["timeout_ms"] = int(form.get("timeout_ms"))
+            timeout_value = int(form.get("timeout_ms"))
+            if timeout_value <= 0:
+                error_msg = "Invalid timeout_ms value: must be a positive integer (greater than 0)"
+                LOGGER.error(error_msg)
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
+            tool_data["timeout_ms"] = timeout_value
         except ValueError as ex:
             LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
             return ORJSONResponse(
@@ -12018,7 +12026,36 @@ async def admin_edit_tool(
 
     # Add REST passthrough fields only if present in form (REST tools only)
     if "base_url" in form and form.get("base_url"):
-        tool_data["base_url"] = form.get("base_url")
+        # Standard
+        from urllib.parse import urlparse
+
+        base_url = form.get("base_url")
+        try:
+            parsed_base_url = urlparse(base_url)
+            # Validate URL format: must have scheme and netloc
+            if not parsed_base_url.scheme or not parsed_base_url.netloc:
+                error_msg = f"Invalid base_url: {base_url} (must be a valid URL with scheme and host, e.g., https://api.example.com)"
+                LOGGER.error(error_msg)
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
+            # Validate scheme is http or https
+            if parsed_base_url.scheme not in ("http", "https"):
+                error_msg = f"Invalid base_url: {base_url} (scheme must be http or https)"
+                LOGGER.error(error_msg)
+                return ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                )
+        except Exception as ex:
+            error_msg = f"Invalid base_url: {base_url} - {str(ex)}"
+            LOGGER.error(error_msg)
+            return ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=422,
+            )
+        tool_data["base_url"] = base_url
 
     if "path_template" in form and form.get("path_template"):
         tool_data["path_template"] = form.get("path_template")

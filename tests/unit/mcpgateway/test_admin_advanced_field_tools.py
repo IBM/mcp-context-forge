@@ -1182,3 +1182,300 @@ class TestPluginChainValidationWhenDisabled:
         # plugin chains should be None (not provided in form)
         assert tool_update.plugin_chain_pre is None
         assert tool_update.plugin_chain_post is None
+
+
+# ---------------------------------------------------------------------------
+# Field Validation: timeout_ms and base_url
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestFieldValidationConsistency:
+    """Test backend validation matches frontend constraints for timeout_ms and base_url."""
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_timeout_ms_rejects_zero(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that timeout_ms=0 is rejected (must be positive)."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "timeout_ms": "0",  # Invalid: must be > 0
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "must be a positive integer" in payload["message"]
+        assert "greater than 0" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_timeout_ms_rejects_negative(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that negative timeout_ms is rejected."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "timeout_ms": "-5000",  # Invalid: negative
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "must be a positive integer" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_timeout_ms_accepts_positive(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that positive timeout_ms values are accepted."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "timeout_ms": "5000",  # Valid
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.timeout_ms == 5000
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_rejects_missing_scheme(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that base_url without scheme is rejected."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "api.example.com",  # Invalid: missing scheme
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid base_url" in payload["message"]
+        assert "must be a valid URL with scheme and host" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_rejects_missing_host(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that base_url without host is rejected."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "https://",  # Invalid: missing host
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid base_url" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_rejects_invalid_scheme(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that base_url with non-http(s) scheme is rejected."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "ftp://api.example.com",  # Invalid: ftp scheme
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "Invalid base_url" in payload["message"]
+        assert "scheme must be http or https" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_accepts_valid_http(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that valid http base_url is accepted."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "http://api.example.com",  # Valid
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.base_url == "http://api.example.com"
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_accepts_valid_https(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that valid https base_url is accepted."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "https://api.example.com",  # Valid
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.base_url == "https://api.example.com"
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_base_url_accepts_with_port(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test that base_url with port is accepted."""
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "base_url": "https://api.example.com:8443",  # Valid with port
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.base_url == "https://api.example.com:8443"
