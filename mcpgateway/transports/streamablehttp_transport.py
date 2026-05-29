@@ -3806,11 +3806,18 @@ class SessionManagerWrapper:
         Returns:
             Request body bytes, or None if client disconnected.
         """
+        max_body_bytes = 16 * 1024 * 1024  # 16MB limit for affinity forwarding
         body_parts = []
+        total = 0
         while True:
             message = await receive()
             if message["type"] == "http.request":
-                body_parts.append(message.get("body", b""))
+                chunk = message.get("body", b"")
+                total += len(chunk)
+                if total > max_body_bytes:
+                    logger.warning("Request body exceeds %d bytes limit, rejecting", max_body_bytes)
+                    return None
+                body_parts.append(chunk)
                 if not message.get("more_body", False):
                     break
             elif message["type"] == "http.disconnect":
