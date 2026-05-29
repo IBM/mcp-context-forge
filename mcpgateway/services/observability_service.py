@@ -358,6 +358,7 @@ class ObservabilityService:
         status: str = "ok",
         status_message: Optional[str] = None,
         http_status_code: Optional[int] = None,
+        user_email: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
         """End a trace.
@@ -371,6 +372,7 @@ class ObservabilityService:
             status: Trace status (ok, error)
             status_message: Optional status message
             http_status_code: HTTP response status code
+            user_email: Authenticated user email resolved during request processing
             attributes: Additional attributes to merge
 
         Note:
@@ -402,6 +404,8 @@ class ObservabilityService:
             trace.status_message = status_message
             if http_status_code is not None:
                 trace.http_status_code = http_status_code
+            if user_email:
+                trace.user_email = user_email
             if attributes:
                 trace.attributes = {**(trace.attributes or {}), **attributes}
 
