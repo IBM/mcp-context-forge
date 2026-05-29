@@ -97,6 +97,13 @@ def test_tool_create_prevent_manual_and_passthrough_rules():
 
 
 def test_tool_create_passthrough_validators():
+    # Standard
+    from unittest.mock import MagicMock, patch
+
+    # Mock settings with plugins enabled so validation runs
+    mock_settings = MagicMock()
+    mock_settings.plugins.enabled = True
+
     values = ToolCreate.extract_base_url_and_path_template({"integration_type": "REST", "url": "http://example.com/api"})
     assert values["base_url"] == "http://example.com"
     assert values["path_template"] == "/api"
@@ -119,8 +126,9 @@ def test_tool_create_passthrough_validators():
     with pytest.raises(ValueError):
         ToolCreate.validate_allowlist(["not a host"])
 
-    with pytest.raises(ValueError):
-        ToolCreate.validate_plugin_chain(["unknown_plugin"])
+    with patch("mcpgateway.schemas.settings", mock_settings):
+        with pytest.raises(ValueError):
+            ToolCreate.validate_plugin_chain(["unknown_plugin"])
 
 
 def test_tool_request_type_validation_unknown_integration():
