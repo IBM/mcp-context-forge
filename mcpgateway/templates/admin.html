@@ -8870,12 +8870,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </div>
 
                     <!-- REST Passthrough Fields -->
-                    <div id="edit-tool-rest-passthrough-section" style="display: none;">
-                      <h4 class="text-md font-semibold text-gray-900 dark:text-gray-100 mb-4 border-b border-gray-200 dark:border-gray-700 pb-2">
-                        REST Passthrough Configuration
-                      </h4>
+                    <!-- Button to show passthrough configuration -->
+                    <div id="edit-tool-rest-passthrough-button-wrapper" style="display: none;">
+                      <button
+                        type="button"
+                        id="edit-tool-passthrough-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+                        onclick="document.getElementById('edit-tool-passthrough-container').style.display='block'; this.parentElement.style.display='none';"
+                      >
+                        Add Passthrough Configuration
+                      </button>
+                    </div>
 
-                      <div class="space-y-6">
+                    <!-- Passthrough configuration container -->
+                    <fieldset id="edit-tool-passthrough-container" style="display: none;" class="border border-gray-300 dark:border-gray-600 rounded-lg p-4">
+                      <legend class="text-md font-semibold text-gray-900 dark:text-gray-100 px-2">
+                        REST Passthrough Configuration
+                      </legend>
+
+                      <div class="space-y-6 mt-4">
                         <div>
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -8980,7 +8993,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </p>
                         </div>
                       </div>
-                    </div>
+                    </fieldset>
 
                     <!-- Plugin Chain Fields (shown when plugins enabled) -->
                     <div id="edit-tool-plugin-section" style="display: none;">

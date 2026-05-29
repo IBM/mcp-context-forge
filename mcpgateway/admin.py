@@ -11878,6 +11878,247 @@ async def admin_add_tool(
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
+def _validate_base_url(base_url: str) -> Optional[ORJSONResponse]:
+    """Validate base_url format for REST passthrough.
+
+    Args:
+        base_url: The base URL to validate
+
+    Returns:
+        ORJSONResponse with error if validation fails, None if valid
+    """
+    try:
+        # Standard
+        from urllib.parse import urlparse
+
+        parsed_base_url = urlparse(base_url)
+        # Validate URL format: must have scheme and netloc
+        if not parsed_base_url.scheme or not parsed_base_url.netloc:
+            error_msg = f"Invalid base_url: {base_url} (must be a valid URL with scheme and host, e.g., https://api.example.com)"
+            LOGGER.error(error_msg)
+            return ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=422,
+            )
+        # Validate scheme is http or https
+        if parsed_base_url.scheme not in ("http", "https"):
+            error_msg = f"Invalid base_url: {base_url} (scheme must be http or https)"
+            LOGGER.error(error_msg)
+            return ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=422,
+            )
+    except Exception as ex:
+        error_msg = f"Invalid base_url: {base_url} - {str(ex)}"
+        LOGGER.error(error_msg)
+        return ORJSONResponse(
+            content={"message": error_msg, "success": False},
+            status_code=422,
+        )
+    return None
+
+
+def _validate_json_field(field_name: str, field_value: str) -> tuple[Optional[dict], Optional[ORJSONResponse]]:
+    """Validate and parse JSON field from form data.
+
+    Args:
+        field_name: Name of the field (for error messages)
+        field_value: Raw JSON string value
+
+    Returns:
+        Tuple of (parsed_json, error_response). If validation fails, returns (None, error_response).
+        If validation succeeds, returns (parsed_json, None).
+    """
+    try:
+        parsed = orjson.loads(field_value) if isinstance(field_value, str) else None
+        return (parsed, None)
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in {field_name} field: {str(ex)}")
+        return (None, ORJSONResponse(
+            content={"message": f"Invalid JSON in {field_name} field: {str(ex)}", "success": False},
+            status_code=422,
+        ))
+
+
+def _parse_core_json_fields(form) -> tuple[Optional[dict], Optional[ORJSONResponse]]:
+    """Parse and validate core JSON fields from form data.
+
+    Args:
+        form: Form data containing headers, input_schema, output_schema, annotations
+
+    Returns:
+        Tuple of (parsed_fields_dict, error_response). If parsing fails, returns (None, error_response).
+        If parsing succeeds, returns (parsed_fields_dict, None) where parsed_fields_dict contains:
+        - headers: parsed JSON object
+        - input_schema: parsed JSON object
+        - output_schema: parsed JSON object or None
+        - annotations: parsed JSON object
+    """
+    try:
+        headers_raw = form.get("headers")
+        input_schema_raw = form.get("input_schema")
+        output_schema_raw = form.get("output_schema")
+        annotations_raw = form.get("annotations")
+
+        headers = orjson.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}")
+        input_schema = orjson.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}")
+        output_schema = orjson.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None
+        annotations = orjson.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}")
+
+        return (
+            {
+                "headers": headers,
+                "input_schema": input_schema,
+                "output_schema": output_schema,
+                "annotations": annotations,
+            },
+            None,
+        )
+    except orjson.JSONDecodeError as ex:
+        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
+        return (None, ORJSONResponse(
+            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
+            status_code=422,
+        ))
+
+
+def _validate_allowlist_urls(allowlist_raw: str) -> tuple[Optional[list], Optional[ORJSONResponse]]:
+    """Validate allowlist URLs and check for SSRF vulnerabilities.
+
+    Args:
+        allowlist_raw: Comma-separated list of URLs
+
+    Returns:
+        Tuple of (allowlist_entries, error_response). If validation fails, returns (None, error_response).
+        If validation succeeds, returns (allowlist_entries, None).
+    """
+    # Standard
+    from urllib.parse import urlparse
+
+    allowlist_entries = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+    # Validate each URL to prevent SSRF attacks
+    for url in allowlist_entries:
+        try:
+            parsed = urlparse(url)
+            if not parsed.scheme or not parsed.netloc:
+                error_msg = f"Invalid URL in allowlist: {url} (must include scheme and host)"
+                return (None, ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=400,
+                ))
+
+            # Enhanced SSRF protection: validate against private IP ranges, cloud metadata, etc.
+            if settings.ssrf_protection_enabled:
+                try:
+                    # Extract hostname without port for SSRF validation
+                    # parsed.hostname handles IPv6 correctly (e.g., "::1" from "http://[::1]:8080")
+                    # Only fall back to netloc if hostname is None (shouldn't happen for valid URLs)
+                    hostname = parsed.hostname or parsed.netloc
+                    # Call internal SSRF validator directly after URL parsing (avoid redundant scheme/netloc checks)
+                    SecurityValidator._validate_ssrf(hostname, f"allowlist URL '{url}'")  # pylint: disable=protected-access
+                except ValueError as ssrf_err:
+                    error_msg = f"Security violation in allowlist: {str(ssrf_err)}"
+                    LOGGER.error(error_msg)
+                    return (None, ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=400,
+                    ))
+        except Exception as ex:
+            error_msg = f"Invalid URL in allowlist: {url} - {str(ex)}"
+            return (None, ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=400,
+            ))
+    return (allowlist_entries, None)
+
+
+def _validate_plugin_chains(plugin_chain_raw: str, field_name: str, available_plugins: list, plugins_enabled: bool) -> tuple[Optional[list], Optional[ORJSONResponse]]:
+    """Validate plugin chain field.
+
+    Args:
+        plugin_chain_raw: Comma-separated list of plugin names
+        field_name: Name of the field (for error messages)
+        available_plugins: List of available plugin names
+        plugins_enabled: Whether plugins are globally enabled
+
+    Returns:
+        Tuple of (plugin_list, error_response). If validation fails, returns (None, error_response).
+        If validation succeeds, returns (plugin_list, None).
+    """
+    plugin_list = [x.strip() for x in plugin_chain_raw.split(",") if x.strip()]
+
+    # Reject plugin chains when plugins are globally disabled
+    if not plugins_enabled:
+        error_msg = f"Cannot configure {field_name}: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
+        LOGGER.warning(f"Rejected {field_name} configuration: {plugin_list} (plugins disabled)")
+        return (None, ORJSONResponse(
+            content={"message": error_msg, "success": False},
+            status_code=422,
+        ))
+
+    # Validate plugin names
+    for plugin_name in plugin_list:
+        if plugin_name not in available_plugins:
+            error_msg = f"Unknown plugin in {field_name}: {plugin_name}"
+            LOGGER.warning(error_msg)
+            return (None, ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=422,
+            ))
+    return (plugin_list, None)
+
+
+def _validate_jsonpath_filter(jsonpath_expr: str) -> Optional[ORJSONResponse]:
+    """Validate JSONPath filter expression.
+
+    Args:
+        jsonpath_expr: JSONPath expression to validate
+
+    Returns:
+        ORJSONResponse with error if validation fails, None if valid
+    """
+    try:
+        # Third-Party
+        from jsonpath_ng import parse as parse_jsonpath
+
+        parse_jsonpath(jsonpath_expr)  # Validate syntax
+        return None
+    except Exception as ex:
+        LOGGER.error(f"Invalid JSONPath expression: {str(ex)}")
+        return ORJSONResponse(
+            content={"message": f"Invalid JSONPath expression: {str(ex)}", "success": False},
+            status_code=422,
+        )
+
+
+def _validate_timeout_ms(timeout_value_str: str) -> tuple[Optional[int], Optional[ORJSONResponse]]:
+    """Validate timeout_ms value.
+
+    Args:
+        timeout_value_str: String representation of timeout value
+
+    Returns:
+        Tuple of (timeout_value, error_response). If validation fails, returns (None, error_response).
+        If validation succeeds, returns (timeout_value, None).
+    """
+    try:
+        timeout_value = int(timeout_value_str)
+        if timeout_value <= 0:
+            error_msg = "Invalid timeout_ms value: must be a positive integer (greater than 0)"
+            LOGGER.error(error_msg)
+            return (None, ORJSONResponse(
+                content={"message": error_msg, "success": False},
+                status_code=422,
+            ))
+        return (timeout_value, None)
+    except ValueError as ex:
+        LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
+        return (None, ORJSONResponse(
+            content={"message": "Invalid timeout_ms value: must be a positive integer", "success": False},
+            status_code=422,
+        ))
+
+
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
 @require_permission("tools.update", allow_admin_bypass=False)
@@ -11949,23 +12190,15 @@ async def admin_edit_tool(
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
-    headers_raw2 = form.get("headers")
-    input_schema_raw2 = form.get("input_schema")
-    output_schema_raw2 = form.get("output_schema")
-    annotations_raw2 = form.get("annotations")
-
     # Parse JSON fields with validation
-    try:
-        headers = orjson.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}")
-        input_schema = orjson.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}")
-        output_schema = orjson.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None
-        annotations = orjson.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}")
-    except orjson.JSONDecodeError as ex:
-        LOGGER.error(f"Invalid JSON in form field: {str(ex)}")
-        return ORJSONResponse(
-            content={"message": f"Invalid JSON in form field: {str(ex)}", "success": False},
-            status_code=422,
-        )
+    parsed_fields, error_response = _parse_core_json_fields(form)
+    if error_response:
+        return error_response
+
+    headers = parsed_fields["headers"]
+    input_schema = parsed_fields["input_schema"]
+    output_schema = parsed_fields["output_schema"]
+    annotations = parsed_fields["annotations"]
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
@@ -11988,99 +12221,46 @@ async def admin_edit_tool(
     # Validate and add JSONPath filter
     jsonpath_expr = form.get("jsonpath_filter", "").strip() if "jsonpath_filter" in form else ""
     if jsonpath_expr:
-        try:
-            # Third-Party
-            from jsonpath_ng import parse as parse_jsonpath
-
-            parse_jsonpath(jsonpath_expr)  # Validate syntax
-            tool_data["jsonpath_filter"] = jsonpath_expr
-        except Exception as ex:
-            LOGGER.error(f"Invalid JSONPath expression: {str(ex)}")
-            return ORJSONResponse(
-                content={"message": f"Invalid JSONPath expression: {str(ex)}", "success": False},
-                status_code=422,
-            )
+        error_response = _validate_jsonpath_filter(jsonpath_expr)
+        if error_response:
+            return error_response
+        tool_data["jsonpath_filter"] = jsonpath_expr
     else:
         tool_data["jsonpath_filter"] = ""
 
     if "timeout_ms" in form and form.get("timeout_ms"):
-        try:
-            timeout_value = int(form.get("timeout_ms"))
-            if timeout_value <= 0:
-                error_msg = "Invalid timeout_ms value: must be a positive integer (greater than 0)"
-                LOGGER.error(error_msg)
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
-            tool_data["timeout_ms"] = timeout_value
-        except ValueError as ex:
-            LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
-            return ORJSONResponse(
-                content={"message": "Invalid timeout_ms value: must be a positive integer", "success": False},
-                status_code=422,
-            )
+        timeout_value, error_response = _validate_timeout_ms(form.get("timeout_ms"))
+        if error_response:
+            return error_response
+        tool_data["timeout_ms"] = timeout_value
 
     if "title" in form and form.get("title"):
         tool_data["title"] = form.get("title")
 
     # Add REST passthrough fields only if present in form (REST tools only)
     if "base_url" in form and form.get("base_url"):
-        # Standard
-        from urllib.parse import urlparse
-
         base_url = form.get("base_url")
-        try:
-            parsed_base_url = urlparse(base_url)
-            # Validate URL format: must have scheme and netloc
-            if not parsed_base_url.scheme or not parsed_base_url.netloc:
-                error_msg = f"Invalid base_url: {base_url} (must be a valid URL with scheme and host, e.g., https://api.example.com)"
-                LOGGER.error(error_msg)
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
-            # Validate scheme is http or https
-            if parsed_base_url.scheme not in ("http", "https"):
-                error_msg = f"Invalid base_url: {base_url} (scheme must be http or https)"
-                LOGGER.error(error_msg)
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
-        except Exception as ex:
-            error_msg = f"Invalid base_url: {base_url} - {str(ex)}"
-            LOGGER.error(error_msg)
-            return ORJSONResponse(
-                content={"message": error_msg, "success": False},
-                status_code=422,
-            )
+        error_response = _validate_base_url(base_url)
+        if error_response:
+            return error_response
         tool_data["base_url"] = base_url
 
     if "path_template" in form and form.get("path_template"):
         tool_data["path_template"] = form.get("path_template")
 
     if "query_mapping" in form and form.get("query_mapping"):
-        try:
-            query_mapping_raw = form.get("query_mapping")
-            tool_data["query_mapping"] = orjson.loads(query_mapping_raw) if isinstance(query_mapping_raw, str) else None
-        except orjson.JSONDecodeError as ex:
-            LOGGER.error(f"Invalid JSON in query_mapping field: {str(ex)}")
-            return ORJSONResponse(
-                content={"message": f"Invalid JSON in query_mapping field: {str(ex)}", "success": False},
-                status_code=422,
-            )
+        query_mapping_raw = form.get("query_mapping")
+        parsed_json, error_response = _validate_json_field("query_mapping", query_mapping_raw)
+        if error_response:
+            return error_response
+        tool_data["query_mapping"] = parsed_json
 
     if "header_mapping" in form and form.get("header_mapping"):
-        try:
-            header_mapping_raw = form.get("header_mapping")
-            tool_data["header_mapping"] = orjson.loads(header_mapping_raw) if isinstance(header_mapping_raw, str) else None
-        except orjson.JSONDecodeError as ex:
-            LOGGER.error(f"Invalid JSON in header_mapping field: {str(ex)}")
-            return ORJSONResponse(
-                content={"message": f"Invalid JSON in header_mapping field: {str(ex)}", "success": False},
-                status_code=422,
-            )
+        header_mapping_raw = form.get("header_mapping")
+        parsed_json, error_response = _validate_json_field("header_mapping", header_mapping_raw)
+        if error_response:
+            return error_response
+        tool_data["header_mapping"] = parsed_json
 
     # Handle expose_passthrough checkbox: always set explicit boolean value
     # Checkbox unchecked → field absent from form → explicitly set False
@@ -12090,45 +12270,9 @@ async def admin_edit_tool(
     if "allowlist" in form:
         allowlist_raw = form.get("allowlist")
         if allowlist_raw and allowlist_raw.strip():
-            # Standard
-            from urllib.parse import urlparse
-
-            # First-Party
-            from mcpgateway.common.validators import SecurityValidator
-
-            allowlist_entries = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
-            # Validate each URL to prevent SSRF attacks
-            for url in allowlist_entries:
-                try:
-                    parsed = urlparse(url)
-                    if not parsed.scheme or not parsed.netloc:
-                        error_msg = f"Invalid URL in allowlist: {url} (must include scheme and host)"
-                        return ORJSONResponse(
-                            content={"message": error_msg, "success": False},
-                            status_code=400,
-                        )
-
-                    # Enhanced SSRF protection: validate against private IP ranges, cloud metadata, etc.
-                    if settings.ssrf_protection_enabled:
-                        try:
-                            # Extract hostname without port for SSRF validation
-                            # parsed.hostname handles IPv6 correctly (e.g., "::1" from "http://[::1]:8080")
-                            # Only fall back to netloc if hostname is None (shouldn't happen for valid URLs)
-                            hostname = parsed.hostname or parsed.netloc
-                            SecurityValidator._validate_ssrf(hostname, f"allowlist URL '{url}'")
-                        except ValueError as ssrf_err:
-                            error_msg = f"Security violation in allowlist: {str(ssrf_err)}"
-                            LOGGER.error(error_msg)
-                            return ORJSONResponse(
-                                content={"message": error_msg, "success": False},
-                                status_code=400,
-                            )
-                except Exception as ex:
-                    error_msg = f"Invalid URL in allowlist: {url} - {str(ex)}"
-                    return ORJSONResponse(
-                        content={"message": error_msg, "success": False},
-                        status_code=400,
-                    )
+            allowlist_entries, error_response = _validate_allowlist_urls(allowlist_raw)
+            if error_response:
+                return error_response
             tool_data["allowlist"] = allowlist_entries
         else:
             # Empty field means clear the list
@@ -12140,29 +12284,15 @@ async def admin_edit_tool(
     if "plugin_chain_pre" in form:
         plugin_chain_pre_raw = form.get("plugin_chain_pre")
         if plugin_chain_pre_raw and plugin_chain_pre_raw.strip():
-            plugin_list = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
-
-            # Reject plugin chains when plugins are globally disabled
-            if not settings.plugins.enabled:
-                error_msg = "Cannot configure plugin_chain_pre: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
-                LOGGER.warning(f"Rejected plugin_chain_pre configuration: {plugin_list} (plugins disabled)")
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
-
-            # Validate plugin names against configured plugins
             # First-Party
             from mcpgateway.plugins import list_configured_plugin_names
 
             available_plugins = list_configured_plugin_names()
-            invalid_plugins = [p for p in plugin_list if p not in available_plugins]
-            if invalid_plugins:
-                error_msg = f"Invalid plugin names in plugin_chain_pre: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
+            plugin_list, error_response = _validate_plugin_chains(
+                plugin_chain_pre_raw, "plugin_chain_pre", available_plugins, settings.plugins.enabled
+            )
+            if error_response:
+                return error_response
             tool_data["plugin_chain_pre"] = plugin_list
         else:
             # Empty field means clear the list
@@ -12171,29 +12301,15 @@ async def admin_edit_tool(
     if "plugin_chain_post" in form:
         plugin_chain_post_raw = form.get("plugin_chain_post")
         if plugin_chain_post_raw and plugin_chain_post_raw.strip():
-            plugin_list = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
-
-            # Reject plugin chains when plugins are globally disabled
-            if not settings.plugins.enabled:
-                error_msg = "Cannot configure plugin_chain_post: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
-                LOGGER.warning(f"Rejected plugin_chain_post configuration: {plugin_list} (plugins disabled)")
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
-
-            # Validate plugin names against configured plugins
             # First-Party
             from mcpgateway.plugins import list_configured_plugin_names
 
             available_plugins = list_configured_plugin_names()
-            invalid_plugins = [p for p in plugin_list if p not in available_plugins]
-            if invalid_plugins:
-                error_msg = f"Invalid plugin names in plugin_chain_post: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
-                return ORJSONResponse(
-                    content={"message": error_msg, "success": False},
-                    status_code=422,
-                )
+            plugin_list, error_response = _validate_plugin_chains(
+                plugin_chain_post_raw, "plugin_chain_post", available_plugins, settings.plugins.enabled
+            )
+            if error_response:
+                return error_response
             tool_data["plugin_chain_post"] = plugin_list
         else:
             # Empty field means clear the list

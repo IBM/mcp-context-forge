@@ -246,10 +246,10 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.plugin_chain_pre == ["rate_limit", "pii_filter"]
         assert tool_update.plugin_chain_post == ["response_shape", "deny_filter"]
 
+    @patch("mcpgateway.plugins.list_configured_plugin_names")
     @patch("mcpgateway.admin.settings")
-    @patch("mcpgateway.admin.list_plugins")
     @patch.object(ToolService, "update_tool")
-    async def test_edit_tool_clear_plugin_chains(self, mock_update_tool, mock_list_plugins, mock_settings, mock_request, mock_db):
+    async def test_edit_tool_clear_plugin_chains(self, mock_update_tool, mock_settings, mock_list_plugins, mock_request, mock_db):
         """Test that submitting empty plugin chain fields clears the chains to []."""
         # Mock plugins as enabled
         mock_settings.plugins.enabled = True
@@ -271,6 +271,85 @@ class TestAdminEditToolAdvancedFields:
 
         result = await admin_edit_tool(
             "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify plugin chains were cleared to empty lists
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == []
+        assert tool_update.plugin_chain_post == []
+
+    @patch("mcpgateway.plugins.list_configured_plugin_names")
+    @patch("mcpgateway.admin.settings")
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_workflow_set_then_clear_plugin_chains(self, mock_update_tool, mock_settings, mock_list_plugins, mock_request, mock_db):
+        """Test complete workflow: set plugin chains, then clear them by submitting empty fields.
+
+        This simulates the real user scenario:
+        1. User edits tool and sets plugin_chain_pre and plugin_chain_post
+        2. Later, user edits the same tool and clears both chains by leaving fields empty
+
+        Verifies that empty string in form field translates to [] in ToolUpdate,
+        which the service layer will interpret as "clear the existing chains".
+        """
+        # Mock plugins as enabled
+        mock_settings.plugins.enabled = True
+        mock_list_plugins.return_value = ["rate_limit", "pii_filter", "response_shape"]
+
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
+
+        # Step 1: First edit - set plugin chains
+        form_data_with_chains = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "rate_limit, pii_filter",
+                "plugin_chain_post": "response_shape",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data_with_chains)
+
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify plugin chains were set
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == ["rate_limit", "pii_filter"]
+        assert tool_update.plugin_chain_post == ["response_shape"]
+
+        # Step 2: Second edit - clear plugin chains by submitting empty strings
+        form_data_clear_chains = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "",  # Empty field clears the chain
+                "plugin_chain_post": "",  # Empty field clears the chain
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data_clear_chains)
+
+        result = await admin_edit_tool(
+            tool_id,
             mock_request,
             mock_db,
             user={"email": "test@example.com", "db": mock_db},
@@ -441,6 +520,75 @@ class TestAdminEditToolAdvancedFields:
 
         result = await admin_edit_tool(
             "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify allowlist was cleared to empty list
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.allowlist == []
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_workflow_set_then_clear_allowlist(self, mock_update_tool, mock_request, mock_db):
+        """Test complete workflow: set allowlist, then clear it by submitting empty field.
+
+        This simulates the real user scenario:
+        1. User edits tool and sets allowlist with multiple URLs
+        2. Later, user edits the same tool and clears allowlist by leaving field empty
+
+        Verifies that empty string in form field translates to [] in ToolUpdate,
+        which the service layer will interpret as "clear the existing allowlist".
+        """
+        tool_id = "550e8400e29b41d4a7164466554400b1"  # pragma: allowlist secret
+
+        # Step 1: First edit - set allowlist
+        form_data_with_allowlist = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api1.example.com, https://api2.example.com, https://api3.example.com",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data_with_allowlist)
+
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify allowlist was set with 3 URLs
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.allowlist == ["https://api1.example.com", "https://api2.example.com", "https://api3.example.com"]
+
+        # Step 2: Second edit - clear allowlist by submitting empty string
+        form_data_clear_allowlist = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "",  # Empty field clears the allowlist
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data_clear_allowlist)
+
+        result = await admin_edit_tool(
+            tool_id,
             mock_request,
             mock_db,
             user={"email": "test@example.com", "db": mock_db},
