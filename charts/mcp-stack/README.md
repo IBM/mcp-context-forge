@@ -1056,7 +1056,11 @@ Create a Secret for the rate limiter Redis URL:
 
 ```bash
 kubectl create secret generic rate-limiter-redis-secret \
-  --from-literal=RATELIMITER_REDIS_URL='redis://:password@rate-limiter-redis:6379/0'
+  --from-literal=RATELIMITER_REDIS_URL='redis://:password@rate-limiter-redis:6379/0' \
+  --from-literal=RATELIMITER_REDIS_SSL_CA_CERTS='path/to/ca.crt' \
+  --from-literal=RATELIMITER_REDIS_SSL_CERTFILE='path/to/client.crt' \
+  --from-literal=RATELIMITER_REDIS_SSL_KEYFILE='path/to/client.key' \
+  --from-literal=RATELIMITER_REDIS_SSL_CHECK_HOSTNAME='true'
 ```
 
 Reference the Secret in your `values.yaml`:
@@ -1072,6 +1076,7 @@ mcpContextForge:
     RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
     RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
     RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: false
 ```
 
 #### Direct Configuration (Development Only)
@@ -1083,6 +1088,11 @@ mcpContextForge:
     RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
     RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
     RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: false
+    RATELIMITER_REDIS_SSL_CA_CERTS: /certs/ca.crt
+    RATELIMITER_REDIS_SSL_CERTFILE: /certs/client.crt
+    RATELIMITER_REDIS_SSL_KEYFILE: /certs/client.key
+    RATELIMITER_REDIS_SSL_CHECK_HOSTNAME: true
 ```
 
 #### Fallback Behavior
@@ -1095,7 +1105,6 @@ The rate limiter Redis inherits TLS settings from the main Redis configuration (
 
 **Notes:**
 - **Migration:** Unset = uses main `REDIS_URL` (backward compatible)
-- **TLS:** Inherits TLS settings from main Redis (`REDIS_SSL`, `REDIS_CA_CERT`, etc). Use `rediss://` scheme for TLS
 - **URL Validation:** Must start with `redis://` or `rediss://` (validated at startup)
 - **Independent:** Operates independently of `CACHE_TYPE` setting
 

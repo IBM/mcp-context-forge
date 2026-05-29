@@ -120,6 +120,42 @@ def _build_ssl_kwargs(settings: Any) -> dict[str, Any]:
     return kwargs
 
 
+def build_reatelimiter_ssl_kwargs(settings: Any) -> dict[str, Any]:
+    """Same as _build_ssl_kwargs but for the rate limiter Redis config.
+
+    Raises:
+        ValueError: If RATELIMITER_REDIS_SSL=true but cert paths are missing, files not found,
+                    or cert content is unparseable. Callers should treat this as a
+                    fatal startup error.
+
+    Args:
+        settings: Application settings instance.
+
+    Returns:
+        Dict of ssl_* kwargs to spread into Redis.from_url() / aioredis.from_url().
+    """
+    if not settings.RATELIMITER_REDIS_SSL:
+        return {}
+
+    _validate_ssl_settings(settings)
+
+    kwargs: dict[str, Any] = {}
+
+    if settings.redis_ssl_ca_certs:
+        kwargs["ssl_ca_certs"] = settings.redis_ssl_ca_certs
+    if settings.redis_ssl_certfile:
+        kwargs["ssl_certfile"] = settings.redis_ssl_certfile
+    if settings.redis_ssl_keyfile:
+        kwargs["ssl_keyfile"] = settings.redis_ssl_keyfile
+
+    if not settings.redis_ssl_check_hostname:
+        # Skip server-cert hostname verification for self-signed certs
+        kwargs["ssl_cert_reqs"] = "none"
+        kwargs["ssl_check_hostname"] = False
+
+    return kwargs
+
+
 def _is_hiredis_available() -> bool:
     """Check if hiredis library is available and functional.
 

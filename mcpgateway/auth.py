@@ -87,7 +87,7 @@ from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.redis_client import _build_ssl_kwargs
+from mcpgateway.utils.redis_client import _build_ssl_kwargs, build_reatelimiter_ssl_kwargs
 from mcpgateway.utils.trace_context import (
     clear_trace_context,
     set_trace_auth_method,
@@ -828,7 +828,7 @@ def _get_ratelimiter_redis_client():
             if redis_url.startswith("rediss://") and not settings.redis_ssl:
                 logger.warning("RATELIMITER_REDIS_URL uses rediss:// but REDIS_SSL=false. " "TLS settings from main Redis will be applied.")
 
-            ssl_kwargs = _build_ssl_kwargs(settings)
+            ssl_kwargs = build_reatelimiter_ssl_kwargs(settings)
 
             _RATELIMITER_REDIS_CLIENT = redis.from_url(
                 redis_url, decode_responses=True, max_connections=pool_size, socket_timeout=socket_timeout, socket_connect_timeout=socket_connect_timeout, **ssl_kwargs

@@ -978,15 +978,19 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `RATELIMITER_REDIS_MAX_CONNECTIONS` | `50` | Connection pool size for rate limiter Redis. |
 | `RATELIMITER_REDIS_SOCKET_TIMEOUT` | `2.0` | Socket timeout in seconds. |
 | `RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Connection timeout in seconds. |
+| `RATELIMITER_REDIS_SSL`               | Enable TLS for Redis       | `false`    | bool                     |
+| `RATELIMITER_REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
+| `RATELIMITER_REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 **Migration:** Existing deployments continue using main Redis. Set `RATELIMITER_REDIS_URL` to enable dedicated instance.
 
 !!! note "Rate Limiter Redis Behavior"
-    - **TLS Configuration:** Rate limiter Redis inherits TLS settings from main Redis (`REDIS_SSL`, `REDIS_CA_CERT`, etc.). Use `rediss://` scheme for TLS connections.
     - **Independent of CACHE_TYPE:** Rate limiter Redis operates independently of the `CACHE_TYPE` setting. It does not require `CACHE_TYPE=redis` to function.
     - **Fallback:** When `RATELIMITER_REDIS_URL` is unset, rate limiting uses the main Redis instance via `REDIS_URL` (backward compatible).
 
-#### Rate Limiter Redis Fallback Behavior
+#### Rate Limiter Redis Fallback Behavior During Runtime
 
 When `RATELIMITER_REDIS_URL` is configured but the dedicated Redis instance becomes unavailable mid-runtime:
 

@@ -313,7 +313,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 count = self.redis_client.zcard(key)
                 return True, max(0, limit - count)
             except Exception as e:
-                logger.warning(f"Redis rate limit failed: {e}")
+                logger.warning(f"Redis rate limit failed: {e}, falling back to in-memory")
 
         return self._check_rate_limit_memory(key, limit, window_seconds)
 

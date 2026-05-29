@@ -302,6 +302,11 @@ mcpContextForge:
     RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
     RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
     RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: "false"
+    RATELIMITER_REDIS_SSL_CA_CERTS: /certs/ca.crt
+    RATELIMITER_REDIS_SSL_CERTFILE: /certs/client.crt
+    RATELIMITER_REDIS_SSL_KEYFILE: /certs/client.key
+    RATELIMITER_REDIS_SSL_CHECK_HOSTNAME: "true"
 
 
     # ─ Registry Cache (reduces DB queries for list endpoints) ─
