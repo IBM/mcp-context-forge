@@ -1023,13 +1023,13 @@ class ServerService(BaseService):
         if not user_email:
             return False
 
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False
-
         server_owner_email = getattr(server, "owner_email", None)
         if visibility == "private" and server_owner_email and server_owner_email == user_email:
             return True
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False
 
         server_team_id = getattr(server, "team_id", None)
         if server_team_id and visibility in ("team", "public"):

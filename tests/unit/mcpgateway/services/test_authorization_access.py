@@ -186,8 +186,8 @@ class TestToolAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_tool_denied_to_owner_with_public_only_token(self, tool_service, mock_db):
-        """Private tools should NOT be accessible to owner if they have a public-only token."""
+    async def test_private_tool_allowed_to_owner_with_public_only_token(self, tool_service, mock_db):
+        """Private tools should be accessible to owner even with a public-only token (Fix #4913)."""
         tool_payload = {
             "id": "tool-123",
             "visibility": "private",
@@ -195,8 +195,22 @@ class TestToolAccessChecks:
             "team_id": None,
         }
 
-        # Owner with a public-only token (token_teams=[]) should be denied
+        # Owner with a public-only token (token_teams=[]) should be allowed
         result = await tool_service._check_tool_access(mock_db, tool_payload, user_email="owner@example.com", token_teams=[])
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_private_tool_denied_to_non_owner_with_public_only_token(self, tool_service, mock_db):
+        """Private tools should NOT be accessible to non-owner with a public-only token."""
+        tool_payload = {
+            "id": "tool-123",
+            "visibility": "private",
+            "owner_email": "owner@example.com",
+            "team_id": None,
+        }
+
+        # Non-owner with a public-only token (token_teams=[]) should be denied
+        result = await tool_service._check_tool_access(mock_db, tool_payload, user_email="other@example.com", token_teams=[])
         assert result is False
 
     @pytest.mark.asyncio
@@ -314,12 +328,21 @@ class TestResourceAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_resource_denied_to_owner_with_public_only_token(self, resource_service, mock_db):
-        """Private resources should NOT be accessible to owner with public-only token."""
+    async def test_private_resource_allowed_to_owner_with_public_only_token(self, resource_service, mock_db):
+        """Private resources should be accessible to owner even with public-only token (Fix #4913)."""
         mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com")
 
-        # Owner with public-only token should be denied
+        # Owner with public-only token should be allowed
         result = await resource_service._check_resource_access(mock_db, mock_resource, user_email="owner@example.com", token_teams=[])
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_private_resource_denied_to_non_owner_with_public_only_token(self, resource_service, mock_db):
+        """Private resources should NOT be accessible to non-owner with public-only token."""
+        mock_resource = create_mock_resource(visibility="private", owner_email="owner@example.com")
+
+        # Non-owner with public-only token should be denied
+        result = await resource_service._check_resource_access(mock_db, mock_resource, user_email="other@example.com", token_teams=[])
         assert result is False
 
     @pytest.mark.asyncio
@@ -385,12 +408,21 @@ class TestPromptAccessChecks:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_private_prompt_denied_to_owner_with_public_only_token(self, prompt_service, mock_db):
-        """Private prompts should NOT be accessible to owner with public-only token."""
+    async def test_private_prompt_allowed_to_owner_with_public_only_token(self, prompt_service, mock_db):
+        """Private prompts should be accessible to owner even with public-only token (Fix #4913)."""
         mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com")
 
-        # Owner with public-only token should be denied
+        # Owner with public-only token should be allowed
         result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email="owner@example.com", token_teams=[])
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_private_prompt_denied_to_non_owner_with_public_only_token(self, prompt_service, mock_db):
+        """Private prompts should NOT be accessible to non-owner with public-only token."""
+        mock_prompt = create_mock_prompt(visibility="private", owner_email="owner@example.com")
+
+        # Non-owner with public-only token should be denied
+        result = await prompt_service._check_prompt_access(mock_db, mock_prompt, user_email="other@example.com", token_teams=[])
         assert result is False
 
     @pytest.mark.asyncio
@@ -1450,9 +1482,9 @@ class TestServerAccessCheckMatrix:
     async def test_public_only_token_denies_non_public(self, service):
         """(email, []) public-only token: covers server_service.py line 1025-1027."""
         s_team = self._server("team", team_id="team-x")
-        s_private = self._server("private", owner_email="user@test.com")
+        s_others_private = self._server("private", owner_email="other@test.com")
         assert await service._check_server_access(MagicMock(), s_team, user_email="user@test.com", token_teams=[]) is False
-        assert await service._check_server_access(MagicMock(), s_private, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_server_access(MagicMock(), s_others_private, user_email="user@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_own_private_allowed(self, service):
@@ -1523,9 +1555,9 @@ class TestGatewayAccessCheckMatrix:
     async def test_public_only_token_denies_non_public(self, service):
         """(email, []) public-only token: covers line 2742-2744."""
         g_team = self._gw("team", team_id="team-x")
-        g_private = self._gw("private", owner_email="user@test.com")
+        g_others_private = self._gw("private", owner_email="other@test.com")
         assert await service._check_gateway_access(MagicMock(), g_team, user_email="user@test.com", token_teams=[]) is False
-        assert await service._check_gateway_access(MagicMock(), g_private, user_email="user@test.com", token_teams=[]) is False
+        assert await service._check_gateway_access(MagicMock(), g_others_private, user_email="user@test.com", token_teams=[]) is False
 
     @pytest.mark.asyncio
     async def test_own_private_allowed(self, service):

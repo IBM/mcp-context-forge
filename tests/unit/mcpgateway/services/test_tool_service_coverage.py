@@ -9863,13 +9863,12 @@ class TestInvokeToolLookupLogic:
             mock_cache.set.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_lookup_public_only_token_filters_private(self, tool_service, mock_db_tools):
-        """Public-only token (token_teams=[]) should not access private tools."""
+    async def test_lookup_owner_private_allowed_with_public_only_token(self, tool_service, mock_db_tools):
+        """Owner with public-only token can access their own private tools (Fix B of #4913)."""
         private_tool = mock_db_tools(visibility="private", owner_email="me@test.com")
-        private_tool2 = mock_db_tools(visibility="private", owner_email="other@test.com")
 
         db = MagicMock()
-        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[private_tool, private_tool2])))))
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[private_tool])))))
 
         with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
             mock_cache = AsyncMock()
@@ -9877,6 +9876,22 @@ class TestInvokeToolLookupLogic:
             mock_cache.get = AsyncMock(return_value=None)
             mock_cache_fn.return_value = mock_cache
 
-            # Even though user_email matches owner, public-only token should deny access
+            # Owner access is not subject to token scope restrictions
+            result = await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])
+            assert result is not None
+
+    async def test_lookup_public_only_token_denies_others_private(self, tool_service, mock_db_tools):
+        """Public-only token should deny access to other users' private tools."""
+        private_tool_other = mock_db_tools(visibility="private", owner_email="other@test.com")
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[private_tool_other])))))
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
             with pytest.raises(ToolNotFoundError, match="not found"):
                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=[])

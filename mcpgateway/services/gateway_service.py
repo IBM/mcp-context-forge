@@ -2811,13 +2811,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not user_email:
             return False
 
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        if is_public_only_token:
-            return False
-
         gateway_owner_email = getattr(gateway, "owner_email", None)
         if visibility == "private" and gateway_owner_email and gateway_owner_email == user_email:
             return True
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False
 
         gateway_team_id = getattr(gateway, "team_id", None)
         if gateway_team_id and visibility in ("team", "public"):

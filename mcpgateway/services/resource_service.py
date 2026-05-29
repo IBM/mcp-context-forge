@@ -1106,14 +1106,14 @@ class ResourceService(BaseService):
         if not user_email:
             return False
 
+        # Owner can access their own private resources (checked before public-only token scope)
+        if visibility == "private" and resource_owner_email and resource_owner_email == user_email:
+            return True
+
         # Public-only tokens (empty teams array) can ONLY access public resources
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token:
             return False  # Already checked public above
-
-        # Owner can access their own private resources
-        if visibility == "private" and resource_owner_email and resource_owner_email == user_email:
-            return True
 
         # Team resources: check team membership (matches list_resources behavior)
         if resource_team_id:
