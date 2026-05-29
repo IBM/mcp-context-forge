@@ -6,7 +6,7 @@
     "description": "Minimal Go MCP server (stdio) with a time tool",
     "version": "0.1.0",
     "license": ["Apache-2.0", "MIT"],
-    "go_version": "1.23",
+    "go_version": "1.26",
     "toolchain": "go1.23.10",
     "include_container": true
 }
