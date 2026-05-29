@@ -208,9 +208,15 @@ class TestAdminEditToolAdvancedFields:
         assert payload["success"] is False
         assert "Invalid JSON in header_mapping field" in payload["message"]
 
+    @patch("mcpgateway.plugins.list_configured_plugin_names")
+    @patch("mcpgateway.admin.settings")
     @patch.object(ToolService, "update_tool")
-    async def test_edit_tool_with_plugin_chains(self, mock_update_tool, mock_request, mock_db):
+    async def test_edit_tool_with_plugin_chains(self, mock_update_tool, mock_settings, mock_list_plugins, mock_request, mock_db):
         """Test editing tool with plugin_chain_pre and plugin_chain_post."""
+        # Mock plugins as enabled and available
+        mock_settings.plugins.enabled = True
+        mock_list_plugins.return_value = ["rate_limit", "pii_filter", "response_shape", "deny_filter"]
+
         form_data = FakeForm(
             {
                 "name": "test_tool",
@@ -983,3 +989,196 @@ async def test_valid_jsonpath_expression():
         call_args = mock_tool_service.call_args[0]
         tool_update = call_args[2]
         assert tool_update.jsonpath_filter == "$.data[*].result"
+
+
+# ---------------------------------------------------------------------------
+# Plugin Chain Validation When Plugins Disabled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestPluginChainValidationWhenDisabled:
+    """Test that plugin chains are rejected when plugins are globally disabled."""
+
+    @patch("mcpgateway.config.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_reject_plugin_chain_pre_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that plugin_chain_pre is rejected when plugins are globally disabled."""
+        # Mock plugins as disabled
+        mock_settings.plugins.enabled = False
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "auth_plugin,validation_plugin",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "plugins are globally disabled" in payload["message"]
+        assert "PLUGINS_ENABLED=true" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch("mcpgateway.config.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_reject_plugin_chain_post_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that plugin_chain_post is rejected when plugins are globally disabled."""
+        # Mock plugins as disabled
+        mock_settings.plugins.enabled = False
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_post": "logging_plugin,metrics_plugin",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "plugins are globally disabled" in payload["message"]
+        assert "PLUGINS_ENABLED=true" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch("mcpgateway.config.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_reject_both_plugin_chains_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that both plugin chains are rejected when plugins are globally disabled."""
+        # Mock plugins as disabled
+        mock_settings.plugins.enabled = False
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "auth_plugin",
+                "plugin_chain_post": "logging_plugin",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        # Should fail on first plugin chain (pre)
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "plugins are globally disabled" in payload["message"]
+        mock_update_tool.assert_not_called()
+
+    @patch("mcpgateway.config.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allow_empty_plugin_chains_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that empty plugin chains are allowed when plugins are disabled (clearing existing chains)."""
+        # Mock plugins as disabled
+        mock_settings.plugins.enabled = False
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "",  # Empty string to clear
+                "plugin_chain_post": "",  # Empty string to clear
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        # Should succeed - clearing plugin chains is allowed even when plugins disabled
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == []
+        assert tool_update.plugin_chain_post == []
+
+    @patch("mcpgateway.config.settings")
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_allow_omitted_plugin_chains_when_plugins_disabled(self, mock_update_tool, mock_verify_team, mock_settings, mock_request, mock_db):
+        """Test that omitting plugin chain fields is allowed when plugins are disabled."""
+        # Mock plugins as disabled
+        mock_settings.plugins.enabled = False
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                # plugin_chain_pre and plugin_chain_post NOT in form
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        # Should succeed - not providing plugin chains is fine
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        # plugin chains should be None (not provided in form)
+        assert tool_update.plugin_chain_pre is None
+        assert tool_update.plugin_chain_post is None
