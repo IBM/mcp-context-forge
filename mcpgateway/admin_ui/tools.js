@@ -807,6 +807,20 @@ export const editTool = async function (toolId) {
       }
     }
 
+    // Auto-expand advanced configuration accordion if any advanced field has a value
+    const advancedConfigDetails = document.querySelector('#edit-tool-modal details');
+    if (advancedConfigDetails) {
+      const hasAdvancedData = tool.title || tool.timeoutMs || tool.jsonpathFilter ||
+                              tool.teamId || tool.baseUrl || tool.pathTemplate ||
+                              tool.queryMapping || tool.headerMapping || tool.exposePassthrough ||
+                              (Array.isArray(tool.allowlist) && tool.allowlist.length > 0) ||
+                              (Array.isArray(tool.pluginChainPre) && tool.pluginChainPre.length > 0) ||
+                              (Array.isArray(tool.pluginChainPost) && tool.pluginChainPost.length > 0);
+      if (hasAdvancedData) {
+        advancedConfigDetails.open = true;
+      }
+    }
+
     // Prefill integration type from DB and set request types accordingly
     if (typeField) {
       typeField.value = tool.integrationType || "REST";
