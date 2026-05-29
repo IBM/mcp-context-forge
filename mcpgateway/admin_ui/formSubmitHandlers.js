@@ -722,6 +722,12 @@ export const handleEditToolFormSubmit = async function (event) {
     if (window.editToolOutputSchemaEditor) {
       window.editToolOutputSchemaEditor.save();
     }
+    if (window.editToolQueryMappingEditor) {
+      window.editToolQueryMappingEditor.save();
+    }
+    if (window.editToolHeaderMappingEditor) {
+      window.editToolHeaderMappingEditor.save();
+    }
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);

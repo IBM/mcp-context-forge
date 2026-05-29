@@ -137,6 +137,16 @@ export const initializeCodeMirrorEditors = function () {
       mode: "application/json",
       varName: "editPromptArgumentsEditor",
     },
+    {
+      id: "edit-tool-query-mapping",
+      mode: "application/json",
+      varName: "editToolQueryMappingEditor",
+    },
+    {
+      id: "edit-tool-header-mapping",
+      mode: "application/json",
+      varName: "editToolHeaderMappingEditor",
+    },
   ];
 
   editorConfigs.forEach((config) => {
