@@ -11990,6 +11990,7 @@ async def admin_edit_tool(
         if jsonpath_expr:
             try:
                 from jsonpath_ng import parse as parse_jsonpath
+
                 parse_jsonpath(jsonpath_expr)  # Validate syntax
                 tool_data["jsonpath_filter"] = jsonpath_expr
             except Exception as ex:
@@ -12009,7 +12010,7 @@ async def admin_edit_tool(
         except ValueError as ex:
             LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
             return ORJSONResponse(
-                content={"message": f"Invalid timeout_ms value: must be a positive integer", "success": False},
+                content={"message": "Invalid timeout_ms value: must be a positive integer", "success": False},
                 status_code=422,
             )
 
@@ -12056,7 +12057,20 @@ async def admin_edit_tool(
     if "allowlist" in form:
         allowlist_raw = form.get("allowlist")
         if allowlist_raw and allowlist_raw.strip():
-            tool_data["allowlist"] = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+            from urllib.parse import urlparse
+
+            allowlist_entries = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+            # Validate each URL to prevent SSRF attacks
+            for url in allowlist_entries:
+                try:
+                    parsed = urlparse(url)
+                    if not parsed.scheme or not parsed.netloc:
+                        error_msg = f"Invalid URL in allowlist: {url} (must include scheme and host)"
+                        return JSONResponse({"error": error_msg}, status_code=400)
+                except Exception:
+                    error_msg = f"Invalid URL in allowlist: {url}"
+                    return JSONResponse({"error": error_msg}, status_code=400)
+            tool_data["allowlist"] = allowlist_entries
         else:
             # Empty field means clear the list
             tool_data["allowlist"] = []

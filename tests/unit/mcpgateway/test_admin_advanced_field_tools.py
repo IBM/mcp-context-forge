@@ -126,7 +126,7 @@ class TestAdminEditToolAdvancedFields:
                 "query_mapping": '{"param1": "field1"}',
                 "header_mapping": '{"X-Custom": "field2"}',
                 "expose_passthrough": "true",
-                "allowlist": "GET, POST, PUT",
+                "allowlist": "https://api.example.com, https://api2.example.org, https://api3.example.net",
                 "requestType": "GET",
                 "integrationType": "REST",
             }
@@ -150,7 +150,7 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.query_mapping == {"param1": "field1"}
         assert tool_update.header_mapping == {"X-Custom": "field2"}
         assert tool_update.expose_passthrough is True
-        assert tool_update.allowlist == ["GET", "POST", "PUT"]
+        assert tool_update.allowlist == ["https://api.example.com", "https://api2.example.org", "https://api3.example.net"]
 
     @patch.object(ToolService, "update_tool")
     async def test_edit_tool_with_invalid_query_mapping_json(self, mock_update_tool, mock_request, mock_db):
@@ -249,7 +249,7 @@ class TestAdminEditToolAdvancedFields:
                 "customName": "test_tool",
                 "url": "http://example.com",
                 "description": "Test tool",
-                "allowlist": "  GET ,  POST  , DELETE  ",  # With extra spaces
+                "allowlist": "  https://api1.example.com ,  https://api2.example.org  , https://api3.example.net  ",  # With extra spaces
                 "requestType": "GET",
                 "integrationType": "REST",
             }
@@ -268,7 +268,116 @@ class TestAdminEditToolAdvancedFields:
         # Verify allowlist was parsed and trimmed correctly
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
-        assert tool_update.allowlist == ["GET", "POST", "DELETE"]
+        assert tool_update.allowlist == ["https://api1.example.com", "https://api2.example.org", "https://api3.example.net"]
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_allowlist_valid_urls(self, mock_update_tool, mock_request, mock_db):
+        """Test that valid URLs in allowlist are accepted."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api.example.com, https://api2.example.org, http://localhost:8080",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.allowlist == ["https://api.example.com", "https://api2.example.org", "http://localhost:8080"]
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_allowlist_invalid_url_missing_scheme(self, mock_update_tool, mock_request, mock_db):
+        """Test that URLs without scheme are rejected."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "api.example.com",  # Missing scheme
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 400
+        assert "Invalid URL in allowlist: api.example.com" in result.body.decode()
+        mock_update_tool.assert_not_called()
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_allowlist_invalid_url_missing_host(self, mock_update_tool, mock_request, mock_db):
+        """Test that URLs without host are rejected."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://",  # Missing host
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 400
+        assert "Invalid URL in allowlist: https://" in result.body.decode()
+        mock_update_tool.assert_not_called()
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_allowlist_mixed_valid_invalid(self, mock_update_tool, mock_request, mock_db):
+        """Test that having one invalid URL rejects the entire allowlist."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "https://api.example.com, invalid-url, https://api2.example.org",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 400
+        assert "Invalid URL in allowlist: invalid-url" in result.body.decode()
+        mock_update_tool.assert_not_called()
 
     @patch.object(ToolService, "update_tool")
     async def test_edit_tool_expose_passthrough_false(self, mock_update_tool, mock_request, mock_db):
@@ -352,7 +461,7 @@ class TestAdminEditToolAdvancedFields:
                 "query_mapping": '{"q": "searchField"}',
                 "header_mapping": '{"Authorization": "tokenField"}',
                 "expose_passthrough": "true",
-                "allowlist": "GET,POST",
+                "allowlist": "https://api1.example.com,https://api2.example.org",
                 "plugin_chain_pre": "rate_limit,regex_filter",
                 "plugin_chain_post": "resource_filter,pii_filter",
                 "requestType": "GET",
@@ -381,7 +490,7 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.query_mapping == {"q": "searchField"}
         assert tool_update.header_mapping == {"Authorization": "tokenField"}
         assert tool_update.expose_passthrough is True
-        assert tool_update.allowlist == ["GET", "POST"]
+        assert tool_update.allowlist == ["https://api1.example.com", "https://api2.example.org"]
         assert tool_update.plugin_chain_pre == ["rate_limit", "regex_filter"]
         assert tool_update.plugin_chain_post == ["resource_filter", "pii_filter"]
 
