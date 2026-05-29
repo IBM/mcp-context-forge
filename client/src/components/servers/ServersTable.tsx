@@ -42,9 +42,17 @@ interface ServersTableProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
+  onViewDetails?: (id: string) => void;
 }
 
-export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest }: ServersTableProps) {
+export function ServersTable({
+  servers,
+  isLoading,
+  onEdit,
+  onDelete,
+  onTest,
+  onViewDetails,
+}: ServersTableProps) {
   if (isLoading) {
     return (
       <div
@@ -95,6 +103,7 @@ export function ServersTable({ servers, isLoading, onEdit, onDelete, onTest }: S
                 onEdit={onEdit}
                 onDelete={onDelete}
                 onTest={onTest}
+                onViewDetails={onViewDetails}
               />
             </TableCell>
           </TableRow>

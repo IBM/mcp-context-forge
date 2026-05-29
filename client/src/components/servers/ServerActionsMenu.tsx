@@ -1,4 +1,4 @@
-import { MoreVertical, Edit, Trash2, TestTube } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,9 +13,16 @@ interface ServerActionsMenuProps {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onTest: (id: string) => void;
+  onViewDetails?: (id: string) => void;
 }
 
-export function ServerActionsMenu({ server, onEdit, onDelete, onTest }: ServerActionsMenuProps) {
+export function ServerActionsMenu({
+  server,
+  onEdit,
+  onDelete,
+  onTest,
+  onViewDetails,
+}: ServerActionsMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -31,12 +38,15 @@ export function ServerActionsMenu({ server, onEdit, onDelete, onTest }: ServerAc
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" role="menu">
+        {onViewDetails && (
+          <DropdownMenuItem onClick={() => onViewDetails(server.id)} role="menuitem">
+            View Details
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={() => onEdit(server.id)} role="menuitem">
-          <Edit className="mr-2 h-4 w-4" aria-hidden="true" />
           Edit
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onTest(server.id)} role="menuitem">
-          <TestTube className="mr-2 h-4 w-4" aria-hidden="true" />
           Test Connection
         </DropdownMenuItem>
         <DropdownMenuItem
@@ -44,7 +54,6 @@ export function ServerActionsMenu({ server, onEdit, onDelete, onTest }: ServerAc
           className="text-red-600 dark:text-red-400"
           role="menuitem"
         >
-          <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
           Delete
         </DropdownMenuItem>
       </DropdownMenuContent>
