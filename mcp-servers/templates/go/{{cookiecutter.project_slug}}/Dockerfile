@@ -7,7 +7,7 @@
 FROM registry.access.redhat.com/ubi9/go-toolset:{{ cookiecutter.go_version }} AS builder
 USER root
 RUN dnf install -y git tzdata ca-certificates && dnf clean all
-ENV GOTOOLCHAIN=auto
+ENV GOTOOLCHAIN=go1.26.3
 WORKDIR /src
 
 COPY go.mod go.sum ./

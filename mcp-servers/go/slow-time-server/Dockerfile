@@ -17,7 +17,7 @@
 FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
 USER root
 RUN dnf install -y git tzdata ca-certificates && dnf clean all
-ENV GOTOOLCHAIN=auto
+ENV GOTOOLCHAIN=go1.26.3
 
 ARG TARGETARCH
 WORKDIR /src
