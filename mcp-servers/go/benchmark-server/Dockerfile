@@ -6,7 +6,7 @@ USER root
 RUN dnf install -y git tzdata ca-certificates && dnf clean all
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
-COPY go.mod .
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/bin/benchmark-server .
