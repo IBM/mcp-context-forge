@@ -4113,6 +4113,7 @@ async def admin_ui(
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
+            "plugins_enabled": settings.plugins.enabled,
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": is_admin,

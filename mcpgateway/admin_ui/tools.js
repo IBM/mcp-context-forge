@@ -775,23 +775,19 @@ export const editTool = async function (toolId) {
       restPassthroughSection.style.display = tool.integrationType === "REST" ? "block" : "none";
     }
 
-    // Handle plugin section visibility
+    // Handle plugin section visibility - always show to match add form behavior
     const pluginSection = safeGetElement("edit-tool-plugin-section");
     if (pluginSection) {
-      if (window.PLUGINS_ENABLED) {
-        pluginSection.style.display = "block";
+      pluginSection.style.display = "block";
 
-        const pluginChainPreField = safeGetElement("edit-tool-plugin-chain-pre");
-        if (pluginChainPreField) {
-          pluginChainPreField.value = Array.isArray(tool.pluginChainPre) ? tool.pluginChainPre.join(", ") : "";
-        }
+      const pluginChainPreField = safeGetElement("edit-tool-plugin-chain-pre");
+      if (pluginChainPreField) {
+        pluginChainPreField.value = Array.isArray(tool.pluginChainPre) ? tool.pluginChainPre.join(", ") : "";
+      }
 
-        const pluginChainPostField = safeGetElement("edit-tool-plugin-chain-post");
-        if (pluginChainPostField) {
-          pluginChainPostField.value = Array.isArray(tool.pluginChainPost) ? tool.pluginChainPost.join(", ") : "";
-        }
-      } else {
-        pluginSection.style.display = "none";
+      const pluginChainPostField = safeGetElement("edit-tool-plugin-chain-post");
+      if (pluginChainPostField) {
+        pluginChainPostField.value = Array.isArray(tool.pluginChainPost) ? tool.pluginChainPost.join(", ") : "";
       }
     }
 

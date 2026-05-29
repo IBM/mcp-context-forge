@@ -12357,6 +12357,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
+      window.PLUGINS_ENABLED = {{ plugins_enabled | default(false) | tojson }};
 
       // Display flash messages from URL parameters
       (function() {
