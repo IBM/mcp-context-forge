@@ -91,7 +91,7 @@ from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
-from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -4146,55 +4146,51 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                    rpc_headers = {
-                        "content-type": "application/json",
-                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
-                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                rpc_headers = {
+                    "content-type": "application/json",
+                    "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
+                    "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                }
+                # Forward the inbound gateway auth header (default: Authorization,
+                # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
+                # the same caller. Hardcoding "authorization" here would silently
+                # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                if _gw_auth_lower in headers:
+                    rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                # Forward passthrough headers for upstream MCP servers (see #3640).
+                # First-Party
+                from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+                # Dispatch IN-PROCESS so /rpc executes in this worker (the session
+                # owner) rather than scattering over the shared socket.
+                response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0)
+
+                # Return response to client
+                response_headers = [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(response.content)).encode()),
+                ]
+                if mcp_session_id != "not-provided":
+                    response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
                     }
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
-                    _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
-                        rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                    # Forward passthrough headers for upstream MCP servers (see #3640).
-                    # First-Party
-                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                    response = await client.post(
-                        f"{internal_loopback_base_url()}/rpc",
-                        content=body,
-                        headers=rpc_headers,
-                        timeout=30.0,
-                    )
-
-                    # Return response to client
-                    response_headers = [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(response.content)).encode()),
-                    ]
-                    if mcp_session_id != "not-provided":
-                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
-
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": response.status_code,
-                            "headers": response_headers,
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": response.content,
-                        }
-                    )
-                    logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
-                    return
+                )
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": response.content,
+                    }
+                )
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Response sent | Status: %s", response.status_code)
+                return
             except Exception as e:
                 logger.error("[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: %s", e)
                 # Fall through to SDK handling as fallback
@@ -4317,49 +4313,46 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                            rpc_headers = {
-                                "content-type": "application/json",
-                                "x-mcp-session-id": mcp_session_id,
-                                "x-forwarded-internally": "true",
+                        rpc_headers = {
+                            "content-type": "application/json",
+                            "x-mcp-session-id": mcp_session_id,
+                            "x-forwarded-internally": "true",
+                        }
+                        _gw_auth_lower = _resolve_auth_header_name(settings).lower()
+                        if _gw_auth_lower in headers:
+                            rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
+                        # Forward passthrough headers for upstream MCP servers (see #3640).
+                        # First-Party
+                        from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                        rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+                        # Dispatch IN-PROCESS so /rpc runs on this worker — the session
+                        # owner that holds the bound upstream session — instead of looping
+                        # back over the shared socket to a random worker (#4205 isolation).
+                        response = await post_rpc_in_process(content=body, headers=rpc_headers, timeout=30.0)
+
+                        response_headers = [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(response.content)).encode()),
+                            (b"mcp-session-id", mcp_session_id.encode()),
+                        ]
+
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": response.status_code,
+                                "headers": response_headers,
                             }
-                            _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if _gw_auth_lower in headers:
-                                rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
-                            # Forward passthrough headers for upstream MCP servers (see #3640).
-                            # First-Party
-                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
-
-                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
-
-                            response = await client.post(
-                                f"{internal_loopback_base_url()}/rpc",
-                                content=body,
-                                headers=rpc_headers,
-                                timeout=30.0,
-                            )
-
-                            response_headers = [
-                                (b"content-type", b"application/json"),
-                                (b"content-length", str(len(response.content)).encode()),
-                                (b"mcp-session-id", mcp_session_id.encode()),
-                            ]
-
-                            await send(
-                                {
-                                    "type": "http.response.start",
-                                    "status": response.status_code,
-                                    "headers": response_headers,
-                                }
-                            )
-                            await send(
-                                {
-                                    "type": "http.response.body",
-                                    "body": response.content,
-                                }
-                            )
-                            logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
-                            return
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": response.content,
+                            }
+                        )
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Response sent | Status: %s", response.status_code)
+                        return
                     except Exception as e:
                         logger.error("[HTTP_AFFINITY_LOCAL] Error routing to /rpc: %s", e)
                         # Fall through to SDK handling as fallback

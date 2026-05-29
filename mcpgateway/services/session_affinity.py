@@ -49,8 +49,7 @@ from mcpgateway.services.upstream_session_registry import (  # re-exported as th
     MessageHandlerFactory,
 )
 from mcpgateway.utils.internal_http import (
-    internal_loopback_base_url,
-    internal_loopback_verify,
+    post_rpc_in_process,
 )
 
 # Shared session-id validation (downstream MCP session IDs used for affinity).
@@ -954,65 +953,63 @@ class SessionAffinity:
 
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
 
-            # Make internal HTTP/HTTPS call to local /rpc endpoint.
-            # This reuses ALL existing method handling logic without duplication.
-            internal_base_url = internal_loopback_base_url()
-            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                # Build headers for internal request - forward original headers
-                # but add x-forwarded-internally to prevent infinite loops.
-                # Relies on the originating transport having already filtered
-                # passthrough headers via extract_headers_for_loopback (#3640).
-                internal_headers = dict(headers)
-                internal_headers["x-forwarded-internally"] = "true"
-                # Ensure content-type is set
-                internal_headers["content-type"] = "application/json"
+            # Build headers for the in-process /rpc call - forward original headers
+            # but add x-forwarded-internally to prevent infinite loops. Relies on the
+            # originating transport having already filtered passthrough headers via
+            # extract_headers_for_loopback (#3640).
+            internal_headers = dict(headers)
+            internal_headers["x-forwarded-internally"] = "true"
+            internal_headers["content-type"] = "application/json"
 
-                response = await client.post(
-                    f"{internal_base_url}/rpc",
-                    json={
+            # Dispatch IN-PROCESS so /rpc resolves the bound upstream session from
+            # this worker's registry instead of scattering over the shared socket.
+            response = await post_rpc_in_process(
+                content=orjson.dumps(
+                    {
                         "jsonrpc": "2.0",
                         "method": method,
                         "params": params,
                         "id": req_id,
-                    },
-                    headers=internal_headers,
-                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                )
-
-                # Gate on HTTP status first: non-2xx responses are errors
-                # even if the body parses as JSON.
-                if not response.is_success:
-                    try:
-                        response_data = response.json()
-                    except ValueError:
-                        response_data = {}
-                    if not isinstance(response_data, dict):
-                        response_data = {}
-
-                    # If body is a JSON-RPC error ({"error": {...}}), propagate it
-                    if "error" in response_data and isinstance(response_data["error"], dict):
-                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error (HTTP {response.status_code})")
-                        return {"error": response_data["error"]}
-
-                    # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
-                    detail = response_data.get("detail", response.text[:200] or "Unknown error")
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
-                    return {
-                        "error": {
-                            "code": -32603,
-                            "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}",
-                        }
                     }
+                ),
+                headers=internal_headers,
+                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+            )
 
-                # Parse successful response
-                response_data = response.json()
+            # Gate on HTTP status first: non-2xx responses are errors
+            # even if the body parses as JSON.
+            if not response.is_success:
+                try:
+                    response_data = response.json()
+                except ValueError:
+                    response_data = {}
+                if not isinstance(response_data, dict):
+                    response_data = {}
 
-                # Extract result or error from JSON-RPC response
-                if "error" in response_data:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                # If body is a JSON-RPC error ({"error": {...}}), propagate it
+                if "error" in response_data and isinstance(response_data["error"], dict):
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error (HTTP {response.status_code})")
                     return {"error": response_data["error"]}
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
-                return {"result": response_data.get("result", {})}
+
+                # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
+                detail = response_data.get("detail", response.text[:200] or "Unknown error")
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                return {
+                    "error": {
+                        "code": -32603,
+                        "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}",
+                    }
+                }
+
+            # Parse successful response
+            response_data = response.json()
+
+            # Extract result or error from JSON-RPC response
+            if "error" in response_data:
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                return {"error": response_data["error"]}
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+            return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
             logger.warning(f"Timeout executing forwarded request: {request.get('method')}")
@@ -1091,7 +1088,7 @@ class SessionAffinity:
                 body = orjson.dumps(json_body)
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
-            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
+            # First-Party
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel
 
@@ -1106,17 +1103,14 @@ class SessionAffinity:
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-            # Dispatch IN-PROCESS: ASGITransport runs the FastAPI app in *this* worker,
-            # so /rpc resolves the bound upstream session from this process's registry
-            # instead of bouncing back through the shared socket to a random worker.
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
-                response = await client.post(
-                    "/rpc",
-                    content=body,
-                    headers=rpc_headers,
-                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                )
+            # Dispatch IN-PROCESS so /rpc resolves the bound upstream session from
+            # this worker's registry instead of bouncing back through the shared
+            # socket to a random worker (see post_rpc_in_process).
+            response = await post_rpc_in_process(
+                content=body,
+                headers=rpc_headers,
+                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+            )
 
             logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed in-process: {response.status_code}")
 
