@@ -5,6 +5,7 @@ import {
   Box,
   Copy,
   Globe,
+  Loader2,
   MessageSquareCode,
   PanelRightClose,
   Plus,
@@ -17,7 +18,6 @@ import { MCPIcon } from "@/components/icons/MCPIcon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loading } from "@/components/ui/loading";
 import { cn } from "@/lib/utils";
 import type { MCPServer as BaseMCPServer, VirtualServerTag } from "@/types/server";
 import { copyToClipboard, truncateMiddle } from "@/components/gateways/utils";
@@ -140,13 +140,11 @@ function getComponentIcon(type: Exclude<ComponentTab, "all">) {
 
 export function MCPServerDetailsPanel({
   server,
-  isLoading,
   error,
   open,
   onClose,
 }: {
   server: MCPServer | null;
-  isLoading: boolean;
   error: { message: string } | null;
   open: boolean;
   onClose: () => void;
@@ -418,25 +416,24 @@ export function MCPServerDetailsPanel({
                 aria-labelledby={`tab-${activeTab}`}
                 className="mt-5 divide-y divide-transparent"
               >
-                {(isLoading || componentsLoading) && (
+                {componentsLoading && (
                   <div
                     role="status"
                     aria-live="polite"
                     className="flex items-center gap-2 py-8 text-muted-foreground"
                   >
-                    <Loading />
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                     <span>Loading components...</span>
                   </div>
                 )}
 
-                {!isLoading && !componentsLoading && visibleComponents.length === 0 && (
+                {!componentsLoading && visibleComponents.length === 0 && (
                   <div className="py-8 text-sm text-muted-foreground">
                     No {activeTab === "all" ? "components" : activeTab} found
                   </div>
                 )}
 
-                {!isLoading &&
-                  !componentsLoading &&
+                {!componentsLoading &&
                   visibleComponents.map((component) => {
                     const title = component.title;
                     const identifier =
