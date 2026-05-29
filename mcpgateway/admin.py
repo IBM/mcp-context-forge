@@ -11986,7 +11986,14 @@ async def admin_edit_tool(
 
     # Add optional fields only if present in form
     if "timeout_ms" in form and form.get("timeout_ms"):
-        tool_data["timeout_ms"] = int(form.get("timeout_ms"))
+        try:
+            tool_data["timeout_ms"] = int(form.get("timeout_ms"))
+        except ValueError as ex:
+            LOGGER.error(f"Invalid timeout_ms value: {str(ex)}")
+            return ORJSONResponse(
+                content={"message": f"Invalid timeout_ms value: must be a positive integer", "success": False},
+                status_code=422,
+            )
 
     if "title" in form and form.get("title"):
         tool_data["title"] = form.get("title")
@@ -12020,21 +12027,38 @@ async def admin_edit_tool(
                 status_code=422,
             )
 
+    # Handle expose_passthrough checkbox: always set value (checked -> True, unchecked -> False)
     if "expose_passthrough" in form:
         tool_data["expose_passthrough"] = form.get("expose_passthrough") == "true"
+    else:
+        # Checkbox not present means unchecked -> explicitly set False
+        tool_data["expose_passthrough"] = False
 
-    if "allowlist" in form and form.get("allowlist"):
+    # Handle list fields: allow clearing to empty list
+    if "allowlist" in form:
         allowlist_raw = form.get("allowlist")
-        tool_data["allowlist"] = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+        if allowlist_raw and allowlist_raw.strip():
+            tool_data["allowlist"] = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
+        else:
+            # Empty field means clear the list
+            tool_data["allowlist"] = []
 
-    # Add plugin chain fields only if present in form
-    if "plugin_chain_pre" in form and form.get("plugin_chain_pre"):
+    # Add plugin chain fields: allow clearing to empty list
+    if "plugin_chain_pre" in form:
         plugin_chain_pre_raw = form.get("plugin_chain_pre")
-        tool_data["plugin_chain_pre"] = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
+        if plugin_chain_pre_raw and plugin_chain_pre_raw.strip():
+            tool_data["plugin_chain_pre"] = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
+        else:
+            # Empty field means clear the list
+            tool_data["plugin_chain_pre"] = []
 
-    if "plugin_chain_post" in form and form.get("plugin_chain_post"):
+    if "plugin_chain_post" in form:
         plugin_chain_post_raw = form.get("plugin_chain_post")
-        tool_data["plugin_chain_post"] = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
+        if plugin_chain_post_raw and plugin_chain_post_raw.strip():
+            tool_data["plugin_chain_post"] = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
+        else:
+            # Empty field means clear the list
+            tool_data["plugin_chain_post"] = []
     # Only include integration_type if it's provided (not disabled in form)
     if "integrationType" in form:
         tool_data["integration_type"] = form.get("integrationType")

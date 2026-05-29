@@ -6370,6 +6370,12 @@ class ToolService(BaseService):
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
 
+            # Check for conflicts when team assignment changes without a name change
+            # This prevents duplicate tool names within the target team
+            if tool_update.team_id is not None and tool_update.team_id != tool.team_id and not name_is_changing:
+                tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                self._check_tool_name_conflict(db, tool.custom_name, tool_visibility_ref, tool.id, team_id=tool_update.team_id, owner_email=tool.owner_email)
+
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name
             if tool_update.displayName is not None:

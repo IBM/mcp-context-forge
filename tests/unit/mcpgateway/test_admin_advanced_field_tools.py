@@ -485,3 +485,160 @@ class TestAdminEditToolAdvancedFields:
         call_args = mock_update_tool.call_args[0]
         tool_update = call_args[2]
         assert tool_update.team_id is None
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_expose_passthrough_checkbox_checked(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Bug fix: Verify expose_passthrough=True when checkbox is checked (value='true')."""
+        mock_verify_team.return_value = None  # No team_id in form
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "expose_passthrough": "true",  # Checked state
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.expose_passthrough is True
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_expose_passthrough_checkbox_unchecked(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Bug fix: Verify expose_passthrough=False when checkbox is unchecked (field absent)."""
+        mock_verify_team.return_value = None  # No team_id in form
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                # expose_passthrough NOT in form = unchecked
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.expose_passthrough is False
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_clear_allowlist_to_empty(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Bug fix: Verify allowlist can be cleared to empty list with empty string."""
+        mock_verify_team.return_value = None  # No team_id in form
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "allowlist": "",  # Empty string to clear
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.allowlist == []
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_clear_plugin_chains_to_empty(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Bug fix: Verify plugin_chain_pre and plugin_chain_post can be cleared to empty lists."""
+        mock_verify_team.return_value = None  # No team_id in form
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "plugin_chain_pre": "",  # Clear
+                "plugin_chain_post": "",  # Clear
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == []
+        assert tool_update.plugin_chain_post == []
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_timeout_ms_invalid_input(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Bug fix: Verify timeout_ms rejects non-numeric input with clear error."""
+        mock_verify_team.return_value = None  # No team_id in form
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+                "timeout_ms": "10seconds",  # Invalid non-numeric
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "must be a positive integer" in payload["message"]
