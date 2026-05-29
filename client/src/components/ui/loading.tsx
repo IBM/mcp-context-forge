@@ -46,5 +46,3 @@ export function Loading() {
     </div>
   );
 }
-
-// Made with Bob
