@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/mocks/server";
 import { renderWithProviders } from "@/test/test-utils";
-import { MCPServerDetailsDrawer } from "./MCPServerDetailsDrawer";
+import { MCPServerDetailsPanel } from "./MCPServerDetailsPanel";
 import type { MCPServer } from "@/types/server";
 
 const mockServer: MCPServer = {
@@ -64,9 +65,8 @@ const mockPrompts = [
   },
 ];
 
-describe("MCPServerDetailsDrawer", () => {
+describe("MCPServerDetailsPanel", () => {
   beforeEach(() => {
-    // Setup default MSW handlers for component endpoints
     server.use(
       http.get("*/tools", ({ request }) => {
         const url = new URL(request.url);
@@ -95,28 +95,30 @@ describe("MCPServerDetailsDrawer", () => {
     );
   });
 
-  it("renders nothing when closed", () => {
-    const { container } = renderWithProviders(
-      <MCPServerDetailsDrawer
+  it("marks region as hidden when closed", () => {
+    renderWithProviders(
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={false}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
-    expect(container.querySelector('[role="dialog"]')).not.toBeInTheDocument();
+    const region = screen.getByRole("region", { hidden: true });
+    expect(region).toHaveAttribute("aria-hidden", "true");
+    expect(region).toHaveAttribute("data-state", "closed");
   });
 
   it("renders server details when open", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -125,16 +127,20 @@ describe("MCPServerDetailsDrawer", () => {
     });
 
     expect(screen.getByText("A test server for unit testing")).toBeInTheDocument();
+
+    const region = screen.getByRole("region");
+    expect(region).toHaveAttribute("data-state", "open");
+    expect(region).toHaveAttribute("aria-hidden", "false");
   });
 
   it("displays loading state", () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={true}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -143,12 +149,12 @@ describe("MCPServerDetailsDrawer", () => {
 
   it("displays error message", () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={{ message: "Failed to load server" }}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -157,12 +163,12 @@ describe("MCPServerDetailsDrawer", () => {
 
   it("fetches and displays tools, resources, and prompts", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -178,12 +184,12 @@ describe("MCPServerDetailsDrawer", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -191,7 +197,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Click Tools tab
     const toolsTab = screen.getByRole("tab", { name: "Tools" });
     await user.click(toolsTab);
 
@@ -200,7 +205,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.queryByText("Resource One")).not.toBeInTheDocument();
     });
 
-    // Click Resources tab
     const resourcesTab = screen.getByRole("tab", { name: "Resources" });
     await user.click(resourcesTab);
 
@@ -209,7 +213,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.queryByText("Tool One")).not.toBeInTheDocument();
     });
 
-    // Click Prompts tab
     const promptsTab = screen.getByRole("tab", { name: "Prompts" });
     await user.click(promptsTab);
 
@@ -218,7 +221,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.queryByText("Tool One")).not.toBeInTheDocument();
     });
 
-    // Click All tab
     const allTab = screen.getByRole("tab", { name: "All" });
     await user.click(allTab);
 
@@ -233,12 +235,12 @@ describe("MCPServerDetailsDrawer", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -249,7 +251,6 @@ describe("MCPServerDetailsDrawer", () => {
     const searchButton = screen.getByRole("button", { name: /search components/i });
     expect(searchButton).toBeInTheDocument();
 
-    // Click search button to expand
     await user.click(searchButton);
 
     const searchInput = screen.getByPlaceholderText("Search...");
@@ -261,12 +262,12 @@ describe("MCPServerDetailsDrawer", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -274,13 +275,11 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Expand search
     const searchButton = screen.getByRole("button", { name: /search components/i });
     await user.click(searchButton);
 
     const searchInput = screen.getByPlaceholderText("Search...");
 
-    // Search for "Tool One"
     await user.type(searchInput, "Tool One");
 
     await waitFor(() => {
@@ -289,7 +288,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.queryByText("Prompt One")).not.toBeInTheDocument();
     });
 
-    // Clear search
     await user.clear(searchInput);
 
     await waitFor(() => {
@@ -303,12 +301,12 @@ describe("MCPServerDetailsDrawer", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -316,13 +314,11 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("original_tool_2")).toBeInTheDocument();
     });
 
-    // Expand search
     const searchButton = screen.getByRole("button", { name: /search components/i });
     await user.click(searchButton);
 
     const searchInput = screen.getByPlaceholderText("Search...");
 
-    // Search for originalName
     await user.type(searchInput, "original_tool_2");
 
     await waitFor(() => {
@@ -335,12 +331,12 @@ describe("MCPServerDetailsDrawer", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -348,13 +344,11 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Resource One")).toBeInTheDocument();
     });
 
-    // Expand search
     const searchButton = screen.getByRole("button", { name: /search components/i });
     await user.click(searchButton);
 
     const searchInput = screen.getByPlaceholderText("Search...");
 
-    // Search for uri
     await user.type(searchInput, "resource1");
 
     await waitFor(() => {
@@ -365,12 +359,12 @@ describe("MCPServerDetailsDrawer", () => {
 
   it("displays component with title and identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -378,19 +372,18 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Tool with title should show both title and originalName
     expect(screen.getByText("Tool One")).toBeInTheDocument();
     expect(screen.getByText("original_tool_1")).toBeInTheDocument();
   });
 
   it("displays component without title showing only identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -398,18 +391,17 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("original_tool_2")).toBeInTheDocument();
     });
 
-    // Tool without title should show only originalName
     expect(screen.getByText("original_tool_2")).toBeInTheDocument();
   });
 
   it("displays server metadata in details sidebar", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -428,12 +420,12 @@ describe("MCPServerDetailsDrawer", () => {
     const inactiveServer = { ...mockServer, enabled: false };
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={inactiveServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -446,12 +438,12 @@ describe("MCPServerDetailsDrawer", () => {
     const unreachableServer = { ...mockServer, reachable: false };
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={unreachableServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -460,17 +452,17 @@ describe("MCPServerDetailsDrawer", () => {
     });
   });
 
-  it("closes drawer when close button is clicked", async () => {
+  it("closes panel when close button is clicked", async () => {
     const user = userEvent.setup();
-    const onOpenChange = vi.fn();
+    const onClose = vi.fn();
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={onOpenChange}
+        onClose={onClose}
       />,
     );
 
@@ -481,19 +473,152 @@ describe("MCPServerDetailsDrawer", () => {
     const closeButton = screen.getByRole("button", { name: /close mcp server details/i });
     await user.click(closeButton);
 
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes panel when Escape is pressed", async () => {
+    const onClose = vi.fn();
+
+    renderWithProviders(
+      <MCPServerDetailsPanel
+        server={mockServer}
+        isLoading={false}
+        error={null}
+        open={true}
+        onClose={onClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Test MCP Server")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close on Escape when already closed", async () => {
+    const onClose = vi.fn();
+
+    renderWithProviders(
+      <MCPServerDetailsPanel
+        server={mockServer}
+        isLoading={false}
+        error={null}
+        open={false}
+        onClose={onClose}
+      />,
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes panel when backdrop is clicked", async () => {
+    const onClose = vi.fn();
+
+    const { container } = renderWithProviders(
+      <MCPServerDetailsPanel
+        server={mockServer}
+        isLoading={false}
+        error={null}
+        open={true}
+        onClose={onClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Test MCP Server")).toBeInTheDocument();
+    });
+
+    const backdrop = container.querySelector('[aria-hidden="true"][data-state="open"]');
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the close button when opened", async () => {
+    const { rerender } = renderWithProviders(
+      <MCPServerDetailsPanel
+        server={mockServer}
+        isLoading={false}
+        error={null}
+        open={false}
+        onClose={() => {}}
+      />,
+    );
+
+    rerender(
+      <MCPServerDetailsPanel
+        server={mockServer}
+        isLoading={false}
+        error={null}
+        open={true}
+        onClose={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      const closeButton = screen.getByRole("button", { name: /close mcp server details/i });
+      expect(closeButton).toHaveFocus();
+    });
+  });
+
+  it("restores focus to the previously focused element when closed", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open
+          </button>
+          <MCPServerDetailsPanel
+            server={mockServer}
+            isLoading={false}
+            error={null}
+            open={open}
+            onClose={() => setOpen(false)}
+          />
+        </>
+      );
+    }
+
+    renderWithProviders(<Harness />);
+
+    const trigger = screen.getByRole("button", { name: "Open" });
+    trigger.focus();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+
+    await waitFor(() => {
+      const closeButton = screen.getByRole("button", { name: /close mcp server details/i });
+      expect(closeButton).toHaveFocus();
+    });
+
+    const closeButton = screen.getByRole("button", { name: /close mcp server details/i });
+    await user.click(closeButton);
+
+    await waitFor(() => {
+      expect(trigger).toHaveFocus();
+    });
   });
 
   it("resets tab and search when server changes", async () => {
     const user = userEvent.setup();
 
     const { rerender } = renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -501,20 +626,16 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Switch to Tools tab
     const toolsTab = screen.getByRole("tab", { name: "Tools" });
     await user.click(toolsTab);
 
-    // Expand search and type
     const searchButton = screen.getByRole("button", { name: /search components/i });
     await user.click(searchButton);
     const searchInput = screen.getByPlaceholderText("Search...");
     await user.type(searchInput, "test query");
 
-    // Change server
     const newServer = { ...mockServer, id: "new-server-456", name: "New Server" };
 
-    // Setup MSW handler for new server
     server.use(
       http.get("*/tools", ({ request }) => {
         const url = new URL(request.url);
@@ -527,12 +648,12 @@ describe("MCPServerDetailsDrawer", () => {
     );
 
     rerender(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={newServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -540,7 +661,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("New Server")).toBeInTheDocument();
     });
 
-    // Search should be cleared
     const newSearchInput = screen.queryByDisplayValue("test query");
     expect(newSearchInput).not.toBeInTheDocument();
   });
@@ -553,12 +673,12 @@ describe("MCPServerDetailsDrawer", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -577,12 +697,12 @@ describe("MCPServerDetailsDrawer", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -590,7 +710,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Resource One")).toBeInTheDocument();
     });
 
-    // Click Tools tab
     const toolsTab = screen.getByRole("tab", { name: "Tools" });
     await user.click(toolsTab);
 
@@ -600,7 +719,6 @@ describe("MCPServerDetailsDrawer", () => {
   });
 
   it("handles array and object-wrapped API responses", async () => {
-    // Test direct array response
     server.use(
       http.get("*/tools", () => HttpResponse.json(mockTools)),
       http.get("*/resources", () => HttpResponse.json(mockResources)),
@@ -608,12 +726,12 @@ describe("MCPServerDetailsDrawer", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -627,12 +745,12 @@ describe("MCPServerDetailsDrawer", () => {
 
   it("displays component badges with correct types", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -640,13 +758,12 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Check for badge labels (singular form)
     expect(screen.getAllByText("tool").length).toBeGreaterThan(0);
     expect(screen.getAllByText("resource").length).toBeGreaterThan(0);
     expect(screen.getAllByText("prompt").length).toBeGreaterThan(0);
   });
 
-  it("does not fetch data when drawer is closed", () => {
+  it("does not fetch data when panel is closed", () => {
     const getRequests: string[] = [];
 
     server.use(
@@ -657,27 +774,26 @@ describe("MCPServerDetailsDrawer", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={false}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
-    // Wait a bit to ensure no requests are made
     expect(getRequests.length).toBe(0);
   });
 
   it("displays copy buttons for identifiers", async () => {
     renderWithProviders(
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={mockServer}
         isLoading={false}
         error={null}
         open={true}
-        onOpenChange={() => {}}
+        onClose={() => {}}
       />,
     );
 
@@ -685,7 +801,6 @@ describe("MCPServerDetailsDrawer", () => {
       expect(screen.getByText("Tool One")).toBeInTheDocument();
     });
 
-    // Should have copy buttons for each component
     const copyButtons = screen.getAllByRole("button", { name: /copy/i });
     expect(copyButtons.length).toBeGreaterThan(0);
   });

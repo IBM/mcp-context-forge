@@ -107,7 +107,7 @@ describe("Servers", () => {
     });
   });
 
-  it("opens details drawer when View Details is clicked", async () => {
+  it("opens details panel when View Details is clicked", async () => {
     const user = userEvent.setup();
 
     // Mock the initial servers fetch
@@ -143,7 +143,7 @@ describe("Servers", () => {
     });
   });
 
-  it("closes details drawer when close button is clicked", async () => {
+  it("closes details panel when close button is clicked", async () => {
     const user = userEvent.setup();
 
     // Mock the initial servers fetch
@@ -187,7 +187,7 @@ describe("Servers", () => {
     });
   });
 
-  it("displays server metadata in details drawer", async () => {
+  it("displays server metadata in details panel", async () => {
     const user = userEvent.setup();
 
     // Mock the initial servers fetch
