@@ -1393,6 +1393,17 @@ class TestUpdateTool:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.title = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
+        tool_update.team_id = None
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
             with pytest.raises(IntegrityError):
@@ -1422,6 +1433,17 @@ class TestUpdateTool:
         tool_update.visibility = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.title = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
+        tool_update.team_id = None
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool):
             with pytest.raises(ToolError, match="Failed to update tool"):
