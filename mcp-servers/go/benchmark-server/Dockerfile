@@ -1,6 +1,10 @@
 # This build supports multi-platform builds through standard Docker Buildx
 # techniques, including the $TARGETPLATFORM environment variable.
-FROM golang:1.26.3 AS builder
+# Using Red Hat UBI 9 Go Toolset for enterprise-grade security and IBM alignment
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
+USER root
+RUN dnf install -y git && dnf clean all
+ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod .
 RUN go mod download
