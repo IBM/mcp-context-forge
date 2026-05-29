@@ -1911,8 +1911,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        # Build base query with ordering and eager load relationships for capability counts
+        query = (
+            select(DbGateway)
+            .options(
+                joinedload(DbGateway.email_team),
+                selectinload(DbGateway.tools),
+                selectinload(DbGateway.prompts),
+                selectinload(DbGateway.resources),
+            )
+            .order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        )
+
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbGateway.enabled)
@@ -4633,10 +4643,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        # Count fields default to 0 (relationships not eagerly loaded for performance)
-        gateway_dict["tool_count"] = 0
-        gateway_dict["prompt_count"] = 0
-        gateway_dict["resource_count"] = 0
+        gateway_dict["tool_count"] = len(getattr(gateway, "tools", []))
+        gateway_dict["prompt_count"] = len(getattr(gateway, "prompts", []))
+        gateway_dict["resource_count"] = len(getattr(gateway, "resources", []))
 
         return GatewayRead.model_validate(gateway_dict).masked()
 
