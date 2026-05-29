@@ -134,7 +134,7 @@ def build_reatelimiter_ssl_kwargs(settings: Any) -> dict[str, Any]:
     Returns:
         Dict of ssl_* kwargs to spread into Redis.from_url() / aioredis.from_url().
     """
-    if not settings.RATELIMITER_REDIS_SSL:
+    if not settings.ratelimiter_redis_ssl:
         return {}
 
     _validate_ssl_settings(settings)

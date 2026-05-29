@@ -144,7 +144,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return
 
         try:
-            # Use dedicated rate limiter Redis client (Issue #4751)
+            # Use dedicated rate limiter Redis client
             client = auth._get_ratelimiter_redis_client()  # pylint: disable=protected-access
             if client is not None:
                 # Ping already done in _get_ratelimiter_redis_client()

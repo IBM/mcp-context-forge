@@ -1357,7 +1357,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     siem_export_service = get_siem_export_service()
     await siem_export_service.initialize()
 
-    # Initialize rate limiter Redis early for validation (Issue #4751)
+    # Initialize rate limiter Redis early for validation
     # First-Party
     from mcpgateway.auth import _get_ratelimiter_redis_client  # pylint: disable=import-outside-toplevel
 

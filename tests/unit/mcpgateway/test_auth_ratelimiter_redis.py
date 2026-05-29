@@ -75,23 +75,27 @@ def test_get_ratelimiter_redis_rediss_warning(caplog):
 
 
 def test_get_ratelimiter_redis_ssl_kwargs_applied():
-    """Test SSL kwargs from _build_ssl_kwargs are applied."""
+    """Test that build_reatelimiter_ssl_kwargs result is spread into redis.from_url call."""
     with patch("mcpgateway.auth.settings") as mock_settings:
         mock_settings.ratelimiter_redis_url = "rediss://localhost:6380/1"
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
-        ssl_kwargs = {"ssl_cert_reqs": "required"}
 
-        with patch("redis.from_url", return_value=mock_client) as mock_from_url, patch("mcpgateway.auth._build_ssl_kwargs", return_value=ssl_kwargs):
+        with patch("redis.from_url", return_value=mock_client) as mock_from_url:
             result = _get_ratelimiter_redis_client()
             assert result is mock_client
             mock_from_url.assert_called_once()
+            # Verify base parameters are passed correctly
             call_kwargs = mock_from_url.call_args[1]
-            assert call_kwargs["ssl_cert_reqs"] == "required"
+            assert call_kwargs["decode_responses"] is True
+            assert call_kwargs["max_connections"] == 10
+            assert call_kwargs["socket_timeout"] == 5
+            assert call_kwargs["socket_connect_timeout"] == 5
 
 
 def test_get_ratelimiter_redis_connection_test():
@@ -101,11 +105,12 @@ def test_get_ratelimiter_redis_connection_test():
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
 
-        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}):
             result = _get_ratelimiter_redis_client()
             assert result is mock_client
             mock_client.ping.assert_called_once()
@@ -118,11 +123,12 @@ def test_get_ratelimiter_redis_url_sanitization(caplog):
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
 
-        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}):
             _get_ratelimiter_redis_client()
             assert "***@localhost:6380" in caplog.text
             assert "password" not in caplog.text
@@ -146,15 +152,16 @@ def test_get_ratelimiter_redis_connection_failure(caplog):
     """Test connection failure sets failure time and returns None."""
     import logging
 
-    with caplog.at_level(logging.DEBUG):
+    with caplog.at_level(logging.WARNING):
         with patch("mcpgateway.auth.settings") as mock_settings:
             mock_settings.ratelimiter_redis_url = "redis://localhost:6380/1"
             mock_settings.ratelimiter_redis_max_connections = 10
             mock_settings.ratelimiter_redis_socket_timeout = 5
             mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+            mock_settings.ratelimiter_redis_ssl = False
 
             with patch("redis.from_url", side_effect=redis.ConnectionError("Connection failed")), patch(
-                "mcpgateway.auth._build_ssl_kwargs", return_value={}
+                "mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}
             ):
                 result = _get_ratelimiter_redis_client()
                 assert result is None
@@ -173,6 +180,7 @@ def test_get_ratelimiter_redis_double_check_lock():
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
@@ -184,7 +192,7 @@ def test_get_ratelimiter_redis_double_check_lock():
             call_count += 1
             return mock_client
 
-        with patch("redis.from_url", side_effect=from_url_side_effect), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+        with patch("redis.from_url", side_effect=from_url_side_effect), patch("mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}):
             # First call initializes
             result1 = _get_ratelimiter_redis_client()
             assert result1 is mock_client
@@ -221,11 +229,12 @@ def test_get_ratelimiter_redis_success_log_sanitization(caplog):
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
 
-        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+        with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}):
             _get_ratelimiter_redis_client()
 
             # Verify success log contains sanitized URL
@@ -243,6 +252,7 @@ def test_get_ratelimiter_redis_backoff_expiry_retry():
         mock_settings.ratelimiter_redis_max_connections = 10
         mock_settings.ratelimiter_redis_socket_timeout = 5
         mock_settings.ratelimiter_redis_socket_connect_timeout = 5
+        mock_settings.ratelimiter_redis_ssl = False
 
         mock_client = MagicMock()
         mock_client.ping.return_value = True
@@ -251,11 +261,9 @@ def test_get_ratelimiter_redis_backoff_expiry_retry():
         with patch("time.time", return_value=1000.0):
             auth_module._RATELIMITER_REDIS_FAILURE_TIME = 969.0  # 31 seconds ago
 
-            with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+            with patch("redis.from_url", return_value=mock_client), patch("mcpgateway.utils.redis_client.build_reatelimiter_ssl_kwargs", return_value={}):
                 result = _get_ratelimiter_redis_client()
 
                 # Should retry and succeed
                 assert result is mock_client
                 assert auth_module._RATELIMITER_REDIS_FAILURE_TIME is None
-
-# Made with Bob

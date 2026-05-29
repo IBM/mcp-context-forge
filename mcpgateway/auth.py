@@ -121,7 +121,7 @@ _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _SYNC_REDIS_LOCK = threading.Lock()
 _SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
 
-# Rate limiter Redis client (Issue #4751)
+# Rate limiter Redis client
 _RATELIMITER_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _RATELIMITER_REDIS_LOCK = threading.Lock()
 _RATELIMITER_REDIS_FAILURE_TIME: Optional[float] = None
