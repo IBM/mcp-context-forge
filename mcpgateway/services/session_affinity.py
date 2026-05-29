@@ -57,6 +57,11 @@ from mcpgateway.utils.internal_http import (
 # Intentionally strict: protects Redis key/channel construction and log lines.
 _MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
+# Extract the virtual server id from a Streamable HTTP path (/servers/{id}/mcp)
+# so a forwarded request can be re-routed to the local /rpc dispatcher. Mirrors
+# _SERVER_ID_RE in streamablehttp_transport; kept local to avoid a transport import.
+_SERVER_ID_RE = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
+
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers (each container has PID 1)
 # and across gunicorn workers within the same container
@@ -1017,12 +1022,18 @@ class SessionAffinity:
             return {"error": {"code": -32603, "message": str(e)}}
 
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
-        """Execute a forwarded HTTP request locally and return response via Redis.
+        """Execute a forwarded Streamable HTTP request in-process and reply via Redis.
 
-        This method handles full HTTP requests forwarded from other workers for
-        Streamable HTTP transport session affinity. It reconstructs the HTTP request,
-        makes an internal call to the appropriate endpoint, and publishes the response
-        back through Redis.
+        A forwarded request always lands here on the worker that OWNS the
+        downstream session (its ``WORKER_ID`` matched the Redis owner key), so the
+        bound upstream session in this process's ``UpstreamSessionRegistry`` can
+        serve it. We therefore dispatch the JSON-RPC call to the local ``/rpc``
+        route via an **in-process ASGI transport** instead of a network loopback
+        to ``127.0.0.1``: a real loopback hits the shared gunicorn socket and the
+        kernel routes it to an arbitrary worker that does not hold this session,
+        which breaks upstream-session reuse and fails the request. The
+        ``x-forwarded-internally`` header stops the re-entered handler from
+        forwarding again.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:
@@ -1030,76 +1041,96 @@ class SessionAffinity:
                 - response_channel: Redis channel to publish response to
                 - mcp_session_id: Session identifier
                 - method: HTTP method (GET, POST, DELETE)
-                - path: Request path (e.g., /mcp)
-                - query_string: Query parameters
-                - headers: Request headers dict
+                - path: Request path (e.g., /servers/{id}/mcp)
+                - headers: Request headers dict (lowercased keys)
                 - body: Hex-encoded request body
             redis: Redis client for publishing response
         """
-        response_channel = None
+        response_channel = request.get("response_channel")
+
+        async def _publish(status: int, body: bytes, headers: Optional[Dict[str, str]] = None) -> None:
+            """Publish a serialized HTTP response back to the requesting worker."""
+            if redis and response_channel:
+                payload = {"status": status, "headers": headers or {"content-type": "application/json"}, "body": body.hex()}
+                await redis.publish(response_channel, orjson.dumps(payload))
+
         try:
-            response_channel = request.get("response_channel")
             method = request.get("method")
-            path = request.get("path")
-            query_string = request.get("query_string", "")
+            path = request.get("path") or ""
             headers = request.get("headers", {})
             body_hex = request.get("body", "")
             mcp_session_id = request.get("mcp_session_id")
-
-            # Decode hex body back to bytes
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
             logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
 
-            # Add internal forwarding headers to prevent loops.
-            # Relies on the originating transport having already filtered
-            # passthrough headers via extract_headers_for_loopback (#3640).
-            internal_headers = dict(headers)
-            internal_headers["x-forwarded-internally"] = "true"
-            internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
+            # Only POST carries a JSON-RPC body that needs upstream dispatch.
+            # DELETE/other lifecycle methods are handled by the originating worker; ack them.
+            if method != "POST":
+                await _publish(200, b'{"jsonrpc":"2.0","result":{}}')
+                return
+            if not body:
+                await _publish(202, b"")
+                return
 
-            # Make internal HTTP/HTTPS request to local endpoint
-            url = f"{internal_loopback_base_url()}{path}"
-            if query_string:
-                url = f"{url}?{query_string}"
+            json_body = orjson.loads(body)
+            rpc_method = json_body.get("method", "") if isinstance(json_body, dict) else ""
 
-            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
-                response = await client.request(
-                    method=method,
-                    url=url,
-                    headers=internal_headers,
+            # Notifications need no upstream round-trip.
+            if isinstance(rpc_method, str) and rpc_method.startswith("notifications/"):
+                await _publish(202, b"")
+                return
+
+            # Inject the virtual server id (from the path) into params so /rpc routes correctly.
+            server_match = _SERVER_ID_RE.search(path)
+            if server_match and isinstance(json_body, dict):
+                if not isinstance(json_body.get("params"), dict):
+                    json_body["params"] = {}
+                json_body["params"]["server_id"] = server_match.group("server_id")
+                body = orjson.dumps(json_body)
+
+            # First-Party - lazy imports avoid a circular dependency with main/transport.
+            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel
+
+            rpc_headers = {
+                "content-type": "application/json",
+                "x-mcp-session-id": mcp_session_id or "",
+                "x-forwarded-internally": "true",
+            }
+            auth_header = _resolve_auth_header_name(settings).lower()
+            if auth_header in headers:
+                rpc_headers[auth_header] = headers[auth_header]
+            # Preserve passthrough headers destined for upstream MCP servers (#3640).
+            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
+
+            # Dispatch IN-PROCESS: ASGITransport runs the FastAPI app in *this* worker,
+            # so /rpc resolves the bound upstream session from this process's registry
+            # instead of bouncing back through the shared socket to a random worker.
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
+                response = await client.post(
+                    "/rpc",
                     content=body,
+                    headers=rpc_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed in-process: {response.status_code}")
 
-                # Serialize response for Redis transport
-                response_data = {
-                    "status": response.status_code,
-                    "headers": dict(response.headers),
-                    "body": response.content.hex(),  # Hex encode binary response
-                }
-
-                # Publish response back to requesting worker
-                if redis and response_channel:
-                    await redis.publish(response_channel, orjson.dumps(response_data))
-                    logger.debug(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
+            resp_headers = {"content-type": "application/json"}
+            if mcp_session_id:
+                resp_headers["mcp-session-id"] = mcp_session_id
+            await _publish(response.status_code, response.content, resp_headers)
 
         except Exception as e:
             logger.error(f"Error executing forwarded HTTP request: {e}")
-            # Try to send error response if possible
-            if redis and response_channel:
-                error_response = {
-                    "status": 500,
-                    "headers": {"content-type": "application/json"},
-                    "body": orjson.dumps({"error": "Internal forwarding error"}).hex(),
-                }
-                try:
-                    await redis.publish(response_channel, orjson.dumps(error_response))
-                except Exception as publish_error:
-                    logger.debug(f"Failed to publish error response via Redis: {publish_error}")
+            try:
+                await _publish(500, orjson.dumps({"error": "Internal forwarding error"}))
+            except Exception as publish_error:
+                logger.debug(f"Failed to publish error response via Redis: {publish_error}")
 
     async def get_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.

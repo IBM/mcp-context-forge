@@ -127,6 +127,22 @@ def post_fork(server, worker):
     except ImportError:
         pass
 
+    # Recompute the session-affinity WORKER_ID per worker. It is a module-level
+    # constant captured at import time; with --preload that import runs in the
+    # master, so every forked worker would otherwise inherit the master's id
+    # ({hostname}:1). A shared id makes all workers subscribe to the same
+    # pool_rpc/pool_http channel, so each forwarded request is broadcast to and
+    # executed by every worker in the container. Giving each worker a unique id
+    # restores per-worker affinity channels and single-executor forwarding.
+    try:
+        import socket
+
+        from mcpgateway.services import session_affinity
+
+        session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
+    except ImportError:
+        pass
+
 
 def post_worker_init(worker):
     worker.log.info("worker initialization completed")
