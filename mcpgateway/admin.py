@@ -11986,23 +11986,20 @@ async def admin_edit_tool(
 
     # Add optional fields only if present in form
     # Validate and add JSONPath filter
-    if "jsonpath_filter" in form and form.get("jsonpath_filter"):
-        jsonpath_expr = form.get("jsonpath_filter").strip()
-        if jsonpath_expr:
-            try:
-                # Third-Party
-                from jsonpath_ng import parse as parse_jsonpath
+    jsonpath_expr = form.get("jsonpath_filter", "").strip() if "jsonpath_filter" in form else ""
+    if jsonpath_expr:
+        try:
+            # Third-Party
+            from jsonpath_ng import parse as parse_jsonpath
 
-                parse_jsonpath(jsonpath_expr)  # Validate syntax
-                tool_data["jsonpath_filter"] = jsonpath_expr
-            except Exception as ex:
-                LOGGER.error(f"Invalid JSONPath expression: {str(ex)}")
-                return ORJSONResponse(
-                    content={"message": f"Invalid JSONPath expression: {str(ex)}", "success": False},
-                    status_code=422,
-                )
-        else:
-            tool_data["jsonpath_filter"] = ""
+            parse_jsonpath(jsonpath_expr)  # Validate syntax
+            tool_data["jsonpath_filter"] = jsonpath_expr
+        except Exception as ex:
+            LOGGER.error(f"Invalid JSONPath expression: {str(ex)}")
+            return ORJSONResponse(
+                content={"message": f"Invalid JSONPath expression: {str(ex)}", "success": False},
+                status_code=422,
+            )
     else:
         tool_data["jsonpath_filter"] = ""
 
@@ -12069,10 +12066,16 @@ async def admin_edit_tool(
                     parsed = urlparse(url)
                     if not parsed.scheme or not parsed.netloc:
                         error_msg = f"Invalid URL in allowlist: {url} (must include scheme and host)"
-                        return JSONResponse({"error": error_msg}, status_code=400)
+                        return ORJSONResponse(
+                            content={"message": error_msg, "success": False},
+                            status_code=400,
+                        )
                 except Exception:
                     error_msg = f"Invalid URL in allowlist: {url}"
-                    return JSONResponse({"error": error_msg}, status_code=400)
+                    return ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=400,
+                    )
             tool_data["allowlist"] = allowlist_entries
         else:
             # Empty field means clear the list

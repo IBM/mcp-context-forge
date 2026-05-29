@@ -745,7 +745,12 @@ export const editTool = async function (toolId) {
       queryMappingField.value = queryMappingValue;
       // Update CodeMirror editor if initialized
       if (window.editToolQueryMappingEditor) {
-        window.editToolQueryMappingEditor.setValue(queryMappingValue);
+        try {
+          window.editToolQueryMappingEditor.setValue(queryMappingValue);
+        } catch (err) {
+          console.error("Failed to set query mapping editor value:", err);
+          // Fallback to textarea value already set above
+        }
       }
     }
 
@@ -755,7 +760,12 @@ export const editTool = async function (toolId) {
       headerMappingField.value = headerMappingValue;
       // Update CodeMirror editor if initialized
       if (window.editToolHeaderMappingEditor) {
-        window.editToolHeaderMappingEditor.setValue(headerMappingValue);
+        try {
+          window.editToolHeaderMappingEditor.setValue(headerMappingValue);
+        } catch (err) {
+          console.error("Failed to set header mapping editor value:", err);
+          // Fallback to textarea value already set above
+        }
       }
     }
 

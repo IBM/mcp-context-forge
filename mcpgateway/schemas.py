@@ -1162,7 +1162,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     deprecated: Optional[bool] = Field(None, description="Whether the tool is deprecated (visible but non-executable)")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tools")
-    owner_email: Optional[str] = Field(None, description="Email of the tool owner")
+    owner_email: Optional[str] = Field(None, description="Email of the tool owner (not updated via admin edit form for security - use dedicated ownership transfer endpoint)")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
