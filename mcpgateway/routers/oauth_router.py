@@ -259,9 +259,9 @@ def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
         if isinstance(email, str) and email.strip():
             return email.strip().lower()
     if isinstance(current_user, dict):
-        email = get_user_email(current_user)
-        # Filter out "unknown" sentinel - treat as missing email
-        if isinstance(email, str) and email.strip() and email != "unknown":
+        # Direct extraction following canonical email-over-sub precedence
+        email = current_user.get("email") or current_user.get("sub")
+        if isinstance(email, str) and email.strip():
             return email.strip().lower()
     return None
 
