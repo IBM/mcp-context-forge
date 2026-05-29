@@ -3326,6 +3326,44 @@ def tojson_attr(value: object) -> str:
 jinja_env.filters["tojson_attr"] = tojson_attr
 
 
+# Pattern set for sanitizing error messages — matches Bearer tokens, passwords, API keys,
+# connection strings, and other sensitive patterns that may leak via exception messages.
+_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"Bearer\s+\S+", re.IGNORECASE), "Bearer [REDACTED]"),
+    (re.compile(r"(password|passwd|pwd)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=[REDACTED]"),
+    (re.compile(r"(api[_-]?key|apikey)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=[REDACTED]"),
+    (re.compile(r"(secret|token)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=[REDACTED]"),
+    (re.compile(r"(connection\s*string|connstr)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=[REDACTED]"),
+    (re.compile(r"mongodb(?:\+srv)?://[^@\s]+@"), "mongodb://[REDACTED]@"),
+    (re.compile(r"postgresql(?:\+psycopg)?://[^@\s]+@"), "postgresql://[REDACTED]@"),
+    (re.compile(r"redis://[^@\s]*@"), "redis://[REDACTED]@"),
+    (re.compile(r"mysql://[^@\s]+@"), "mysql://[REDACTED]@"),
+]
+
+
+def sanitize_error_message(msg: str) -> str:
+    """Sanitize an error message by redacting sensitive patterns.
+
+    Args:
+        msg: Raw error message that may contain credentials or internal details.
+
+    Returns:
+        Sanitized message safe for display in the Admin UI.
+    """
+    if not msg:
+        return msg
+    result = str(msg)
+    for pattern, replacement in _SENSITIVE_PATTERNS:
+        result = pattern.sub(replacement, result)
+    # Truncate extremely long messages to prevent UI layout issues
+    if len(result) > 500:
+        result = result[:497] + "..."
+    return result
+
+
+jinja_env.filters["sanitize_error"] = sanitize_error_message
+
+
 jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
 
 templates = Jinja2Templates(env=jinja_env)

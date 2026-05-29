@@ -5196,6 +5196,66 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_grpc_failed_services_context(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Cover gRPC failed-services detection path (admin.py lines 3901-3903)."""
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+        mock_roots.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False)
+        monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+        monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
+
+        grpc_service = MagicMock()
+        grpc_service.model_dump.return_value = {
+            "id": "svc-fail-1",
+            "team_id": "team-1",
+            "discovered_services": {
+                "_failed_services": [
+                    {"service": "testpkg.SvcA", "error": "connection timeout"},
+                    {"service": "testpkg.SvcB", "error": "refused"},
+                ]
+            },
+        }
+        monkeypatch.setattr(
+            "mcpgateway.admin.grpc_service_mgr",
+            MagicMock(list_services=AsyncMock(return_value=[grpc_service])),
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id="team-1",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+        assert isinstance(response, HTMLResponse)
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert context["grpc_services_with_failures"] is True
+        assert context["failed_service_count"] == 2
+        assert "svc-fail-1" in context["failed_service_ids"]
+        assert context["total_service_count"] == 1
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_list_exceptions_and_grpc_exception(
         self,
         mock_roots,
@@ -16215,9 +16275,7 @@ async def test_admin_get_agent_admin_with_token_teams_none_retrieves_own_private
     assert result["visibility"] == "private"
     assert result["owner_email"] == "admin@example.com"
     # Verify get_agent was called with correct token_teams
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -16239,9 +16297,7 @@ async def test_admin_get_agent_admin_with_public_only_token_cannot_retrieve_othe
 
     assert exc.value.status_code == 404
     # Verify get_agent was called with token_teams=[]
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[]
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[])
 
 
 @pytest.mark.asyncio
