@@ -122,12 +122,11 @@ describe("Servers", () => {
       expect(screen.getByText("Test Server 0")).toBeInTheDocument();
     });
 
-    // Mock server details fetch
-    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
-    // Mock components fetch
+    // Components fetches fire first (panel child effects run before parent detail effect).
     vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
 
     // Find the first server row's actions menu
     const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
@@ -158,11 +157,11 @@ describe("Servers", () => {
       expect(screen.getByText("Test Server 0")).toBeInTheDocument();
     });
 
-    // Mock server details and components fetch
-    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
+    // Components fetches fire first (panel child effects run before parent detail effect).
     vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
 
     // Open details drawer
     const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
@@ -202,11 +201,11 @@ describe("Servers", () => {
       expect(screen.getByText("Test Server 0")).toBeInTheDocument();
     });
 
-    // Mock server details and components fetch
-    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
+    // Components fetches fire first (panel child effects run before parent detail effect).
     vi.mocked(api.get).mockResolvedValueOnce({ tools: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ resources: [] });
     vi.mocked(api.get).mockResolvedValueOnce({ prompts: [] });
+    vi.mocked(api.get).mockResolvedValueOnce(mockServerDetails);
 
     // Open details drawer
     const actionsButtons = screen.getAllByRole("button", { name: /actions for/i });
