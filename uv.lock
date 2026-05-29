@@ -8,14 +8,14 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-05-19T14:42:21.538230078Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
 opentelemetry-exporter-otlp-proto-common = "2026-05-25T23:59:59Z"
 opentelemetry-api = "2026-05-25T23:59:59Z"
 langchain-core = "2026-05-06T23:59:59Z"
-cpex = "2026-05-11T23:59:59Z"
+cpex = "2026-05-29T23:59:59Z"
 cpex-retry-with-backoff = "2026-05-25T23:59:59Z"
 opentelemetry-exporter-otlp-proto-http = "2026-05-25T23:59:59Z"
 cpex-pii-filter = "2026-05-25T23:59:59Z"
@@ -935,7 +935,7 @@ toml = [
 
 [[package]]
 name = "cpex"
-version = "0.1.0"
+version = "0.1.1.dev1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -950,9 +950,9 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fe/73/98eb3322c63fe8654e3db87b13557aff75eaeecf35aabb129901e5c7704e/cpex-0.1.0.tar.gz", hash = "sha256:d67fdb2892bb9c683d42c716be46d926fbb01b9f4c3d85d2cdf0869d7a0f2d0e", size = 1211837, upload-time = "2026-05-05T19:17:15.387Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/e0/705a814c7b7a02d6558fa752e569ec3fcab7744979fb85eecc78ccaa4f4b/cpex-0.1.1.dev1.tar.gz", hash = "sha256:4a9dfc9a0bab6fb8ca58d22f90b43203405019c5b1ac0300a53c37c1c1a496b9", size = 2309240, upload-time = "2026-05-29T14:03:41.037Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/15/c1a98af9dca602846373a07dd09b3944f6e2fceee132df58772acc057d66/cpex-0.1.0-py3-none-any.whl", hash = "sha256:890db8077e05aedf8236b1ff140f39b677944a751afe57de6538faf884d64d4a", size = 241015, upload-time = "2026-05-05T19:17:13.614Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/60/e7c7931e2791a8f6f878553b95675bc1daf6795ed21efa6b46d5a361ecc2/cpex-0.1.1.dev1-py3-none-any.whl", hash = "sha256:6f3d30cde7a1b5bcafb04f02fcca0bdee8e5ab83d8a6489e5b6b665e2749f4ce", size = 241695, upload-time = "2026-05-29T14:03:39.594Z" },
 ]
 
 [[package]]
@@ -3164,7 +3164,7 @@ requires-dist = [
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "click", specifier = "<=8.3.3" },
     { name = "cookiecutter", marker = "extra == 'templating'", specifier = ">=2.7.1" },
-    { name = "cpex", specifier = ">=0.1.0" },
+    { name = "cpex", specifier = "==0.1.1.dev1" },
     { name = "cpex-encoded-exfil-detection", marker = "extra == 'plugins'", specifier = ">=0.3.3" },
     { name = "cpex-pii-filter", marker = "extra == 'plugins'", specifier = ">=0.3.3" },
     { name = "cpex-rate-limiter", marker = "extra == 'plugins'", specifier = ">=0.1.3" },

@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-05-11T23:59:59Z"
+cpex = "2026-05-29T23:59:59Z"
 cpex-url-reputation = "2026-05-25T23:59:59Z"
 cpex-rate-limiter = "2026-05-25T23:59:59Z"
 cpex-encoded-exfil-detection = "2026-05-29T23:59:59Z"
@@ -76,7 +76,7 @@ dependencies = [
     "base58>=2.1.1",
     "brotli>=1.2.0",
     "click<=8.3.3", # Transitive pin
-    "cpex>=0.1.0",
+    "cpex==0.1.1.dev1",
     "cryptography>=48.0.0",
     "fastapi<=0.136.1",
     "filelock>=3.29.0",
