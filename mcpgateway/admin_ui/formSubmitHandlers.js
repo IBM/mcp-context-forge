@@ -319,11 +319,29 @@ export const handleEditPromptFormSubmit = async function (e) {
     }
 
     // Save CodeMirror editors' contents if present
-    if (window.promptToolHeadersEditor) {
-      window.promptToolHeadersEditor.save();
+    // Collect all errors to avoid partial save failures
+    const editorSaveErrors = [];
+    const editors = [
+      { name: "promptToolHeadersEditor", editor: window.promptToolHeadersEditor },
+      { name: "promptToolSchemaEditor", editor: window.promptToolSchemaEditor },
+    ];
+
+    for (const { name, editor } of editors) {
+      if (editor) {
+        try {
+          editor.save();
+        } catch (error) {
+          console.error(`Failed to save ${name}:`, error);
+          editorSaveErrors.push(`${name}: ${error.message}`);
+        }
+      }
     }
-    if (window.promptToolSchemaEditor) {
-      window.promptToolSchemaEditor.save();
+
+    // If any editor failed to save, report all errors and abort submission
+    if (editorSaveErrors.length > 0) {
+      throw new Error(
+        `Failed to save editor content:\n${editorSaveErrors.join("\n")}`
+      );
     }
 
     const isInactiveCheckedBool = isInactiveChecked("prompts");
@@ -647,14 +665,30 @@ export const handleToolFormSubmit = async function (event) {
     }
 
     // Save CodeMirror editors' contents
-    if (window.headersEditor) {
-      window.headersEditor.save();
+    // Collect all errors to avoid partial save failures
+    const editorSaveErrors = [];
+    const editors = [
+      { name: "headersEditor", editor: window.headersEditor },
+      { name: "schemaEditor", editor: window.schemaEditor },
+      { name: "outputSchemaEditor", editor: window.outputSchemaEditor },
+    ];
+
+    for (const { name, editor } of editors) {
+      if (editor) {
+        try {
+          editor.save();
+        } catch (error) {
+          console.error(`Failed to save ${name}:`, error);
+          editorSaveErrors.push(`${name}: ${error.message}`);
+        }
+      }
     }
-    if (window.schemaEditor) {
-      window.schemaEditor.save();
-    }
-    if (window.outputSchemaEditor) {
-      window.outputSchemaEditor.save();
+
+    // If any editor failed to save, report all errors and abort submission
+    if (editorSaveErrors.length > 0) {
+      throw new Error(
+        `Failed to save editor content:\n${editorSaveErrors.join("\n")}`
+      );
     }
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
@@ -711,22 +745,33 @@ export const handleEditToolFormSubmit = async function (event) {
       throw new Error(urlValidation.error);
     }
 
-    // // Save CodeMirror editors' contents if present
+    // Save CodeMirror editors' contents if present
+    // Collect all errors to avoid partial save failures
+    const editorSaveErrors = [];
+    const editors = [
+      { name: "editToolHeadersEditor", editor: window.editToolHeadersEditor },
+      { name: "editToolSchemaEditor", editor: window.editToolSchemaEditor },
+      { name: "editToolOutputSchemaEditor", editor: window.editToolOutputSchemaEditor },
+      { name: "editToolQueryMappingEditor", editor: window.editToolQueryMappingEditor },
+      { name: "editToolHeaderMappingEditor", editor: window.editToolHeaderMappingEditor },
+    ];
 
-    if (window.editToolHeadersEditor) {
-      window.editToolHeadersEditor.save();
+    for (const { name, editor } of editors) {
+      if (editor) {
+        try {
+          editor.save();
+        } catch (error) {
+          console.error(`Failed to save ${name}:`, error);
+          editorSaveErrors.push(`${name}: ${error.message}`);
+        }
+      }
     }
-    if (window.editToolSchemaEditor) {
-      window.editToolSchemaEditor.save();
-    }
-    if (window.editToolOutputSchemaEditor) {
-      window.editToolOutputSchemaEditor.save();
-    }
-    if (window.editToolQueryMappingEditor) {
-      window.editToolQueryMappingEditor.save();
-    }
-    if (window.editToolHeaderMappingEditor) {
-      window.editToolHeaderMappingEditor.save();
+
+    // If any editor failed to save, report all errors and abort submission
+    if (editorSaveErrors.length > 0) {
+      throw new Error(
+        `Failed to save editor content:\n${editorSaveErrors.join("\n")}`
+      );
     }
 
     const isInactiveCheckedBool = isInactiveChecked("tools");
@@ -979,11 +1024,29 @@ export const handleEditServerFormSubmit = async function (e) {
     }
 
     // Save CodeMirror editors' contents if present
-    if (window.promptToolHeadersEditor) {
-      window.promptToolHeadersEditor.save();
+    // Collect all errors to avoid partial save failures
+    const editorSaveErrors = [];
+    const editors = [
+      { name: "promptToolHeadersEditor", editor: window.promptToolHeadersEditor },
+      { name: "promptToolSchemaEditor", editor: window.promptToolSchemaEditor },
+    ];
+
+    for (const { name, editor } of editors) {
+      if (editor) {
+        try {
+          editor.save();
+        } catch (error) {
+          console.error(`Failed to save ${name}:`, error);
+          editorSaveErrors.push(`${name}: ${error.message}`);
+        }
+      }
     }
-    if (window.promptToolSchemaEditor) {
-      window.promptToolSchemaEditor.save();
+
+    // If any editor failed to save, report all errors and abort submission
+    if (editorSaveErrors.length > 0) {
+      throw new Error(
+        `Failed to save editor content:\n${editorSaveErrors.join("\n")}`
+      );
     }
 
     const isInactiveCheckedBool = isInactiveChecked("servers");
@@ -1087,11 +1150,29 @@ export const handleEditResFormSubmit = async function (e) {
     }
 
     // Save CodeMirror editors' contents if present
-    if (window.promptToolHeadersEditor) {
-      window.promptToolHeadersEditor.save();
+    // Collect all errors to avoid partial save failures
+    const editorSaveErrors = [];
+    const editors = [
+      { name: "promptToolHeadersEditor", editor: window.promptToolHeadersEditor },
+      { name: "promptToolSchemaEditor", editor: window.promptToolSchemaEditor },
+    ];
+
+    for (const { name, editor } of editors) {
+      if (editor) {
+        try {
+          editor.save();
+        } catch (error) {
+          console.error(`Failed to save ${name}:`, error);
+          editorSaveErrors.push(`${name}: ${error.message}`);
+        }
+      }
     }
-    if (window.promptToolSchemaEditor) {
-      window.promptToolSchemaEditor.save();
+
+    // If any editor failed to save, report all errors and abort submission
+    if (editorSaveErrors.length > 0) {
+      throw new Error(
+        `Failed to save editor content:\n${editorSaveErrors.join("\n")}`
+      );
     }
 
     const isInactiveCheckedBool = isInactiveChecked("resources");
