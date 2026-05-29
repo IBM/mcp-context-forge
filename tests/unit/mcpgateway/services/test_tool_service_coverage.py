@@ -5676,7 +5676,9 @@ class TestUpdateToolBranches:
         tool.name = "old_name"
         tool.custom_name = "old_name"
         tool.team_id = "team-1"
+        tool.owner_email = "owner@example.com"
         tool.visibility = "team"
+        tool.version = 1
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = "conflict_name"
@@ -5692,15 +5694,28 @@ class TestUpdateToolBranches:
         tool_update.output_schema = None
         tool_update.annotations = None
         tool_update.jsonpath_filter = None
-        tool_update.visibility = "team"
+        # visibility must support .lower() method
+        tool_update.visibility = MagicMock()
+        tool_update.visibility.lower.return_value = "team"
+        tool_update.team_id = None
         tool_update.auth = None
         tool_update.tags = None
+        tool_update.timeout_ms = None
+        tool_update.base_url = None
+        tool_update.path_template = None
+        tool_update.query_mapping = None
+        tool_update.header_mapping = None
+        tool_update.expose_passthrough = None
+        tool_update.allowlist = None
+        tool_update.plugin_chain_pre = None
+        tool_update.plugin_chain_post = None
 
         existing = MagicMock()
         existing.custom_name = "conflict_name"
         existing.enabled = True
         existing.id = "t2"
         existing.visibility = "team"
+        existing.team_id = "team-1"
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):

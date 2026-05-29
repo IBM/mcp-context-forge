@@ -12112,8 +12112,9 @@ async def admin_edit_tool(
                     if settings.ssrf_protection_enabled:
                         try:
                             # Extract hostname without port for SSRF validation
-                            # parsed.netloc can be "host:port", we need just the hostname
-                            hostname = parsed.hostname or parsed.netloc.split(":")[0]
+                            # parsed.hostname handles IPv6 correctly (e.g., "::1" from "http://[::1]:8080")
+                            # Only fall back to netloc if hostname is None (shouldn't happen for valid URLs)
+                            hostname = parsed.hostname or parsed.netloc
                             SecurityValidator._validate_ssrf(hostname, f"allowlist URL '{url}'")
                         except ValueError as ssrf_err:
                             error_msg = f"Security violation in allowlist: {str(ssrf_err)}"
