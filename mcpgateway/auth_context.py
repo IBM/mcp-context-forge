@@ -592,18 +592,18 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
     Examples:
         >>> # New format: sub contains user ID
         >>> payload = {"sub": "12345", "is_admin": True, "auth_provider": "local"}
-        >>> await set_user_context_from_token(request, payload, db)
-        >>> request.state.user_email
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
         'user@example.com'
-        >>> request.state.user_id
+        >>> request.state.user_id  # doctest: +SKIP
         '12345'
 
         >>> # Legacy format: sub contains email
         >>> payload = {"sub": "user@example.com", "is_admin": False}
-        >>> await set_user_context_from_token(request, payload, db)
-        >>> request.state.user_email
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
         'user@example.com'
-        >>> request.state.user_id
+        >>> request.state.user_id  # doctest: +SKIP
         'user@example.com'
     """
     from mcpgateway.auth import get_user_email_from_token

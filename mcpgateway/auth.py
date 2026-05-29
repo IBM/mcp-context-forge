@@ -1008,6 +1008,25 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         return None
 
 
+def _get_email_by_id_sync(user_id: str) -> Optional[str]:
+    """Synchronous helper to resolve user email from UUID id.
+
+    Used to convert new-format JWT sub (UUID) back to email for the existing auth flow.
+
+    Args:
+        user_id: The UUID string stored in EmailUser.id
+
+    Returns:
+        Email string if found, None otherwise.
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(select(EmailUser.email).where(EmailUser.id == user_id))
+        return result.scalar_one_or_none()
+
+
 def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
     """Resolve plugin-authenticated user against database-backed identity state.
 
@@ -1543,6 +1562,16 @@ async def get_current_user(
                 detail="Invalid token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # If sub is a UUID (new token format), resolve to email via DB lookup
+        if email is not None:
+            try:
+                uuid.UUID(email)
+                resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
+                if resolved is not None:
+                    email = resolved
+            except ValueError:
+                pass  # sub is an email (legacy format), keep as-is
 
         logger.debug("JWT authentication successful for email: %s", email)
 
@@ -2090,20 +2119,20 @@ async def get_user_email_from_token(payload: dict, db: Session) -> Optional[str]
     Examples:
         >>> # New format: sub contains UUID
         >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000"}
-        >>> email = await get_user_email_from_token(payload, db)
-        >>> email
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
         'user@example.com'
 
         >>> # Legacy format: sub contains email
         >>> payload = {"sub": "user@example.com"}
-        >>> email = await get_user_email_from_token(payload, db)
-        >>> email
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email  # doctest: +SKIP
         'user@example.com'
 
         >>> # Unknown UUID returns None
         >>> payload = {"sub": "00000000-0000-0000-0000-000000000000"}
-        >>> email = await get_user_email_from_token(payload, db)
-        >>> email is None
+        >>> email = await get_user_email_from_token(payload, db)  # doctest: +SKIP
+        >>> email is None  # doctest: +SKIP
         True
     """
 

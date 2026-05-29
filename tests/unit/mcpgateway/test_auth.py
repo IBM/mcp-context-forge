@@ -225,6 +225,66 @@ class TestGetCurrentUser:
                     assert user.email == mock_user.email
 
     @pytest.mark.asyncio
+    async def test_jwt_uuid_sub_resolved_to_email(self, monkeypatch):
+        """UUID sub in JWT is resolved to email via _get_email_by_id_sync (lines 1488-1490)."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        mock_user = EmailUser(
+            email="resolved@example.com",
+            password_hash="hash",
+            full_name="Resolved User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_email_by_id_sync", return_value="resolved@example.com"):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            user = await get_current_user(credentials=credentials)
+
+        assert user.email == "resolved@example.com"
+
+    @pytest.mark.asyncio
+    async def test_jwt_uuid_sub_not_found_keeps_uuid_as_email(self, monkeypatch):
+        """UUID sub not found in DB: email stays as UUID (resolved is None path, line 1489)."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        mock_user = EmailUser(
+            email=user_uuid,
+            password_hash="hash",
+            full_name="UUID User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
+                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                            user = await get_current_user(credentials=credentials)
+
+        assert user.email == user_uuid
+
+    @pytest.mark.asyncio
     async def test_jwt_without_email_or_sub_raises_401(self):
         """Test JWT token without email or sub field raises 401."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="invalid_jwt")  # pragma: allowlist secret
@@ -1990,6 +2050,54 @@ class TestGetUserByEmailSyncNone:
         assert result is None
 
 
+class TestGetEmailByIdSync:
+    """Test _get_email_by_id_sync helper (lines 946-951)."""
+
+    def test_returns_email_when_found(self, monkeypatch):
+        """Returns email string when UUID matches a DB row."""
+        from contextlib import contextmanager
+
+        class DummyResult:
+            def scalar_one_or_none(self):
+                return "found@example.com"
+
+        class DummySession:
+            def execute(self, _q):
+                return DummyResult()
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        from mcpgateway.auth import _get_email_by_id_sync
+
+        result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
+        assert result == "found@example.com"
+
+    def test_returns_none_when_not_found(self, monkeypatch):
+        """Returns None when UUID has no matching DB row."""
+        from contextlib import contextmanager
+
+        class DummyResult:
+            def scalar_one_or_none(self):
+                return None
+
+        class DummySession:
+            def execute(self, _q):
+                return DummyResult()
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        from mcpgateway.auth import _get_email_by_id_sync
+
+        result = _get_email_by_id_sync("550e8400-e29b-41d4-a716-446655440000")
+        assert result is None
+
+
 class TestBatchedSyncNoPTeam:
     """Test _get_auth_context_batched_sync with user but no personal team."""
 
@@ -2712,7 +2820,7 @@ class TestBatchedPathBranches:
             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
             patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
         ):
-            user = await get_current_user(credentials=credentials)
+            user = await get_current_user(credentials=credentials)  # pragma: allowlist secret
 
         assert user.email == "user@example.com"
 
