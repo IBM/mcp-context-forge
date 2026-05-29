@@ -728,11 +728,7 @@ export const editTool = async function (toolId) {
       });
     }
 
-    // Handle REST passthrough button visibility and populate fields
-    const restPassthroughButtonWrapper = safeGetElement("edit-tool-rest-passthrough-button-wrapper");
-    const restPassthroughContainer = safeGetElement("edit-tool-passthrough-container");
-
-    // Always populate REST passthrough fields (they'll be hidden if not REST)
+    // Populate REST passthrough fields
     const baseUrlField = safeGetElement("edit-tool-base-url");
     if (baseUrlField) {
       baseUrlField.value = tool.baseUrl || "";
@@ -745,12 +741,22 @@ export const editTool = async function (toolId) {
 
     const queryMappingField = safeGetElement("edit-tool-query-mapping");
     if (queryMappingField) {
-      queryMappingField.value = tool.queryMapping ? JSON.stringify(tool.queryMapping, null, 2) : "";
+      const queryMappingValue = tool.queryMapping ? JSON.stringify(tool.queryMapping, null, 2) : "";
+      queryMappingField.value = queryMappingValue;
+      // Update CodeMirror editor if initialized
+      if (window.editToolQueryMappingEditor) {
+        window.editToolQueryMappingEditor.setValue(queryMappingValue);
+      }
     }
 
     const headerMappingField = safeGetElement("edit-tool-header-mapping");
     if (headerMappingField) {
-      headerMappingField.value = tool.headerMapping ? JSON.stringify(tool.headerMapping, null, 2) : "";
+      const headerMappingValue = tool.headerMapping ? JSON.stringify(tool.headerMapping, null, 2) : "";
+      headerMappingField.value = headerMappingValue;
+      // Update CodeMirror editor if initialized
+      if (window.editToolHeaderMappingEditor) {
+        window.editToolHeaderMappingEditor.setValue(headerMappingValue);
+      }
     }
 
     const exposePassthroughField = safeGetElement("edit-tool-expose-passthrough");
@@ -763,28 +769,10 @@ export const editTool = async function (toolId) {
       allowlistField.value = Array.isArray(tool.allowlist) ? tool.allowlist.join(", ") : "";
     }
 
-    // Show/hide button and container based on integration type
-    if (restPassthroughButtonWrapper) {
-      if (tool.integrationType === "REST") {
-        restPassthroughButtonWrapper.style.display = "block";
-        // Show container if any passthrough fields have values
-        if (restPassthroughContainer) {
-          const hasPassthroughData = tool.baseUrl || tool.pathTemplate ||
-                                     tool.queryMapping || tool.headerMapping ||
-                                     tool.exposePassthrough ||
-                                     (Array.isArray(tool.allowlist) && tool.allowlist.length > 0);
-          if (hasPassthroughData) {
-            restPassthroughContainer.style.display = "block";
-          } else {
-            restPassthroughContainer.style.display = "none";
-          }
-        }
-      } else {
-        restPassthroughButtonWrapper.style.display = "none";
-        if (restPassthroughContainer) {
-          restPassthroughContainer.style.display = "none";
-        }
-      }
+    // Show/hide REST passthrough section based on integration type
+    const restPassthroughSection = safeGetElement("edit-tool-rest-passthrough-section");
+    if (restPassthroughSection) {
+      restPassthroughSection.style.display = tool.integrationType === "REST" ? "block" : "none";
     }
 
     // Handle plugin section visibility

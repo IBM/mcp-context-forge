@@ -11989,6 +11989,7 @@ async def admin_edit_tool(
         jsonpath_expr = form.get("jsonpath_filter").strip()
         if jsonpath_expr:
             try:
+                # Third-Party
                 from jsonpath_ng import parse as parse_jsonpath
 
                 parse_jsonpath(jsonpath_expr)  # Validate syntax
@@ -12057,6 +12058,7 @@ async def admin_edit_tool(
     if "allowlist" in form:
         allowlist_raw = form.get("allowlist")
         if allowlist_raw and allowlist_raw.strip():
+            # Standard
             from urllib.parse import urlparse
 
             allowlist_entries = [x.strip() for x in allowlist_raw.split(",") if x.strip()]

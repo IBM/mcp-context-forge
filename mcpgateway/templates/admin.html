@@ -8795,7 +8795,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     <!-- Advanced Configuration Fields -->
                     <details class="border border-gray-300 dark:border-gray-600 rounded-lg p-4 mt-4">
                       <summary class="cursor-pointer text-md font-semibold text-gray-900 dark:text-gray-100 hover:text-indigo-600 dark:hover:text-indigo-400 select-none">
-                        Advanced Configuration
+                        Advanced: Add Passthrough
                       </summary>
                       <div class="mt-4 space-y-6">
                     <div>
@@ -8869,24 +8869,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       </p>
                     </div>
 
-                    <!-- REST Passthrough Button (shown only for REST integration type) -->
-                    <div id="edit-tool-rest-passthrough-button-wrapper" style="display: none;">
-                      <button
-                        type="button"
-                        id="edit-tool-passthrough-btn"
-                        class="mt-2 inline-flex justify-center py-1 px-2 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
-                      >
-                        Advanced: Add Passthrough
-                      </button>
-                    </div>
-
-                    <!-- REST Passthrough Fields Container -->
-                    <fieldset id="edit-tool-passthrough-container" class="mt-2 border p-4 rounded-lg dark:border-gray-600" style="display: none;">
-                      <legend class="text-md font-semibold text-gray-900 dark:text-gray-100 px-2">
+                    <!-- REST Passthrough Fields -->
+                    <div id="edit-tool-rest-passthrough-section" style="display: none;">
+                      <h4 class="text-md font-semibold text-gray-900 dark:text-gray-100 mb-4 border-b border-gray-200 dark:border-gray-700 pb-2">
                         REST Passthrough Configuration
-                      </legend>
+                      </h4>
 
-                      <div class="space-y-6 mt-4">
+                      <div class="space-y-6">
                         <div>
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -8991,7 +8980,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </p>
                         </div>
                       </div>
-                    </fieldset>
+                    </div>
 
                     <!-- Plugin Chain Fields (shown when plugins enabled) -->
                     <div id="edit-tool-plugin-section" style="display: none;">
