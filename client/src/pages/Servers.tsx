@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { MCPServerForm } from "@/components/mcp-servers/MCPServerForm";
 import { ServersTable } from "@/components/servers/ServersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
-import { MCPServerDetailsDrawer } from "@/components/servers/MCPServerDetailsDrawer";
+import { MCPServerDetailsPanel } from "@/components/servers/MCPServerDetailsPanel";
 import { useQuery } from "@/hooks/useQuery";
 import { api } from "@/api/client";
 import { serversApi } from "@/api/servers";
@@ -324,12 +324,12 @@ export function Servers() {
         onConfirm={() => setTestDialogOpen(false)}
       />
 
-      <MCPServerDetailsDrawer
+      <MCPServerDetailsPanel
         server={detailsServer ?? null}
         isLoading={detailsLoading}
         error={detailsError}
         open={isDetailsDrawerOpen}
-        onOpenChange={handleCloseDetails}
+        onClose={() => handleCloseDetails(false)}
       />
     </div>
   );
