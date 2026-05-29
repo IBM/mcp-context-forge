@@ -6408,6 +6408,128 @@ class TestUpdateToolBranches:
         assert "Public" not in str(err)
 
     @pytest.mark.asyncio
+    async def test_update_tool_simultaneous_name_and_team_change_no_conflict(self, tool_service, mock_tool):
+        """Renaming a tool while changing teams should check for conflicts in the NEW team with the NEW name."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Change both name AND team
+        tool_update = _make_tool_update(name="new_tool_name", team_id="team-2")
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call checks for conflicts in team-2 with new_tool_name (returns None = no conflict)
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1", "name": "new_tool_name"}),
+        ):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert result is not None
+        assert tool.name == "new_tool_name"
+        assert tool.custom_name == "new_tool_name"  # Tracks the rename since name == custom_name
+        assert tool.team_id == "team-2"
+        assert tool.version == 2
+
+    @pytest.mark.asyncio
+    async def test_update_tool_simultaneous_name_and_team_change_with_conflict(self, tool_service, mock_tool):
+        """Renaming a tool while changing teams should detect conflicts in the NEW team with the NEW name."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Change both name AND team
+        tool_update = _make_tool_update(name="new_tool_name", team_id="team-2")
+
+        # Existing tool in team-2 with the same new name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "new_tool_name"
+        existing_tool.team_id = "team-2"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-2
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "new_tool_name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_name_change_with_same_team_checks_same_team(self, tool_service, mock_tool):
+        """Renaming a tool without changing teams should still check conflicts in the SAME team."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "old_tool_name"
+        tool.custom_name = "old_tool_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Only change name, keep same team
+        tool_update = _make_tool_update(name="new_tool_name")
+
+        # Existing tool in team-1 with the same new name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "new_tool_name"
+        existing_tool.team_id = "team-1"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-1
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "new_tool_name" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_team_change_without_name_change_checks_new_team(self, tool_service, mock_tool):
+        """Changing only the team (not the name) should check for conflicts in the NEW team."""
+        tool = mock_tool
+        tool.id = "t1"
+        tool.name = "my_tool"
+        tool.custom_name = "my_tool"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+        tool.version = 1
+
+        # Only change team, keep same name
+        tool_update = _make_tool_update(team_id="team-2")
+
+        # Existing tool in team-2 with the same name
+        existing_tool = MagicMock()
+        existing_tool.id = "t2"
+        existing_tool.custom_name = "my_tool"
+        existing_tool.team_id = "team-2"
+        existing_tool.visibility = "team"
+        existing_tool.enabled = True
+
+        db = MagicMock()
+        # First call returns the tool being updated, second call returns the conflicting tool in team-2
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing_tool]):
+            with pytest.raises(ToolNameConflictError) as exc_info:
+                await tool_service.update_tool(db, "t1", tool_update)
+
+        # Verify the error message mentions the conflict
+        assert "my_tool" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_permission_check_on_update(self, tool_service):
         """Non-owner user gets PermissionError on update."""
         tool = MagicMock(spec=DbTool)
