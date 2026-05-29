@@ -12046,11 +12046,8 @@ async def admin_edit_tool(
             )
 
     # Handle expose_passthrough checkbox: always set value (checked -> True, unchecked -> False)
-    if "expose_passthrough" in form:
-        tool_data["expose_passthrough"] = form.get("expose_passthrough") == "true"
-    else:
-        # Checkbox not present means unchecked -> explicitly set False
-        tool_data["expose_passthrough"] = False
+    # Checkbox not present means unchecked -> explicitly set False
+    tool_data["expose_passthrough"] = "expose_passthrough" in form and form.get("expose_passthrough") == "true"
 
     # Handle list fields: allow clearing to empty list
     if "allowlist" in form:
@@ -12058,6 +12055,9 @@ async def admin_edit_tool(
         if allowlist_raw and allowlist_raw.strip():
             # Standard
             from urllib.parse import urlparse
+
+            # First-Party
+            from mcpgateway.common.validators import SecurityValidator
 
             allowlist_entries = [x.strip() for x in allowlist_raw.split(",") if x.strip()]
             # Validate each URL to prevent SSRF attacks
@@ -12070,8 +12070,23 @@ async def admin_edit_tool(
                             content={"message": error_msg, "success": False},
                             status_code=400,
                         )
-                except Exception:
-                    error_msg = f"Invalid URL in allowlist: {url}"
+
+                    # Enhanced SSRF protection: validate against private IP ranges, cloud metadata, etc.
+                    if settings.ssrf_protection_enabled:
+                        try:
+                            # Extract hostname without port for SSRF validation
+                            # parsed.netloc can be "host:port", we need just the hostname
+                            hostname = parsed.hostname or parsed.netloc.split(":")[0]
+                            SecurityValidator._validate_ssrf(hostname, f"allowlist URL '{url}'")
+                        except ValueError as ssrf_err:
+                            error_msg = f"Security violation in allowlist: {str(ssrf_err)}"
+                            LOGGER.error(error_msg)
+                            return ORJSONResponse(
+                                content={"message": error_msg, "success": False},
+                                status_code=400,
+                            )
+                except Exception as ex:
+                    error_msg = f"Invalid URL in allowlist: {url} - {str(ex)}"
                     return ORJSONResponse(
                         content={"message": error_msg, "success": False},
                         status_code=400,
@@ -12082,10 +12097,24 @@ async def admin_edit_tool(
             tool_data["allowlist"] = []
 
     # Add plugin chain fields: allow clearing to empty list
+    # Validate plugin names against configured plugins if plugins are enabled
     if "plugin_chain_pre" in form:
         plugin_chain_pre_raw = form.get("plugin_chain_pre")
         if plugin_chain_pre_raw and plugin_chain_pre_raw.strip():
-            tool_data["plugin_chain_pre"] = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
+            plugin_list = [x.strip() for x in plugin_chain_pre_raw.split(",") if x.strip()]
+            if settings.plugins.enabled:
+                # First-Party
+                from mcpgateway.plugins import list_configured_plugin_names
+
+                available_plugins = list_configured_plugin_names()
+                invalid_plugins = [p for p in plugin_list if p not in available_plugins]
+                if invalid_plugins:
+                    error_msg = f"Invalid plugin names in plugin_chain_pre: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
+                    return ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=422,
+                    )
+            tool_data["plugin_chain_pre"] = plugin_list
         else:
             # Empty field means clear the list
             tool_data["plugin_chain_pre"] = []
@@ -12093,7 +12122,20 @@ async def admin_edit_tool(
     if "plugin_chain_post" in form:
         plugin_chain_post_raw = form.get("plugin_chain_post")
         if plugin_chain_post_raw and plugin_chain_post_raw.strip():
-            tool_data["plugin_chain_post"] = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
+            plugin_list = [x.strip() for x in plugin_chain_post_raw.split(",") if x.strip()]
+            if settings.plugins.enabled:
+                # First-Party
+                from mcpgateway.plugins import list_configured_plugin_names
+
+                available_plugins = list_configured_plugin_names()
+                invalid_plugins = [p for p in plugin_list if p not in available_plugins]
+                if invalid_plugins:
+                    error_msg = f"Invalid plugin names in plugin_chain_post: {', '.join(invalid_plugins)}. Available plugins: {', '.join(available_plugins)}"
+                    return ORJSONResponse(
+                        content={"message": error_msg, "success": False},
+                        status_code=422,
+                    )
+            tool_data["plugin_chain_post"] = plugin_list
         else:
             # Empty field means clear the list
             tool_data["plugin_chain_post"] = []
