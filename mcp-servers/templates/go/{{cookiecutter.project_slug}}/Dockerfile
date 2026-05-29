@@ -4,7 +4,7 @@
 # techniques, including the $TARGETPLATFORM environment variable.
 # Using Red Hat UBI 9 Go Toolset for enterprise-grade security and IBM alignment
 
-FROM registry.access.redhat.com/ubi9/go-toolset:1.26 AS builder
+FROM registry.access.redhat.com/{{ cookiecutter.go_version }} AS builder
 USER root
 RUN dnf install -y git tzdata ca-certificates && dnf clean all
 ENV GOTOOLCHAIN=auto
