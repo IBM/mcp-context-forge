@@ -1104,7 +1104,16 @@ class ToolCreate(BaseModel):
 
         Raises:
             ValueError: If any plugin is not in the allowed set.
+
+        Note:
+            When plugins are globally disabled (settings.plugins.enabled = False),
+            plugin chain validation is skipped to allow pre-configuration of plugin chains.
+            The chains will be validated when plugins are enabled.
         """
+        # Skip validation if plugins are globally disabled (allows pre-configuration)
+        if not settings.plugins.enabled:
+            return v
+
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
         if v is not None:
             for plugin in v:
@@ -1556,7 +1565,16 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         Raises:
             ValueError: If any plugin is not in the allowed set.
+
+        Note:
+            When plugins are globally disabled (settings.plugins.enabled = False),
+            plugin chain validation is skipped to allow pre-configuration of plugin chains.
+            The chains will be validated when plugins are enabled.
         """
+        # Skip validation if plugins are globally disabled (allows pre-configuration)
+        if not settings.plugins.enabled:
+            return v
+
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
         if v is not None:
             for plugin in v:

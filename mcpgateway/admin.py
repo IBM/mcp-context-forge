@@ -12044,27 +12044,31 @@ def _validate_plugin_chains(plugin_chain_raw: str, field_name: str, available_pl
     Returns:
         Tuple of (plugin_list, error_response). If validation fails, returns (None, error_response).
         If validation succeeds, returns (plugin_list, None).
+
+    Note:
+        Plugin chains can be configured even when plugins are globally disabled.
+        This allows pre-configuration of plugin chains before enabling the plugin system.
+        The chains will only execute when plugins are globally enabled.
     """
     plugin_list = [x.strip() for x in plugin_chain_raw.split(",") if x.strip()]
 
-    # Reject plugin chains when plugins are globally disabled
-    if not plugins_enabled:
-        error_msg = f"Cannot configure {field_name}: plugins are globally disabled. Enable plugins via PLUGINS_ENABLED=true to use plugin chains."
-        LOGGER.warning(f"Rejected {field_name} configuration: {plugin_list} (plugins disabled)")
-        return (None, ORJSONResponse(
-            content={"message": error_msg, "success": False},
-            status_code=422,
-        ))
+    # If plugins are disabled but user is configuring chains, log a warning but allow it
+    # The chains will be stored but won't execute until plugins are enabled
+    if not plugins_enabled and plugin_list:
+        LOGGER.info(f"Configuring {field_name}: {plugin_list} (plugins currently disabled - chains will execute when plugins are enabled)")
 
-    # Validate plugin names
-    for plugin_name in plugin_list:
-        if plugin_name not in available_plugins:
-            error_msg = f"Unknown plugin in {field_name}: {plugin_name}"
-            LOGGER.warning(error_msg)
-            return (None, ORJSONResponse(
-                content={"message": error_msg, "success": False},
-                status_code=422,
-            ))
+    # Validate plugin names only if plugins are enabled (so we can check available_plugins)
+    # If plugins are disabled, we can't validate against available plugins, so skip validation
+    # and allow any plugin names to be stored (they'll be validated when plugins are enabled)
+    if plugins_enabled:
+        for plugin_name in plugin_list:
+            if plugin_name not in available_plugins:
+                error_msg = f"Unknown plugin in {field_name}: {plugin_name}"
+                LOGGER.warning(error_msg)
+                return (None, ORJSONResponse(
+                    content={"message": error_msg, "success": False},
+                    status_code=422,
+                ))
     return (plugin_list, None)
 
 
