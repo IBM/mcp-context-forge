@@ -56,15 +56,19 @@ export function Servers() {
     [selectedServerIdForDetails],
   );
 
-  const {
-    data: detailsServer,
-    error: detailsQueryError,
-    isLoading: detailsLoading,
-  } = useQuery<MCPServer>(detailsQueryPath, {
+  const { data: detailsServer, error: detailsQueryError } = useQuery<MCPServer>(detailsQueryPath, {
     enabled: Boolean(selectedServerIdForDetails),
   });
 
   const detailsError = detailsQueryError ? { message: detailsQueryError.message } : null;
+
+  // Seed the panel from the listing row so the chrome renders instantly;
+  // detailsServer silently replaces the seed once the detail fetch resolves.
+  const selectedRow = useMemo(
+    () => allServers.find((s) => s.id === selectedServerIdForDetails) ?? null,
+    [allServers, selectedServerIdForDetails],
+  );
+  const panelServer = detailsServer ?? selectedRow;
 
   // Update servers on initial load
   useEffect(() => {
@@ -325,8 +329,7 @@ export function Servers() {
       />
 
       <MCPServerDetailsPanel
-        server={detailsServer ?? null}
-        isLoading={detailsLoading}
+        server={panelServer}
         error={detailsError}
         open={isDetailsDrawerOpen}
         onClose={() => handleCloseDetails(false)}
