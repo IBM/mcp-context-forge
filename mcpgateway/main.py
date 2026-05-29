@@ -10468,8 +10468,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10511,9 +10512,10 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             _req_email, _req_is_admin = user_email, is_admin
             _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             # If token has explicit team scope (even empty [] for public-only), respect it
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10570,8 +10572,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10596,10 +10599,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
@@ -10672,8 +10677,9 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
             user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             if is_admin and token_teams is None:
-                user_email = None
+                # user_email stays as-is (not None) for owner matching
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
@@ -10698,10 +10704,12 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
+            # Keep user_email for owner matching (PR #4341 / issue #4694)
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
+                # auth_user_email stays as-is (not None) for owner matching
                 # auth_token_teams stays None (unrestricted)
+                pass
             elif auth_token_teams is None:
                 auth_token_teams = []  # Non-admin without teams = public-only
 
