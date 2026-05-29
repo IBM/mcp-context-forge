@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
 from mcpgateway.services.grpc_service import (
     GrpcService,
@@ -1541,3 +1542,309 @@ class TestUpdateServiceVisibilityPropagation:
         second_call_arg = db.execute.call_args_list[1].args[0]
         rendered = str(second_call_arg).lower()
         assert "update" in rendered and "tools" in rendered
+
+
+class TestDeleteServiceChunkedBulkDelete:
+    """Test chunked bulk deletion of tools when service has >500 tools."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.mark.asyncio
+    async def test_delete_service_chunked_bulk_delete(self):
+        """Test that delete_service chunks tool deletion when >500 tools exist."""
+        # Create a service with 1200 tools
+        sample_db_service = MagicMock(spec=DbGrpcService)
+        sample_db_service.id = "svc-1"
+        sample_db_service.name = "test-service"
+        sample_db_service.tools = [MagicMock(id=f"tool-{i}") for i in range(1200)]
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
+
+        await GrpcService().delete_service(mock_db, "svc-1")
+
+        # Should have called execute at least 9 times (3 chunks × 3 tables per chunk)
+        # Chunks: [0:500], [500:1000], [1000:1200]
+        # Tables per chunk: ToolMetric, server_tool_association, DbTool
+        assert mock_db.execute.call_count >= 9
+
+        # Should have deleted the service itself
+        mock_db.delete.assert_called_once_with(sample_db_service)
+        mock_db.commit.assert_called_once()
+
+
+class TestInvokeMethodMetadataForwarding:
+    """Test that invoke_method forwards gRPC metadata to GrpcEndpoint."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_metadata_forwarded_to_endpoint(self, monkeypatch):
+        """Test that service.grpc_metadata is passed to GrpcEndpoint constructor."""
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {"x-custom-key": "secret-token"}
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+
+        # Mock GrpcEndpoint to capture constructor args
+        mock_endpoint_class = MagicMock()
+        mock_endpoint_instance = MagicMock()
+        mock_endpoint_instance.start = AsyncMock()
+        mock_endpoint_instance.invoke = AsyncMock(return_value={"result": "ok"})
+        mock_endpoint_instance.close = AsyncMock()
+        mock_endpoint_instance._services = {}
+        mock_endpoint_class.return_value = mock_endpoint_instance
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", mock_endpoint_class):
+            await GrpcService().invoke_method(mock_db, "svc-1", "svc.Method", {})
+
+        # Verify GrpcEndpoint was called with metadata
+        mock_endpoint_class.assert_called_once()
+        _, kwargs = mock_endpoint_class.call_args
+        assert kwargs["metadata"] == {"x-custom-key": "secret-token"}
+
+
+class TestInvokeMethodExceptionWrapping:
+    """Test that invoke_method wraps RuntimeError as GrpcServiceError."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_runtime_error_wrapped_as_grpc_service_error(self):
+        """Test that RuntimeError during invoke is wrapped as GrpcServiceError."""
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {}
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+
+        class FailingEndpoint:
+            def __init__(self, **_kw):
+                self._services = None
+
+            async def start(self, timeout=None):
+                pass
+
+            async def invoke(self, *_a, **_kw):
+                raise RuntimeError("internal grpc failure")
+
+            async def close(self):
+                pass
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", FailingEndpoint):
+            with pytest.raises(GrpcServiceError, match="Method invocation failed: internal grpc failure") as exc_info:
+                await GrpcService().invoke_method(mock_db, "svc-1", "svc.Method", {})
+
+        # Verify exception chaining
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == "internal grpc failure"
+
+
+class TestInvokeMethodFinallyClose:
+    """Test that invoke_method calls close() in finally block even on exception."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_method_finally_close_called_on_exception(self):
+        """Test that endpoint.close() is called even when invoke raises."""
+        enabled = MagicMock(spec=DbGrpcService)
+        enabled.id = "svc-1"
+        enabled.name = "svc"
+        enabled.enabled = True
+        enabled.target = "localhost:50051"
+        enabled.tls_cert_path = None
+        enabled.tls_key_path = None
+        enabled.tls_enabled = False
+        enabled.discovered_services = {}
+        enabled.grpc_metadata = {}
+
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = enabled
+
+        # Use a module-level sentinel so we can inspect state after the raise
+        global _sentinel_endpoint
+        _sentinel_endpoint = None
+
+        class CloseSentinelEndpoint:
+            def __init__(self, **_kw):
+                global _sentinel_endpoint
+                self.close_called = False
+                self._services = None
+                _sentinel_endpoint = self
+
+            async def start(self, timeout=None):
+                pass
+
+            async def invoke(self, *_a, **_kw):
+                raise RuntimeError("boom")
+
+            async def close(self):
+                self.close_called = True
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", CloseSentinelEndpoint):
+            with pytest.raises(GrpcServiceError):
+                await GrpcService().invoke_method(mock_db, "svc-1", "svc.Method", {})
+
+        # Verify close was called despite the exception
+        assert _sentinel_endpoint is not None
+        assert _sentinel_endpoint.close_called is True
+
+
+class TestSyncToolsSchemaChange:
+    """Test that _sync_tools_from_reflection increments tools_updated on schema change."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    def test_sync_tools_schema_change_increments_tools_updated(self, caplog):
+        """Test that changing input_schema increments tools_updated counter."""
+        sample_db_service = MagicMock(spec=DbGrpcService)
+        sample_db_service.id = "svc-1"
+        sample_db_service.name = "test-service"
+        sample_db_service.target = "localhost:50051"
+        sample_db_service.visibility = "public"
+        sample_db_service.team_id = None
+        sample_db_service.owner_email = "test@example.com"
+        sample_db_service.discovered_services = {
+            "test.Service": {
+                "name": "test.Service",
+                "methods": [
+                    {
+                        "name": "Method",
+                        "input_type": ".new.InputType",
+                        "output_type": ".test.OutputType",
+                        "client_streaming": False,
+                        "server_streaming": False,
+                    }
+                ],
+            }
+        }
+
+        # Existing tool with old input_type
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.id = "tool-1"
+        existing_tool.original_name = "test.Service.Method"
+        existing_tool.original_description = "gRPC method test.Service.Method"
+        existing_tool.description = "gRPC method test.Service.Method"
+        existing_tool.url = "localhost:50051"
+        existing_tool.visibility = "public"
+        existing_tool.team_id = None
+        existing_tool.owner_email = "test@example.com"
+        existing_tool.input_schema = {
+            "type": "object",
+            "properties": {},
+            "x-grpc-input-type": ".old.InputType",
+            "x-grpc-output-type": ".test.OutputType",
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+        }
+
+        mock_db = MagicMock(spec=Session)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [existing_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        with caplog.at_level("INFO"):
+            GrpcService()._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Verify schema was updated
+        assert existing_tool.input_schema["x-grpc-input-type"] == ".new.InputType"
+
+        # Verify log message contains "1 updated"
+        assert "1 updated" in caplog.text
+
+
+class TestSyncToolsUnchanged:
+    """Test that _sync_tools_from_reflection does not increment tools_updated when nothing changes."""
+
+    @pytest.fixture(autouse=True)
+    def _no_external_calls(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+
+    def test_sync_tools_unchanged_does_not_increment_tools_updated(self, caplog):
+        """Test that unchanged tool does not increment tools_updated counter."""
+        sample_db_service = MagicMock(spec=DbGrpcService)
+        sample_db_service.id = "svc-1"
+        sample_db_service.name = "test-service"
+        sample_db_service.target = "localhost:50051"
+        sample_db_service.visibility = "public"
+        sample_db_service.team_id = None
+        sample_db_service.owner_email = "test@example.com"
+        sample_db_service.discovered_services = {
+            "test.Service": {
+                "name": "test.Service",
+                "methods": [
+                    {
+                        "name": "Method",
+                        "input_type": ".test.InputType",
+                        "output_type": ".test.OutputType",
+                        "client_streaming": False,
+                        "server_streaming": False,
+                    }
+                ],
+            }
+        }
+
+        # Existing tool that exactly matches what would be created
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.id = "tool-1"
+        existing_tool.original_name = "test.Service.Method"
+        existing_tool.original_description = "gRPC method test.Service.Method"
+        existing_tool.description = "gRPC method test.Service.Method"
+        existing_tool.url = "localhost:50051"
+        existing_tool.visibility = "public"
+        existing_tool.team_id = None
+        existing_tool.owner_email = "test@example.com"
+        existing_tool.input_schema = {
+            "type": "object",
+            "properties": {},
+            "x-grpc-input-type": ".test.InputType",
+            "x-grpc-output-type": ".test.OutputType",
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+        }
+
+        mock_db = MagicMock(spec=Session)
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [existing_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        with caplog.at_level("INFO"):
+            GrpcService()._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Verify log message contains "0 updated"
+        assert "0 updated" in caplog.text
+
+        # Verify no mutation happened
+        assert existing_tool.url == "localhost:50051"

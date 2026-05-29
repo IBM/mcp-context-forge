@@ -2688,6 +2688,45 @@ class TestToolService:
             assert "Required URL parameter 'type' not found in arguments" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_grpc_dispatch_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that invoke_tool dispatches to GrpcServiceManager for gRPC tools."""
+        # Configure tool as gRPC
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-svc-123"
+        mock_tool.original_name = "test.Service.Method"
+        mock_tool.jsonpath_filter = ""
+
+        # Mock DB to return the tool and GlobalConfig
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # Mock GrpcServiceManager.invoke_method to return a response
+        mock_grpc_response = {"result": "ok", "data": {"value": 42}}
+
+        # Patch at the source module where GrpcService is defined (lazy import in tool_service)
+        with patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_service_class:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value=mock_grpc_response)
+            mock_grpc_service_class.return_value = mock_grpc_manager
+
+            # Invoke the tool
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None)
+
+            # Verify GrpcServiceManager.invoke_method was called
+            mock_grpc_manager.invoke_method.assert_awaited_once()
+            call_args = mock_grpc_manager.invoke_method.call_args
+
+            # Verify the arguments passed to invoke_method
+            # invoke_method signature: (db, service_id, method_name, request_data, timeout=None)
+            assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
+            assert call_args[0][2] == "test.Service.Method"  # method_name (positional arg 2)
+            assert call_args[0][3] == {"input": "value"}  # request_data (positional arg 3)
+
+            # Verify the result is properly JSON-serialized
+            assert result.content[0].type == "text"
+            result_json = json.loads(result.content[0].text)
+            assert result_json == mock_grpc_response
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
         """Test invoking a REST tool."""
         # Standard
