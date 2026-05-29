@@ -103,6 +103,7 @@ def test_legacy_prefixes_match_assembled_routers():
         "/.well-known",  # RFC 9116 - permanently unversioned
         "/api",          # Internal API prefix (if present)
         "/v1",           # Already-versioned routes (e.g. tool_plugin_bindings hardcodes /v1 prefix)
+        "/version",      # Diagnostics endpoint — no deprecation headers (like /health)
     }
 
     # Only check prefixes that should be in _LEGACY_PREFIXES

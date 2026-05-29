@@ -91,6 +91,14 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(tag_router)
     target_router.include_router(export_import_router)
 
+    # Version / diagnostics endpoint — always present; must live in both versioned
+    # (/v1/version) and legacy (/version with Sunset headers) mounts.
+    # First-Party
+    from mcpgateway.version import router as version_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(version_router)
+    logger.info("Version router included")
+
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
     # -------------------------------------------------------------------------
@@ -271,13 +279,15 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
             target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
 
-            # Well-known admin status endpoint lives in the well_known router;
-            # include it here so /v1/admin/well-known is reachable alongside the
-            # unversioned /.well-known/* routes mounted on app directly.
-            from mcpgateway.routers.well_known import router as well_known_router  # pylint: disable=import-outside-toplevel
+            # Only the /admin/well-known status endpoint belongs in the versioned
+            # router.  The full well_known router (which owns /.well-known/* paths)
+            # is mounted on app directly in main.py so those paths stay at server
+            # root as required by RFC 8615.  Including the full router here would
+            # create /v1/.well-known/** — a direct RFC 8615 violation.
+            from mcpgateway.routers.well_known import admin_router as well_known_admin_router  # pylint: disable=import-outside-toplevel
 
-            target_router.include_router(well_known_router)
-            logger.info("Well-known router included in v1 (admin status endpoint)")
+            target_router.include_router(well_known_admin_router)
+            logger.info("Well-known admin router included (/admin/well-known only — RFC 8615 safe)")
         except ImportError as e:
             logger.error(f"Admin router not available: {e}")
     else:

@@ -231,6 +231,30 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
 ]
 
 
+def _strip_v1_prefix(path: str) -> str:
+    """Strip a leading /v1 version segment from a normalized path.
+
+    Args:
+        path: Normalized path string (must start with /).
+
+    Returns:
+        Path with the /v1 prefix removed, or the original path if not present.
+
+    Examples:
+        >>> _strip_v1_prefix("/v1/tools")
+        '/tools'
+        >>> _strip_v1_prefix("/v1")
+        '/'
+        >>> _strip_v1_prefix("/tools")
+        '/tools'
+    """
+    if path.startswith("/v1/"):
+        return path[3:]
+    if path == "/v1":
+        return "/"
+    return path
+
+
 def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     """Normalize llm_api_prefix to a canonical path prefix.
 
@@ -246,10 +270,9 @@ def _normalize_llm_api_prefix(prefix: Optional[str]) -> str:
     if normalized == "/":
         return ""
     # Strip the /v1 API version prefix to align with _normalize_path_for_matching.
-    if normalized == "/v1":
+    normalized = _strip_v1_prefix(normalized)
+    if normalized == "/":
         return ""
-    if normalized.startswith("/v1/"):
-        normalized = normalized[3:]
     return normalized
 
 
@@ -369,11 +392,7 @@ class TokenScopingMiddleware:
             normalized = f"/{normalized}"
         # Strip the /v1 API version prefix so all patterns match unversioned paths.
         # This ensures scope patterns work identically for /tools and /v1/tools.
-        if normalized.startswith("/v1/"):
-            normalized = normalized[3:]
-        elif normalized == "/v1":
-            normalized = "/"
-        return normalized
+        return _strip_v1_prefix(normalized)
 
     def _get_normalized_request_path(self, request: Request) -> str:
         """Resolve request path with APP_ROOT_PATH-aware normalization.

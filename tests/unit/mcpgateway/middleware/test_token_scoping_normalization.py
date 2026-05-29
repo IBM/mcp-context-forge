@@ -6,7 +6,7 @@ across both versioned (/v1/*) and legacy (unversioned) routes.
 
 import pytest
 
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware, _normalize_llm_api_prefix
+from mcpgateway.middleware.token_scoping import TokenScopingMiddleware, _normalize_llm_api_prefix, _strip_v1_prefix
 
 
 @pytest.mark.parametrize(
@@ -150,3 +150,32 @@ def test_normalize_llm_api_prefix_v1_subpath_strips_version():
     """Input '/v1/llm' starts with '/v1/' so version prefix is stripped (line 252)."""
     assert _normalize_llm_api_prefix("/v1/llm") == "/llm"
     assert _normalize_llm_api_prefix("/v1/api/chat") == "/api/chat"
+
+
+# ---------------------------------------------------------------------------
+# _strip_v1_prefix unit tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "input_path,expected",
+    [
+        ("/v1/tools", "/tools"),
+        ("/v1/admin/users", "/admin/users"),
+        ("/v1/", "/"),
+        ("/v1", "/"),
+        ("/tools", "/tools"),
+        ("/admin", "/admin"),
+        ("/", "/"),
+        ("/v2/tools", "/v2/tools"),
+        ("/v1tools", "/v1tools"),
+    ],
+)
+def test_strip_v1_prefix_parametrized(input_path, expected):
+    """_strip_v1_prefix must strip exactly the /v1 segment and nothing else."""
+    assert _strip_v1_prefix(input_path) == expected
+
+
+def test_strip_v1_prefix_idempotent():
+    """/tools is already unversioned — second call must return the same value."""
+    assert _strip_v1_prefix(_strip_v1_prefix("/v1/tools")) == "/tools"

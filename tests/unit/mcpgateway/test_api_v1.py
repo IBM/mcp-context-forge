@@ -515,7 +515,7 @@ class TestBuildV1RouterGroupF:
         runtime_admin_mod.runtime_admin_router = _sentinel_router("/sentinel-runtime-admin")
 
         well_known_mod = ModuleType("_mock_well_known")
-        well_known_mod.router = _sentinel_router("/sentinel-well-known")
+        well_known_mod.admin_router = _sentinel_router("/sentinel-well-known")
 
         return {
             "mcpgateway.admin": admin_mod,

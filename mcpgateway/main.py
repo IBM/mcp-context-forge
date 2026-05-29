@@ -220,7 +220,6 @@ from mcpgateway.utils.verify_credentials import (
     require_docs_auth_override,
 )
 from mcpgateway.validation.jsonrpc import JSONRPCError
-from mcpgateway.version import router as version_router
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -12173,9 +12172,6 @@ else:  # pragma: no cover
 # Unversioned routes — mounted directly on app (no /v1 prefix)
 # ---------------------------------------------------------------------------
 
-# Version info endpoint (diagnostic, not a resource)
-app.include_router(version_router)
-
 # Internal utility routes (/_internal/*) — must stay at root
 app.include_router(utility_router)
 
@@ -12239,11 +12235,25 @@ else:
 
 # LLM proxy (/v1 or settings.llm_api_prefix) — prefix is runtime-configured,
 # cannot be nested inside the v1_router prefix
+
+
+def _warn_llm_prefix_collision(llm_prefix: str, gateway_prefix: str = "/v1") -> None:
+    """Warn when llm_api_prefix collides with the gateway versioned prefix."""
+    if llm_prefix == gateway_prefix:
+        logger.warning(
+            "LLM_API_PREFIX=%r conflicts with the gateway %r prefix — "
+            "set LLM_API_PREFIX to a distinct path (e.g. /llm/v1)",
+            llm_prefix,
+            gateway_prefix,
+        )
+
+
 if settings.llmchat_enabled:
     try:
         # First-Party
         from mcpgateway.routers.llm_proxy_router import llm_proxy_router  # pylint: disable=import-outside-toplevel
 
+        _warn_llm_prefix_collision(settings.llm_api_prefix)
         app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
         logger.info(f"LLM proxy router included at prefix {settings.llm_api_prefix}")
     except ImportError as e:
