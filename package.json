@@ -48,7 +48,8 @@
         "vite:build": "vite build",
         "vite:preview": "vite preview",
         "build:css": "NODE_ENV=production postcss mcpgateway/static/css/tailwind.src.css -o mcpgateway/static/css/tailwind.min.css",
-        "watch:css": "postcss mcpgateway/static/css/tailwind.src.css -o mcpgateway/static/css/tailwind.min.css --watch"
+        "watch:css": "postcss mcpgateway/static/css/tailwind.src.css -o mcpgateway/static/css/tailwind.min.css --watch",
+        "generate-helpdb": "node mcpgateway/admin_ui/scripts/helpDatabaseGenerator.js"
     },
     "dependencies": {
         "alpinejs": "^3.15.8",
