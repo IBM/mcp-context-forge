@@ -18,6 +18,7 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
@@ -222,8 +223,13 @@ _SENSITIVE_TOOL_HEADER_PATTERNS = (
 
 def _mapping_keys(value: Any) -> Optional[list[str]]:
     """Return sorted mapping keys for diagnostics without exposing values."""
-    if isinstance(value, dict):
-        return sorted(sanitize_for_log(key) for key in value)
+    if isinstance(value, Mapping):
+        return sorted(sanitize_for_log(key) for key in value.keys())
+    if isinstance(value, BaseModel):
+        fields = getattr(value.__class__, "model_fields", None) or getattr(value, "__fields__", None)
+        if fields:
+            return sorted(sanitize_for_log(key) for key in fields.keys())
+        return sorted(sanitize_for_log(key) for key in value.model_dump().keys())
     return None
 
 
@@ -237,41 +243,52 @@ def _header_payload_keys(value: Any) -> Optional[list[str]]:
 
 def _log_tool_pre_invoke_result(tool_name: str, original_args: Any, original_headers: Any, pre_result: Any) -> None:
     """Log sanitized TOOL_PRE_INVOKE output shape for plugin diagnostics."""
-    modified_payload = getattr(pre_result, "modified_payload", None)
-    before_arg_keys = _mapping_keys(original_args)
-    before_header_keys = _header_payload_keys(original_headers)
+    try:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
 
-    if modified_payload is None:
+        sanitized_tool_name = sanitize_for_log(tool_name)
+        modified_payload = getattr(pre_result, "modified_payload", None)
+        before_arg_keys = _mapping_keys(original_args)
+        before_header_keys = _header_payload_keys(original_headers)
+
+        if modified_payload is None:
+            logger.debug(
+                "tool_pre_invoke completed for %s: modified_payload=None, arg_keys_before=%s, header_keys_before=%s",
+                sanitized_tool_name,
+                before_arg_keys,
+                before_header_keys,
+            )
+            return
+
+        after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None))
+        after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None))
+        before_arg_set = set(before_arg_keys or [])
+        after_arg_set = set(after_arg_keys or [])
+        before_header_set = set(before_header_keys or [])
+        after_header_set = set(after_header_keys or [])
+        modified_name = sanitize_for_log(getattr(modified_payload, "name", None))
+
         logger.debug(
-            "tool_pre_invoke completed for %s: modified_payload=False, arg_keys_before=%s, header_keys_before=%s",
-            tool_name,
+            "tool_pre_invoke completed for %s: modified_payload=True, modified_name=%s, "
+            "arg_keys_before=%s, arg_keys_after=%s, removed_arg_keys=%s, added_arg_keys=%s, "
+            "header_keys_before=%s, header_keys_after=%s, removed_header_keys=%s, added_header_keys=%s",
+            sanitized_tool_name,
+            modified_name,
             before_arg_keys,
+            after_arg_keys,
+            sorted(before_arg_set - after_arg_set),
+            sorted(after_arg_set - before_arg_set),
             before_header_keys,
+            after_header_keys,
+            sorted(before_header_set - after_header_set),
+            sorted(after_header_set - before_header_set),
         )
-        return
-
-    after_arg_keys = _mapping_keys(getattr(modified_payload, "args", None))
-    after_header_keys = _header_payload_keys(getattr(modified_payload, "headers", None))
-    before_arg_set = set(before_arg_keys or [])
-    after_arg_set = set(after_arg_keys or [])
-    before_header_set = set(before_header_keys or [])
-    after_header_set = set(after_header_keys or [])
-
-    logger.debug(
-        "tool_pre_invoke completed for %s: modified_payload=True, modified_name=%s, "
-        "arg_keys_before=%s, arg_keys_after=%s, removed_arg_keys=%s, added_arg_keys=%s, "
-        "header_keys_before=%s, header_keys_after=%s, removed_header_keys=%s, added_header_keys=%s",
-        tool_name,
-        getattr(modified_payload, "name", None),
-        before_arg_keys,
-        after_arg_keys,
-        sorted(before_arg_set - after_arg_set),
-        sorted(after_arg_set - before_arg_set),
-        before_header_keys,
-        after_header_keys,
-        sorted(before_header_set - after_header_set),
-        sorted(after_header_set - before_header_set),
-    )
+    except Exception:  # noqa: BLE001
+        try:
+            logger.debug("tool_pre_invoke diagnostic logging failed", exc_info=False)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _is_sensitive_tool_header_name(name: str) -> bool:

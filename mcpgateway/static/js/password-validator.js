@@ -4,8 +4,6 @@
  */
 
 window.PasswordValidator = window.PasswordValidator || {
-  specialCharacters: "!@#$%^&*(),.?\":{}|<>-_=+[]\\;'`~",
-
   /**
    * Check password complexity requirements (3 of 4 character types)
    * @param {string} password - The password to validate
@@ -17,7 +15,7 @@ window.PasswordValidator = window.PasswordValidator || {
       uppercase: /[A-Z]/.test(password),
       lowercase: /[a-z]/.test(password),
       numbers: /[0-9]/.test(password),
-      special: [...password].some((char) => this.specialCharacters.includes(char))
+      special: /[!@#$%^&*(),.?":{}|<>\-_=+[\]\\;'`~]/.test(password)
     };
 
     const typesPresent = Object.values(has).filter(Boolean).length;
@@ -116,7 +114,7 @@ window.PasswordValidator = window.PasswordValidator || {
     const hasLower = /[a-z]/.test(password);
     const hasUpper = /[A-Z]/.test(password);
     const hasDigit = /[0-9]/.test(password);
-    const hasSpecial = [...password].some((char) => this.specialCharacters.includes(char));
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>\-_=+[\]\\;'`~]/.test(password);
 
     const complexityCount = [hasLower, hasUpper, hasDigit, hasSpecial].filter(Boolean).length;
     score += complexityCount * 15;
