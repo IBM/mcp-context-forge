@@ -809,6 +809,56 @@ describe("showPluginDetails", () => {
     expect(modalContent.innerHTML).toContain("setting1");
   });
 
+  test("renders plugin metadata as text instead of HTML", async () => {
+    const modal = document.createElement("div");
+    modal.id = "plugin-details-modal";
+    document.body.appendChild(modal);
+
+    const modalName = document.createElement("div");
+    modalName.id = "modal-plugin-name";
+    document.body.appendChild(modalName);
+
+    const modalContent = document.createElement("div");
+    modalContent.id = "modal-plugin-content";
+    document.body.appendChild(modalContent);
+
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          description: '<img src=x onerror="alert(1)">',
+          author: '<svg onload="alert(2)">',
+          version: "<script>alert(3)</script>",
+          hooks: ['<button onclick="alert(4)">hook</button>'],
+          tags: ['<iframe src="javascript:alert(5)"></iframe>'],
+          config: { nested: '<a onclick="alert(6)">config</a>' },
+        }),
+    });
+
+    await showPluginDetails("test-plugin");
+
+    expect(modalContent.textContent).toContain(
+      '<img src=x onerror="alert(1)">'
+    );
+    expect(modalContent.textContent).toContain('<svg onload="alert(2)">');
+    expect(modalContent.textContent).toContain("<script>alert(3)</script>");
+    expect(modalContent.textContent).toContain(
+      '<button onclick="alert(4)">hook</button>'
+    );
+    expect(modalContent.textContent).toContain(
+      '<iframe src="javascript:alert(5)"></iframe>'
+    );
+    expect(modalContent.textContent).toContain(
+      '<a onclick=\\"alert(6)\\">config</a>'
+    );
+    expect(modalContent.querySelector("img")).toBeNull();
+    expect(modalContent.querySelector("svg")).toBeNull();
+    expect(modalContent.querySelector("script")).toBeNull();
+    expect(modalContent.querySelector("button")).toBeNull();
+    expect(modalContent.querySelector("iframe")).toBeNull();
+    expect(modalContent.querySelector("a")).toBeNull();
+  });
+
   test("handles missing optional fields", async () => {
     const modal = document.createElement("div");
     modal.id = "plugin-details-modal";
@@ -904,7 +954,9 @@ describe("showPluginDetails", () => {
     await showPluginDetails("test-plugin");
 
     expect(modalContent.innerHTML).toContain("Error:");
-    expect(modalContent.innerHTML).toContain("Failed to load plugin details: Not Found");
+    expect(modalContent.innerHTML).toContain(
+      "Failed to load plugin details: Not Found"
+    );
     expect(consoleErrorSpy).toHaveBeenCalled();
   });
 
@@ -927,6 +979,30 @@ describe("showPluginDetails", () => {
 
     expect(modalContent.innerHTML).toContain("Error:");
     expect(modalContent.innerHTML).toContain("Network error");
+    expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
+  test("renders fetch error as text instead of HTML", async () => {
+    const modal = document.createElement("div");
+    modal.id = "plugin-details-modal";
+    document.body.appendChild(modal);
+
+    const modalName = document.createElement("div");
+    modalName.id = "modal-plugin-name";
+    document.body.appendChild(modalName);
+
+    const modalContent = document.createElement("div");
+    modalContent.id = "modal-plugin-content";
+    document.body.appendChild(modalContent);
+
+    fetchSpy.mockRejectedValue(new Error('<img src=x onerror="alert(1)">'));
+
+    await showPluginDetails("test-plugin");
+
+    expect(modalContent.textContent).toContain(
+      '<img src=x onerror="alert(1)">'
+    );
+    expect(modalContent.querySelector("img")).toBeNull();
     expect(consoleErrorSpy).toHaveBeenCalled();
   });
 

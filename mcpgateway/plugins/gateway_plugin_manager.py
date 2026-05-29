@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 from mcpgateway.plugins._state import active_local_mode_overrides, prune_expired_local_overrides
+from mcpgateway.plugins.metadata import enrich_config_plugin_metadata
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,7 @@ class TenantPluginManagerFactory:
         db_factory: Optional[Callable[[], Session]] = None,
     ):
         """Initialise the factory, loading base config from *yaml_path*."""
-        self._base_config: Config = ConfigLoader.load_config(yaml_path)
+        self._base_config: Config = enrich_config_plugin_metadata(ConfigLoader.load_config(yaml_path))
         self._timeout = timeout
         self._observability = observability
         self._hook_policies = hook_policies

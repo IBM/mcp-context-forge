@@ -35,8 +35,6 @@ plugins:
   # PII Filter — detect and mask sensitive data
   - name: "PIIFilterPlugin"
     kind: "cpex_pii_filter.PIIFilterPlugin"
-    description: "Detects and masks Personally Identifiable Information"
-    version: "0.1.0"
     hooks:
       - "prompt_pre_fetch"
       - "prompt_post_fetch"

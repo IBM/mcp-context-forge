@@ -347,22 +347,6 @@
           {{ mode_label_map.get(m, m | replace('_', ' ') | title) }}
         </span>
 
-        <!-- Implementation Badge -->
-        {% if plugin.implementation == 'Rust' %}
-        <span
-          class="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded dark:bg-orange-900 dark:text-orange-200"
-          title="Rust-accelerated implementation (5-100x faster)"
-        >
-          🦀 Rust
-        </span>
-        {% elif plugin.implementation == 'Python' %}
-        <span
-          class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
-          title="Pure Python implementation"
-        >
-          🐍 Python
-        </span>
-        {% endif %}
       </div>
 
       <!-- Tags -->
