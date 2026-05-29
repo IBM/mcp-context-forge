@@ -246,6 +246,44 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.plugin_chain_pre == ["rate_limit", "pii_filter"]
         assert tool_update.plugin_chain_post == ["response_shape", "deny_filter"]
 
+    @patch("mcpgateway.admin.settings")
+    @patch("mcpgateway.admin.list_plugins")
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_clear_plugin_chains(self, mock_update_tool, mock_list_plugins, mock_settings, mock_request, mock_db):
+        """Test that submitting empty plugin chain fields clears the chains to []."""
+        # Mock plugins as enabled
+        mock_settings.plugins.enabled = True
+        mock_list_plugins.return_value = ["rate_limit", "pii_filter"]
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "plugin_chain_pre": "",  # Empty string should clear the list
+                "plugin_chain_post": "",  # Empty string should clear the list
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify plugin chains were cleared to empty lists
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.plugin_chain_pre == []
+        assert tool_update.plugin_chain_post == []
+
     @patch.object(ToolService, "update_tool")
     async def test_edit_tool_with_allowlist_parsing(self, mock_update_tool, mock_request, mock_db):
         """Test that allowlist field is correctly parsed from comma-separated string."""
@@ -384,6 +422,36 @@ class TestAdminEditToolAdvancedFields:
         assert result.status_code == 400
         assert "Invalid URL in allowlist: invalid-url" in result.body.decode()
         mock_update_tool.assert_not_called()
+
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_clear_allowlist(self, mock_update_tool, mock_request, mock_db):
+        """Test that submitting empty allowlist field clears the list to []."""
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "allowlist": "",  # Empty string should clear the list
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify allowlist was cleared to empty list
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.allowlist == []
 
     @patch.object(ToolService, "update_tool")
     async def test_edit_tool_expose_passthrough_false(self, mock_update_tool, mock_request, mock_db):
