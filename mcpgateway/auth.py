@@ -540,6 +540,16 @@ async def resolve_session_teams(
     """
     if not email:
         return []  # No identity — public-only; never admin bypass
+
+    # If sub is a UUID (new token format), resolve to email for DB lookups
+    try:
+        uuid.UUID(email)
+        resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
+        if resolved:
+            email = resolved
+    except ValueError:
+        pass  # Already an email string
+
     if preresolved_db_teams is not _UNSET:
         db_teams: Optional[List[str]] = preresolved_db_teams
     else:

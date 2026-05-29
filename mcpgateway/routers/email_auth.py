@@ -145,8 +145,6 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
 
     issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
-    # NOTE: Phase 1 of PII cleanup - flattened structure, keeping email in sub for backward compatibility
-    # Phase 2 will switch sub to user.id
     payload = {
         # Standard JWT claims
         "sub": str(user.id),
@@ -186,9 +184,8 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     expire = now + expires_delta
 
     # Create simple JWT payload (original format) with primitives only
-    # NOTE: Phase 2 - Using user ID in sub claim (backward compatible via get_user_email_from_token)
     payload = {
-        "sub": str(getattr(user, "id", "")),  # Phase 2: User ID-based tokens
+        "sub": str(getattr(user, "id", "")),
         "is_admin": bool(getattr(user, "is_admin", False)),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),
