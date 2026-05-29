@@ -152,12 +152,11 @@ mcpContextForge:
       cpu: 500m
       memory: 768Mi
   # Pod security context - controls UID/GID for the container
-  # Default values align with the container image (UID 10001, GID 10001)
-  podSecurityContext:
-    runAsUser: 10001
-    runAsGroup: 10001
-    fsGroup: 10001
-    runAsNonRoot: true
+  # NOTE: For OpenShift compatibility, runAsUser/runAsGroup/fsGroup are NOT set here.
+  # OpenShift's Security Context Constraints (SCC) automatically assign UIDs.
+  # Explicitly setting these values will cause pod startup failures in OpenShift.
+  # The deployment template uses only seccompProfile to maintain OpenShift compatibility.
+  podSecurityContext: {}
 
   # Container security context - additional security constraints
   containerSecurityContext:
