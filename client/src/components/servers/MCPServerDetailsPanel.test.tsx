@@ -97,13 +97,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("marks region as hidden when closed", () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={false}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={false} onClose={() => {}} />,
     );
 
     const region = screen.getByRole("region", { hidden: true });
@@ -113,13 +107,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("renders server details when open", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -133,15 +121,16 @@ describe("MCPServerDetailsPanel", () => {
     expect(region).toHaveAttribute("aria-hidden", "false");
   });
 
-  it("displays loading state", () => {
+  it("displays loading state while fetching components", () => {
+    // Suspend all three fetches so componentsLoading stays true.
+    server.use(
+      http.get("*/tools", () => new Promise<HttpResponse>(() => {})),
+      http.get("*/resources", () => new Promise<HttpResponse>(() => {})),
+      http.get("*/prompts", () => new Promise<HttpResponse>(() => {})),
+    );
+
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={true}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     expect(screen.getByText(/loading components/i)).toBeInTheDocument();
@@ -151,7 +140,6 @@ describe("MCPServerDetailsPanel", () => {
     renderWithProviders(
       <MCPServerDetailsPanel
         server={mockServer}
-        isLoading={false}
         error={{ message: "Failed to load server" }}
         open={true}
         onClose={() => {}}
@@ -163,13 +151,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("fetches and displays tools, resources, and prompts", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -184,13 +166,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -235,13 +211,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -262,13 +232,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -301,13 +265,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -331,13 +289,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -359,13 +311,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component with title and identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -378,13 +324,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component without title showing only identifier", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -396,13 +336,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays server metadata in details sidebar", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -420,13 +354,7 @@ describe("MCPServerDetailsPanel", () => {
     const inactiveServer = { ...mockServer, enabled: false };
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={inactiveServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={inactiveServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -440,7 +368,6 @@ describe("MCPServerDetailsPanel", () => {
     renderWithProviders(
       <MCPServerDetailsPanel
         server={unreachableServer}
-        isLoading={false}
         error={null}
         open={true}
         onClose={() => {}}
@@ -457,13 +384,7 @@ describe("MCPServerDetailsPanel", () => {
     const onClose = vi.fn();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={onClose}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={onClose} />,
     );
 
     await waitFor(() => {
@@ -480,13 +401,7 @@ describe("MCPServerDetailsPanel", () => {
     const onClose = vi.fn();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={onClose}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={onClose} />,
     );
 
     await waitFor(() => {
@@ -502,13 +417,7 @@ describe("MCPServerDetailsPanel", () => {
     const onClose = vi.fn();
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={false}
-        onClose={onClose}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={false} onClose={onClose} />,
     );
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -520,13 +429,7 @@ describe("MCPServerDetailsPanel", () => {
     const onClose = vi.fn();
 
     const { container } = renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={onClose}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={onClose} />,
     );
 
     await waitFor(() => {
@@ -542,23 +445,11 @@ describe("MCPServerDetailsPanel", () => {
 
   it("focuses the close button when opened", async () => {
     const { rerender } = renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={false}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={false} onClose={() => {}} />,
     );
 
     rerender(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -579,7 +470,6 @@ describe("MCPServerDetailsPanel", () => {
           </button>
           <MCPServerDetailsPanel
             server={mockServer}
-            isLoading={false}
             error={null}
             open={open}
             onClose={() => setOpen(false)}
@@ -613,13 +503,7 @@ describe("MCPServerDetailsPanel", () => {
     const user = userEvent.setup();
 
     const { rerender } = renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -648,13 +532,7 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     rerender(
-      <MCPServerDetailsPanel
-        server={newServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={newServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -673,13 +551,7 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -697,13 +569,7 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -726,13 +592,7 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -745,13 +605,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays component badges with correct types", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
@@ -774,13 +628,7 @@ describe("MCPServerDetailsPanel", () => {
     );
 
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={false}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={false} onClose={() => {}} />,
     );
 
     expect(getRequests.length).toBe(0);
@@ -788,13 +636,7 @@ describe("MCPServerDetailsPanel", () => {
 
   it("displays copy buttons for identifiers", async () => {
     renderWithProviders(
-      <MCPServerDetailsPanel
-        server={mockServer}
-        isLoading={false}
-        error={null}
-        open={true}
-        onClose={() => {}}
-      />,
+      <MCPServerDetailsPanel server={mockServer} error={null} open={true} onClose={() => {}} />,
     );
 
     await waitFor(() => {
