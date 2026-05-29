@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import React from "react";
 import { renderWithProviders } from "@/test/test-utils";
 import { Agents } from "./Agents";
@@ -9,7 +9,6 @@ import { LLMModels } from "./LLMModels";
 import { LLMProviders } from "./LLMProviders";
 import { Maintenance } from "./Maintenance";
 import { Metrics } from "./Metrics";
-import { NotFound } from "./NotFound";
 import { Observability } from "./Observability";
 import { Performance } from "./Performance";
 import { Plugins } from "./Plugins";
@@ -62,12 +61,6 @@ describe("Simple Page Components", () => {
     expect(document.body).toBeTruthy();
   });
 
-  it("renders NotFound page", () => {
-    vi.mock("../router", () => ({
-      useRouter: () => ({ navigate: vi.fn() }),
-    }));
-    expect(document.body).toBeTruthy();
-  });
   it("renders Observability page", () => {
     renderWithProviders(<Observability />);
     expect(document.body).toBeTruthy();
