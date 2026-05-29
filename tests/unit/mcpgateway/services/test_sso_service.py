@@ -3447,7 +3447,8 @@ class TestAuthenticateOrCreateUser:
         token_payload = mock_jwt.await_args.args[0]
         assert token_payload["sub"] == "550e8400-e29b-41d4-a716-446655440001"
         assert "email" not in token_payload
-        assert "email" not in token_payload["user"]
+        assert "user" not in token_payload
+        assert "is_admin" not in token_payload
 
     @pytest.mark.asyncio
     async def test_existing_user_avoids_post_commit_attribute_reads(self, sso_service, mock_db):

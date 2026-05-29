@@ -111,6 +111,7 @@ policy. The key invariants that this module enforces:
 """
 
 # Standard
+import asyncio
 import base64
 from functools import lru_cache
 import hashlib
@@ -608,8 +609,11 @@ async def set_user_context_from_token(request: Request, payload: dict, db: Sessi
     """
     from mcpgateway.auth import get_user_email_from_token
 
+    from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
     user_email = await get_user_email_from_token(payload, db)
     request.state.user_email = user_email
     request.state.user_id = payload.get("sub")
-    request.state.is_admin = payload.get("is_admin", False)
+    db_user = await asyncio.to_thread(_get_user_by_email_sync, user_email) if user_email else None
+    request.state.is_admin = db_user.is_admin if db_user else False
     request.state.auth_provider = payload.get("auth_provider", "local")

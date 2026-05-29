@@ -156,8 +156,6 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         # Idle-timeout bootstrap: first request after issuance uses this until
         # `TokenBlocklistService.update_activity()` writes a fresher value to Redis.
         "last_activity": issued_at,
-        # Flattened user context (no PII except email in sub - removed full_name)
-        "is_admin": bool(getattr(user, "is_admin", False)),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
@@ -186,7 +184,6 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     # Create simple JWT payload (original format) with primitives only
     payload = {
         "sub": str(getattr(user, "id", "")),
-        "is_admin": bool(getattr(user, "is_admin", False)),
         "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),

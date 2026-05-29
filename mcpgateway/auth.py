@@ -459,7 +459,15 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     Returns:
         None (admin bypass), [] (no teams), or list of team ID strings
     """
-    is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else getattr(user_info, "is_admin", False)
+    if isinstance(user_info, dict):
+        is_admin = user_info.get("is_admin")  # None if key absent → fetch from DB
+    else:
+        is_admin = getattr(user_info, "is_admin", None)
+
+    if is_admin is None:
+        db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+        is_admin = db_user.is_admin if db_user else False
+
     if is_admin:
         return None  # Admin bypass
 
@@ -1289,21 +1297,15 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
 def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
     """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
 
-    is_admin is derived from the token's own claim (default False) so that
-    the bootstrap path grants login access without unconditional admin elevation.
+    is_admin is derived from whether the email matches the configured platform admin
+    address, since session tokens no longer embed the is_admin claim.
     """
-    # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
-    resolved_is_admin = payload.get("is_admin", False)
-    if not resolved_is_admin:
-        user_info = payload.get("user", {})
-        if isinstance(user_info, dict):
-            resolved_is_admin = user_info.get("is_admin", False)
 
     return EmailUser(
         email=email,
         password_hash="",  # nosec B106 - not used for JWT authentication
         full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-        is_admin=resolved_is_admin,
+        is_admin=bool(email == getattr(settings, "platform_admin_email", None)),
         is_active=True,
         auth_provider="local",
         password_change_required=False,
@@ -1621,7 +1623,7 @@ async def get_current_user(
 
                         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                             # Session token: resolve teams from DB/cache
-                            user_info = cached_ctx.user or {"is_admin": False}
+                            user_info = cached_ctx.user or {}
                             teams = await resolve_session_teams(payload, email, user_info)
                         else:
                             # API token or legacy: use embedded teams
