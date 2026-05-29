@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from mcpgateway.admin import admin_edit_tool
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
@@ -382,3 +383,105 @@ class TestAdminEditToolAdvancedFields:
         assert tool_update.allowlist == ["GET", "POST"]
         assert tool_update.plugin_chain_pre == ["rate_limit", "regex_filter"]
         assert tool_update.plugin_chain_post == ["resource_filter", "pii_filter"]
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_with_team_reassignment(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test editing tool with team_id reassignment."""
+        # Mock verify_team_for_user to return the team_id (user is member of team)
+        mock_verify_team.return_value = "team-456"
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "team_id": "team-456",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify team_id was included and verify_team_for_user was called
+        mock_verify_team.assert_called_once_with("test@example.com", "team-456")
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.team_id == "team-456"
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_with_invalid_team_reassignment(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test editing tool with team_id when user is not member of that team."""
+        # Mock verify_team_for_user to return empty list (user is not member)
+        mock_verify_team.return_value = []
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "team_id": "team-999",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        # Should return 422 validation error because team_id becomes []
+        assert result.status_code == 422
+        payload = json.loads(result.body.decode())
+        assert payload["success"] is False
+        assert "team_id" in payload["message"].lower()
+
+    @patch.object(TeamManagementService, "verify_team_for_user")
+    @patch.object(ToolService, "update_tool")
+    async def test_edit_tool_without_team_reassignment(self, mock_update_tool, mock_verify_team, mock_request, mock_db):
+        """Test editing tool without providing team_id (no reassignment)."""
+        # Mock verify_team_for_user to return None (no team_id provided, user has no personal team)
+        mock_verify_team.return_value = None
+
+        form_data = FakeForm(
+            {
+                "name": "test_tool",
+                "customName": "test_tool",
+                "url": "http://example.com",
+                "description": "Test tool",
+                "requestType": "GET",
+                "integrationType": "REST",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_edit_tool(
+            "550e8400e29b41d4a7164466554400b1",  # pragma: allowlist secret
+            mock_request,
+            mock_db,
+            user={"email": "test@example.com", "db": mock_db},
+        )
+
+        assert result.status_code == 200
+
+        # Verify verify_team_for_user was called with None team_id
+        mock_verify_team.assert_called_once_with("test@example.com", None)
+        call_args = mock_update_tool.call_args[0]
+        tool_update = call_args[2]
+        assert tool_update.team_id is None
