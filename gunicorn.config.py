@@ -140,8 +140,19 @@ def post_fork(server, worker):
         from mcpgateway.services import session_affinity
 
         session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
-    except ImportError:
-        pass
+    except Exception as exc:  # noqa: BLE001 - fail loud, but never crash the worker
+        # If rebinding fails (import path shift, attribute renamed/removed, ...),
+        # workers silently fall back to the master's frozen WORKER_ID and the
+        # broadcast amplification (#4557) returns. Make the failure VISIBLE so it
+        # doesn't go unnoticed into production.
+        server.log.warning(
+            "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID per worker "
+            "(%s: %s) - workers may share the master's WORKER_ID and #4557 "
+            "broadcast amplification can return. Investigate immediately.",
+            worker.pid,
+            type(exc).__name__,
+            exc,
+        )
 
 
 def post_worker_init(worker):
