@@ -2369,7 +2369,7 @@ class SessionRegistry(SessionBackend):
                     )
                     logger.info(f"SSE RPC: Got response status {rpc_response.status_code}")
                     result = rpc_response.json()
-                    logger.info(f"SSE RPC: Response content: {result}")
+                    logger.debug(f"SSE RPC: Response content: {result}")
                     result = result.get("result", {})
 
                 response = {"jsonrpc": "2.0", "result": result, "id": req_id}
