@@ -2125,11 +2125,35 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
     db_user_is_admin = False
     if email:
-        # First-Party
-        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+        platform_admin_email = getattr(settings, "platform_admin_email", "")
+        if email == platform_admin_email:
+            db_user_is_admin = True
+        else:
+            auth_cache_resolved = False
+            if settings.auth_cache_enabled:
+                try:
+                    # First-Party
+                    from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
 
-        with SessionLocal() as db:
-            db_user_is_admin = is_user_admin(db, email)
+                    cached_ctx = await get_auth_cache().get_auth_context(email, payload.get("jti"))
+                    if cached_ctx is not None:
+                        _record_mcp_auth_cache_event("auth_context_hit")
+                        auth_cache_resolved = True
+                        if cached_ctx.user:
+                            db_user_is_admin = bool(cached_ctx.user.get("is_admin", False))
+                    else:
+                        _record_mcp_auth_cache_event("auth_context_miss")
+                except Exception as cache_error:  # pylint: disable=broad-except
+                    _record_mcp_auth_cache_event("auth_context_cache_error")
+                    logger.debug("Stateful MCP auth cache lookup failed for %s: %s", email, cache_error)
+
+            if not auth_cache_resolved:
+                _record_mcp_auth_cache_event("auth_context_fallback")
+                # First-Party
+                from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+                with SessionLocal() as db:
+                    db_user_is_admin = is_user_admin(db, email)
 
     effective_is_admin = db_user_is_admin or jwt_is_admin
 

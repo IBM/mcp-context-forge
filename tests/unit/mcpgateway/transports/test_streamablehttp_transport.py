@@ -16930,6 +16930,8 @@ async def test_normalize_jwt_payload_sso_platform_admin_gets_effective_admin(mon
         "token_use": "session",
     }
 
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+
     with patch("mcpgateway.utils.admin_check.is_user_admin", mock_is_user_admin):
         with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock) as mock_resolve:
             mock_resolve.return_value = ["team1"]
@@ -16943,7 +16945,7 @@ async def test_normalize_jwt_payload_sso_platform_admin_gets_effective_admin(mon
 
 
 @pytest.mark.asyncio
-async def test_normalize_jwt_payload_non_admin_without_db_record():
+async def test_normalize_jwt_payload_non_admin_without_db_record(monkeypatch):
     """_normalize_jwt_payload: non-admin without DB record gets is_admin=False."""
     # Standard
     from unittest.mock import patch
@@ -16960,6 +16962,8 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
         "token_use": "session",
     }
 
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+
     with patch("mcpgateway.utils.admin_check.is_user_admin", mock_is_user_admin):
         with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock) as mock_resolve:
             mock_resolve.return_value = ["team1"]
@@ -16969,6 +16973,84 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
     # Verify non-admin status
     assert result["is_admin"] is False
     assert result["email"] == "regular_user@example.com"
+    assert result["teams"] == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_uses_auth_cache_without_db_session(monkeypatch):
+    """Cached auth context should avoid opening a DB session in the stateful fallback."""
+    # First-Party
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={
+                "email": "cached_admin@example.com",
+                "is_admin": True,
+                "is_active": True,
+            },
+            personal_team_id=None,
+            is_token_revoked=False,
+        )
+    )
+    session_local = MagicMock(side_effect=AssertionError("SessionLocal should not be called"))
+
+    payload = {
+        "sub": "cached_admin@example.com",
+        "jti": "cached-jti",
+        "teams": ["team1"],
+        "user": {"is_admin": False},
+        "token_use": "session",
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr, "SessionLocal", session_local)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team1"]))
+
+    result = await tr._normalize_jwt_payload(payload)
+
+    auth_cache.get_auth_context.assert_awaited_once_with("cached_admin@example.com", "cached-jti")
+    session_local.assert_not_called()
+    assert result["is_admin"] is True
+    assert result["email"] == "cached_admin@example.com"
+    assert result["teams"] == ["team1"]
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_cache_miss_falls_back_to_db_session(monkeypatch):
+    """Cache misses should keep the existing DB fallback behavior."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    db = object()
+    session_context = MagicMock()
+    session_context.__enter__.return_value = db
+    session_context.__exit__.return_value = None
+    session_local = MagicMock(return_value=session_context)
+    is_user_admin = MagicMock(return_value=True)
+
+    payload = {
+        "sub": "db_admin@example.com",
+        "jti": "miss-jti",
+        "teams": ["team1"],
+        "user": {"is_admin": False},
+        "token_use": "session",
+    }
+
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr, "SessionLocal", session_local)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr("mcpgateway.utils.admin_check.is_user_admin", is_user_admin)
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team1"]))
+
+    result = await tr._normalize_jwt_payload(payload)
+
+    auth_cache.get_auth_context.assert_awaited_once_with("db_admin@example.com", "miss-jti")
+    session_local.assert_called_once_with()
+    is_user_admin.assert_called_once_with(db, "db_admin@example.com")
+    assert result["is_admin"] is True
+    assert result["email"] == "db_admin@example.com"
     assert result["teams"] == ["team1"]
 
 
