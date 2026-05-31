@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { serversApi } from "./servers";
 
+vi.mock("./client", () => ({
+  api: {
+    get: vi.fn(),
+    post: vi.fn(),
+    delete: vi.fn(),
+  },
+}));
+
+import { api } from "./client";
+
 describe("serversApi", () => {
   const mockFetch = vi.fn();
 
@@ -143,6 +153,62 @@ describe("serversApi", () => {
   describe("triggerOAuthAuthorization", () => {
     it("rejects when popup is blocked (window.open returns null)", async () => {
       vi.spyOn(window, "open").mockReturnValue(null);
+    it("should support listing gateways with default pagination parameters", async () => {
+      const response = { gateways: [], nextCursor: null };
+      vi.mocked(api.get).mockResolvedValueOnce(response);
+
+      const result = await serversApi.list();
+
+      expect(api.get).toHaveBeenCalledWith("/gateways?include_pagination=true", undefined, undefined);
+      expect(result).toEqual(response);
+    });
+
+    it("should clamp limit values and include optional query parameters", async () => {
+      const response = { gateways: [], nextCursor: null };
+      vi.mocked(api.get).mockResolvedValueOnce(response);
+
+      await serversApi.list({ cursor: "abc123", limit: 150, include_inactive: true });
+
+      expect(api.get).toHaveBeenCalledWith(
+        "/gateways?cursor=abc123&limit=100&include_inactive=true&include_pagination=true",
+        undefined,
+        undefined,
+      );
+    });
+
+    it("should fallback to the default limit when limit is not finite", async () => {
+      const response = { gateways: [], nextCursor: null };
+      vi.mocked(api.get).mockResolvedValueOnce(response);
+
+      await serversApi.list({ limit: Number.NaN });
+
+      expect(api.get).toHaveBeenCalledWith("/gateways?limit=25&include_pagination=true", undefined, undefined);
+    });
+
+    it("should proxy get, delete, and testConnection requests using validated gateway IDs", async () => {
+      const expected = { id: "allowed_id" } as const;
+      vi.mocked(api.get).mockResolvedValueOnce(expected);
+      vi.mocked(api.delete).mockResolvedValueOnce(undefined);
+      vi.mocked(api.post).mockResolvedValueOnce({ success: true, message: "ok" });
+
+      await serversApi.get("allowed_id");
+      expect(api.get).toHaveBeenCalledWith("/gateways/allowed_id");
+
+      await serversApi.delete("allowed_id");
+      expect(api.delete).toHaveBeenCalledWith("/gateways/allowed_id");
+
+      await serversApi.testConnection("allowed_id");
+      expect(api.post).toHaveBeenCalledWith("/gateways/allowed_id/test", {});
+    });
+
+    it("should reject invalid gateway IDs for get, delete, and testConnection", () => {
+      expect(() => serversApi.get("invalid id!" as any)).toThrow("Invalid server ID format");
+      expect(() => serversApi.delete("invalid id!" as any)).toThrow("Invalid server ID format");
+      expect(() => serversApi.testConnection("invalid id!" as any)).toThrow("Invalid server ID format");
+    });
+
+    it("should handle multiple rapid messages (only first should settle)", async () => {
+      const promise = serversApi.triggerOAuthAuthorization("test-gateway");
 
       await expect(serversApi.triggerOAuthAuthorization("server-123")).rejects.toThrow(
         "Failed to open OAuth authorization window",
@@ -271,3 +337,4 @@ describe("serversApi", () => {
     });
   });
 });
+
