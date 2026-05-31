@@ -51,6 +51,85 @@ describe("Gateways", () => {
     });
   });
 
+  it("renders the loading state while the servers request is in-flight", () => {
+    mockUseQuery.mockReturnValue({
+      data: undefined,
+      error: null,
+      isLoading: true,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getAllByRole("status")[0]).toBeInTheDocument();
+  });
+
+  it("renders an alert when no servers can be loaded and an error occurs", () => {
+    mockUseQuery.mockReturnValue({
+      data: { servers: [] },
+      error: { message: "Network failure" },
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("Network failure")).toBeInTheDocument();
+  });
+
+  it("renders an inline banner when servers exist but a load error still occurred", () => {
+    const mockServer = {
+      id: "gateway-1",
+      name: "GH repo tasks",
+      description: "Test server",
+      icon: "",
+      createdAt: "2026-04-16T13:23:12Z",
+      updatedAt: "2026-04-16T13:23:12Z",
+      enabled: true,
+      associatedTools: [],
+      associatedToolIds: [],
+      associatedResources: [],
+      associatedPrompts: [],
+      associatedA2aAgents: [],
+      metrics: null,
+      tags: [],
+      createdBy: "admin@example.com",
+      createdFromIp: "127.0.0.1",
+      createdVia: "ui",
+      createdUserAgent: "Mozilla/5.0",
+      modifiedBy: null,
+      modifiedFromIp: null,
+      modifiedVia: null,
+      modifiedUserAgent: null,
+      importBatchId: null,
+      federationSource: null,
+      version: 1,
+      teamId: "team-1",
+      team: "Test Team",
+      ownerEmail: "admin@example.com",
+      visibility: "team",
+      oauthEnabled: false,
+      oauthConfig: null,
+    };
+
+    mockUseQuery.mockReturnValue({
+      data: { servers: [mockServer] },
+      error: { message: "Partial failure" },
+      isLoading: false,
+      execute: vi.fn(),
+      refetch: vi.fn(),
+    });
+
+    renderWithProviders(<Gateways />);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("Partial failure")).toBeInTheDocument();
+    expect(screen.getByText("GH repo tasks")).toBeInTheDocument();
+  });
+
   it("requests the servers list on page load", () => {
     renderWithProviders(<Gateways />);
 

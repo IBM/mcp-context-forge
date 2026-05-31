@@ -46,6 +46,56 @@ describe("Users", () => {
     vi.clearAllMocks();
   });
 
+  it("renders an error alert when the user fetch fails", async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Could not load users"));
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Error loading users")).toBeInTheDocument();
+    expect(screen.getByText("Could not load users")).toBeInTheDocument();
+  });
+
+  it("renders an empty users state when no users exist", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ users: [], nextCursor: null });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("No users found")).toBeInTheDocument();
+    });
+  });
+
+  it("changes the displayed user limit when the select changes", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ users: createMockUsers(0, 1), nextCursor: null });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    const limitSelect = screen.getByRole("combobox", { name: /Per page:/i });
+    await userEvent.selectOptions(limitSelect, "25");
+
+    expect(limitSelect).toHaveValue("25");
+  });
+
+  it("does not render Load More button when there is no next cursor", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ users: createMockUsers(0, 10), nextCursor: null });
+
+    renderWithRouter(<Users />);
+
+    await waitFor(() => {
+      expect(screen.getByText("user0@example.com")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /Load more/i })).not.toBeInTheDocument();
+  });
+
   it("renders users list when data is loaded", async () => {
     vi.mocked(api.get).mockResolvedValueOnce({
       users: createMockUsers(0, 10),
