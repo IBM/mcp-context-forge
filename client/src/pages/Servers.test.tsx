@@ -65,6 +65,66 @@ describe("Servers", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders a loading placeholder while the initial server fetch is pending", () => {
+    const pendingRequest = new Promise(() => {});
+    vi.mocked(api.get).mockReturnValueOnce(pendingRequest as any);
+
+    renderWithRouter(<Servers />);
+
+    expect(screen.getAllByRole("status")[0]).toBeInTheDocument();
+  });
+
+  it("renders an error alert when the initial server fetch fails", async () => {
+    vi.mocked(api.get).mockRejectedValueOnce(new Error("Service down"));
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Error loading servers")).toBeInTheDocument();
+    expect(screen.getByText("Service down")).toBeInTheDocument();
+  });
+
+  it("shows the MCP server form when openForm=true is present in the URL", async () => {
+    window.history.pushState({}, "", "/app/servers?openForm=true");
+    vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Connect MCP server" })).toBeInTheDocument();
+    });
+  });
+
+  it("changes the page size when the limit select value changes", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({
+      gateways: createMockServers(0, 1),
+      nextCursor: null,
+    });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Test Server 0")).toBeInTheDocument();
+    });
+
+    const limitSelect = screen.getByRole("combobox", { name: /Per page:/i });
+    await userEvent.selectOptions(limitSelect, "25");
+    expect(limitSelect).toHaveValue("25");
+  });
+
+  it("renders an empty state when no servers exist", async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ gateways: [], nextCursor: null });
+
+    renderWithRouter(<Servers />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Connect/i })).toBeInTheDocument();
+    });
+  });
+
   it("renders servers list when data is loaded", async () => {
     // Mock the initial servers fetch - useQuery expects direct response, not wrapped in data
     vi.mocked(api.get).mockResolvedValueOnce({
