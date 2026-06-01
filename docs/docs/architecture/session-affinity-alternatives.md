@@ -1,20 +1,28 @@
-# Session-Affinity Architecture — Alternative Approaches
+# Session-Affinity — Candidate Solutions for #4557
 
-Companion to [`standup-session-affinity-fix.md`](./standup-session-affinity-fix.md). That doc explains what we shipped. This one explores **what else exists** if the team ever wants to revisit the design.
+[Issue #4557](https://github.com/IBM/mcp-context-forge/issues/4557) reports a severe multi-worker session-affinity regression: throughput on the 3 × 24 reference stack collapses from ~180 RPS down to ~9 RPS, with `tools/call` p99 pinned at the 30-second forward timeout. The [#4674](https://github.com/IBM/mcp-context-forge/pull/4674) reproducer hinted at an amplification — a single user issuing 1 request per second drove the per-user rate-limiter counter up by ~24× the expected rate, suggesting each request was being processed by ~24 workers instead of one.
 
-The recent fixes (per-worker `WORKER_ID`, in-process ASGI dispatch, auth-context propagation) restored throughput from ~9 RPS to ~400 RPS. The architecture is correct now; the bug was an implementation defect, not a design flaw. So this doc isn't "we should change everything" — it's "here are the structural alternatives, with honest tradeoffs, so we have an informed answer when the question comes up."
+This doc lays out the candidate solutions, walks through where each one shines and breaks down, and recommends a starting point with a path for further improvement.
 
 ---
 
-## The Core Problem (one paragraph)
+## The Core Problem
 
-A stateful MCP request carrying `Mcp-Session-Id` can land on any of N workers, but only one worker holds the live upstream session — the `UpstreamSessionRegistry` entry contains a live `ClientSession` with an open connection, which is not serializable and not movable. When the request lands on the wrong worker, you have exactly three structural choices:
+A stateful MCP request carrying `Mcp-Session-Id` can land on any of N workers, but only one worker holds the live upstream session — the `UpstreamSessionRegistry` entry contains a live `ClientSession` with an open connection, which is not serializable and not movable. When the request lands on the wrong worker, the architecture has exactly three structural choices:
 
 1. **Route correctly upstream**, so the request always lands on the right worker.
 2. **Externalize session ownership**, so any worker can serve any session.
 3. **Forward across workers**, accepting that the wrong worker may receive the request and pass it along.
 
-Today we do option 3 with Redis pub/sub. The other two are real alternatives.
+The three approaches below walk through each option in turn.
+
+### What any candidate solution must preserve
+
+- The **#4205 upstream-session isolation invariant**: one upstream session per downstream session, no cross-session state leakage.
+- Multi-worker / multi-container deployment shape (`SO_REUSEPORT`, gunicorn `--preload`, nginx fronting multiple replicas).
+- All authentication shapes that `streamable_http_auth()` validates: ContextForge JWT, virtual-server OAuth verifier (RFC 9728), and `MCP_REQUIRE_AUTH=false` public-only mode.
+- Existing observability: structured logs, OTEL spans, the `mcpgw:*` Redis state surface that operators read.
+- Graceful behaviour on worker failure (no cluster-wide outage when one worker dies).
 
 ---
 
@@ -95,9 +103,11 @@ If the project grows to need cluster-wide session migration (blue/green deploys,
 
 ---
 
-## Approach 3 — Redis-Based Cross-Worker Forwarding (today's approach)
+## Approach 3 — Redis-Based Cross-Worker Forwarding
 
-Keep the current architecture: Redis stores `sid → owner_worker_id`; when a request lands on the wrong worker, forward the payload to the owner. The question becomes: **what transport carries the forwarded payload?**
+Redis stores `sid → owner_worker_id`; when a request lands on the wrong worker, the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The question this approach has to answer is **what transport carries the forwarded payload?**
+
+This approach has the smallest delta from the gateway's current architecture. The directory-lookup path (`mcpgw:pool_owner:{sid} → worker_id`) is already in place; only the dispatch path needs fixing. Implementation is therefore bounded to a small surface — no new process types, no LB-layer changes, no deployment-shape constraints. This makes it the **fastest path to a working solution**, with room to evolve the transport later (3a → 3c) as performance demands grow.
 
 ```
    Worker X
@@ -112,7 +122,7 @@ Keep the current architecture: Redis stores `sid → owner_worker_id`; when a re
 
 The transport options below all share the same ownership lookup in Redis. They differ only in how the request/response payload travels between workers.
 
-### Sub-option 3a — Redis pub/sub over TCP (today)
+### Sub-option 3a — Redis pub/sub over TCP
 
 ```
    Worker X  ──PUBLISH──►  Redis (TCP)  ──fanout──►  Worker 7 (SUBSCRIBE)
@@ -120,12 +130,12 @@ The transport options below all share the same ownership lookup in Redis. They d
 ```
 
 - **Latency**: ~1–2 ms per round-trip (transport ~50–200 μs each way + Redis-side fanout ~100–500 μs + serialization + ASGI dispatch ~500 μs–2 ms).
-- **Mechanics**: each worker subscribes to its own channel `mcpgw:pool_http:{worker_id}`. Pub/sub semantics are "broadcast to all subscribers of a channel" — we constrain it to point-to-point by giving each channel exactly one subscriber.
+- **Mechanics**: each worker subscribes to its own channel `mcpgw:pool_http:{worker_id}`. Pub/sub semantics are "broadcast to all subscribers of a channel" — constrained to point-to-point by giving each channel exactly one subscriber.
 - **Operationally simplest**: Redis is already in the stack; nothing else to deploy.
 - **Fire-and-forget**: pub/sub has no persistence. If the owner worker is restarting when the publish lands, the message is lost.
 - **Smallest mental model**: everything goes through Redis, which is also the observability and rate-limit substrate.
 
-This is what we have today. The other sub-options swap the transport for something faster or more direct.
+This is the baseline transport for Approach 3. The other sub-options swap it for something faster or more direct, but the surrounding architecture (Redis directory, worker subscriptions, dead-worker reclaim) is unchanged.
 
 ### Sub-option 3b — Redis pub/sub over Unix Domain Sockets
 
@@ -223,7 +233,7 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 |---|---|---|---|---|---|
 | **1. Sticky LB** | 0 (no forward) | n/a | nginx config + 1-worker-per-container | small | no |
 | **2. Coordinator-worker** | ~10 μs UDS to coordinator | yes | new process type, lifecycle, monitoring | very large | no |
-| **3a. Redis pub/sub TCP (today)** | ~1–2 ms | yes | none | none | yes |
+| **3a. Redis pub/sub TCP** | ~1–2 ms | yes | none | none | yes |
 | **3b. Redis pub/sub UDS** | ~0.8–1.7 ms (15–25% faster) | only if co-located | shared volume, config | tiny | yes |
 | **3c. Worker-to-worker UDS** | ~5–50 μs (10–100× faster) | no (needs fallback) | shared mount, UDS lifecycle | medium | no, intra-container |
 | **3d. Direct TCP per worker** | ~50 μs–5 ms | yes | per-worker port allocation, auth | medium | no |
@@ -231,35 +241,31 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 
 ---
 
-## Honest Take
+## Recommendation
 
-For where the project is **today**:
+**Starting point: Approach 3 with sub-option 3a (Redis pub/sub over TCP).**
 
-- **Stay with 3a (pub/sub over TCP).** The fixes we just shipped removed the actual bugs. At 400 RPS with p99 1.8 s, the architecture isn't a bottleneck. The Redis pub/sub per-call cost (~1–2 ms) is a small fraction of total request time (10–100 ms+, dominated by upstream MCP server round-trips).
-- **Don't pursue 3b (Redis-over-UDS) for production.** The gain only materializes if Redis is co-located, which our Kubernetes/OCP topology doesn't do. It's a dev-environment-only win that doesn't translate.
+Rationale:
 
-For where the project might be **going**:
+- **Smallest delta from existing architecture.** The Redis directory, worker subscriptions, dead-worker reclaim, and observability surface are already in place. Implementation is bounded to fixing defects in the dispatch path rather than restructuring components.
+- **No new operational burden.** Redis is already in the deployment; no new process types, no new dependencies, no LB-layer changes, no deployment-shape constraints.
+- **Fastest path to a working solution.** Approaches 1 and 2 deliver more in the long run but require structural change (LB stickiness or a coordinator process) that takes more time to design, validate, and operationalise.
+- **Doesn't foreclose the long-term options.** Picking 3a now leaves room to evolve toward 3c (worker-to-worker UDS) when perf demands grow, or pivot to Approach 1 / Approach 2 if the deployment shape or requirements change.
 
-- **If you want a cheap perf upgrade and stay-in-architecture**: Sub-option 3c (worker-to-worker UDS). 10–100× faster, no Redis in the data path, smallest code delta among the perf wins. Fallback to pub/sub for cross-container.
-- **If you want to constrain the deployment for operational simplicity**: Approach 1 (sticky LB) — give up multi-worker-per-container in exchange for never needing to forward.
-- **If you want cluster-wide session portability** (auto-scale without dropping sessions, multi-region failover): Approach 2 (coordinator-worker). Large project; only worth it if multi-replica session migration becomes a real requirement.
+### Further improvements within Approach 3
 
-**The question to revisit isn't "should we rip out pub/sub."** It's **"do we ever need cluster-wide session migration?"** — if no, today's architecture is done. If yes, plan for the coordinator model explicitly rather than evolving piecemeal.
+These are transport-only upgrades — the surrounding architecture stays the same, so they can be adopted incrementally as the system matures.
 
----
+| Upgrade | When to consider it |
+|---|---|
+| **3b (Redis pub/sub over UDS)** | Single-node deployments where Redis is co-located with the gateway. Drop-in transport upgrade, no architectural change. Not useful for multi-Pod Kubernetes/OCP topologies where Redis is a separate Pod. |
+| **3c (worker-to-worker UDS)** | When affinity forwarding becomes a measured bottleneck. Removes Redis from the data path entirely (keeps it as the directory), 10–100× faster per forward, intra-container fast path covers the common case in the 24 × 3 deployment shape. The natural next step if 3a's ~1–2 ms per forward is shown to matter. |
+| **3d (per-worker TCP)** | When cross-container forwarding is a significant fraction of total forwards (low workers-per-container, many containers, no sticky LB). Niche; most deployments don't hit this. |
+| **3e (ZeroMQ)** | When MCP forwarding warrants its own bounded subsystem with custom observability. Adds a dependency and bypasses ASGI; rarely worth the trade for this use case. |
 
-## What I Would Bring to a Design Review
+### When to revisit and switch approach
 
-If asked to pick one alternative to explore further: **3c, worker-to-worker UDS.**
+- **Pivot to Approach 1 (sticky LB)** if the deployment moves to one-worker-per-container. With no intra-container scatter, sticky LB at nginx is strictly simpler than any forwarding mechanism.
+- **Pivot to Approach 2 (coordinator-worker)** if cluster-wide session migration becomes a real requirement (auto-scale without dropping sessions, blue/green deploys preserving session state, multi-region failover). At that point the structural refactor is worth the cost.
 
-Why:
-- Biggest perf headroom among the options that don't change the operational footprint.
-- Smallest code delta (still HTTP semantics, just different transport — `httpx` supports it natively).
-- Removes Redis from the data path while keeping it as the directory — clean separation of concerns.
-- Intra-container fast path covers the common case in our deployment shape.
-- Worth a spike before committing.
-
-Three things that would make me change my mind:
-1. If we move to one-worker-per-container, then Approach 1 (sticky LB) is strictly better — there's nothing to forward.
-2. If multi-replica session migration becomes a real requirement, jump straight to Approach 2.
-3. If we measure actual production latency and Redis pub/sub isn't in the top 3 cost contributors, none of this is worth doing.
+The question that drives any future revisit isn't *"should we replace pub/sub with X?"* — it's *"do the deployment shape or the requirements still match the assumptions behind Approach 3?"* As long as both hold, 3a (with 3b/3c as ready-to-pick upgrades) covers the problem cleanly.
