@@ -9011,6 +9011,65 @@ async def test_affinity_forward_to_owner_worker_multipart_body(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_affinity_forward_to_owner_propagates_encoded_auth_context(monkeypatch):
+    """The sender encodes the live ``get_streamable_http_auth_context()`` result and passes it through ``forward_to_owner``.
+
+    Without this, OAuth-enabled virtual servers and ``MCP_REQUIRE_AUTH=false``
+    public-only mode would 401 after a cross-worker forward, because the owner
+    would have nothing to reconstruct the edge-authenticated user from.
+    """
+    # First-Party
+    from mcpgateway.auth_context import encode_internal_mcp_auth_context
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    # Stand-in for the authenticated identity the edge worker already established.
+    edge_auth_ctx = {"email": "alice@example.com", "is_admin": False, "teams": ["t1"]}
+    expected_encoded = encode_internal_mcp_auth_context(edge_auth_ctx)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_streamable_http_auth_context", lambda: edge_auth_ctx)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-auth")])
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-2")
+    mock_pool.forward_to_owner = AsyncMock(
+        return_value={
+            "status": 200,
+            "headers": {"content-type": "application/json"},
+            "body": b'{"jsonrpc":"2.0","result":{}}',
+        }
+    )
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+    ):
+        await wrapper.handle_streamable_http(scope, _make_receive(b'{"jsonrpc":"2.0"}'), send)
+
+    await wrapper.shutdown()
+    # auth_context kwarg is supplied and equals the encoded edge identity.
+    assert mock_pool.forward_to_owner.call_args.kwargs["auth_context"] == expected_encoded
+
+
+@pytest.mark.asyncio
 async def test_affinity_forward_failure_falls_through(monkeypatch):
     """Test affinity forward failure falls through to local handling (line 1525-1527)."""
 
