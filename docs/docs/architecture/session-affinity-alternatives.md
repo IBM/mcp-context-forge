@@ -127,7 +127,7 @@ This approach has no architectural delta from the gateway's current design: the 
 These are non-negotiable properties of the design. The existing code violated several of them, which is what produced the regression in #4557.
 
 - **Unique per-worker `WORKER_ID`** after process fork. Under gunicorn `--preload` the `WORKER_ID` constant is captured in the master process before workers fork, so all workers inherit the same id unless the value is recomputed in the `post_fork` hook. A shared `WORKER_ID` collapses every worker onto the same Redis channel, and pub/sub then delivers each forwarded request to every worker in the container — the source of the 24× amplification observed in #4557.
-- **Exactly one subscriber per `mcpgw:pool_http:{worker_id}` channel.** Redis pub/sub semantics are broadcast; this approach constrains them to point-to-point by giving each channel a unique name keyed on the unique `WORKER_ID`. The invariant follows directly from per-worker `WORKER_ID` but is worth stating independently because operators can verify it directly (`PUBSUB NUMSUB` should return 1, not N).
+- **Exactly one subscriber per per-worker channel.** `SessionAffinity.start_rpc_listener()` subscribes each worker to both its Streamable HTTP forwarding channel (`mcpgw:pool_http:{worker_id}`) and its SSE/RPC forwarding channel (`mcpgw:pool_rpc:{worker_id}`). Redis pub/sub semantics are broadcast; this approach constrains them to point-to-point by giving each channel a unique name keyed on the unique `WORKER_ID`. The invariant follows directly from per-worker `WORKER_ID` but is worth stating independently because operators can verify it directly: `PUBSUB NUMSUB mcpgw:pool_http:{worker_id}` and `PUBSUB NUMSUB mcpgw:pool_rpc:{worker_id}` should each return 1, not N. If either returns more than 1, the `WORKER_ID` collision is present on the corresponding transport and that transport will amplify forwards.
 - **Forwarded requests execute in the owner process**, not via a network loopback through the shared gunicorn socket. Network loopback hits the shared socket, where `SO_REUSEPORT` scatters the call to whichever worker the kernel picks — almost never the owner that holds the bound upstream session. In-process dispatch (e.g., `httpx.ASGITransport(app=app)`) keeps execution on the correct worker.
 - **Forwarded requests preserve the original `streamable_http_auth()` context.** The originating worker has already validated the inbound credentials (ContextForge JWT, virtual-server OAuth verifier, public-only mode). The forwarded payload must carry that validated identity to the owner; otherwise the owner's inner dispatch will re-authenticate against a context it cannot validate (IdP OAuth bearers fail at internal JWT verification, public-only requests have no token to verify). Both fail with 401 on the inner call even though the original request was correctly authenticated at the edge.
 
@@ -202,7 +202,7 @@ Remove Redis from the data path entirely. Each worker opens a UDS listener at a 
 - **httpx supports UDS natively**: `AsyncHTTPTransport(uds=...)`. No new dependency.
 - **Synchronous request/response**: the call is one round-trip; no correlation-id-keyed response channel, no subscription teardown. `forward_to_owner` becomes ~15 lines.
 - **Backpressure for free**: UDS has TCP-style flow control. Pub/sub has none.
-- **Doesn't cross containers**: UDS is host-local. Cross-container forwards need a fallback (TCP loopback, or sticky LB at nginx so cross-container forwards don't happen).
+- **Doesn't cross pod/node boundaries**: UDS is host-local and requires a shared filesystem path. Cross-container use only works when containers are co-located on the same node *and* share a mount for the socket directory with compatible permissions. Cross-pod or cross-node forwards need a fallback (TCP loopback, or sticky LB at nginx so cross-container forwards don't happen in the first place).
 - **Lifecycle overhead**: workers must clean up their `.sock` file on shutdown. Stale entries accumulate otherwise.
 - **Shared mount required**: the UDS directory needs to be writable by all worker UIDs.
 
@@ -242,7 +242,7 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 - **Purpose-built**: ZMQ exists to be "point-to-point messaging that's faster than a broker." Exactly this use case.
 - **Single API across UDS and TCP**: switch transports with a URL change. Get UDS perf intra-host and TCP reach cross-host without two code paths.
 - **Latency**: ~20–50 μs over `ipc://`, comparable to UDS.
-- **Built-in retry**: `REQ/REP` retries failed requests. Pub/sub gives you nothing.
+- **Transport-level resilience**: ZMQ sockets reconnect automatically on transient drops, which pub/sub gives you nothing equivalent to. Application-level retry semantics (request IDs, timeouts, idempotency, exactly-once) are NOT handled by `REQ/REP` itself — those still need to be implemented in the caller, same as for any other transport.
 - **New dependency**: `pyzmq` + `libzmq` C library. Containerfile change.
 - **Bypasses ASGI**: ZMQ doesn't go through the FastAPI middleware stack, so observability, CSRF, RBAC, etc. don't apply automatically. You'd reimplement that or accept it.
 - **Heavier mental model**: socket types, framing, pattern semantics. Onboarding cost.
@@ -253,7 +253,9 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 
 ## Comparison Matrix
 
-| Approach | Latency / forward | Cross-container | Operational delta | Code change | Pub/sub still needed |
+> **Latency figures are order-of-magnitude estimates** drawn from typical commodity hardware, included to support relative comparison between the approaches. They are sensitive to deployment specifics (kernel, container runtime, Redis version, network path, payload size) and must be measured against the gateway benchmark stack before being used for capacity planning or SLA commitments.
+
+| Approach | Latency / forward (est.) | Cross-container | Operational delta | Code change | Pub/sub still needed |
 |---|---|---|---|---|---|
 | **1. Sticky LB** | 0 (no forward) | n/a | nginx config + 1-worker-per-container | small | no |
 | **2. Coordinator-worker** | ~10 μs UDS to coordinator | yes | new process type, lifecycle, monitoring | very large | no |
@@ -272,7 +274,7 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 The recommendation is not "stay with the existing code" — the existing implementation produced the regression in #4557. The recommendation is "keep the existing architecture (Redis-based cross-worker forwarding with pub/sub transport) and enforce the invariants the architecture depends on." Concretely, an Approach-3 implementation must:
 
 1. Recompute `WORKER_ID` per worker after fork (so each worker has a unique Redis channel).
-2. Maintain exactly one subscriber per `mcpgw:pool_http:{worker_id}` channel (a verifiable property: `PUBSUB NUMSUB` returns 1, not N).
+2. Maintain exactly one subscriber per worker's pub/sub channels — both `mcpgw:pool_http:{worker_id}` (Streamable HTTP) and `mcpgw:pool_rpc:{worker_id}` (SSE/RPC). A verifiable property: `PUBSUB NUMSUB` returns 1 for each, not N.
 3. Dispatch the forwarded request in the owner process, not via a network loopback that the shared gunicorn socket would scatter.
 4. Preserve the `streamable_http_auth()` context across the forward so OAuth and `MCP_REQUIRE_AUTH=false` requests survive without 401-ing on the inner dispatch.
 
