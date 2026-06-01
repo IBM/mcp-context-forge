@@ -60,8 +60,16 @@ Stop forwarding at the application layer. Route correctly at the LB layer.
 - **SSE doesn't benefit.** Long-lived GET streams have their own connection-ownership problem (#4334) that sticky LB doesn't touch.
 - **Capacity planning gets coupled to stickiness ratio.** If one popular session pins to one worker, that worker becomes hot while others sit idle.
 
+**Open design question — session bootstrap.**
+The Streamable HTTP `initialize` request is what *creates* the session; it doesn't yet carry `Mcp-Session-Id`. So hashing on that header doesn't pin the bootstrap request itself — only every request after it. For sticky LB to be a complete replacement for forwarding, the worker that serves `initialize` and mints the session id has to be the same worker the LB's hash function will route subsequent requests to. Two known mitigations:
+
+- **(a) Server-side session-id minting that encodes routing.** The worker generating the session id constructs it so the LB's hash function returns this worker — e.g., the id contains a prefix or slot identifier the LB hash respects. Requires tight contract between the LB hash and the gateway's session-id format; brittle to LB config changes.
+- **(b) Bootstrap-then-pin.** `initialize` lands on any worker via non-hashed routing (least-conn or round-robin), the response returns the session id, and from then on the LB hashes on the session id. Requires the LB hash to be deterministic across requests AND deterministic from the worker's point of view at session-creation time — typically achieved by hashing into a slot ring that's known to both sides. Failure mode: if a worker dies before the bootstrap completes, the session id may map elsewhere.
+
+Neither mitigation is hard, but the doc would be misleading to claim "just turn on `hash ... consistent;`" without acknowledging that bootstrap routing needs its own answer.
+
 **When to pick**
-If you're willing to constrain the deployment shape (one worker per container, more containers) and accept failover behaviour that's coarser than dead-worker reclaim, this is the cleanest answer. Works well for edge/appliance deployments. Pushes back against the "many workers per container" pattern most teams default to.
+If you're willing to constrain the deployment shape (one worker per container, more containers) and accept failover behaviour that's coarser than dead-worker reclaim, this is the cleanest answer. Works well for edge/appliance deployments. Pushes back against the "many workers per container" pattern most teams default to. Bootstrap routing must be solved alongside.
 
 ---
 
@@ -105,9 +113,25 @@ If the project grows to need cluster-wide session migration (blue/green deploys,
 
 ## Approach 3 — Redis-Based Cross-Worker Forwarding
 
-Redis stores `sid → owner_worker_id`; when a request lands on the wrong worker, the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. The question this approach has to answer is **what transport carries the forwarded payload?**
+Redis stores `sid → owner_worker_id`; when a request lands on the wrong worker, the receiving worker forwards the payload to the owner over an IPC transport, and the response comes back the same way. Two questions this approach has to answer:
 
-This approach has the smallest delta from the gateway's current architecture. The directory-lookup path (`mcpgw:pool_owner:{sid} → worker_id`) is already in place; only the dispatch path needs fixing. Implementation is therefore bounded to a small surface — no new process types, no LB-layer changes, no deployment-shape constraints. This makes it the **fastest path to a working solution**, with room to evolve the transport later (3a → 3c) as performance demands grow.
+1. **What transport carries the forwarded payload?** (the sub-options 3a–3e below)
+2. **What invariants must the implementation satisfy** for the architecture to actually behave as point-to-point forwarding?
+
+The second question matters because the architecture is correct only when those invariants hold — and the existing implementation violates several of them, which is what produced the #4557 regression. The transport choice is independent of whether the invariants hold. Both have to be addressed.
+
+This approach has no architectural delta from the gateway's current design: the Redis directory (`mcpgw:pool_owner:{sid} → worker_id`), the per-worker channels, and the dead-worker reclaim path are all already in place. The work is bounded to honouring the invariants below and (optionally) upgrading the transport. No new process types, no LB-layer changes, no deployment-shape constraints. This makes it the **fastest path to a working solution**, with room to evolve the transport later (3a → 3c) as performance demands grow.
+
+### Invariants any Approach-3 implementation must satisfy
+
+These are non-negotiable properties of the design. The existing code violated several of them, which is what produced the regression in #4557.
+
+- **Unique per-worker `WORKER_ID`** after process fork. Under gunicorn `--preload` the `WORKER_ID` constant is captured in the master process before workers fork, so all workers inherit the same id unless the value is recomputed in the `post_fork` hook. A shared `WORKER_ID` collapses every worker onto the same Redis channel, and pub/sub then delivers each forwarded request to every worker in the container — the source of the 24× amplification observed in #4557.
+- **Exactly one subscriber per `mcpgw:pool_http:{worker_id}` channel.** Redis pub/sub semantics are broadcast; this approach constrains them to point-to-point by giving each channel a unique name keyed on the unique `WORKER_ID`. The invariant follows directly from per-worker `WORKER_ID` but is worth stating independently because operators can verify it directly (`PUBSUB NUMSUB` should return 1, not N).
+- **Forwarded requests execute in the owner process**, not via a network loopback through the shared gunicorn socket. Network loopback hits the shared socket, where `SO_REUSEPORT` scatters the call to whichever worker the kernel picks — almost never the owner that holds the bound upstream session. In-process dispatch (e.g., `httpx.ASGITransport(app=app)`) keeps execution on the correct worker.
+- **Forwarded requests preserve the original `streamable_http_auth()` context.** The originating worker has already validated the inbound credentials (ContextForge JWT, virtual-server OAuth verifier, public-only mode). The forwarded payload must carry that validated identity to the owner; otherwise the owner's inner dispatch will re-authenticate against a context it cannot validate (IdP OAuth bearers fail at internal JWT verification, public-only requests have no token to verify). Both fail with 401 on the inner call even though the original request was correctly authenticated at the edge.
+
+These invariants are what make point-to-point semantics, owner-process execution, and end-to-end auth correctness all hold simultaneously. The transport sub-options below assume them; none of the sub-options compensate for an invariant being violated.
 
 ```
    Worker X
@@ -233,7 +257,7 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 |---|---|---|---|---|---|
 | **1. Sticky LB** | 0 (no forward) | n/a | nginx config + 1-worker-per-container | small | no |
 | **2. Coordinator-worker** | ~10 μs UDS to coordinator | yes | new process type, lifecycle, monitoring | very large | no |
-| **3a. Redis pub/sub TCP** | ~1–2 ms | yes | none | none | yes |
+| **3a. Redis pub/sub TCP** | ~1–2 ms | yes | none | bounded (honour the Approach-3 invariants) | yes |
 | **3b. Redis pub/sub UDS** | ~0.8–1.7 ms (15–25% faster) | only if co-located | shared volume, config | tiny | yes |
 | **3c. Worker-to-worker UDS** | ~5–50 μs (10–100× faster) | no (needs fallback) | shared mount, UDS lifecycle | medium | no, intra-container |
 | **3d. Direct TCP per worker** | ~50 μs–5 ms | yes | per-worker port allocation, auth | medium | no |
@@ -243,13 +267,22 @@ Use ZMQ's `REQ/REP` pattern over `ipc://` (UDS) or `tcp://`. Discovery still in 
 
 ## Recommendation
 
-**Starting point: Approach 3 with sub-option 3a (Redis pub/sub over TCP).**
+**Adopt Approach 3 with Redis pub/sub over TCP (sub-option 3a) as the transport, and repair the existing implementation against the four Approach-3 invariants.**
 
-Rationale:
+The recommendation is not "stay with the existing code" — the existing implementation produced the regression in #4557. The recommendation is "keep the existing architecture (Redis-based cross-worker forwarding with pub/sub transport) and enforce the invariants the architecture depends on." Concretely, an Approach-3 implementation must:
 
-- **Smallest delta from existing architecture.** The Redis directory, worker subscriptions, dead-worker reclaim, and observability surface are already in place. Implementation is bounded to fixing defects in the dispatch path rather than restructuring components.
-- **No new operational burden.** Redis is already in the deployment; no new process types, no new dependencies, no LB-layer changes, no deployment-shape constraints.
-- **Fastest path to a working solution.** Approaches 1 and 2 deliver more in the long run but require structural change (LB stickiness or a coordinator process) that takes more time to design, validate, and operationalise.
+1. Recompute `WORKER_ID` per worker after fork (so each worker has a unique Redis channel).
+2. Maintain exactly one subscriber per `mcpgw:pool_http:{worker_id}` channel (a verifiable property: `PUBSUB NUMSUB` returns 1, not N).
+3. Dispatch the forwarded request in the owner process, not via a network loopback that the shared gunicorn socket would scatter.
+4. Preserve the `streamable_http_auth()` context across the forward so OAuth and `MCP_REQUIRE_AUTH=false` requests survive without 401-ing on the inner dispatch.
+
+The four invariants are listed in detail under [Approach 3 — Invariants](#invariants-any-approach-3-implementation-must-satisfy). The work in flight (PRs [#4981](https://github.com/IBM/mcp-context-forge/pull/4981), [#4987](https://github.com/IBM/mcp-context-forge/pull/4987), [#4997](https://github.com/IBM/mcp-context-forge/pull/4997)) is the implementation of this contract.
+
+### Why this approach over the alternatives
+
+- **No architectural delta.** The Redis directory, per-worker channels, and dead-worker reclaim are already in place. Approach 1 (sticky LB) requires both LB-layer and deployment-shape changes plus an answer to the bootstrap-routing question. Approach 2 (coordinator-worker) is a significant refactor that introduces a new process type.
+- **No new operational burden.** Redis is already in the deployment; no new dependencies, no new process types to monitor and version.
+- **Fastest path to a working solution.** Bounded to honouring the four invariants — the surface is small and the validation criteria are explicit and verifiable.
 - **Doesn't foreclose the long-term options.** Picking 3a now leaves room to evolve toward 3c (worker-to-worker UDS) when perf demands grow, or pivot to Approach 1 / Approach 2 if the deployment shape or requirements change.
 
 ### Further improvements within Approach 3
