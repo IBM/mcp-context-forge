@@ -427,6 +427,109 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
     assert forwarded["scoped_permissions"] is not original["scoped_permissions"]
 
 
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_non_oauth():
+    """Should return None when auth_method is not oauth_access_token."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "jwt",
+            "token_use": "session",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_unauthenticated():
+    """Should return None when is_authenticated is False."""
+    token = tr.user_context_var.set(
+        {
+            "email": "user@example.com",
+            "is_authenticated": False,
+            "auth_method": "oauth_access_token",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_returns_none_for_empty_email():
+    """Should return None when email is missing from the auth context."""
+    token = tr.user_context_var.set(
+        {
+            "is_authenticated": True,
+            "auth_method": "oauth_access_token",
+        }
+    )
+    try:
+        result = await tr._mint_internal_jwt_for_rpc()
+        assert result is None
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_empty_teams():
+    """Should mint an internal JWT with empty teams list."""
+    token = tr.user_context_var.set(
+        {
+            "email": "viewer@example.com",
+            "teams": [],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        import jwt as pyjwt
+
+        claims = pyjwt.decode(jwt_str, options={"verify_signature": False})
+        assert claims["sub"] == "viewer@example.com"
+        assert claims["teams"] == []
+    finally:
+        tr.user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_mint_internal_jwt_for_rpc_round_trip():
+    """Should mint a JWT that passes verify_credentials (round-trip)."""
+    token = tr.user_context_var.set(
+        {
+            "email": "bob@example.com",
+            "teams": ["team-x"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        # First-Party
+        from mcpgateway.utils.verify_credentials import verify_credentials
+
+        jwt_str = await tr._mint_internal_jwt_for_rpc()
+        payload = await verify_credentials(jwt_str)
+        assert payload["sub"] == "bob@example.com"
+        assert payload["token_use"] == "session"
+        assert payload["teams"] == ["team-x"]
+    finally:
+        tr.user_context_var.reset(token)
+
+
 def test_record_mcp_auth_cache_event_swallows_metrics_errors(monkeypatch):
     """Metrics failures must not break MCP auth cache instrumentation."""
 
@@ -17009,6 +17112,7 @@ async def test_normalize_jwt_payload_non_admin_without_db_record():
 
 
 def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
@@ -17018,6 +17122,7 @@ def test_get_scoped_visibility_from_user_context_admin_missing_teams_key():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": []})
@@ -17027,6 +17132,7 @@ def test_get_scoped_visibility_from_user_context_admin_with_empty_teams():
 
 
 def test_get_scoped_visibility_from_user_context_admin_with_team_scope():
+    # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context
 
     user_email, token_teams = get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True, "teams": ["team1"]})

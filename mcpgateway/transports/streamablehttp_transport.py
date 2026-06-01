@@ -89,6 +89,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
@@ -4156,12 +4157,17 @@ class SessionManagerWrapper:
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
                         "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
                     }
-                    # Forward the inbound gateway auth header (default: Authorization,
-                    # or AUTH_HEADER_NAME when customized) so /rpc can re-authenticate
-                    # the same caller. Hardcoding "authorization" here would silently
-                    # drop auth on deployments using a custom AUTH_HEADER_NAME.
+                    # If the request was authenticated via an external IdP OAuth
+                    # token, exchange it for a short-lived internal JWT that
+                    # /rpc's verify_jwt_token() accepts.  Minting is cheap and
+                    # the 1-minute TTL limits blast radius if the token leaks.
+                    # The raw IdP token would fail at /rpc because it is signed
+                    # with the IdP's key, not the gateway's jwt_secret_key.
+                    internal_jwt = await _mint_internal_jwt_for_rpc()
                     _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                    if _gw_auth_lower in headers:
+                    if internal_jwt:
+                        rpc_headers[_gw_auth_lower] = f"Bearer {internal_jwt}"
+                    elif _gw_auth_lower in headers:
                         rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                     # Forward passthrough headers for upstream MCP servers (see #3640).
                     # First-Party
@@ -4327,8 +4333,11 @@ class SessionManagerWrapper:
                                 "x-mcp-session-id": mcp_session_id,
                                 "x-forwarded-internally": "true",
                             }
+                            internal_jwt = await _mint_internal_jwt_for_rpc()
                             _gw_auth_lower = _resolve_auth_header_name(settings).lower()
-                            if _gw_auth_lower in headers:
+                            if internal_jwt:
+                                rpc_headers[_gw_auth_lower] = f"Bearer {internal_jwt}"
+                            elif _gw_auth_lower in headers:
                                 rpc_headers[_gw_auth_lower] = headers[_gw_auth_lower]
                             # Forward passthrough headers for upstream MCP servers (see #3640).
                             # First-Party
@@ -4785,6 +4794,54 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         else:
             forwarded[key] = value
     return forwarded
+
+
+async def _mint_internal_jwt_for_rpc() -> str | None:
+    """If the current request was authenticated via an external IdP OAuth
+    token, mint a short-lived internal ContextForge JWT to forward to /rpc.
+
+    Session-affinity forwarding routes session-bound MCP POSTs to the
+    internal /rpc endpoint.  /rpc authenticates via verify_jwt_token(),
+    which only accepts internal JWTs signed with the gateway's own key.
+    The raw IdP OAuth token fails signature/issuer validation there.
+
+    Non-OAuth paths (internal JWTs, proxy auth, anonymous) pass through
+    unchanged — this helper returns None and the caller forwards whatever
+    auth header it already has.
+
+    Security note:
+        The minted JWT intentionally omits ``is_admin`` from its claims.
+        ``/rpc`` determines admin status by querying the database, not from
+        JWT claims. Including ``is_admin`` here would be redundant (the DB
+        query happens anyway) and would introduce a JWT-based privilege
+        escalation vector if token verification were ever bypassed.
+
+    Returns:
+        A signed internal JWT string (1-minute TTL), or None if the
+        auth context is missing or the request was not OAuth-authenticated.
+    """
+    ctx = get_streamable_http_auth_context()
+    if not ctx.get("is_authenticated") or ctx.get("auth_method") != "oauth_access_token":
+        return None
+
+    email = ctx.get("email")
+    if not email:
+        return None
+
+    payload: dict[str, Any] = {
+        "sub": email,
+        "token_use": "session",  # nosec B105 — claim type marker, not secret
+    }
+    user_data = {
+        "email": email,
+        "auth_provider": "oauth_delegated",
+    }
+    return await create_jwt_token(
+        payload,
+        expires_in_minutes=1,
+        teams=ctx.get("teams"),
+        user_data=user_data,
+    )
 
 
 class _StreamableHttpAuthHandler:
