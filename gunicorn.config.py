@@ -117,6 +117,12 @@ def when_ready(server):
 
 def post_fork(server, worker):
     server.log.info("Worker spawned (pid: %s)", worker.pid)
+    
+    # Set worker ID in environment for plugin worker-local state
+    worker_id = worker.age
+    os.environ["GUNICORN_WORKER_ID"] = str(worker_id)
+    server.log.info("Set GUNICORN_WORKER_ID=%s for worker (pid: %s, age: %s)", worker_id, worker.pid, worker.age)
+    
     # Reset Redis client state so each worker creates its own connection
     # This is necessary because --preload causes the client to be initialized
     # in the master process, but each forked worker needs its own event loop

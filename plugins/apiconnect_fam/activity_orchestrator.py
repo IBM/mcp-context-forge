@@ -11,6 +11,7 @@ Coordinates activity execution, statistics tracking, and health monitoring.
 # Standard
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 # Local
@@ -24,6 +25,27 @@ from .fam import FAMAssetCatalogClient
 from .models import ActivityContext
 
 logger = logging.getLogger(__name__)
+
+
+def _is_primary_worker() -> bool:
+    """Check if this is the primary worker (worker 1) in a multi-worker deployment.
+    
+    In single-worker deployments (uvicorn --reload), always returns True.
+    In multi-worker deployments (gunicorn), only returns True for worker 1.
+    
+    Returns:
+        True if this is the primary worker or single-worker deployment
+    """
+    # Check for gunicorn worker ID (format: "0", "1", "2", etc.)
+    worker_id = os.environ.get("GUNICORN_WORKER_ID")
+    if worker_id is not None:
+        is_primary = worker_id == "1"
+        logger.info(f"Gunicorn worker detected: worker_id={worker_id}, is_primary={is_primary}")
+        return is_primary
+    
+    # Single-worker deployment (uvicorn, or gunicorn with 1 worker)
+    logger.info("Single-worker deployment detected (no GUNICORN_WORKER_ID)")
+    return True
 
 
 class ActivityOrchestrator:
@@ -189,6 +211,14 @@ class ActivityOrchestrator:
 
         Performs runtime registration first, then starts the activity loop.
         """
+        # Check if this is the primary worker
+        if not _is_primary_worker():
+            logger.info("This is not the primary worker - orchestrator will remain inactive (no background tasks)")
+            logger.info("Only worker 1 runs background tasks to prevent duplicate FAM API calls")
+            return
+
+        logger.info("This is the primary worker - orchestrator will start background tasks")
+
         if self._running:
             logger.warning("ActivityOrchestrator already running")
             return
