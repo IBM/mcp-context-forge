@@ -1091,7 +1091,7 @@ class SessionAffinity:
                 body = orjson.dumps(json_body)
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
-            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel
+            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel
 
