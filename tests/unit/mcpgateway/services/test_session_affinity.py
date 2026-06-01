@@ -2320,6 +2320,52 @@ async def test_forward_request_to_owner_returns_none_when_reclaim_race_makes_us_
 
 
 @pytest.mark.asyncio
+async def test_execute_forwarded_http_request_preserves_authorization_for_csrf_bypass():
+    """The originating ``Authorization`` bearer is copied onto the trusted-internal dispatch.
+
+    The CSRF middleware short-circuits on bearer-tokened requests; without
+    preserving the original ``Authorization`` header, the affinity dispatch to
+    ``/_internal/mcp/rpc`` 403s on CSRF even though the trusted-internal gate
+    itself is satisfied. Mirrors the Rust runtime forward path.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedis()
+    response = _FakeHttpResponse(200, text_body="ok")
+    response.headers = {"content-type": "application/json"}
+    client = _FakeHttpxClient(response=response)
+
+    jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    request = {
+        "response_channel": "mcpgw:pool_http_response:req-auth",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": {"authorization": "Bearer original-jwt"},  # lowercased like the wire
+        "body": jsonrpc_body.hex(),
+        "mcp_session_id": "sess-auth-bypass",
+        "auth_context": "ctx",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
+        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
+
+    assert client.last_post_kwargs is not None
+    sent_headers = client.last_post_kwargs["headers"]
+    assert sent_headers.get("authorization") == "Bearer original-jwt"
+
+
+@pytest.mark.asyncio
 async def test_execute_forwarded_http_request_sends_empty_auth_context_header_when_missing():
     """Executor side: a forwarded payload with no auth_context still dispatches with an empty x-contextforge-auth-context header.
 

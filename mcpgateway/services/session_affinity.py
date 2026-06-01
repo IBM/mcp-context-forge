@@ -1128,6 +1128,15 @@ class SessionAffinity:
                 "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
                 "x-contextforge-auth-context": auth_context_header,
             }
+            # Preserve the originating request's Authorization header. The
+            # trusted-internal endpoint doesn't re-authenticate (it trusts the
+            # encoded auth-context above), but the CSRF middleware short-circuits
+            # on requests carrying a bearer token, and lacking that bearer makes
+            # it 403 the dispatch. Mirrors the Rust runtime forward path, which
+            # also passes Authorization straight through.
+            original_auth = headers.get("authorization") or headers.get("Authorization")
+            if original_auth:
+                rpc_headers["authorization"] = original_auth
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
