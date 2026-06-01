@@ -123,10 +123,12 @@ class AbstractScheduledActivity(AbstractActivity):
         if not self.should_execute():
             return True  # Not time to execute yet, not an error
 
+        # Update last execution time BEFORE executing to prevent concurrent executions
+        # This ensures that if the activity takes longer than the orchestrator's check interval,
+        # it won't be triggered again until the full interval has elapsed from this point
+        self.last_execution_time = time.time()
+
         # Execute the activity
         success = await super().execute()
-
-        # Update last execution time
-        self.last_execution_time = time.time()
 
         return success

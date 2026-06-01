@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 # Third-Party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Constants
 RUNTIME_TYPE = "MCP_CONTEXT_FORGE"  # Fixed runtime type for ContextForge
@@ -79,14 +79,11 @@ class ActivityContext(BaseModel):
         config: Plugin configuration dictionary
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     runtime_id: str
     fam_base_url: str
     config: Dict[str, Any] = Field(default_factory=dict)
-
-    class Config:
-        """Pydantic model configuration."""
-
-        arbitrary_types_allowed = True
 
 
 class InactiveHeartbeat(BaseModel):

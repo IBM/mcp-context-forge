@@ -185,7 +185,6 @@ class TestAPIConnectFAMPlugin:
             fam_enabled=True,
             fam_runtime_name="Custom Gateway",
             fam_runtime_description="Custom Description",
-            fam_runtime_type="CUSTOM_TYPE",
             fam_runtime_deployment_type="CLOUD",
             fam_runtime_region="us-west-2",
             fam_runtime_location="Oregon",
@@ -198,7 +197,6 @@ class TestAPIConnectFAMPlugin:
         
         assert plugin._cfg.fam_runtime_name == "Custom Gateway"
         assert plugin._cfg.fam_runtime_description == "Custom Description"
-        assert plugin._cfg.fam_runtime_type == "CUSTOM_TYPE"
         assert plugin._cfg.fam_runtime_deployment_type == "CLOUD"
         assert plugin._cfg.fam_runtime_region == "us-west-2"
         assert plugin._cfg.fam_runtime_location == "Oregon"

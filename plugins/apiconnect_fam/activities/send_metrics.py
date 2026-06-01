@@ -11,10 +11,10 @@ Sends runtime metrics to FAM periodically.
 # Standard
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # First-Party
-from mcpgateway.db import Server, ServerMetric, SessionLocal, Tool, ToolMetric
+from mcpgateway.db import Server, ServerMetric, SessionLocal, ToolMetric
 
 # Local
 from ..fam import FAMAssetCatalogClient, FAMMetricsPayload
@@ -44,6 +44,7 @@ class SendMetricsActivity(AbstractScheduledActivity):
         self._fam_client = fam_client
         self._metrics_interval = metrics_interval
         self._total_metrics_sent = 0
+        self._last_sent_timestamp: Optional[datetime] = None
 
     def get_interval_seconds(self) -> int:
         """Get the metrics interval.
@@ -61,8 +62,16 @@ class SendMetricsActivity(AbstractScheduledActivity):
         """
 
         try:
+            # Capture timestamp once before retry loop to ensure consistent window across retries
+            query_timestamp = datetime.now(timezone.utc)
+
+            # Create async wrapper for retry
+            async def query_with_timestamp():
+                return await self._query_and_send_metrics(query_timestamp)
+
             # Query and send metrics
-            metrics_count = await with_retry(self._query_and_send_metrics, retry_config=RetryConfig(max_attempts=2, initial_delay=1.0), operation_name="Send Metrics")
+            # Pass timestamp to ensure consistent window across retries
+            metrics_count = await with_retry(query_with_timestamp, retry_config=RetryConfig(max_attempts=2, initial_delay=1.0), operation_name="Send Metrics")
 
             # Track success
             self._total_metrics_sent += metrics_count
@@ -74,8 +83,11 @@ class SendMetricsActivity(AbstractScheduledActivity):
             self.logger.error(error_msg, exc_info=True)
             raise SyncError(error_msg, e)
 
-    async def _query_and_send_metrics(self) -> int:
+    async def _query_and_send_metrics(self, current_time: datetime) -> int:
         """Query metrics from database and send to FAM.
+
+        Args:
+            current_time: Timestamp to use for this metrics collection cycle (passed from perform() to ensure consistency across retries)
 
         Returns:
             Number of metrics sent
@@ -86,11 +98,19 @@ class SendMetricsActivity(AbstractScheduledActivity):
         with SessionLocal() as db:
             # Get all servers and tools
             servers = db.query(Server).all()
-            tools = db.query(Tool).all()
 
-            # Query metrics from last interval
-            time_window_minutes = self._metrics_interval / 60
-            time_window_start = datetime.now(timezone.utc) - timedelta(minutes=time_window_minutes)
+            if self._last_sent_timestamp is not None:
+                # Query only new metrics since last successful send
+                # Convert to naive datetime for SQLite compatibility
+                time_window_start = self._last_sent_timestamp.replace(tzinfo=None)
+                self.logger.debug(f"Querying metrics since last send: {self._last_sent_timestamp.isoformat()}")
+            else:
+                # First run: use interval-based window
+                time_window_minutes = self._metrics_interval / 60
+                time_window_start_aware = current_time - timedelta(minutes=time_window_minutes)
+                # Convert to naive datetime for SQLite compatibility
+                time_window_start = time_window_start_aware.replace(tzinfo=None)
+                self.logger.debug(f"First run: querying metrics from last {time_window_minutes} minutes")
 
             server_metrics_raw = db.query(ServerMetric).filter(ServerMetric.timestamp >= time_window_start).all()
 
@@ -109,14 +129,14 @@ class SendMetricsActivity(AbstractScheduledActivity):
                 self.logger.debug("Sending empty metrics payload (no metrics in time window)")
 
             # Build payload using FAMMetricsPayload builder
-            self.logger.debug("Calling FAM API: POST /api/engine/v3/runtimes/.../metrics")
             payload = FAMMetricsPayload.build_payload(
-                timestamp=datetime.now(timezone.utc), server_metrics_map=dict(server_metrics_map), tool_metrics_by_server={k: dict(v) for k, v in tool_metrics_by_server.items()}
+                timestamp=current_time, server_metrics_map=dict(server_metrics_map), tool_metrics_by_server={k: dict(v) for k, v in tool_metrics_by_server.items()}
             )
 
             success = await self._fam_client.submit_metrics(payload)
 
             if success:
+                self._last_sent_timestamp = current_time
                 if total_metrics > 0:
                     self.logger.debug(f"FAM API call successful ({total_metrics} metrics sent)")
                 else:
