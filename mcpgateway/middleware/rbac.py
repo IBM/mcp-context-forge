@@ -367,14 +367,44 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             # Construct expected origin from request
             # Use X-Forwarded-Proto if behind proxy, otherwise use request.url.scheme
             scheme = request.headers.get("x-forwarded-proto")
-            if not scheme:
+            if scheme:
+                # Handle comma-separated values from multiple proxies (take first)
+                scheme = scheme.split(",")[0].strip()
+            else:
                 # Fallback: use the actual request scheme
                 # This ensures we validate against the real request protocol
                 scheme = request.url.scheme
-            expected_origin = f"{scheme}://{request_host}"
-            referer_origin = f"{referer_parsed.scheme}://{referer_parsed.netloc}"
 
-            is_admin_ui_request = referer_origin == expected_origin
+            # Normalize IPv6 addresses by removing brackets for comparison
+            # urlparse keeps brackets in netloc: [::1]:4444
+            # Host header also has brackets: [::1]:4444
+            # We normalize both to ::1:4444 for consistent comparison
+            def normalize_host(host_str: str) -> str:
+                """Remove IPv6 brackets for consistent comparison."""
+                return host_str.replace("[", "").replace("]", "")
+
+            normalized_request_host = normalize_host(request_host)
+            normalized_referer_netloc = normalize_host(referer_parsed.netloc)
+
+            expected_origin = f"{scheme}://{normalized_request_host}"
+            referer_origin = f"{referer_parsed.scheme}://{normalized_referer_netloc}"
+
+            # Debug logging for troubleshooting misconfigured proxies
+            same_origin_match = referer_origin == expected_origin
+            if not same_origin_match:
+                logger.debug(
+                    "Same-origin check failed for %s referer",
+                    referer_parsed.path,
+                    extra={
+                        "referer_origin": referer_origin,
+                        "expected_origin": expected_origin,
+                        "x_forwarded_proto": request.headers.get("x-forwarded-proto"),
+                        "request_scheme": request.url.scheme,
+                        "host": request_host,
+                    },
+                )
+
+            is_admin_ui_request = same_origin_match
 
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 

@@ -285,6 +285,62 @@ async def test_cookie_auth_rejected_with_missing_host_header():
 
 
 @pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_comma_separated_x_forwarded_proto():
+    """Comma-separated X-Forwarded-Proto header should use first value (multi-proxy scenario)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {
+        "accept": "application/json",
+        "referer": "https://example.com/oauth/callback",
+        "host": "example.com",
+        "x-forwarded-proto": "https,http",  # First proxy was HTTPS, second was HTTP
+    }
+    mock_request.url = MagicMock(scheme="http")  # Request received as HTTP by gateway
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-multi-proxy", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_ipv6_host_header():
+    """IPv6 host header with brackets should be normalized for same-origin check."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://[::1]:4444/oauth/callback", "host": "[::1]:4444"}
+    mock_request.url = MagicMock(scheme="http")
+    mock_request.client = MagicMock()
+    mock_request.client.host = "::1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-ipv6", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_cookie_auth_allowed_with_ipv6_localhost():
+    """IPv6 localhost should work for same-origin check."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"accept": "application/json", "referer": "http://[::1]:8000/admin", "host": "[::1]:8000"}
+    mock_request.url = MagicMock(scheme="http")
+    mock_request.client = MagicMock()
+    mock_request.client.host = "::1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req-ipv6-admin", token_teams=["team-1"])
+
+    mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=False)
+    with patch("mcpgateway.auth.validate_token_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
+    assert result["email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
 async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}
