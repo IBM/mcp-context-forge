@@ -8450,6 +8450,80 @@ async def test_forwarded_post_routes_to_rpc_multipart_body_and_auth_header(monke
 
 
 @pytest.mark.asyncio
+async def test_forwarded_post_with_oauth_exchanges_token(monkeypatch):
+    """When forwarded request is OAuth-authenticated, the IdP token is exchanged for an internal JWT."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[
+            (b"x-forwarded-internally", b"true"),
+            (b"authorization", b"Bearer idp-token-abc"),
+        ],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    receive = _make_receive_sequence(
+        [
+            {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"tools/list","id":1}', "more_body": False},
+        ]
+    )
+
+    token = user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+    forwarded_auth = mock_client.post.call_args.kwargs["headers"]["authorization"]
+    # Must be an exchanged JWT, not the raw IdP token
+    assert forwarded_auth.startswith("Bearer ")
+    assert forwarded_auth != "Bearer idp-token-abc"
+    # Verify it decodes to the expected internal claims
+    import jwt as pyjwt
+
+    claims = pyjwt.decode(forwarded_auth.removeprefix("Bearer "), options={"verify_signature": False})
+    assert claims["sub"] == "user@example.com"
+    assert claims["token_use"] == "session"
+    assert claims["teams"] == ["team-a"]
+
+
+@pytest.mark.asyncio
 async def test_forwarded_post_empty_body_returns_202(monkeypatch):
     """Test forwarded POST with empty body returns 202 (line 1406-1410)."""
 
@@ -9408,6 +9482,96 @@ async def test_local_affinity_post_routes_to_rpc_multipart_and_auth_header(monke
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
     assert mock_client.post.call_args.kwargs["headers"]["authorization"] == "Bearer abc"
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_with_oauth_exchanges_token(monkeypatch):
+    """When local-affinity request is OAuth-authenticated, exchange IdP token for internal JWT."""
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[
+            (b"mcp-session-id", b"sess-abc"),
+            (b"authorization", b"Bearer idp-token-xyz"),
+        ],
+    )
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{}}'
+
+    receive = _make_receive_sequence(
+        [
+            {"type": "http.request", "body": b'{"jsonrpc":"2.0","method":"tools/list","id":1}', "more_body": False},
+        ]
+    )
+
+    mock_session_registry = AsyncMock()
+    mock_session_registry.get_session_owner = AsyncMock(return_value="user@example.com")
+
+    token = user_context_var.set(
+        {
+            "email": "user@example.com",
+            "teams": ["team-a"],
+            "is_authenticated": True,
+            "is_admin": False,
+            "auth_method": "oauth_access_token",
+            "token_use": "session",
+        }
+    )
+    try:
+        with (
+            patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+            patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+            patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+            patch("mcpgateway.transports.streamablehttp_transport._get_shared_session_registry", return_value=mock_session_registry),
+            patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+        ):
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_cls.return_value = mock_client
+
+            await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+    forwarded_auth = mock_client.post.call_args.kwargs["headers"]["authorization"]
+    assert forwarded_auth.startswith("Bearer ")
+    assert forwarded_auth != "Bearer idp-token-xyz"
+    import jwt as pyjwt
+
+    claims = pyjwt.decode(forwarded_auth.removeprefix("Bearer "), options={"verify_signature": False})
+    assert claims["sub"] == "user@example.com"
+    assert claims["token_use"] == "session"
+    assert claims["teams"] == ["team-a"]
 
 
 @pytest.mark.asyncio
