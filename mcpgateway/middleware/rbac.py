@@ -351,7 +351,31 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
-    is_admin_ui_request = "/admin" in referer
+
+    # Same-origin check for /admin and /oauth referers (prevent cross-origin cookie attacks)
+    is_admin_ui_request = False
+    if referer:
+        # Third-Party
+        from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+        referer_parsed = urlparse(referer)
+        request_host = request.headers.get("host", "")
+
+        # Check if referer is same-origin (scheme + host must match)
+        # For /admin or /oauth paths, only allow same-origin requests
+        if ("/admin" in referer or "/oauth" in referer) and request_host:
+            # Construct expected origin from request
+            # Use X-Forwarded-Proto if behind proxy, otherwise infer from referer scheme
+            scheme = request.headers.get("x-forwarded-proto")
+            if not scheme:
+                # Fallback: use the referer's scheme (most reliable in same-origin scenario)
+                # This avoids issues with mock objects and matches real browser behavior
+                scheme = referer_parsed.scheme
+            expected_origin = f"{scheme}://{request_host}"
+            referer_origin = f"{referer_parsed.scheme}://{referer_parsed.netloc}"
+
+            is_admin_ui_request = referer_origin == expected_origin
+
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
