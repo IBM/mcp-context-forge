@@ -355,7 +355,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     # Same-origin check for /admin and /oauth referers (prevent cross-origin cookie attacks)
     is_admin_ui_request = False
     if referer:
-        # Third-Party
+        # Standard
         from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
         referer_parsed = urlparse(referer)
