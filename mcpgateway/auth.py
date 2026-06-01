@@ -1187,11 +1187,18 @@ def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
     is_admin is derived from the token's own claim (default False) so that
     the bootstrap path grants login access without unconditional admin elevation.
     """
+    # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
+    resolved_is_admin = payload.get("is_admin", False)
+    if not resolved_is_admin:
+        user_info = payload.get("user", {})
+        if isinstance(user_info, dict):
+            resolved_is_admin = user_info.get("is_admin", False)
+
     return EmailUser(
         email=email,
         password_hash="",  # nosec B106 - not used for JWT authentication
         full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
-        is_admin=bool(payload.get("is_admin", False) or (payload.get("user") or {}).get("is_admin", False)),
+        is_admin=resolved_is_admin,
         is_active=True,
         auth_provider="local",
         password_change_required=False,
@@ -1766,7 +1773,13 @@ async def get_current_user(
         token_use = payload.get("token_use")
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
-            user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
+            # Resolve is_admin: payload-level claim is authoritative; fall back to nested user dict.
+            resolved_is_admin = payload.get("is_admin", False)
+            if not resolved_is_admin:
+                user_info_nested = payload.get("user", {})
+                if isinstance(user_info_nested, dict):
+                    resolved_is_admin = user_info_nested.get("is_admin", False)
+            user_info = {"is_admin": resolved_is_admin}
             normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
