@@ -363,14 +363,14 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
 
         # Check if referer is same-origin (scheme + host must match)
         # For /admin or /oauth paths, only allow same-origin requests
-        if ("/admin" in referer or "/oauth" in referer) and request_host:
+        if (referer_parsed.path.startswith("/admin") or referer_parsed.path.startswith("/oauth")) and request_host:
             # Construct expected origin from request
-            # Use X-Forwarded-Proto if behind proxy, otherwise infer from referer scheme
+            # Use X-Forwarded-Proto if behind proxy, otherwise use request.url.scheme
             scheme = request.headers.get("x-forwarded-proto")
             if not scheme:
-                # Fallback: use the referer's scheme (most reliable in same-origin scenario)
-                # This avoids issues with mock objects and matches real browser behavior
-                scheme = referer_parsed.scheme
+                # Fallback: use the actual request scheme
+                # This ensures we validate against the real request protocol
+                scheme = request.url.scheme
             expected_origin = f"{scheme}://{request_host}"
             referer_origin = f"{referer_parsed.scheme}://{referer_parsed.netloc}"
 
