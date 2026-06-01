@@ -9187,6 +9187,127 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_local_affinity_post_dispatches_via_post_rpc_in_process(monkeypatch):
+    """Local-owned path goes through the shared ``post_rpc_in_process`` helper (PR #4987).
+
+    Before this PR the dispatch built its own ``httpx.AsyncClient`` and
+    looped back to ``127.0.0.1`` over the shared gunicorn socket — which the
+    kernel then routed to a random worker that did not hold the bound
+    upstream session. Routing through the helper enforces in-process dispatch
+    so ``/rpc`` resolves the session from THIS worker's
+    ``UpstreamSessionRegistry``. Pins both the helper call and the loop-stop
+    header that prevents the re-entered handler from forwarding again.
+    """
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-local"), (b"authorization", b"Bearer original-jwt")])
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-1")  # we own it → local-owned path
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{}}'
+
+    mock_post_rpc = AsyncMock(return_value=mock_response)
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process", mock_post_rpc),
+    ):
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+    await wrapper.shutdown()
+    # Helper was invoked exactly once with the loop-stop header so the re-entered handler doesn't forward again.
+    mock_post_rpc.assert_awaited_once()
+    sent_headers = mock_post_rpc.await_args.kwargs["headers"]
+    assert sent_headers["x-forwarded-internally"] == "true"
+    assert sent_headers["x-mcp-session-id"] == "sess-local"
+    # Original Authorization is preserved so /rpc can re-authenticate the same caller.
+    assert sent_headers["authorization"] == "Bearer original-jwt"
+
+
+@pytest.mark.asyncio
+async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(monkeypatch):
+    """``[HTTP_AFFINITY_FORWARDED]`` re-entry also goes through ``post_rpc_in_process`` (PR #4987).
+
+    When a worker receives a forwarded request (carrying
+    ``x-forwarded-internally: true``), it re-enters the /rpc dispatch. Before
+    PR #4987 that re-entry built its own ``httpx.AsyncClient`` and bounced
+    back through the shared socket — splitting the session across yet
+    another random worker. Routing through the helper keeps the dispatch
+    in-process on the worker that already owns the session, closing the last
+    remaining scatter point in the forward chain.
+    """
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, _messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
+    # x-forwarded-internally: true triggers the [HTTP_AFFINITY_FORWARDED] re-entry branch.
+    # Use a server-less path so the handler doesn't try to validate server_id against the (un-initialised) DB.
+    scope = _make_scope(
+        "/mcp",
+        method="POST",
+        headers=[
+            (b"mcp-session-id", b"sess-fwd"),
+            (b"x-forwarded-internally", b"true"),
+            (b"authorization", b"Bearer original-jwt"),
+        ],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{}}'
+
+    mock_post_rpc = AsyncMock(return_value=mock_response)
+
+    with patch("mcpgateway.transports.streamablehttp_transport.post_rpc_in_process", mock_post_rpc):
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+    await wrapper.shutdown()
+    mock_post_rpc.assert_awaited_once()
+    sent_headers = mock_post_rpc.await_args.kwargs["headers"]
+    assert sent_headers["x-forwarded-internally"] == "true"
+    assert sent_headers["x-mcp-session-id"] == "sess-fwd"
+    assert sent_headers["authorization"] == "Bearer original-jwt"
+
+
+@pytest.mark.asyncio
 async def test_local_affinity_post_denies_non_owner_session_access(monkeypatch):
     """Local affinity /rpc routing must deny cross-user stateful session replay."""
 
