@@ -144,6 +144,7 @@ This OAuth flow is **separate** from user authentication to ContextForge itself:
 
 For user authentication details, see [RBAC Configuration](../manage/rbac.md).
 
+<<<<<<< HEAD
 ## Inbound External-Token Validation (M2M API Auth)
 
 The flows above describe ContextForge as an OAuth **client** delegating to upstream MCP servers. ContextForge can also act as a **resource server** for its own API/MCP endpoints, accepting access tokens minted by a trusted external SSO provider directly as `Bearer` credentials — see [SSO: Machine-to-machine API auth with external IdP tokens](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for operator-facing setup.
@@ -158,6 +159,25 @@ This path is gated by `SSO_API_TOKEN_AUTH_ENABLED` (global) and `SSOProvider.tru
 
 !!! note "Revocation and role-sync caveats"
     ContextForge cannot revoke an externally-issued token before its own expiry — only local user-deactivation/team-membership changes take effect immediately. If role-sync is enabled for the provider, teams/admin status are re-derived from token claims into the local DB on each provisioning pass. See the [SSO documentation](../manage/sso.md#machine-to-machine-api-auth-with-external-idp-tokens) for details.
+=======
+### Session Affinity with OAuth
+
+When `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true`, session-bound MCP POSTs are
+routed to the internal `/rpc` endpoint for optimal worker locality.
+
+The `/rpc` endpoint authenticates via `verify_jwt_token()`, which only accepts
+internal ContextForge JWTs. OAuth tokens issued by an external IdP fail
+signature verification there. To bridge this gap, the streamable HTTP transport
+layer automatically exchanges an external IdP OAuth token for a short-lived
+(1-minute) internal JWT before forwarding the request to `/rpc`. This exchange
+is transparent to clients.
+
+!!! note "Security: is_admin is not included in the exchanged JWT"
+    The minted internal JWT intentionally omits `is_admin` from its claims.
+    The `/rpc` endpoint determines admin status by querying the database, not
+    from JWT claims. This prevents JWT-based privilege escalation if token
+    verification were ever bypassed.
+>>>>>>> 1d61f3d6a (docs(oauth): add session affinity with OAuth section to oauth-design.md)
 
 ## Future Enhancements
 
