@@ -1692,13 +1692,15 @@ async def get_current_user(
 
                 # Idle timeout enforcement.
                 #
+                # Skipped for API tokens (token_use="api") which have their own
+                # expiry and revocation mechanisms via EmailApiToken / TokenRevocation.
+                #
                 # Activity source-of-truth precedence (most-recent first):
                 #   1. Redis key `token:activity:{jti}` written by `update_activity()`.
-                #   2. Optional `last_activity` JWT claim (issuer can set this for first-request bootstrap).
-                #   3. Standard `iat` JWT claim (always present on tokens issued by this gateway).
-                # If none of the three are available we skip the idle check rather than fail-open silently —
+                #   2. JWT `last_activity` claim (issuer sets this for first-request bootstrap).
+                # If neither is available we skip the idle check rather than fail-open silently —
                 # the periodic revocation check above already handles tokens that should be denied outright.
-                if settings.token_idle_timeout > 0:
+                if settings.token_idle_timeout > 0 and payload.get("token_use") != "api":
                     # First-Party
                     from mcpgateway.services.token_blocklist_service import get_token_blocklist_service  # pylint: disable=import-outside-toplevel
 
@@ -1711,7 +1713,7 @@ async def get_current_user(
                         logger.debug(f"Failed to read last activity from cache: {activity_lookup_error}")
 
                     if last_activity is None:
-                        last_activity_ts = payload.get("last_activity") or payload.get("iat")
+                        last_activity_ts = payload.get("last_activity")
                         if last_activity_ts:
                             last_activity = datetime.fromtimestamp(last_activity_ts, tz=timezone.utc)
 
