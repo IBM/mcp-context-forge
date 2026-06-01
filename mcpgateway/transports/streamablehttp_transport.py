@@ -4213,6 +4213,17 @@ class SessionManagerWrapper:
                     # Session owned by another worker - forward the entire HTTP request
                     logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
 
+                    # Package the authenticated identity that streamable_http_auth()
+                    # established for this request so the owner worker can dispatch
+                    # via the trusted internal /_internal/mcp/rpc endpoint without
+                    # re-authenticating. This is what makes virtual-server OAuth
+                    # tokens and MCP_REQUIRE_AUTH=false public-only mode survive a
+                    # cross-worker forward.
+                    # First-Party
+                    from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
+
+                    encoded_auth_context = encode_internal_mcp_auth_context(get_streamable_http_auth_context())
+
                     # Read request body
                     body_parts = []
                     while True:
@@ -4234,6 +4245,7 @@ class SessionManagerWrapper:
                         headers=headers,
                         body=body,
                         query_string=query_string,
+                        auth_context=encoded_auth_context,
                     )
 
                     if response:
