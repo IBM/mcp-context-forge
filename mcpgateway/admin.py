@@ -12617,6 +12617,17 @@ async def admin_delete_gateway_rest(
 ) -> Response:
     """Delete a gateway via REST API (DELETE).
 
+    **Example Request:**
+    ```bash
+    curl -X DELETE http://localhost:4444/admin/gateways/gw-123 \
+         -H "Authorization: Bearer $TOKEN"
+    ```
+
+    **Example Response (204):**
+    ```
+    (No content - empty response body)
+    ```
+
     Args:
         gateway_id: The ID of the gateway to delete.
         db: Database session.

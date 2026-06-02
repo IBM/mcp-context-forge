@@ -178,10 +178,14 @@ class GatewayAPITester:
                 print(f"\n📥 Response Status: {response.status_code}")
                 print(f"📥 Response Body: {response.text}")
 
-                if response.status_code == 200:
+                if response.status_code == 204:
+                    print("✅ Gateway deleted successfully (204 No Content)!")
+                    return True
+                elif response.status_code == 200:
+                    # Legacy behavior - still accept but warn
                     data = response.json()
                     if data.get("success"):
-                        print("✅ Gateway deleted successfully!")
+                        print("⚠️  Gateway deleted (200 OK - should return 204 No Content)")
                         return True
                     else:
                         print(f"❌ Deletion failed: {data.get('message')}")
