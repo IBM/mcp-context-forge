@@ -5065,9 +5065,6 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     # Third-Party
                     from sqlalchemy import inspect as sa_inspect
 
-                    # First-Party
-                    from mcpgateway.db import EmailUser
-
                     insp = sa_inspect(current_user)
                     if insp.transient or insp.detached:
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()

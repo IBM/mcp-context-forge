@@ -1294,8 +1294,8 @@ async def validate_token_user(request: Request, token: str) -> EmailUser:
         ) from exc
 
 
-def _bootstrap_platform_admin_user(email: str, payload: dict) -> "EmailUser":
-    """Synthesise a virtual platform-admin EmailUser from a validated JWT payload.
+def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
+    """Synthesise a virtual platform-admin EmailUser.
 
     is_admin is derived from whether the email matches the configured platform admin
     address, since session tokens no longer embed the is_admin claim.
@@ -1779,7 +1779,7 @@ async def get_current_user(
                             f"Platform admin bootstrap authentication for {email}. " "User authenticated via platform admin configuration.",
                             extra={"security_event": "platform_admin_bootstrap", "user_id": email},
                         )
-                        _batched_user = _bootstrap_platform_admin_user(email=email, payload=payload)
+                        _batched_user = _bootstrap_platform_admin_user(email=email)
                     else:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -2000,7 +2000,7 @@ async def get_current_user(
                 extra={"security_event": "platform_admin_bootstrap", "user_id": email},
             )
             # Create a virtual admin user for authentication purposes
-            user = _bootstrap_platform_admin_user(email=email, payload=payload)
+            user = _bootstrap_platform_admin_user(email=email)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
