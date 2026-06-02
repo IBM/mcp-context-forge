@@ -15471,6 +15471,7 @@ async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db)
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
             "validated_url": value,
@@ -15567,6 +15568,7 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
             "validated_url": value,
@@ -16215,9 +16217,7 @@ async def test_admin_get_agent_admin_with_token_teams_none_retrieves_own_private
     assert result["visibility"] == "private"
     assert result["owner_email"] == "admin@example.com"
     # Verify get_agent was called with correct token_teams
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -16239,9 +16239,7 @@ async def test_admin_get_agent_admin_with_public_only_token_cannot_retrieve_othe
 
     assert exc.value.status_code == 404
     # Verify get_agent was called with token_teams=[]
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[]
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[])
 
 
 @pytest.mark.asyncio
