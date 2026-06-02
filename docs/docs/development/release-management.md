@@ -287,7 +287,7 @@ make test-js-coverage
 
 ### 3.5 Frontend CDN dependencies
 
-The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX is bundled via npm/Vite and no longer loaded from CDN.
+The Admin UI loads frontend libraries (Tailwind, Chart.js, CodeMirror, Font Awesome, Marked, DOMPurify) from CDNs at runtime, with pinned versions in three places that must be kept in sync. **Note:** HTMX and Alpine.js are bundled via npm/Vite and no longer loaded from CDN.
 
 | File | What it controls |
 |------|------------------|
@@ -302,9 +302,10 @@ The Admin UI loads frontend libraries (Tailwind, Alpine.js, Chart.js, CodeMirror
 2. **Update the version numbers** in all three files. Search-and-replace the old version with the new one:
 
     ```bash
-    # Example: update Alpine.js from 3.15.8 to 3.16.0
-    grep -rn "3.15.8" scripts/cdn_resources.py scripts/download-cdn-assets.sh mcpgateway/templates/
+    # Example: update Chart.js from 4.4.1 to 4.5.0
+    grep -rn "4.4.1" scripts/cdn_resources.py scripts/download-cdn-assets.sh mcpgateway/templates/
     # Replace in all matching files
+    # Note: Alpine.js and HTMX are bundled via npm/Vite — update via package.json instead
     ```
 
 3. **Regenerate SRI hashes** for the new CDN URLs:

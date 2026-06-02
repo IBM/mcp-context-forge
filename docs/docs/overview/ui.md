@@ -24,17 +24,17 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 
 ### Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Templating** | Jinja2 | Server-side HTML rendering (44 templates in `mcpgateway/templates/`) |
-| **Interactivity** | HTMX 2.0.3 | AJAX without JavaScript, HTML-over-HTTP patterns (bundled via npm/Vite) |
-| **Reactivity** | Alpine.js 3.x | Lightweight reactive components |
-| **Styling** | Tailwind CSS | Utility-first CSS framework |
-| **Code Editor** | CodeMirror 5.65.18 | Syntax-highlighted editing |
-| **Charts** | Chart.js | Data visualization and metrics |
-| **Markdown** | Marked.js | Markdown rendering |
-| **Security** | DOMPurify | XSS sanitization |
-| **Icons** | Font Awesome | Icon library |
+| Layer             | Technology         | Purpose                                                                 |
+| ----------------- | ------------------ | ----------------------------------------------------------------------- |
+| **Templating**    | Jinja2             | Server-side HTML rendering (44 templates in `mcpgateway/templates/`)    |
+| **Interactivity** | HTMX 2.0.3         | AJAX without JavaScript, HTML-over-HTTP patterns (bundled via npm/Vite) |
+| **Reactivity**    | Alpine.js 3.x      | Lightweight reactive components                                         |
+| **Styling**       | Tailwind CSS       | Utility-first CSS framework                                             |
+| **Code Editor**   | CodeMirror 5.65.18 | Syntax-highlighted editing                                              |
+| **Charts**        | Chart.js           | Data visualization and metrics                                          |
+| **Markdown**      | Marked.js          | Markdown rendering                                                      |
+| **Security**      | DOMPurify          | XSS sanitization                                                        |
+| **Icons**         | Font Awesome       | Icon library                                                            |
 
 All vendor libraries are bundled locally for **air-gapped deployments** with CDN fallbacks. See [Air-Gapped Mode](#air-gapped-mode) below.
 
@@ -53,14 +53,14 @@ It provides tabbed access to:
 
 ## ✍️ Common Actions
 
-| Action | How |
-|--------|-----|
-| Register a tool | Use the Tools tab → Add Tool form |
-| Bulk import tools | Use API endpoint `/admin/tools/import` (see [Bulk Import](../manage/bulk-import.md)) |
-| View prompt output | Go to Prompts → click View |
-| **View entity metadata** | Click "View" on any entity → scroll to "Metadata" section |
-| Toggle server activity | Use the "Activate/Deactivate" buttons in Servers tab |
-| Delete a resource | Navigate to Resources → click Delete (after confirming) |
+| Action                   | How                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| Register a tool          | Use the Tools tab → Add Tool form                                                    |
+| Bulk import tools        | Use API endpoint `/admin/tools/import` (see [Bulk Import](../manage/bulk-import.md)) |
+| View prompt output       | Go to Prompts → click View                                                           |
+| **View entity metadata** | Click "View" on any entity → scroll to "Metadata" section                            |
+| Toggle server activity   | Use the "Activate/Deactivate" buttons in Servers tab                                 |
+| Delete a resource        | Navigate to Resources → click Delete (after confirming)                              |
 
 All actions are reflected in the live API via `/tools`, `/prompts`, etc.
 
@@ -94,7 +94,7 @@ MCPGATEWAY_UI_AIRGAPPED=true
 
 ### How It Works
 
-By default, the UI loads vendor libraries from CDNs (Tailwind, Alpine.js, etc.). HTMX is bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
+By default, the UI loads vendor libraries from CDNs (Tailwind, Chart.js, etc.). HTMX and Alpine.js are bundled via npm/Vite. When `MCPGATEWAY_UI_AIRGAPPED=true`:
 
 - All libraries load from `mcpgateway/static/vendor/`
 - No external network requests for UI assets
@@ -125,13 +125,13 @@ MCPGATEWAY_UI_AIRGAPPED=true make dev
 
 The script downloads to `mcpgateway/static/vendor/`:
 
-| Library | Version | Size |
-|---------|---------|------|
-| Tailwind CSS | CDN | ~404KB |
-| HTMX | 2.0.3 | Bundled in main JS (included in bundle size) |
-| CodeMirror | 5.65.18 | ~216KB |
-| Alpine.js | 3.14.1 | ~48KB |
-| Chart.js | 4.4.1 | ~208KB |
-| Font Awesome | 6.4.0 | ~1.2MB |
+| Library      | Version | Size                                         |
+| ------------ | ------- | -------------------------------------------- |
+| Tailwind CSS | CDN     | ~404KB                                       |
+| HTMX         | 2.0.3   | Bundled in main JS (included in bundle size) |
+| Alpine.js    | 3.x CSP | Bundled in main JS (included in bundle size) |
+| CodeMirror   | 5.65.18 | ~216KB                                       |
+| Chart.js     | 4.4.1   | ~208KB                                       |
+| Font Awesome | 6.4.0   | ~1.2MB                                       |
 
 ---

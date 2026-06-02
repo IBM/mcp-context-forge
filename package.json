@@ -51,7 +51,7 @@
         "watch:css": "postcss mcpgateway/static/css/tailwind.src.css -o mcpgateway/static/css/tailwind.min.css --watch"
     },
     "dependencies": {
-        "alpinejs": "^3.15.8",
+        "@alpinejs/csp": "^3.15.8",
         "htmx.org": "^2.0.3"
     }
 }

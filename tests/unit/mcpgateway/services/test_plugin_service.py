@@ -8,11 +8,13 @@ Authors: Mihai Criveti
 Module documentation...
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from mcpgateway.services.plugin_service import PluginService, get_plugin_service
-import mcpgateway.services.plugin_service as plugin_service_module
+
+import pytest
 from cpex.framework.models import PluginMode
+
+import mcpgateway.services.plugin_service as plugin_service_module
+from mcpgateway.services.plugin_service import PluginService, get_plugin_service
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +177,9 @@ def test_get_all_plugins_enabled_without_config_has_empty_summary():
     plugins = service.get_all_plugins()
 
     assert plugins[0]["name"] == "sample-no-config"
+    assert plugins[0]["description"] == ""
+    assert plugins[0]["author"] == "Unknown"
+    assert plugins[0]["version"] == "0.0.0"
     assert plugins[0]["config_summary"] == {}
 
 
