@@ -18,7 +18,7 @@ export interface User {
 
 interface LoginResponse {
   user: User;
-  csrf_token: string;
+  mcpgateway_csrf_token: string;
 }
 
 interface AuthState {

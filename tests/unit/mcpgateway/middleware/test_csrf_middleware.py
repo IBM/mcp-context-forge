@@ -110,7 +110,7 @@ async def test_post_with_invalid_token_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -139,7 +139,7 @@ async def test_post_with_missing_cookie_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -170,7 +170,7 @@ async def test_post_with_mismatched_cookie_returns_403():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
@@ -202,7 +202,7 @@ async def test_post_with_valid_token_succeeds():
         mock_settings.csrf_exempt_paths = []
         mock_settings.csrf_token_name = "X-CSRF-Token"
         mock_settings.csrf_check_referer = False
-        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
 
         response = await middleware.dispatch(request, call_next)
 
