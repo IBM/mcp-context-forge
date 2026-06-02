@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 class TestRateLimiterWithDedicatedRedis:
     """Unit tests for rate limiter Redis client initialization."""
 
-    @patch("redis.from_url")
+    @patch("mcpgateway.auth.redis.from_url")
     def test_rate_limiter_with_dedicated_redis(self, mock_from_url):
         """Verify rate limiting works with dedicated Redis URL."""
         # Mock dedicated Redis client
