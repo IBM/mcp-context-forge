@@ -1,10 +1,10 @@
 # ADR-0014: Security Headers and Environment-Aware CORS Middleware
 
-- *Status:* Accepted
-- *Date:* 2025-08-17
-- *Deciders:* Core Engineering Team
-- *Issues:* [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)
-- *Related:* Addresses all 9 security headers identified by nodejsscan
+- _Status:_ Accepted
+- _Date:_ 2025-08-17
+- _Deciders:_ Core Engineering Team
+- _Issues:_ [#344](https://github.com/IBM/mcp-context-forge/issues/344), [#533](https://github.com/IBM/mcp-context-forge/issues/533)
+- _Related:_ Addresses all 9 security headers identified by nodejsscan
 
 ## Context
 
@@ -144,6 +144,7 @@ Added security meta tags to `mcpgateway/templates/admin.html` for static analysi
 ### 6. Enhanced Static Analysis
 
 Updated Makefile to scan both static files and templates:
+
 ```makefile
 nodejsscan:
     @$(VENV_DIR)/bin/nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
@@ -178,18 +179,19 @@ nodejsscan:
 
 ## Alternatives Considered
 
-| Alternative | Why Not Chosen |
-|------------|----------------|
-| **Manual CORS configuration only** | Error-prone and inconsistent across environments |
-| **Strict CSP without Admin UI support** | Would break existing Admin UI functionality |
-| **Separate middleware for each header** | More complex and harder to maintain |
-| **Runtime-configurable CSP** | Added complexity with minimal benefit |
-| **No security headers** | Unacceptable security posture for production |
-| **Environment-specific builds** | More complex deployment and maintenance |
+| Alternative                             | Why Not Chosen                                   |
+| --------------------------------------- | ------------------------------------------------ |
+| **Manual CORS configuration only**      | Error-prone and inconsistent across environments |
+| **Strict CSP without Admin UI support** | Would break existing Admin UI functionality      |
+| **Separate middleware for each header** | More complex and harder to maintain              |
+| **Runtime-configurable CSP**            | Added complexity with minimal benefit            |
+| **No security headers**                 | Unacceptable security posture for production     |
+| **Environment-specific builds**         | More complex deployment and maintenance          |
 
 ## Implementation Details
 
 ### Middleware Order
+
 ```python
 # Order matters - security headers should be added after CORS
 app.add_middleware(CORSMiddleware, ...)      # 1. CORS first
@@ -198,17 +200,20 @@ app.add_middleware(DocsAuthMiddleware)       # 3. Auth protection
 ```
 
 ### Environment Detection
+
 - Uses `ENVIRONMENT` setting to determine development vs production mode
 - Falls back to safe defaults if environment not specified
 - Only applies automatic origins when using default configuration
 
 ### CSP Design Decisions
-- **'unsafe-inline'**: Required for Tailwind CSS inline styles and Alpine.js
-- **'unsafe-eval'**: Required for some JavaScript frameworks used in Admin UI
+
+- **'unsafe-inline'**: Required for Tailwind CSS inline styles
+- **'unsafe-eval'**: Still required — HTMX evaluates `hx-vals="js:{...}"` and `hx-on:*` attributes via `htmx.config.allowEval`. Tracked in issue #4655.
 - **Specific CDN domains**: Whitelisted known-good CDN sources instead of wildcard
 - **'frame-ancestors none'**: Prevents all framing to prevent clickjacking
 
 ### iframe Embedding Configuration
+
 By default, iframe embedding is **disabled** for security via `X-Frame-Options: DENY` and `frame-ancestors 'none'`. To enable iframe embedding:
 
 1. **Same-domain embedding**: Set `X_FRAME_OPTIONS=SAMEORIGIN`
@@ -244,10 +249,10 @@ As part of the security enhancements, Subresource Integrity (SRI) has been imple
 
 ### Protected Resources
 
-All 14 external CDN resources are protected with SRI hashes:
+All external CDN resources are protected with SRI hashes:
 
 - **HTMX** (2.0.3) - Dynamic interactions (bundled via npm/Vite)
-- **Alpine.js** (3.14.1) - Reactive framework
+- **Alpine.js** (3.x CSP) - Reactive framework (bundled via npm/Vite)
 - **Chart.js** (4.4.1) - Data visualization
 - **Marked** (11.1.1) - Markdown parser
 - **DOMPurify** (3.0.6) - XSS sanitizer

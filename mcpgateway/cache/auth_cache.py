@@ -1274,6 +1274,33 @@ class AuthCache:
 
         return None
 
+    async def set_not_revoked(self, jti: str) -> None:
+        """Cache a confirmed DB result that a token is not revoked (negative result caching).
+
+        Call this immediately after a DB query returns None for the given JTI so
+        subsequent callers skip the DB round-trip within the revocation TTL window.
+        ``invalidate_revocation()`` evicts this entry atomically on revocation, so
+        there is no window where a freshly-revoked token receives a stale False.
+
+        Args:
+            jti: JWT ID confirmed by DB as not revoked
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_not_revoked("some-jti"))
+            >>> asyncio.run(cache.is_token_revoked("some-jti"))
+            False
+        """
+        if not self._enabled:
+            return
+        with self._lock:
+            if jti not in self._revoked_jtis:
+                self._revocation_cache[jti] = CacheEntry(
+                    value=False,
+                    expiry=time.time() + self._revocation_ttl,
+                )
+
     async def sync_revoked_tokens(self) -> None:
         """Sync revoked tokens from database to cache on startup.
 
