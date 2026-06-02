@@ -1291,3 +1291,57 @@ class TestRedisMissCounts:
 
         assert result is None
         assert auth_cache._redis_miss_count == initial + 1
+
+
+class TestSetNotRevoked:
+    """Tests for set_not_revoked() negative result caching (Issue #2692)."""
+
+    @pytest.mark.asyncio
+    async def test_set_not_revoked_stores_false(self, auth_cache):
+        """set_not_revoked stores False in L1 so is_token_revoked skips DB."""
+        jti = "not-revoked-jti"
+
+        await auth_cache.set_not_revoked(jti)
+
+        result = await auth_cache.is_token_revoked(jti)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_set_not_revoked_no_op_when_disabled(self):
+        """Disabled cache: set_not_revoked is a no-op and is_token_revoked returns None."""
+        cache = AuthCache(enabled=False)
+        jti = "some-jti"
+
+        await cache.set_not_revoked(jti)
+
+        result = await cache.is_token_revoked(jti)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_not_revoked_ignored_if_already_revoked(self, auth_cache):
+        """If JTI is in _revoked_jtis, set_not_revoked must not overwrite it."""
+        jti = "confirmed-revoked-jti"
+        auth_cache._revoked_jtis.add(jti)
+
+        await auth_cache.set_not_revoked(jti)
+
+        # Fast path via _revoked_jtis must still return True
+        result = await auth_cache.is_token_revoked(jti)
+        assert result is True
+        # L1 cache must not hold a False entry for this JTI
+        entry = auth_cache._revocation_cache.get(jti)
+        assert entry is None or entry.value is True
+
+    @pytest.mark.asyncio
+    async def test_invalidate_revocation_evicts_false_entry(self, auth_cache):
+        """invalidate_revocation() must evict a cached False so revocation takes effect."""
+        jti = "to-be-revoked-jti"
+        auth_cache._redis_available = False
+
+        await auth_cache.set_not_revoked(jti)
+        assert await auth_cache.is_token_revoked(jti) is False
+
+        await auth_cache.invalidate_revocation(jti)
+
+        result = await auth_cache.is_token_revoked(jti)
+        assert result is True
