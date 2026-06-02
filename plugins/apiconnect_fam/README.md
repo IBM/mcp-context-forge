@@ -86,8 +86,18 @@ plugins:
       fam_enabled: true
       fam_base_url: "https://fam.example.com"
       fam_runtime_id: "your-runtime-id"  # REQUIRED
+      
+      # Authentication - choose one method:
+      # Option 1: Basic Authentication (default)
+      fam_auth_type: "basic"
       fam_username: "admin"
       fam_password: "changeme"
+      
+      # Option 2: API Key Authentication
+      # fam_auth_type: "apikey"
+      # fam_api_key: "your-api-key-here"
+      # fam_client_id: "your-client-id-here"
+      
       fam_timeout: 30
       fam_verify_ssl: true
       
@@ -102,6 +112,29 @@ plugins:
       circuit_breaker_failure_threshold: 5
       circuit_breaker_recovery_timeout: 60.0
 ```
+
+### Authentication Methods
+
+The plugin supports two authentication methods:
+
+#### Basic Authentication (Default)
+Uses HTTPs Basic Authentication with username and password:
+
+```yaml
+fam_auth_type: "basic"
+fam_username: "admin"
+fam_password: "changeme"
+```
+
+#### API Key Authentication
+Uses API key and client ID to obtain a bearer token:
+
+```yaml
+fam_auth_type: "apikey"
+fam_api_key: "your-api-key-here"
+fam_client_id: "your-client-id-here"
+```
+
 
 ## Configuration Reference
 
@@ -119,8 +152,11 @@ plugins:
 | `fam_enabled` | bool | false | Enable FAM synchronization |
 | `fam_base_url` | string | - | FAM API base URL (REQUIRED) |
 | `fam_runtime_id` | string | - | Runtime identifier (REQUIRED) |
-| `fam_username` | string | - | Basic auth username |
-| `fam_password` | string | - | Basic auth password |
+| `fam_auth_type` | string | "basic" | Authentication type: "basic" or "apikey" |
+| `fam_username` | string | - | Basic auth username (required if auth_type=basic) |
+| `fam_password` | string | - | Basic auth password (required if auth_type=basic) |
+| `fam_api_key` | string | - | API key (required if auth_type=apikey) |
+| `fam_client_id` | string | - | Client ID (required if auth_type=apikey) |
 | `fam_timeout` | int | 30 | HTTP request timeout (seconds) |
 | `fam_verify_ssl` | bool | true | Verify SSL certificates |
 
@@ -147,7 +183,6 @@ plugins:
 |-----------|------|---------|-------------|
 | `fam_runtime_name` | string | "ContextForge Gateway" | Display name |
 | `fam_runtime_description` | string | - | Runtime description |
-| `fam_runtime_type` | string | "MCP_CONTEXT_FORGE" | Runtime type |
 | `fam_runtime_deployment_type` | string | "ON_PREMISE" | Deployment type |
 | `fam_runtime_region` | string | null | Region identifier |
 | `fam_runtime_location` | string | null | Location description |
@@ -165,10 +200,16 @@ plugins:
 
 ### FAM Connection Issues
 
-1. **401 Unauthorized**: Check username/password
+1. **401 Unauthorized**:
+   - For Basic Auth: Check username/password
+   - For API Key Auth: Verify api_key and client_id are correct
+   - Check that the authentication method matches FAM server configuration
 2. **404 Not Found**: Verify `fam_base_url` and `fam_runtime_id`
 3. **Connection Timeout**: Check network connectivity and `fam_timeout`
 4. **SSL Errors**: Set `fam_verify_ssl: false` for self-signed certs
+5. **Token Fetch Failures** (API Key Auth):
+   - Check that API key and client ID have proper permissions
+   - Review logs for detailed error messages with status codes
 
 ### Circuit Breaker Opened
 
