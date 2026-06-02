@@ -124,9 +124,9 @@ describe("MCPServerDetailsPanel", () => {
   it("displays loading state while fetching components", () => {
     // Suspend all three fetches so componentsLoading stays true.
     server.use(
-      http.get("*/tools", () => new Promise<HttpResponse>(() => {})),
-      http.get("*/resources", () => new Promise<HttpResponse>(() => {})),
-      http.get("*/prompts", () => new Promise<HttpResponse>(() => {})),
+      http.get("*/tools", () => new Promise<never>(() => {})),
+      http.get("*/resources", () => new Promise<never>(() => {})),
+      http.get("*/prompts", () => new Promise<never>(() => {})),
     );
 
     renderWithProviders(
