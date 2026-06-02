@@ -100,7 +100,7 @@ class TestTokenExpirySynchronization:
 
         # Find JWT and CSRF cookies
         jwt_cookie = next((c for c in set_cookies if "jwt_token=" in c), None)
-        csrf_cookie = next((c for c in set_cookies if "csrf_token=" in c), None)
+        csrf_cookie = next((c for c in set_cookies if "mcpgateway_csrf_token=" in c), None)
 
         assert jwt_cookie is not None, "JWT cookie should be set"
         assert csrf_cookie is not None, "CSRF cookie should be set"
@@ -148,7 +148,7 @@ class TestTokenExpirySynchronization:
 
         # Extract CSRF cookie
         set_cookies = _set_cookie_headers(response)
-        csrf_cookie = next((c for c in set_cookies if "csrf_token=" in c), None)
+        csrf_cookie = next((c for c in set_cookies if "mcpgateway_csrf_token=" in c), None)
 
         assert csrf_cookie is not None, "CSRF cookie should be set"
 
