@@ -10,6 +10,9 @@ IBM API Connect Federated API Management API Endpoint Constants.
 class FAMEndpoints:
     """IBM API Connect Federated API Management Asset Catalog and Engine API endpoint constants."""
 
+    # Ingress API v1 - Authentication
+    TOKEN = "/api/ingress/v1/token"
+
     # Asset Catalog API v1 - Servers
     SERVERS_BASE = "/api/assetcatalog/v1/runtimes/{runtime_id}/mcp-servers"
     SERVER_BY_ID = "/api/assetcatalog/v1/runtimes/{runtime_id}/mcp-servers/{server_id}"

@@ -33,10 +33,19 @@ plugins:
       
       # FAM sync configuration (disabled by default)
       fam_enabled: true
-      fam_base_url: "http://sample.com"
-      fam_runtime_id: "0f8320a0-6a63-45b5-8217-a7488f150980"  # REQUIRED: Runtime ID from FAM registration
+      fam_base_url: "https://sample.com"
+      fam_runtime_id: "0f8320a0-6a63-45b5-8217-a7488f150989"  # REQUIRED: Runtime ID from FAM registration
+      # FAM password for Basic Authentication
+      # Authentication configuration - choose one method:
+      # Option 1: Basic Authentication (default)
+      fam_auth_type: "basic"  # Authentication type: "basic" or "apikey"
       fam_username: "your-username"  # FAM username for Basic Authentication
       fam_password: "your-password"    # FAM password for Basic Authentication
+      
+      # Option 2: API Key Authentication (comment out basic auth and uncomment below)
+      # fam_auth_type: "apikey"
+      # fam_api_key: "fam-api-key"      # FAM API key for API Key Authentication
+      # fam_client_id: "fam-client-id"  # FAM client ID for API Key Authentication
       fam_timeout: 30
       fam_verify_ssl: false  # Set to false for self-signed certificates
       

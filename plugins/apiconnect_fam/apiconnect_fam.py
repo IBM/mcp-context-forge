@@ -39,8 +39,11 @@ class APIConnectFAMConfig(BaseModel):
         fam_enabled: Whether to sync servers to IBM API Connect Federated API Management.
         fam_base_url: Base URL for IBM API Connect Federated API Management API (e.g., https://fam.example.com).
         fam_runtime_id: Runtime ID to use when syncing to IBM API Connect Federated API Management (REQUIRED when fam_enabled is true).
+        fam_auth_type: Authentication type - 'basic' or 'apikey' (default: 'basic').
         fam_username: IBM API Connect Federated API Management username for Basic Authentication.
         fam_password: IBM API Connect Federated API Management password for Basic Authentication.
+        fam_api_key: IBM API Connect Federated API Management API key for API Key Authentication.
+        fam_client_id: IBM API Connect Federated API Management client ID for API Key Authentication.
         fam_timeout: HTTP request timeout in seconds.
         fam_verify_ssl: Whether to verify SSL certificates (set False for self-signed certs).
         fam_asset_sync_enabled: Whether to sync assets (servers/tools) to IBM API Connect Federated API Management.
@@ -61,6 +64,7 @@ class APIConnectFAMConfig(BaseModel):
 
     Note:
         Runtime type is hardcoded to 'MCP_CONTEXT_FORGE' and will be auto-created if it doesn't exist in FAM.
+        Authentication: Either use Basic Auth (username/password) or API Key (api_key/client_id).
     """
 
     interval_seconds: int = 60
@@ -68,8 +72,11 @@ class APIConnectFAMConfig(BaseModel):
     fam_enabled: bool = False
     fam_base_url: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management API base URL")
     fam_runtime_id: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management runtime ID (REQUIRED when fam_enabled is true)")
+    fam_auth_type: str = Field(default="basic", description="Authentication type: 'basic' or 'apikey'")
     fam_username: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management username for Basic Authentication")
     fam_password: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management password for Basic Authentication")
+    fam_api_key: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management API key for API Key Authentication")
+    fam_client_id: Optional[str] = Field(default=None, description="IBM API Connect Federated API Management client ID for API Key Authentication")
     fam_timeout: int = 30
     fam_verify_ssl: bool = True  # Verify SSL certificates by default
     fam_asset_sync_enabled: bool = True
@@ -118,9 +125,26 @@ class APIConnectFAMPlugin(Plugin):
 
         # Initialize IBM API Connect Federated API Management client if sync is enabled
         if self._cfg.fam_enabled:
-            # Check if we have all required fields: base URL, username, password, and runtime_id
-            if not all([self._cfg.fam_base_url, self._cfg.fam_username, self._cfg.fam_password, self._cfg.fam_runtime_id]):
-                error_msg = "IBM API Connect Federated API Management sync enabled but required fields missing (base_url, username, password, or runtime_id). Plugin initialization failed."
+            # Validate required base fields
+            if not self._cfg.fam_base_url or not self._cfg.fam_runtime_id:
+                error_msg = "IBM API Connect Federated API Management sync enabled but required fields missing (base_url or runtime_id). Plugin initialization failed."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+
+            # Validate authentication configuration based on auth_type
+            auth_type = self._cfg.fam_auth_type.lower()
+            if auth_type == "basic":
+                if not self._cfg.fam_username or not self._cfg.fam_password:
+                    error_msg = "Basic authentication selected but username or password is missing. Plugin initialization failed."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            elif auth_type == "apikey":
+                if not self._cfg.fam_api_key or not self._cfg.fam_client_id:
+                    error_msg = "API Key authentication selected but api_key or client_id is missing. Plugin initialization failed."
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            else:
+                error_msg = f"Invalid authentication type '{auth_type}'. Must be 'basic' or 'apikey'. Plugin initialization failed."
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
@@ -130,14 +154,15 @@ class APIConnectFAMPlugin(Plugin):
             # Create FAM client with runtime ID (type assertions safe due to validation above)
             assert self._cfg.fam_base_url is not None
             assert self._runtime_id is not None
-            assert self._cfg.fam_username is not None
-            assert self._cfg.fam_password is not None
 
             self._fam_client = FAMAssetCatalogClient(
                 base_url=self._cfg.fam_base_url,
                 runtime_id=self._runtime_id,
+                auth_type=auth_type,
                 username=self._cfg.fam_username,
                 password=self._cfg.fam_password,
+                api_key=self._cfg.fam_api_key,
+                client_id=self._cfg.fam_client_id,
                 timeout=self._cfg.fam_timeout,
                 verify_ssl=self._cfg.fam_verify_ssl,
             )

@@ -39,8 +39,11 @@ class FAMAssetCatalogClient:
         self,
         base_url: str,
         runtime_id: str,
-        username: str,
-        password: str,
+        auth_type: str = "basic",
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        api_key: Optional[str] = None,
+        client_id: Optional[str] = None,
         timeout: int = 30,
         verify_ssl: bool = True,
         circuit_breaker_enabled: bool = True,
@@ -52,8 +55,11 @@ class FAMAssetCatalogClient:
         Args:
             base_url: IBM API Connect Federated API Management API base URL (e.g., https://fam.example.com)
             runtime_id: Runtime identifier
+            auth_type: Authentication type - 'basic' or 'apikey' (default: 'basic')
             username: IBM API Connect Federated API Management username for Basic Authentication
             password: IBM API Connect Federated API Management password for Basic Authentication
+            api_key: IBM API Connect Federated API Management API key for API Key Authentication
+            client_id: IBM API Connect Federated API Management client ID for API Key Authentication
             timeout: HTTP request timeout in seconds
             verify_ssl: Whether to verify SSL certificates (default: True, set False for self-signed certs)
             circuit_breaker_enabled: Enable circuit breaker pattern (default: True)
@@ -62,12 +68,36 @@ class FAMAssetCatalogClient:
         """
         self.base_url = base_url.rstrip("/")
         self.runtime_id = runtime_id
+        self._auth_type = auth_type.lower()
+        self._timeout = timeout
+        self._verify_ssl = verify_ssl
 
-        # Create Basic Auth header
-        credentials = f"{username}:{password}"
-        encoded_credentials = base64.b64encode(credentials.encode()).decode()
+        # Store auth credentials for token refresh
+        self._api_key = api_key
+        self._client_id = client_id
+        self._bearer_token: Optional[str] = None
+        self._token_expires_at: Optional[float] = None
 
-        self._http_client = httpx.AsyncClient(timeout=timeout, headers={"Authorization": f"Basic {encoded_credentials}", "Content-Type": "application/json"}, verify=verify_ssl)
+        # Build initial headers based on auth type
+        headers = {"Content-Type": "application/json"}
+        
+        if self._auth_type == "basic":
+            if not username or not password:
+                raise ValueError("Username and password required for basic authentication")
+            # Create Basic Auth header
+            credentials = f"{username}:{password}"
+            encoded_credentials = base64.b64encode(credentials.encode()).decode()
+            headers["Authorization"] = f"Basic {encoded_credentials}"
+        elif self._auth_type == "apikey":
+            if not api_key or not client_id:
+                raise ValueError("API key and client ID required for API key authentication")
+            # For API key auth, we'll fetch bearer token before first request
+            # Don't set Authorization header yet - will be set after token fetch
+            pass
+        else:
+            raise ValueError(f"Invalid auth_type '{auth_type}'. Must be 'basic' or 'apikey'")
+
+        self._http_client = httpx.AsyncClient(timeout=timeout, headers=headers, verify=verify_ssl)
         self._endpoint = f"{self.base_url}{FAMEndpoints.SERVERS_BASE.format(runtime_id=self.runtime_id)}"
 
         # Initialize circuit breaker
@@ -83,6 +113,81 @@ class FAMAssetCatalogClient:
         """Close HTTP client and release resources."""
         if self._http_client:
             await self._http_client.aclose()
+
+    async def _fetch_bearer_token(self) -> bool:
+        """Fetch bearer token for API key authentication.
+        
+        Returns:
+            True if token was successfully fetched, False otherwise
+        """
+        if self._auth_type != "apikey":
+            return True  # Not needed for basic auth
+            
+        try:
+            token_url = f"{self.base_url}{FAMEndpoints.TOKEN}"
+            
+            # Ensure api_key and client_id are not None (validated in __init__)
+            assert self._api_key is not None
+            assert self._client_id is not None
+            
+            headers = {
+                "X-APIKEY": self._api_key,
+                "X-ClientID": self._client_id,
+                "Content-Type": "application/json"
+            }
+            
+            logger.debug(f"Fetching bearer token from {token_url}")
+            
+            # Use a temporary client for token fetch to avoid circular dependency
+            # (main client needs token, but we need to fetch token first)
+            async with httpx.AsyncClient(timeout=self._timeout, verify=self._verify_ssl) as temp_client:
+                response = await temp_client.post(token_url, headers=headers, json={})
+                response.raise_for_status()
+                
+                token_data = response.json()
+                self._bearer_token = token_data.get("token")
+                # expires_in is an epoch timestamp (not duration in seconds)
+                self._token_expires_at = token_data.get("expires_in")
+            
+            # Update main client headers with bearer token
+            self._http_client.headers["Authorization"] = f"Bearer {self._bearer_token}"
+            
+            logger.info("Bearer token fetched successfully for API key authentication")
+            return True
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to fetch bearer token: status={e.response.status_code}, body={e.response.text}")
+            return False
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching bearer token: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error fetching bearer token: {e}", exc_info=True)
+            return False
+
+    async def _ensure_valid_token(self) -> bool:
+        """Ensure we have a valid bearer token for API key auth.
+        
+        Returns:
+            True if token is valid or successfully refreshed, False otherwise
+        """
+        if self._auth_type != "apikey":
+            return True  # Not needed for basic auth
+            
+        # Standard
+        import time
+        
+        # Check if token exists and is not expired (refresh 5 minutes before expiry)
+        # expires_at is an epoch timestamp in seconds
+        if self._bearer_token and self._token_expires_at:
+            current_time = time.time()
+            # Add 5 minutes (300 seconds) buffer before expiry
+            if current_time < (self._token_expires_at - 300):
+                return True
+        
+        # Token missing or expired, fetch new one
+        logger.debug("Bearer token missing or expired, fetching new token")
+        return await self._fetch_bearer_token()
 
     async def _call_with_circuit_breaker(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Execute function with circuit breaker protection if enabled.
@@ -113,6 +218,7 @@ class FAMAssetCatalogClient:
         """Execute function with standardized error handling and circuit breaker protection.
 
         This method provides a centralized error handling pattern for all IBM API Connect Federated API Management API calls:
+        - Token validity check (for API key auth)
         - Circuit breaker protection (if enabled)
         - HTTP status error handling with detailed logging
         - HTTP error handling (connection, timeout, etc.)
@@ -129,6 +235,11 @@ class FAMAssetCatalogClient:
             Function result on success, default_return on error
         """
         try:
+            # Ensure valid token for API key auth
+            if not await self._ensure_valid_token():
+                logger.error(f"Failed to obtain valid bearer token for {operation_name}")
+                return default_return
+
             # Execute with circuit breaker protection
             return await self._call_with_circuit_breaker(func, *args, **kwargs)
 
@@ -198,6 +309,11 @@ class FAMAssetCatalogClient:
             True if creation succeeded, False otherwise
         """
         try:
+            # Ensure valid token for API key auth
+            if not await self._ensure_valid_token():
+                logger.error(f"Failed to obtain valid bearer token for creating runtime type '{runtime_type_id}'")
+                return False
+
             endpoint = f"{self.base_url}{FAMEndpoints.RUNTIME_TYPES}"
             payload = {"id": runtime_type_id, "name": runtime_type_name, "capabilities": ["AI"]}
 
@@ -286,6 +402,11 @@ class FAMAssetCatalogClient:
             return await self._http_client.post(endpoint, json=payload)
 
         try:
+            # Ensure valid token for API key auth
+            if not await self._ensure_valid_token():
+                logger.error(f"Failed to obtain valid bearer token for registering runtime '{name}'")
+                return None
+
             # Execute with circuit breaker protection
             response = await self._call_with_circuit_breaker(_do_register)
 
