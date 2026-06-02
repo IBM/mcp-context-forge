@@ -12840,6 +12840,53 @@ async def admin_edit_gateway(
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
+        # Pre-flight DCR validation: Check if OAuth provider supports DCR before saving
+        # This prevents mid-flow failures when user clicks "Authorize" button
+        if oauth_config and oauth_config.get("issuer") and not oauth_config.get("client_id"):
+            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
+                try:
+                    # First-Party
+                    from mcpgateway.services.dcr_service import DcrError, DcrService
+
+                    dcr_service = DcrService()
+                    metadata = await dcr_service.discover_as_metadata(oauth_config["issuer"])
+
+                    if not metadata.get("registration_endpoint"):
+                        # Provider doesn't support DCR - require manual credentials
+                        provider_name = oauth_config["issuer"].replace("https://", "").replace("http://", "").split("/")[0]
+                        return ORJSONResponse(
+                            content={
+                                "message": (
+                                    f"⚠️ OAuth Configuration Incomplete\n\n"
+                                    f"The OAuth provider '{provider_name}' does not support automatic client registration "
+                                    f"(Dynamic Client Registration / RFC 7591).\n\n"
+                                    f"Please register your application manually:\n"
+                                    f"1. Visit your OAuth provider's developer portal\n"
+                                    f"2. Create a new OAuth application\n"
+                                    f"3. Copy the client_id and client_secret\n"
+                                    f"4. Enter them in the form below\n\n"
+                                    f"For Atlassian: https://developer.atlassian.com/console/myapps/"
+                                ),
+                                "success": False,
+                                "dcr_unsupported": True,
+                                "provider": provider_name,
+                            },
+                            status_code=400,
+                        )
+
+                    LOGGER.info(f"✅ Pre-flight DCR check passed for {oauth_config['issuer']} - registration_endpoint found")
+
+                except DcrError as dcr_err:
+                    # Failed to discover metadata - could be network issue or invalid issuer
+                    LOGGER.warning(f"Pre-flight DCR check failed for {oauth_config.get('issuer')}: {dcr_err}")
+                    return ORJSONResponse(
+                        content={
+                            "message": (f"Failed to validate OAuth configuration: {str(dcr_err)}\n\n" f"Please verify the issuer URL is correct, or provide client_id and client_secret manually."),
+                            "success": False,
+                        },
+                        status_code=400,
+                    )
+
         user_email = get_user_email(user)
         # Preserve existing gateway's team_id when no explicit team_id is provided.
         # Without this guard, verify_team_for_user() falls back to the user's

@@ -19,7 +19,7 @@ import logging
 import re
 import secrets
 from typing import Annotated, Any, Dict
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -476,10 +476,15 @@ async def initiate_oauth_flow(
 
                 except DcrError as dcr_err:
                     logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
+                    # Graceful redirect to Admin UI with actionable error message instead of raw JSON
+                    error_msg = quote(
+                        f"⚠️ OAuth Setup Incomplete\n\n"
+                        f"Dynamic Client Registration failed: {str(dcr_err)}\n\n"
+                        f"Please edit this gateway and provide client_id and client_secret manually, "
+                        f"or verify your OAuth provider supports RFC 7591 (Dynamic Client Registration)."
                     )
+                    admin_url = resolve_root_path(request, f"/admin/gateways?error={error_msg}&gateway_id={gateway_id}")
+                    return RedirectResponse(url=admin_url, status_code=303)
                 except Exception as dcr_ex:
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
                     raise HTTPException(status_code=500, detail="Failed to register OAuth client")
