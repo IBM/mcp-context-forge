@@ -47,6 +47,13 @@ logger = logging_service.get_logger(__name__)
 def _team_from_dict(d: Dict[str, Any]) -> EmailTeam:
     """Construct a transient EmailTeam from a serialised dict (no DB session needed).
 
+    The returned instance is **never attached to a SQLAlchemy session**.
+    Scalar attributes (id, name, slug, etc.) are fully populated and safe to read.
+    Lazy-loaded relationships (members, invitations, api_tokens, creator) are NOT
+    available — accessing them raises DetachedInstanceError or returns empty collections.
+    get_member_count() returns 0 on transient instances. is_member() returns False.
+    Only use the scalar fields that are present in AuthCache.team_to_dict().
+
     Args:
         d: Dict produced by AuthCache.team_to_dict()
 
@@ -1085,7 +1092,10 @@ class TeamManagementService:
             include_personal: Whether to include personal teams
 
         Returns:
-            List[EmailTeam]: List of teams the user belongs to
+            List[EmailTeam]: List of teams the user belongs to.
+            Cache-hit path returns transient EmailTeam instances (no DB session).
+            Accessing lazy relationships (.members, .creator, etc.) is not safe on
+            cache-hit objects. Use scalar attributes only.
 
         Examples:
             User dashboard showing team memberships.
