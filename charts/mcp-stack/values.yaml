@@ -295,7 +295,6 @@ mcpContextForge:
     # ─ Rate Limiter Redis (Optional) ─
     # Dedicated Redis instance for rate limiting to prevent contention with main Redis
     # When unset, rate limiting uses REDIS_URL (backward compatible)
-    # TLS: Inherits TLS settings from main Redis (REDIS_SSL, REDIS_CA_CERT, etc)
     # Must start with redis:// or rediss:// (validated at startup)
     # Example: RATELIMITER_REDIS_URL: "redis://rate-limiter-redis:6379/0"
     RATELIMITER_REDIS_URL: ""

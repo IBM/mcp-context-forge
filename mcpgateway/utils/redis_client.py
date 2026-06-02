@@ -120,6 +120,46 @@ def _build_ssl_kwargs(settings: Any) -> dict[str, Any]:
     return kwargs
 
 
+def _validate_ratelimiter_ssl_settings(settings: Any) -> None:
+    """Validate Redis SSL file paths and cert content before the client is created.
+
+    Raises:
+        ValueError: On any misconfiguration — missing files, unparseable certs,
+                    or incomplete mTLS pair (certfile without keyfile or vice versa).
+    """
+    errors: list[str] = []
+
+    for attr, label in [
+        ("ratelimiter_redis_ssl_ca_certs", "CA certificate (RATELIMITER_REDIS_SSL_CA_CERTS)"),
+        ("ratelimiter_redis_ssl_certfile", "client certificate (RATELIMITER_REDIS_SSL_CERTFILE)"),
+        ("ratelimiter_redis_ssl_keyfile", "private key (RATELIMITER_REDIS_SSL_KEYFILE)"),
+    ]:
+        path = getattr(settings, attr, None)
+        if path and not os.path.isfile(path):
+            errors.append(f"{label} file not found: {path!r}")
+
+    if errors:
+        raise ValueError("Redis SSL misconfiguration:\n" + "\n".join(f"  - {e}" for e in errors))
+
+    # Verify CA bundle is parseable
+    ca_certs = getattr(settings, "ratelimiter_redis_ssl_ca_certs", None)
+    if ca_certs and os.path.isfile(ca_certs):
+        try:
+            _ssl.create_default_context(cafile=ca_certs)
+        except (_ssl.SSLError, OSError) as exc:
+            raise ValueError(f"Invalid CA certificate {ca_certs!r}: {exc}") from exc
+
+    # Verify client cert and key load cleanly when both are provided
+    certfile = getattr(settings, "ratelimiter_redis_ssl_certfile", None)
+    keyfile = getattr(settings, "ratelimiter_redis_ssl_keyfile", None)
+    if certfile and keyfile and os.path.isfile(certfile) and os.path.isfile(keyfile):
+        try:
+            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+            ctx.load_cert_chain(certfile, keyfile)
+        except (_ssl.SSLError, OSError) as exc:
+            raise ValueError(f"Invalid client certificate/key ({certfile!r}, {keyfile!r}): {exc}") from exc
+
+
 def build_reatelimiter_ssl_kwargs(settings: Any) -> dict[str, Any]:
     """Same as _build_ssl_kwargs but for the rate limiter Redis config.
 
@@ -137,18 +177,18 @@ def build_reatelimiter_ssl_kwargs(settings: Any) -> dict[str, Any]:
     if not settings.ratelimiter_redis_ssl:
         return {}
 
-    _validate_ssl_settings(settings)
+    _validate_ratelimiter_ssl_settings(settings)
 
     kwargs: dict[str, Any] = {}
 
-    if settings.redis_ssl_ca_certs:
-        kwargs["ssl_ca_certs"] = settings.redis_ssl_ca_certs
-    if settings.redis_ssl_certfile:
-        kwargs["ssl_certfile"] = settings.redis_ssl_certfile
-    if settings.redis_ssl_keyfile:
-        kwargs["ssl_keyfile"] = settings.redis_ssl_keyfile
+    if settings.ratelimiter_redis_ssl_ca_certs:
+        kwargs["ssl_ca_certs"] = settings.ratelimiter_redis_ssl_ca_certs
+    if settings.ratelimiter_redis_ssl_certfile:
+        kwargs["ssl_certfile"] = settings.ratelimiter_redis_ssl_certfile
+    if settings.ratelimiter_redis_ssl_keyfile:
+        kwargs["ssl_keyfile"] = settings.ratelimiter_redis_ssl_keyfile
 
-    if not settings.redis_ssl_check_hostname:
+    if not settings.ratelimiter_redis_ssl_check_hostname:
         # Skip server-cert hostname verification for self-signed certs
         kwargs["ssl_cert_reqs"] = "none"
         kwargs["ssl_check_hostname"] = False

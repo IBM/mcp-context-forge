@@ -1097,11 +1097,7 @@ mcpContextForge:
 
 #### Fallback Behavior
 
-When `RATELIMITER_REDIS_URL` is not set, the gateway automatically falls back to the main Redis instance configured via `REDIS_URL`. This ensures backward compatibility with existing deployments.
-
-#### TLS Configuration
-
-The rate limiter Redis inherits TLS settings from the main Redis configuration (`REDIS_SSL`, `REDIS_SSL_CA_CERTS`, etc.). Both Redis instances must use the same TLS configuration.
+When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatically falls back to the main Redis instance configured via `REDIS_URL`. But during mid-runtime if `RATELIMITER_REDIS_URL` becomes unavailable, rather than falling back to `REDIS_URL`, it falls back to in-memory. This ensures backward compatibility with existing deployments.
 
 **Notes:**
 - **Migration:** Unset = uses main `REDIS_URL` (backward compatible)
