@@ -849,6 +849,138 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
+    """Parse gateway data from either JSON body or form data.
+
+    This helper function enables endpoints to accept both application/json and
+    multipart/form-data content types, supporting both API clients and the HTMX UI.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        Dictionary containing parsed gateway data.
+
+    Raises:
+        HTTPException: If content type is unsupported or data is malformed.
+    """
+    content_type = request.headers.get("content-type", "").lower()
+
+    # Handle JSON requests
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            # Normalize tags if provided as string
+            if isinstance(data.get("tags"), str):
+                data["tags"] = [tag.strip() for tag in data["tags"].split(",") if tag.strip()]
+            return data
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}")
+
+    # Handle form data requests (multipart/form-data or application/x-www-form-urlencoded)
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        data: dict[str, Any] = {}
+
+        # Extract all form fields
+        for key in form.keys():
+            value = form.get(key)
+            if value is not None:
+                data[key] = value
+
+        # Parse tags from comma-separated string
+        if "tags" in data and isinstance(data["tags"], str):
+            tags_str = str(data["tags"])
+            data["tags"] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+        # Parse auth_headers JSON if present
+        if "auth_headers" in data and isinstance(data["auth_headers"], str):
+            try:
+                data["auth_headers"] = orjson.loads(data["auth_headers"])
+            except (orjson.JSONDecodeError, ValueError):
+                data["auth_headers"] = []
+
+        # Parse passthrough_headers
+        if "passthrough_headers" in data and isinstance(data["passthrough_headers"], str):
+            passthrough_str = str(data["passthrough_headers"]).strip()
+            if passthrough_str:
+                try:
+                    data["passthrough_headers"] = orjson.loads(passthrough_str)
+                except (orjson.JSONDecodeError, ValueError):
+                    # Fallback to comma-separated parsing
+                    data["passthrough_headers"] = [h.strip() for h in passthrough_str.split(",") if h.strip()]
+            else:
+                data["passthrough_headers"] = None
+
+        # Parse OAuth configuration - support both JSON string and individual form fields
+        oauth_config: Optional[dict[str, Any]] = None
+        oauth_config_json = str(data.get("oauth_config", ""))
+
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
+        # If oauth_config field is present (even if invalid), don't fall back to Option 2
+        oauth_config_field_provided = "oauth_config" in data
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = orjson.loads(oauth_config_json)
+            except (orjson.JSONDecodeError, ValueError):
+                # Invalid JSON - set to None in data and don't try Option 2
+                oauth_config = None
+                data["oauth_config"] = None
+        elif oauth_config_json == "None":
+            # Explicit "None" string - set to None in data
+            oauth_config = None
+            data["oauth_config"] = None
+
+        # Option 2: Assemble from individual UI form fields
+        # Only try this if oauth_config field was NOT provided
+        if not oauth_config and not oauth_config_field_provided:
+            oauth_grant_type = str(data.get("oauth_grant_type", ""))
+            oauth_issuer = str(data.get("oauth_issuer", ""))
+            oauth_token_url = str(data.get("oauth_token_url", ""))
+            oauth_authorization_url = str(data.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(data.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(data.get("oauth_client_id", ""))
+            oauth_client_secret = str(data.get("oauth_client_secret", ""))
+            oauth_username = str(data.get("oauth_username", ""))
+            oauth_password = str(data.get("oauth_password", ""))
+            oauth_scopes_str = str(data.get("oauth_scopes", ""))
+
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_url"] = oauth_token_url
+                if oauth_authorization_url:
+                    oauth_config["authorization_url"] = oauth_authorization_url
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    oauth_config["client_secret"] = oauth_client_secret
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+
+        # Only set oauth_config if it's a non-empty dict
+        if oauth_config:
+            data["oauth_config"] = oauth_config
+
+        return data
+
+    else:
+        raise HTTPException(status_code=415, detail=f"Unsupported content type: {content_type}. Use application/json or multipart/form-data")
+
+
 def _build_admin_redirect(root_path: str, fragment: str, *, error: Optional[str] = None, include_inactive: bool = False, team_id: Optional[str] = None) -> str:
     """Build an admin redirect URL preserving query parameters.
 
@@ -12177,194 +12309,106 @@ async def admin_discover_oauth(
         )
 
 
-@admin_router.post("/gateways")
+@admin_router.post("/gateways", response_model=None)
 @require_permission("gateways.create", allow_admin_bypass=False)
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
-    """Add a gateway via the admin UI.
+async def admin_add_gateway(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """Add a gateway via Admin API.
 
-    Expects form fields:
-      - name
-      - url
-      - description (optional)
-      - tags (optional, comma-separated)
+    Accepts both JSON (application/json) and form data (multipart/form-data).
+
+    **JSON Example:**
+    ```json
+    {
+      "name": "my-gateway",
+      "url": "http://localhost:9000/sse",
+      "transport": "SSE",
+      "description": "My gateway",
+      "tags": ["tag1", "tag2"],
+      "visibility": "private"
+    }
+    ```
+
+    **Form Data Example:**
+    ```
+    name=my-gateway
+    url=http://localhost:9000/sse
+    transport=SSE
+    tags=tag1,tag2
+    ```
 
     Args:
-        request: FastAPI request containing form data.
+        request: FastAPI request containing JSON or form data.
+        gateway_data: Optional pre-parsed Pydantic model (for JSON requests).
         db: Database session.
         user: Authenticated user.
 
     Returns:
-        A redirect response to the admin dashboard.
+        JSON response with success status and message.
 
     Raises:
         HTTPException: 422 when public visibility is disabled and request is team-scoped.
-
-    Examples:
-        >>> callable(admin_add_gateway)
-        True
-        >>> admin_add_gateway.__name__
-        'admin_add_gateway'
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
-    form = await request.form()
-    team_id = _form_team_id(form)
-    visibility = str(form.get("visibility", "private"))
-    _check_public_visibility_allowed(visibility, team_id=team_id)
+
+    # Parse request data (supports both JSON and form-data)
     try:
-        # Parse tags from comma-separated string
-        tags_str = str(form.get("tags", ""))
-        tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        data = await _parse_gateway_data_from_request(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
 
-        # Parse auth_headers JSON if present
-        auth_headers_json = form.get("auth_headers") or ""
-        auth_headers: list[dict[str, Any]] = []
-        if auth_headers_json:
-            try:
-                auth_headers = orjson.loads(auth_headers_json)
-            except (orjson.JSONDecodeError, ValueError):
-                auth_headers = []
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
 
-        # Parse OAuth configuration - support both JSON string and individual form fields
-        oauth_config_json = str(form.get("oauth_config"))
-        oauth_config: Optional[dict[str, Any]] = None
+    _check_public_visibility_allowed(visibility, team_id=team_id)
 
-        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
-        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
+    try:
+        # Handle OAuth client secret encryption if present
+        oauth_config = data.get("oauth_config")
+        if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
+            client_secret = oauth_config.get("client_secret")
+            if client_secret and isinstance(client_secret, str):
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                oauth_config["client_secret"] = await encryption.encrypt_secret_async(client_secret)
+                data["oauth_config"] = oauth_config
 
-        # Option 1: Pre-assembled oauth_config JSON (from API calls)
-        if oauth_config_json and oauth_config_json != "None":
-            try:
-                oauth_config = orjson.loads(oauth_config_json)
-                # Encrypt the client secret if present
-                if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
-            except (orjson.JSONDecodeError, ValueError) as e:
-                LOGGER.error(f"Failed to parse OAuth config: {e}")
-                oauth_config = None
-
-        # Option 2: Assemble from individual UI form fields
-        if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
-
-        # Handle passthrough_headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
-            try:
-                passthrough_headers = orjson.loads(passthrough_headers)
-            except (orjson.JSONDecodeError, ValueError):
-                # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
-        else:
-            passthrough_headers = None
-
-        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
-        auth_type_from_form = str(form.get("auth_type", ""))
-        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
-        if oauth_config and not auth_type_from_form:
-            auth_type_from_form = "oauth"
-            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
-        elif oauth_config and auth_type_from_form:
-            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
-
-        ca_certificate: Optional[str] = None
+        # Handle CA certificate signing
+        ca_certificate = data.get("ca_certificate")
         sig: Optional[str] = None
+        if ca_certificate and isinstance(ca_certificate, str) and ca_certificate.strip():
+            ca_certificate = ca_certificate.strip()
+            if settings.enable_ed25519_signing:
+                try:
+                    private_key_pem = settings.ed25519_private_key.get_secret_value()
+                    sig = sign_data(ca_certificate.encode(), private_key_pem)
+                    data["ca_certificate_sig"] = sig
+                    data["signing_algorithm"] = "ed25519"
+                except Exception as e:
+                    LOGGER.error(f"Error signing CA certificate: {e}")
+                    raise RuntimeError("Failed to sign CA certificate") from e
+            else:
+                # Explicitly set to None when signing is disabled
+                data["ca_certificate_sig"] = None
+                data["signing_algorithm"] = None
 
-        # CA certificate(s) handled by JavaScript validation (supports single or multiple files)
-        # JavaScript validates, orders (root→intermediate→leaf), and concatenates into hidden field
-        if "ca_certificate" in form:
-            ca_cert_value = form["ca_certificate"]
-            if isinstance(ca_cert_value, str) and ca_cert_value.strip():
-                ca_certificate = ca_cert_value.strip()
-                LOGGER.info("✅ CA certificate(s) received and validated by frontend")
+        # Auto-detect OAuth auth_type
+        if oauth_config and not data.get("auth_type"):
+            data["auth_type"] = "oauth"
+            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
 
-                if settings.enable_ed25519_signing:
-                    try:
-                        private_key_pem = settings.ed25519_private_key.get_secret_value()
-                        sig = sign_data(ca_certificate.encode(), private_key_pem)
-                    except Exception as e:
-                        LOGGER.error(f"Error signing CA certificate: {e}")
-                        sig = None
-                        raise RuntimeError("Failed to sign CA certificate") from e
-                else:
-                    LOGGER.warning("⚠️  Ed25519 signing is disabled; CA certificate will be stored without signature")
-                    sig = None
-
-        gateway = GatewayCreate(
-            name=str(form["name"]),
-            url=str(form["url"]),
-            description=str(form.get("description")),
-            tags=tags,
-            transport=str(form.get("transport", "SSE")),
-            auth_type=auth_type_from_form,
-            auth_username=str(form.get("auth_username", "")),
-            auth_password=str(form.get("auth_password", "")),
-            auth_token=str(form.get("auth_token", "")),
-            auth_header_key=str(form.get("auth_header_key", "")),
-            auth_header_value=str(form.get("auth_header_value", "")),
-            auth_headers=auth_headers if auth_headers else None,
-            auth_query_param_key=str(form.get("auth_query_param_key", "")) or None,
-            auth_query_param_value=str(form.get("auth_query_param_value", "")) or None,
-            oauth_config=oauth_config,
-            one_time_auth=form.get("one_time_auth", False),
-            passthrough_headers=passthrough_headers,
-            visibility=visibility,
-            ca_certificate=ca_certificate,
-            ca_certificate_sig=sig if sig else None,
-            signing_algorithm="ed25519" if sig else None,
-        )
-    except KeyError as e:
-        # Convert KeyError to ValidationError-like response
-        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+        # Create GatewayCreate model from data
+        gateway = GatewayCreate(**data)
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
-        error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        error_ctx = [str(err.get("ctx", {}).get("error", err.get("msg", str(err)))) for err in ex.errors()]
         return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     except RuntimeError as err:
@@ -12436,6 +12480,182 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
 
 
+# RESTful PUT endpoint for gateway updates (JSON/form-data support)
+@admin_router.put("/gateways/{gateway_id}", response_model=None)
+@require_permission("gateways.update", allow_admin_bypass=False)
+async def admin_update_gateway_rest(
+    gateway_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """Update a gateway via REST API (PUT).
+
+    Accepts both JSON (application/json) and form data (multipart/form-data).
+
+    **JSON Example:**
+    ```json
+    {
+      "name": "updated-gateway",
+      "url": "http://localhost:9001/sse",
+      "description": "Updated description"
+    }
+    ```
+
+    Args:
+        gateway_id: Gateway ID to update.
+        request: FastAPI request containing JSON or form data.
+        gateway_data: Optional pre-parsed Pydantic model (for JSON requests).
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSON response with success status and message.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating gateway ID {gateway_id}")
+
+    # Parse request data (supports both JSON and form-data)
+    try:
+        data = await _parse_gateway_data_from_request(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ORJSONResponse(content={"message": f"Invalid request data: {e}", "success": False}, status_code=400)
+
+    team_id = data.get("team_id")
+    if team_id and isinstance(team_id, str):
+        team_id = team_id.strip() or None
+    visibility = str(data.get("visibility", "private"))
+
+    _check_public_visibility_allowed(visibility, team_id=team_id)
+
+    try:
+        # Handle OAuth client secret encryption if present
+        oauth_config = data.get("oauth_config")
+        if oauth_config and isinstance(oauth_config, dict) and "client_secret" in oauth_config:
+            client_secret = oauth_config.get("client_secret")
+            if client_secret and isinstance(client_secret, str):
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                oauth_config["client_secret"] = await encryption.encrypt_secret_async(client_secret)
+                data["oauth_config"] = oauth_config
+
+        # Auto-detect OAuth auth_type
+        if oauth_config and not data.get("auth_type"):
+            data["auth_type"] = "oauth"
+
+        user_email = get_user_email(user)
+
+        # Fetch existing gateway to preserve owner_email and team_id
+        existing_gateway = db.get(DbGateway, gateway_id)
+        if not existing_gateway:
+            return ORJSONResponse(content={"message": "Gateway not found", "success": False}, status_code=404)
+
+        # Preserve existing owner_email (don't transfer ownership)
+        existing_owner = getattr(existing_gateway, "owner_email", None)
+        if existing_owner:
+            data["owner_email"] = existing_owner
+
+        # Preserve existing gateway's team_id when no explicit team_id is provided
+        if not team_id:
+            existing_team = getattr(existing_gateway, "team_id", None)
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
+        team_service = TeamManagementService(db)
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+
+        # Set team_id (but not owner_email, which was preserved above)
+        data["team_id"] = team_id
+
+        # Create GatewayUpdate model from data
+        gateway = GatewayUpdate(**data)
+
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        await gateway_service.update_gateway(
+            db,
+            gateway_id,
+            gateway,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
+        )
+        return ORJSONResponse(
+            content={"message": "Gateway updated successfully!", "success": True},
+            status_code=200,
+        )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except HTTPException:
+        raise
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
+    except Exception as ex:
+        if isinstance(ex, GatewayConnectionError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+        if isinstance(ex, RuntimeError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+        if isinstance(ex, ValidationError):
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+        if isinstance(ex, IntegrityError):
+            return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
+        LOGGER.exception(f"Unexpected error in admin_update_gateway_rest: {ex}")
+        return ORJSONResponse(content={"message": "An unexpected error occurred. Please try again or contact support.", "success": False}, status_code=500)
+
+
+# RESTful DELETE endpoint for gateway deletion
+@admin_router.delete("/gateways/{gateway_id}", response_model=None, status_code=204)
+@require_permission("gateways.delete", allow_admin_bypass=False)
+async def admin_delete_gateway_rest(
+    gateway_id: str,
+    db: Session = Depends(get_db),
+    user: dict[str, Any] = Depends(get_current_user_with_permissions),
+) -> Response:
+    """Delete a gateway via REST API (DELETE).
+
+    **Example Request:**
+    ```bash
+    curl -X DELETE http://localhost:4444/admin/gateways/gw-123 \
+         -H "Authorization: Bearer $TOKEN"
+    ```
+
+    **Example Response (204):**
+    ```
+    (No content - empty response body)
+    ```
+
+    Args:
+        gateway_id: The ID of the gateway to delete.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        204 No Content on success, or error response with appropriate status code.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
+
+    try:
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        return Response(status_code=204)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
+    except GatewayNotFoundError as e:
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
+    except Exception as e:
+        LOGGER.error(f"Error deleting gateway: {e}")
+        return ORJSONResponse(
+            content={"message": "Failed to delete gateway. Please try again.", "success": False},
+            status_code=500,
+        )
+
+
+# Legacy POST endpoint for backward compatibility with HTMX UI
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
