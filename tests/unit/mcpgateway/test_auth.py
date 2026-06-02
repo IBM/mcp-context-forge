@@ -50,6 +50,19 @@ class TestGetDb:
 
             db = next(get_db())
 
+
+
+
+class TestGetDb:
+    """Test cases for the get_db dependency function."""
+
+    def test_get_db_yields_session(self):
+        """Test that get_db yields a database session."""
+        with patch("mcpgateway.auth.SessionLocal") as mock_session_local:
+            mock_session = MagicMock(spec=Session)
+            mock_session_local.return_value = mock_session
+
+            db = next(get_db())
             assert db == mock_session
             mock_session_local.assert_called_once()
 
@@ -990,28 +1003,33 @@ class TestGetSyncRedisClient:
 
     def test_get_sync_redis_client_initializes_on_first_call(self):
         """Test that _get_sync_redis_client initializes Redis client on first call."""
-        # Standard
-        import sys
-
         # First-Party
         from mcpgateway import auth
 
-        # Reset cached client
+        # Reset cached client and failure time
         original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
         auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
 
         try:
             mock_redis_client = MagicMock()
             mock_redis_client.ping.return_value = True
 
-            # Mock the redis module
+            # Mock the redis module where it's used
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.return_value = mock_redis_client
 
-            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+            with patch("mcpgateway.auth.settings") as mock_settings, \
+                 patch("mcpgateway.auth.redis", mock_redis_module), \
+                 patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+                # Use actual string for redis_url
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
                 mock_settings.redis_ssl = False
+                mock_settings.redis_max_connections = 50
+                mock_settings.redis_socket_timeout = 2.0
+                mock_settings.redis_socket_connect_timeout = 2.0
 
                 result = auth._get_sync_redis_client()
 
@@ -1023,6 +1041,7 @@ class TestGetSyncRedisClient:
         finally:
             # Restore original state
             auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
 
     def test_get_sync_redis_client_handles_redis_connection_failure(self):
         """Test that _get_sync_redis_client handles Redis connection failure gracefully."""
@@ -1150,7 +1169,6 @@ class TestGetSyncRedisClient:
     def test_get_sync_redis_client_backoff_after_failure(self):
         """Test that _get_sync_redis_client backs off for 30s after a failure."""
         # Standard
-        import sys
         import time as time_module
 
         # First-Party
@@ -1166,10 +1184,16 @@ class TestGetSyncRedisClient:
             mock_redis_module = MagicMock()
             mock_redis_module.from_url.side_effect = Exception("Connection refused")
 
-            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+            with patch("mcpgateway.auth.settings") as mock_settings, \
+                 patch("mcpgateway.auth.redis", mock_redis_module), \
+                 patch("mcpgateway.auth._build_ssl_kwargs", return_value={}):
+                # Use actual string for redis_url
                 mock_settings.redis_url = "redis://localhost:6379/0"
                 mock_settings.cache_type = "redis"
                 mock_settings.redis_ssl = False
+                mock_settings.redis_max_connections = 50
+                mock_settings.redis_socket_timeout = 2.0
+                mock_settings.redis_socket_connect_timeout = 2.0
 
                 # First call: should attempt connection and fail
                 result1 = auth._get_sync_redis_client()
@@ -1198,9 +1222,6 @@ class TestGetSyncRedisClient:
 
     def test_get_sync_redis_client_applies_ssl_kwargs_when_redis_ssl_enabled(self):
         """Test that SSL kwargs from _build_ssl_kwargs are passed to redis.from_url when REDIS_SSL=true."""
-        # Standard
-        import sys
-
         # First-Party
         from mcpgateway import auth
 
@@ -1219,13 +1240,17 @@ class TestGetSyncRedisClient:
             ssl_kwargs = {"ssl_ca_certs": "/path/to/ca.pem"}
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
-                patch("mcpgateway.utils.redis_client._build_ssl_kwargs", return_value=ssl_kwargs) as mock_build,
-                patch.dict(sys.modules, {"redis": mock_redis_module}),
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth._build_ssl_kwargs", return_value=ssl_kwargs) as mock_build,
+                patch("mcpgateway.auth.redis", mock_redis_module),
             ):
+                # Use actual string for redis_url
                 mock_settings.redis_url = "rediss://localhost:6380/0"
                 mock_settings.cache_type = "redis"
                 mock_settings.redis_ssl = True
+                mock_settings.redis_max_connections = 50
+                mock_settings.redis_socket_timeout = 2.0
+                mock_settings.redis_socket_connect_timeout = 2.0
 
                 result = auth._get_sync_redis_client()
 
@@ -1295,14 +1320,18 @@ class TestGetSyncRedisClient:
             mock_redis_module.from_url.return_value = mock_redis_client
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
-                patch("mcpgateway.utils.redis_client._build_ssl_kwargs", return_value={}),
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth._build_ssl_kwargs", return_value={}),
                 patch.dict(sys.modules, {"redis": mock_redis_module}),
                 caplog.at_level(logging.WARNING, logger="mcpgateway.auth"),
             ):
+                # Use actual string for redis_url
                 mock_settings.redis_url = "rediss://localhost:6380/0"
                 mock_settings.cache_type = "redis"
                 mock_settings.redis_ssl = False
+                mock_settings.redis_max_connections = 50
+                mock_settings.redis_socket_timeout = 2.0
+                mock_settings.redis_socket_connect_timeout = 2.0
 
                 auth._get_sync_redis_client()
 

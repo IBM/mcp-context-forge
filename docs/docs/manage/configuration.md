@@ -968,6 +968,63 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
 
 !!! tip "Cache Backend Selection"
+
+
+#### Rate Limiter Redis
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATELIMITER_REDIS_URL` | `None` | Optional Redis URL for rate limiting. Falls back to `REDIS_URL` when unset. Must start with `redis://` or `rediss://`. |
+| `RATELIMITER_REDIS_MAX_CONNECTIONS` | `50` | Connection pool size for rate limiter Redis. |
+| `RATELIMITER_REDIS_SOCKET_TIMEOUT` | `2.0` | Socket timeout in seconds. |
+| `RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Connection timeout in seconds. |
+| `RATELIMITER_REDIS_SSL`               | Enable TLS for Redis       | `false`    | bool                     |
+| `RATELIMITER_REDIS_SSL_CA_CERTS`      | Path to CA certificate bundle | (none)  | file path                |
+| `RATELIMITER_REDIS_SSL_CERTFILE`      | Path to client certificate (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_KEYFILE`       | Path to client private key (mTLS) | (none) | file path           |
+| `RATELIMITER_REDIS_SSL_CHECK_HOSTNAME`| Verify hostname in TLS cert | `true`   | bool                     |
+
+**Migration:** Existing deployments continue using main Redis. Set `RATELIMITER_REDIS_URL` to enable dedicated instance.
+
+!!! note "Rate Limiter Redis Behavior"
+    - **Independent of CACHE_TYPE:** Rate limiter Redis operates independently of the `CACHE_TYPE` setting. It does not require `CACHE_TYPE=redis` to function.
+    - **Fallback:** When `RATELIMITER_REDIS_URL` is unset, rate limiting uses the main Redis instance via `REDIS_URL` (backward compatible).
+
+#### Rate Limiter Redis Fallback Behavior During Runtime
+
+When `RATELIMITER_REDIS_URL` is configured but the dedicated Redis instance becomes unavailable mid-runtime:
+
+- Each worker process falls back to **independent in-memory rate limiting**
+- Rate limits are **no longer enforced globally** across workers
+- A client can effectively multiply their rate limit by the number of worker processes
+- This is a **degraded service state** that operators must monitor
+
+**Example:** With 4 workers and a 100 req/min limit:
+
+- Normal: 100 req/min enforced globally via Redis
+- Degraded: Each worker enforces 100 req/min independently = 400 req/min effective limit
+
+**Monitoring:** Watch for WARNING logs: `"Rate limiter Redis unavailable: ..."`
+
+**Recovery:** The gateway does not automatically reconnect to Redis after initial failure. Restart the gateway to restore shared rate limiting.
+
+#### Connection Pool Sizing
+
+When using a dedicated rate limiter Redis (`RATELIMITER_REDIS_URL`), the gateway maintains **two separate connection pools**:
+
+- **Main Redis pool:** `REDIS_MAX_CONNECTIONS` (default: 50)
+- **Rate limiter Redis pool:** `RATELIMITER_REDIS_MAX_CONNECTIONS` (default: 50)
+
+**Total Redis connections:** 100 (with defaults)
+
+**Planning:** Ensure your Redis `maxclients` setting accommodates:
+
+```
+maxclients >= (num_gateway_instances × (REDIS_MAX_CONNECTIONS + RATELIMITER_REDIS_MAX_CONNECTIONS))
+```
+
+**Example:** 3 gateway instances with defaults = 300 total connections needed
+
     Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
 
 !!! note "Redis TLS"

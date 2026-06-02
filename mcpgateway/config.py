@@ -2593,6 +2593,31 @@ class Settings(BaseSettings):
         description="Seconds the circuit remains open before a single probe is allowed. A successful probe closes the circuit; a failed probe extends the cooldown.",
     )
 
+    # Dedicated Redis instance for rate limiting to prevent contention with main Redis
+    ratelimiter_redis_url: Optional[str] = Field(
+        default=None, description="Optional Redis URL for rate limiting middleware. Falls back to main Redis when unset. Must start with redis:// or rediss://"
+    )
+    ratelimiter_redis_max_connections: int = Field(default=50, description="Connection pool size for rate limiter Redis")
+    ratelimiter_redis_socket_timeout: float = Field(default=2.0, description="Socket read/write timeout for rate limiter Redis")
+    ratelimiter_redis_socket_connect_timeout: float = Field(default=2.0, description="Connection timeout for rate limiter Redis")
+    ratelimiter_redis_ssl: bool = Field(default=False, description="Enable TLS for Redis connections (set True in production with a rediss:// URL)")
+    ratelimiter_redis_ssl_ca_certs: Optional[str] = Field(default=None, description="Path to CA certificate bundle used to verify the Redis server certificate")
+    ratelimiter_redis_ssl_certfile: Optional[str] = Field(default=None, description="Path to client certificate for mutual TLS (mTLS) authentication with Redis")
+    ratelimiter_redis_ssl_keyfile: Optional[str] = Field(default=None, description="Path to client private key for mutual TLS (mTLS) authentication with Redis")
+    ratelimiter_redis_ssl_check_hostname: bool = Field(
+        default=True, description="Verify the Redis TLS certificate chain and hostname. Set False only for self-signed certs (pair with REDIS_SSL_CA_CERTS for the CA bundle)"
+    )
+
+    @field_validator("ratelimiter_redis_url")
+    @classmethod
+    def validate_ratelimiter_redis_url(cls, v: Optional[str]) -> Optional[str]:
+        """Validate rate limiter Redis URL format."""
+        if v is not None and v.strip():
+            v = v.strip()
+            if not (v.startswith("redis://") or v.startswith("rediss://")):
+                raise ValueError("RATELIMITER_REDIS_URL must start with redis:// or rediss://")
+        return v
+
     # Redis Leader Election - Multi-Node Deployments
     redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
     redis_leader_key: str = Field(default="gateway_service_leader", description="Leader key name")
