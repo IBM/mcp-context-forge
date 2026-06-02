@@ -1101,9 +1101,7 @@ class SessionAffinity:
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-            # Dispatch IN-PROCESS: ASGITransport runs the FastAPI app in *this* worker,
-            # so /rpc resolves the bound upstream session from this process's registry
-            # instead of bouncing back through the shared socket to a random worker.
+            # In-process dispatch — a network loopback would scatter through the shared gunicorn socket and miss the owner.
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
                 response = await client.post(
