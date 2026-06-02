@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from mcpgateway.auth import get_current_user_from_cookie
+from mcpgateway.config import settings
 from mcpgateway.main import app
-from mcpgateway.utils.csrf import CSRF_TOKEN_LENGTH
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("MCPGATEWAY_UI_ENABLED", "").lower() not in ("1", "true"),
@@ -121,7 +121,7 @@ class TestAuthLogin:
 
         # Verify no cookies set
         assert "jwt_token" not in response.cookies
-        assert "csrf_token" not in response.cookies
+        assert "mcpgateway_csrf_token" not in response.cookies
 
     def test_login_missing_email(self, client):
         """Test login without email returns 422."""
@@ -229,24 +229,24 @@ class TestCSRFProtection:
 
     def test_csrf_token_generation(self):
         """Test CSRF token generation produces unique tokens."""
-        from mcpgateway.utils.csrf import generate_csrf_token
+        from mcpgateway.services.csrf_service import generate_csrf_token
 
-        token1 = generate_csrf_token()
-        token2 = generate_csrf_token()
+        token1 = generate_csrf_token("test@example.com", "session1", "secret", 3600)
+        token2 = generate_csrf_token("test@example.com", "session2", "secret", 3600)
 
-        # Tokens should be different
+        # Tokens should be different for different sessions
         assert token1 != token2
 
-        assert len(token1) == CSRF_TOKEN_LENGTH
-        assert len(token2) == CSRF_TOKEN_LENGTH
+        assert len(token1) == 64
+        assert len(token2) == 64
 
     def test_csrf_cookie_security_flags(self):
         """Test CSRF cookie has samesite=strict, non-httpOnly, and path=/ (application-wide scope)."""
         from fastapi import Response
-        from mcpgateway.utils.csrf import set_csrf_cookie
+        from mcpgateway.services.csrf_service import set_csrf_cookie
 
         response = Response()
-        set_csrf_cookie(response, "test-token")
+        set_csrf_cookie(response, "test-token", settings)
 
         set_cookie_headers = [v.decode() if isinstance(v, bytes) else v for k, v in response.raw_headers if (k.decode() if isinstance(k, bytes) else k).lower() == "set-cookie"]
         assert set_cookie_headers, "No Set-Cookie header found"
@@ -297,13 +297,13 @@ class TestSecurityVectors:
         assert response.status_code == 401
 
     def test_csrf_token_wrong_length_rejected(self, client):
-        """Test CSRF validation rejects tokens that are not 43 characters."""
-        short_token = "token-with-wrong-len"  # 20 chars, not 43
+        """Test CSRF validation rejects tokens that are not 64 characters."""
+        short_token = "token-with-wrong-len"  # 20 chars, not 64
         response = client.post(
             "/app/auth/logout",
             cookies={
                 "jwt_token": "valid-jwt-token",
-                "csrf_token": short_token,
+                "mcpgateway_csrf_token": short_token,
             },
             headers={"X-CSRF-Token": short_token},
         )
@@ -317,7 +317,7 @@ class TestSecurityVectors:
             "/app/auth/logout",
             cookies={
                 "jwt_token": "valid-jwt-token",
-                "csrf_token": oversized_token,
+                "mcpgateway_csrf_token": oversized_token,
             },
             headers={"X-CSRF-Token": oversized_token},
         )
@@ -333,7 +333,7 @@ class TestSecurityVectors:
             "/app/auth/logout",
             cookies={
                 "jwt_token": "valid-jwt-token",
-                "csrf_token": undersized_token,
+                "mcpgateway_csrf_token": undersized_token,
             },
             headers={"X-CSRF-Token": undersized_token},
         )
