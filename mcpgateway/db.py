@@ -1951,8 +1951,7 @@ class EmailTeam(Base):
 
         session = object_session(self)
         if session is None:
-            # Transient instance (e.g. reconstructed from cache dict) — no DB available.
-            return 0
+            return sum(1 for m in self.members if m.is_active)
         count = session.query(func.count(EmailTeamMember.id)).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.is_active.is_(True)).scalar()  # pylint: disable=not-callable
         return count or 0
 
@@ -1977,8 +1976,7 @@ class EmailTeam(Base):
 
         session = object_session(self)
         if session is None:
-            # Transient instance (e.g. reconstructed from cache dict) — no DB available.
-            return False
+            return any(m.user_email == user_email and m.is_active for m in self.members)
 
         exists = session.query(EmailTeamMember.id).filter(EmailTeamMember.team_id == self.id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
         return exists is not None
