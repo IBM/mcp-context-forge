@@ -164,6 +164,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
+from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -178,7 +179,6 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
@@ -5423,6 +5423,7 @@ async def get_tool(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    include_metrics: bool = Query(True, description="Include metrics (execution count, success rate, etc.) in the response"),
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
 ) -> ToolResponse:
     """
@@ -5433,6 +5434,7 @@ async def get_tool(
         request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
+        include_metrics: Whether to include metrics in the response. Defaults to True for detail view.
         apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
                      Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
                      (decoded: {"jsonpath":"$.name","mapping":null})
@@ -5460,6 +5462,7 @@ async def get_tool(
             requesting_user_is_admin=_req_is_admin,
             requesting_user_team_roles=_req_team_roles,
             token_teams=auth_token_teams,
+            include_metrics=include_metrics,
         )
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
 
