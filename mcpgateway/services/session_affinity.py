@@ -1119,7 +1119,14 @@ class SessionAffinity:
             await _publish(response.status_code, response.content, resp_headers)
 
         except Exception as e:
-            logger.error(f"Error executing forwarded HTTP request: {e}")
+            # Sanitise + truncate the exception message: this except catches anything from the
+            # inner /rpc dispatch (FastAPI handlers, middleware, services), so the exception may
+            # carry request fragments or newlines that would forge log entries (CWE-117).
+            logger.error(
+                "Error executing forwarded HTTP request: %s: %s",
+                type(e).__name__,
+                SecurityValidator.sanitize_log_message(str(e), max_length=500),
+            )
             try:
                 await _publish(500, orjson.dumps({"error": "Internal forwarding error"}))
             except Exception as publish_error:
