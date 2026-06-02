@@ -114,6 +114,20 @@ class FAMAssetCatalogClient:
         if self._http_client:
             await self._http_client.aclose()
 
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """Get current authentication headers.
+        
+        Returns:
+            Dictionary with Authorization header (and Content-Type)
+        """
+        headers = {"Content-Type": "application/json"}
+        
+        if self._auth_type == "apikey" and self._bearer_token:
+            headers["Authorization"] = f"Bearer {self._bearer_token}"
+        # For basic auth, headers are already set in the client
+        
+        return headers
+
     async def _fetch_bearer_token(self) -> bool:
         """Fetch bearer token for API key authentication.
         
@@ -146,13 +160,19 @@ class FAMAssetCatalogClient:
                 
                 token_data = response.json()
                 self._bearer_token = token_data.get("token")
-                # expires_in is an epoch timestamp (not duration in seconds)
-                self._token_expires_at = token_data.get("expires_in")
+                
+                # expires_in is an epoch timestamp in milliseconds, convert to seconds
+                expires_in_ms = token_data.get("expires_in")
+                if expires_in_ms:
+                    self._token_expires_at = expires_in_ms / 1000.0  # Convert ms to seconds
+                else:
+                    self._token_expires_at = None
             
-            # Update main client headers with bearer token
-            self._http_client.headers["Authorization"] = f"Bearer {self._bearer_token}"
-            
-            logger.info("Bearer token fetched successfully for API key authentication")
+            # Standard
+            import time
+            current_time = time.time()
+            time_until_expiry = self._token_expires_at - current_time if self._token_expires_at else 0
+            logger.info(f"Bearer token fetched successfully for API key authentication (expires_at={self._token_expires_at}, current_time={current_time}, valid_for={time_until_expiry:.0f}s)")
             return True
             
         except httpx.HTTPStatusError as e:
@@ -181,12 +201,19 @@ class FAMAssetCatalogClient:
         # expires_at is an epoch timestamp in seconds
         if self._bearer_token and self._token_expires_at:
             current_time = time.time()
+            time_until_expiry = self._token_expires_at - current_time
+            
             # Add 5 minutes (300 seconds) buffer before expiry
-            if current_time < (self._token_expires_at - 300):
+            if time_until_expiry > 300:
+                logger.debug(f"Bearer token still valid (time_left={time_until_expiry:.0f}s)")
                 return True
+            
+            # Token expiring soon, refresh it
+            logger.info(f"Bearer token expiring soon (current={current_time:.0f}, expires={self._token_expires_at:.0f}, time_left={time_until_expiry:.0f}s), refreshing")
+        else:
+            # Token missing or expired, fetch new one
+            logger.info("Bearer token missing or not set, fetching new token")
         
-        # Token missing or expired, fetch new one
-        logger.debug("Bearer token missing or expired, fetching new token")
         return await self._fetch_bearer_token()
 
     async def _call_with_circuit_breaker(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -318,7 +345,7 @@ class FAMAssetCatalogClient:
             payload = {"id": runtime_type_id, "name": runtime_type_name, "capabilities": ["AI"]}
 
             logger.info(f"Creating runtime type '{runtime_type_name}' (ID: {runtime_type_id}) at {endpoint}")
-            response = await self._http_client.post(endpoint, json=payload)
+            response = await self._http_client.post(endpoint, json=payload, headers=self._get_auth_headers())
 
             if response.status_code in (200, 201):
                 logger.info(f"Successfully created runtime type '{runtime_type_name}' (ID: {runtime_type_id})")
@@ -399,7 +426,7 @@ class FAMAssetCatalogClient:
             # POST to API v2 runtime endpoint
             endpoint = f"{self.base_url}{FAMEndpoints.RUNTIMES}"
             logger.info(f"Registering runtime '{name}' at {endpoint}")
-            return await self._http_client.post(endpoint, json=payload)
+            return await self._http_client.post(endpoint, json=payload, headers=self._get_auth_headers())
 
         try:
             # Ensure valid token for API key auth
@@ -526,7 +553,7 @@ class FAMAssetCatalogClient:
 
             payload = {"created": int(time.time() * 1000), "runtimeId": runtime_id}
             endpoint = f"{self.base_url}{FAMEndpoints.HEARTBEAT}"
-            response = await self._http_client.post(endpoint, json=payload)
+            response = await self._http_client.post(endpoint, json=payload, headers=self._get_auth_headers())
             response.raise_for_status()
             logger.debug(f"Heartbeat sent successfully for runtime {runtime_id}")
             return True
@@ -547,7 +574,7 @@ class FAMAssetCatalogClient:
 
         async def _do_create() -> bool:
             payload = FAMServerPayload.build_create_payload(server)
-            response = await self._http_client.post(self._endpoint, json=payload)
+            response = await self._http_client.post(self._endpoint, json=payload, headers=self._get_auth_headers())
 
             # Handle 409 Conflict as success (server already exists in IBM API Connect Federated API Management)
             if response.status_code == 409:
@@ -575,7 +602,7 @@ class FAMAssetCatalogClient:
         async def _do_update() -> bool:
             url = f"{self._endpoint}/{server.id}"
             payload = FAMServerPayload.build_update_payload(server)
-            response = await self._http_client.put(url, json=payload)
+            response = await self._http_client.put(url, json=payload, headers=self._get_auth_headers())
             response.raise_for_status()
             logger.info(f"Updated MCP Server {server.id} in IBM API Connect Federated API Management")
             return True
@@ -596,7 +623,7 @@ class FAMAssetCatalogClient:
 
         async def _do_delete() -> bool:
             url = f"{self._endpoint}/{server_id}"
-            response = await self._http_client.delete(url)
+            response = await self._http_client.delete(url, headers=self._get_auth_headers())
 
             # 404 is acceptable for delete (already deleted)
             if response.status_code == 404:
@@ -625,7 +652,7 @@ class FAMAssetCatalogClient:
         async def _do_bulk_create() -> Optional[str]:
             url = f"{self._endpoint}/{server_id}/mcp-tools/bulk/create"
             payloads = [FAMToolPayload.build_create_payload(tool, server_id) for tool in tools]
-            response = await self._http_client.post(url, json=payloads)
+            response = await self._http_client.post(url, json=payloads, headers=self._get_auth_headers())
             response.raise_for_status()
 
             if response.status_code == 202:
@@ -655,7 +682,7 @@ class FAMAssetCatalogClient:
         async def _do_bulk_update() -> Optional[str]:
             url = f"{self._endpoint}/{server_id}/mcp-tools/bulk/update"
             payloads = [FAMToolPayload.build_update_payload(tool) for tool in tools]
-            response = await self._http_client.post(url, json=payloads)
+            response = await self._http_client.post(url, json=payloads, headers=self._get_auth_headers())
             response.raise_for_status()
 
             if response.status_code == 202:
@@ -684,7 +711,7 @@ class FAMAssetCatalogClient:
 
         async def _do_bulk_delete() -> Optional[str]:
             url = f"{self._endpoint}/{server_id}/mcp-tools/bulk/delete"
-            response = await self._http_client.post(url, json=tool_ids)
+            response = await self._http_client.post(url, json=tool_ids, headers=self._get_auth_headers())
             response.raise_for_status()
 
             if response.status_code == 202:
@@ -712,7 +739,7 @@ class FAMAssetCatalogClient:
 
         async def _do_submit_metrics() -> bool:
             metrics_url = f"{self.base_url}{FAMEndpoints.METRICS.format(runtime_id=self.runtime_id)}"
-            response = await self._http_client.post(metrics_url, json=metrics_payload)
+            response = await self._http_client.post(metrics_url, json=metrics_payload, headers=self._get_auth_headers())
             response.raise_for_status()
 
             # Metrics endpoint returns 202 Accepted
