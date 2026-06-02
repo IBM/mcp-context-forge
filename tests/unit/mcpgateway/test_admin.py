@@ -3181,6 +3181,7 @@ class TestAdminGatewayRoutes:
         for auth_config in auth_configs:
             form_data = FakeForm({"name": f"Gateway_{auth_config.get('auth_type', 'none')}", "url": "http://example.com", **auth_config})
             mock_request.form = AsyncMock(return_value=form_data)
+            mock_request.headers = {"content-type": "multipart/form-data"}
 
             result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert isinstance(result, JSONResponse)
@@ -3198,6 +3199,7 @@ class TestAdminGatewayRoutes:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
@@ -3207,6 +3209,9 @@ class TestAdminGatewayRoutes:
     async def test_admin_add_gateway_connection_error(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with connection error."""
         mock_register_gateway.side_effect = GatewayConnectionError("Cannot connect to gateway")
+        form_data = FakeForm({"name": "Test_Gateway", "url": "http://example.com"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -3223,6 +3228,7 @@ class TestAdminGatewayRoutes:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6230,6 +6236,7 @@ class TestOAuthFunctionality:
 
         form_data = FakeForm({"name": "OAuth_Gateway", "url": "https://oauth.example.com", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         # Mock OAuth encryption
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
@@ -6254,6 +6261,7 @@ class TestOAuthFunctionality:
         """Test adding gateway with invalid OAuth JSON."""
         form_data = FakeForm({"name": "Invalid_OAuth_Gateway", "url": "https://example.com", "oauth_config": "invalid-json{"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6272,17 +6280,33 @@ class TestOAuthFunctionality:
         """Test adding gateway with oauth_config as 'None' string."""
         form_data = FakeForm({"name": "No_OAuth_Gateway", "url": "https://example.com", "oauth_config": "None"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
+        ):
+            mock_meta.return_value = {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            }
 
-        assert isinstance(result, JSONResponse)
-        body = json.loads(result.body)
-        assert body["success"] is True
-        mock_register_gateway.assert_called_once()
-        # Verify oauth_config was set to None
-        call_args = mock_register_gateway.call_args[0]
-        gateway_create = call_args[1]
-        assert gateway_create.oauth_config is None
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            body = json.loads(result.body)
+            assert body["success"] is True
+            mock_register_gateway.assert_called_once()
+            # Verify oauth_config was set to None
+            call_args = mock_register_gateway.call_args[0]
+            gateway_create = call_args[1]
+            assert gateway_create.oauth_config is None
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_with_oauth_config(self, mock_update_gateway, mock_request, mock_db):
@@ -6387,6 +6411,7 @@ class TestOAuthFunctionality:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6439,6 +6464,7 @@ class TestOAuthFunctionality:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6477,6 +6503,7 @@ class TestOAuthFunctionality:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6507,6 +6534,7 @@ class TestOAuthFunctionality:
         oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
         form_data = FakeForm({"name": "OAuth_NoSecret_Gateway", "url": "https://example.com", "auth_headers": "", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6650,6 +6678,7 @@ class TestOAuthFunctionality:
 
         form_data = FakeForm({"name": "Gateway_With_CA", "url": "https://example.com", "ca_certificate": "CERT"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6682,6 +6711,7 @@ class TestOAuthFunctionality:
 
         form_data = FakeForm({"name": "Gateway_With_CA", "url": "https://example.com", "ca_certificate": "CERT"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6720,6 +6750,8 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "Gateway_With_CA", "url": "https://example.com", "ca_certificate": "CERT"})
         mock_request.form = AsyncMock(return_value=form_data)
 
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -6737,6 +6769,7 @@ class TestOAuthFunctionality:
 
         form_data = FakeForm({"name": "Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         team_service = MagicMock()
         team_service.verify_team_for_user = AsyncMock(return_value=None)
@@ -6791,6 +6824,111 @@ class TestOAuthFunctionality:
             response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
             assert response.status_code == expected
 
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_invalid_json_body(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with invalid JSON body (covers line 876)."""
+        mock_request.headers = {"content-type": "application/json"}
+        # Mock request.json() to raise an exception
+        mock_request.json = AsyncMock(side_effect=ValueError("Invalid JSON"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert exc_info.value.status_code == 400
+        assert "Invalid JSON body" in str(exc_info.value.detail)
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_empty_tags_string(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with empty tags string (covers lines 891-892)."""
+        form_data = FakeForm({"name": "Test_Gateway", "url": "https://example.com", "tags": ""})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.MetadataCapture.extract_creation_metadata") as mock_meta,
+        ):
+            mock_meta.return_value = {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            }
+
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            body = json.loads(result.body)
+            assert body["success"] is True
+
+            # Verify tags is an empty list
+            gateway_create = mock_register_gateway.call_args.args[1]
+            assert gateway_create.tags == []
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_unsupported_content_type(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with unsupported content type (covers line 979)."""
+        mock_request.headers = {"content-type": "text/plain"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert exc_info.value.status_code == 415
+        assert "Unsupported content type" in str(exc_info.value.detail)
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_form_success(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway via form data (covers line 12547)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        # Mock existing gateway
+        existing_gateway = MagicMock()
+        existing_gateway.team_id = "team-123"
+        existing_gateway.owner_email = "original-owner@example.com"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        form_data = FakeForm({
+            "name": "Updated_Gateway",
+            "url": "https://updated.example.com",
+            "description": "Updated description"
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.MetadataCapture.extract_modification_metadata") as mock_meta,
+        ):
+            mock_meta.return_value = {
+                "modified_by": "u@example.com",
+                "modified_from_ip": None,
+                "modified_via": "ui",
+                "modified_user_agent": None,
+            }
+
+            result = await admin_update_gateway_rest(
+                "gateway-123",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db}
+            )
+
+            assert isinstance(result, JSONResponse)
+            body = json.loads(result.body)
+            assert body["success"] is True
+
+            # Verify update_gateway was called
+            mock_update_gateway.assert_called_once()
+            gateway_update = mock_update_gateway.call_args.args[2]
+            assert gateway_update.name == "Updated_Gateway"
+            assert gateway_update.url == "https://updated.example.com"
+
 
 class TestPassthroughHeadersParsing:
     """Test passthrough headers parsing functionality."""
@@ -6802,6 +6940,8 @@ class TestPassthroughHeadersParsing:
 
         form_data = FakeForm({"name": "Gateway_With_Headers", "url": "https://example.com", "passthrough_headers": json.dumps(passthrough_headers)})
         mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6819,6 +6959,8 @@ class TestPassthroughHeadersParsing:
         """Test adding gateway with comma-separated passthrough headers."""
         form_data = FakeForm({"name": "Gateway_With_CSV_Headers", "url": "https://example.com", "passthrough_headers": "X-Header-1, X-Header-2 , X-Header-3"})
         mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6843,6 +6985,8 @@ class TestPassthroughHeadersParsing:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6869,6 +7013,7 @@ class TestErrorHandlingPaths:
             }
         )
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6876,7 +7021,8 @@ class TestErrorHandlingPaths:
         assert result.status_code == 422
         body = json.loads(result.body)
         assert body["success"] is False
-        assert "Missing required field" in body["message"]
+        # Verify Pydantic ValidationError message format (field validation errors)
+        assert "field required" in body["message"].lower() or "missing" in body["message"].lower()
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_runtime_error(self, mock_register_gateway, mock_request, mock_db):
@@ -6885,6 +7031,8 @@ class TestErrorHandlingPaths:
 
         form_data = FakeForm({"name": "Runtime_Error_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6902,6 +7050,8 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Value_Error_Gateway", "url": "invalid-url"})
         mock_request.form = AsyncMock(return_value=form_data)
 
+        mock_request.headers = {"content-type": "multipart/form-data"}
+
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
@@ -6917,6 +7067,8 @@ class TestErrorHandlingPaths:
 
         form_data = FakeForm({"name": "Exception_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
@@ -6939,6 +7091,7 @@ class TestErrorHandlingPaths:
         # Mock form parsing to raise ValidationError
         form_data = FakeForm({"name": "", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
 
         # Mock the GatewayCreate validation to raise the error
         with patch("mcpgateway.admin.GatewayCreate") as mock_gateway_create:
@@ -6951,6 +7104,412 @@ class TestErrorHandlingPaths:
             body = json.loads(result.body)
             assert body["success"] is False
             assert "Name cannot be empty" in body["message"]
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_tags_as_comma_string_json(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with tags as comma-separated string in JSON (covers lines 874-876)."""
+        mock_request.json = AsyncMock(return_value={
+            "name": "test-gateway",
+            "url": "https://example.com",
+            "tags": "tag1, tag2, tag3"  # String instead of array
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+
+        # Verify tags were parsed correctly (tags are converted to dict format)
+        mock_register_gateway.assert_called_once()
+        gateway_create = mock_register_gateway.call_args[0][1]
+        assert len(gateway_create.tags) == 3
+        assert gateway_create.tags[0]["id"] == "tag1"
+        assert gateway_create.tags[1]["id"] == "tag2"
+        assert gateway_create.tags[2]["id"] == "tag3"
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_parse_exception(self, mock_register_gateway, mock_request, mock_db):
+        """Test adding gateway with parsing exception after successful parse (covers lines 12362-12363)."""
+        # Mock successful JSON parsing but raise exception during processing
+        mock_request.json = AsyncMock(return_value={
+            "name": "test-gateway",
+            "url": "https://example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        # Mock _parse_gateway_data_from_request to raise a generic exception
+        with patch("mcpgateway.admin._parse_gateway_data_from_request", side_effect=Exception("Processing failed")):
+            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Invalid request data" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_parse_exception(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with parsing exception (covers lines 12520-12523)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        # Mock _parse_gateway_data_from_request to raise exception
+        with patch("mcpgateway.admin._parse_gateway_data_from_request", side_effect=Exception("Parsing failed")):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Invalid request data" in body["message"]
+        assert "Parsing failed" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_with_team_id_whitespace(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with team_id containing whitespace (covers line 12527)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com",
+            "team_id": "  "  # Whitespace only
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_with_oauth_secret(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with OAuth client secret (covers lines 12536-12540)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "oauth-gateway",
+            "url": "https://oauth.example.com",
+            "oauth_config": {
+                "client_id": "client123",
+                "client_secret": "secret123",
+                "token_url": "https://oauth.example.com/token"
+            }
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with (
+            patch("mcpgateway.admin.TeamManagementService", lambda db: team_service),
+            patch("mcpgateway.admin.get_encryption_service") as mock_encryption,
+        ):
+            mock_enc_service = MagicMock()
+            mock_enc_service.encrypt_secret_async = AsyncMock(return_value="encrypted_secret")
+            mock_encryption.return_value = mock_enc_service
+
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+        mock_enc_service.encrypt_secret_async.assert_called_once_with("secret123")
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_auto_detect_oauth(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with OAuth auto-detection (covers line 12544)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "oauth-gateway",
+            "url": "https://oauth.example.com",
+            "oauth_config": {
+                "client_id": "client123",
+                "token_url": "https://oauth.example.com/token"
+            }
+            # No auth_type specified
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        body = json.loads(result.body)
+        assert body["success"] is True
+        # Verify auth_type was auto-detected
+        mock_update_gateway.assert_called_once()
+        gateway_update = mock_update_gateway.call_args[0][2]
+        assert gateway_update.auth_type == "oauth"
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_permission_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with permission error (covers lines 12588-12590)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = PermissionError("User does not have permission")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 403
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "does not have permission" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_gateway_connection_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with connection error (covers lines 12596-12597)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = GatewayConnectionError("Connection failed")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 502
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Connection failed" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_runtime_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with runtime error (covers lines 12598-12599)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = RuntimeError("Service unavailable")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 500
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Service unavailable" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_validation_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with validation error (covers lines 12600-12601)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+        from pydantic import ValidationError
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        # Create a proper Pydantic ValidationError by trying to validate invalid data
+        try:
+            from mcpgateway.schemas import GatewayUpdate
+            GatewayUpdate(url="not-a-valid-url")  # This will raise ValidationError
+        except ValidationError as e:
+            validation_error = e
+
+        mock_update_gateway.side_effect = validation_error
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        body = json.loads(result.body)
+        assert body["success"] is False
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_integrity_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with integrity error (covers lines 12602-12603)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = IntegrityError("statement", {}, None)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 409
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_value_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with value error (covers lines 12604-12605)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = ValueError("Invalid value")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Invalid value" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_unexpected_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with unexpected error (covers lines 12606-12607)."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={
+            "name": "updated-gateway",
+            "url": "https://updated.example.com"
+        })
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = Exception("Unexpected error")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 500
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "An unexpected error occurred" in body["message"]
+
+    async def test_admin_delete_gateway_rest_permission_error(self, mock_db):
+        """Test deleting gateway with permission error (covers lines 12634-12636)."""
+        from mcpgateway.admin import admin_delete_gateway_rest
+
+        with patch("mcpgateway.admin.gateway_service.delete_gateway", new_callable=AsyncMock) as mock_delete:
+            mock_delete.side_effect = PermissionError("User does not have permission")
+
+            result = await admin_delete_gateway_rest("gateway-123", mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 403
+            body = json.loads(result.body)
+            assert body["success"] is False
+            assert "does not have permission" in body["message"]
+
+    async def test_admin_delete_gateway_rest_unexpected_error(self, mock_db):
+        """Test deleting gateway with unexpected error (covers lines 12639-12641)."""
+        from mcpgateway.admin import admin_delete_gateway_rest
+
+        with patch("mcpgateway.admin.gateway_service.delete_gateway", new_callable=AsyncMock) as mock_delete:
+            mock_delete.side_effect = Exception("Unexpected error")
+
+            result = await admin_delete_gateway_rest("gateway-123", mock_db, user={"email": "test-user", "db": mock_db})
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 500
+            body = json.loads(result.body)
+            assert body["success"] is False
+            assert "Failed to delete gateway" in body["message"]
+
 
 
 class TestImportConfigurationEndpoints:
@@ -15471,6 +16030,7 @@ async def test_admin_test_gateway_wraps_ipv6_pinned_netloc(monkeypatch, mock_db)
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
             "validated_url": value,
@@ -15567,6 +16127,7 @@ async def test_admin_test_gateway_skips_disabled_gateway(monkeypatch, mock_db):
 
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *_args, **_kwargs: MagicMock(log=MagicMock()))
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
+
     async def mock_validate_gateway_test_url(value, _allowed_hosts, _field_name="Gateway test URL"):
         return {
             "validated_url": value,
@@ -16215,9 +16776,7 @@ async def test_admin_get_agent_admin_with_token_teams_none_retrieves_own_private
     assert result["visibility"] == "private"
     assert result["owner_email"] == "admin@example.com"
     # Verify get_agent was called with correct token_teams
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "private-agent-1", user_email="admin@example.com", token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -16239,9 +16798,7 @@ async def test_admin_get_agent_admin_with_public_only_token_cannot_retrieve_othe
 
     assert exc.value.status_code == 404
     # Verify get_agent was called with token_teams=[]
-    service.get_agent.assert_awaited_once_with(
-        mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[]
-    )
+    service.get_agent.assert_awaited_once_with(mock_db, "other-user-private-agent", user_email="admin@example.com", token_teams=[])
 
 
 @pytest.mark.asyncio
@@ -22056,15 +22613,13 @@ class TestLoadSriHashes:
             assert result == test_hashes
 
     def test_load_sri_hashes_excludes_tailwind_play_cdn(self):
-        """Tailwind Play CDN is intentionally excluded from SRI hash map."""
-        # First-Party
+        """Tailwind Play CDN is intentionally excluded; Alpine.js is now bundled (no CDN)."""
         from mcpgateway import admin as admin_mod
 
         admin_mod.load_sri_hashes.cache_clear()
         hashes = admin_mod.load_sri_hashes()
         assert "tailwindcss" not in hashes
-        assert "alpinejs" in hashes
-        assert hashes["alpinejs"].startswith("sha384-")
+        assert "alpinejs" not in hashes
 
 
 class TestAdminCsrfProtection:
@@ -23006,6 +23561,7 @@ class TestPublicVisibilityGuard:
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
         form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public", "team_id": "team-abc"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
         with pytest.raises(HTTPException) as exc_info:
             await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert exc_info.value.status_code == 422
@@ -23100,6 +23656,7 @@ class TestPublicVisibilityGuard:
         monkeypatch.setattr("mcpgateway.admin.settings.allow_public_visibility", False)
         form_data = FakeForm({"name": "G", "url": "http://g", "visibility": "public"})
         mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.headers = {"content-type": "multipart/form-data"}
         result = await admin_add_gateway(mock_request, mock_db, user={"email": "u@e.com", "db": mock_db})
         assert result.status_code != 422
 

@@ -142,5 +142,13 @@ export function overflowMenu(wrapperId = null) {
       const idx = items.indexOf(document.activeElement);
       items[(idx + dir + items.length) % items.length]?.focus();
     },
+    closeMenu() {
+      this.menuOpen = false;
+      if (this.$refs.trigger) this.$refs.trigger.focus();
+    },
+    dispatch(action, ...args) {
+      const fn = window.Admin && window.Admin[action];
+      if (typeof fn === "function") fn.apply(window.Admin, args);
+    },
   };
 }
