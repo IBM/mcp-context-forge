@@ -1022,18 +1022,13 @@ class SessionAffinity:
             return {"error": {"code": -32603, "message": str(e)}}
 
     async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
-        """Execute a forwarded Streamable HTTP request in-process and reply via Redis.
+        """Execute a forwarded Streamable HTTP request on the owner worker and reply over Redis.
 
-        A forwarded request always lands here on the worker that OWNS the
-        downstream session (its ``WORKER_ID`` matched the Redis owner key), so the
-        bound upstream session in this process's ``UpstreamSessionRegistry`` can
-        serve it. We therefore dispatch the JSON-RPC call to the local ``/rpc``
-        route via an **in-process ASGI transport** instead of a network loopback
-        to ``127.0.0.1``: a real loopback hits the shared gunicorn socket and the
-        kernel routes it to an arbitrary worker that does not hold this session,
-        which breaks upstream-session reuse and fails the request. The
-        ``x-forwarded-internally`` header stops the re-entered handler from
-        forwarding again.
+        Dispatches the JSON-RPC call to the local ``/rpc`` route via an in-process
+        ASGI transport so it runs in this worker against the bound upstream session.
+        A network loopback would scatter the call through the shared gunicorn socket
+        to an arbitrary worker. The ``x-forwarded-internally`` header on the inner
+        dispatch stops the re-entered handler from forwarding again.
 
         Args:
             request: Serialized HTTP request data from Redis Pub/Sub containing:

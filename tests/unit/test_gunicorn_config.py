@@ -117,10 +117,10 @@ def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
     # WORKER_ID was NOT silently rebound (the failure was real, not papered over).
     assert session_affinity.WORKER_ID == original_worker_id
 
-    # A warning was emitted, mentioning the failing operation (rebind) and #4557.
+    # A warning was emitted, mentioning the failing operation (rebind) and the consequence.
     assert server.log.warning.called, "expected post_fork to log a warning on rebind failure"
     call_args = server.log.warning.call_args
     # First arg is the format string; subsequent args are the format params.
     fmt = call_args.args[0] if call_args.args else ""
     assert "WORKER_ID" in fmt
-    assert "#4557" in fmt, "warning should reference #4557 so operators can find the root cause"
+    assert "broadcast" in fmt, "warning should describe the consequence (per-container broadcast) so operators can act on it"

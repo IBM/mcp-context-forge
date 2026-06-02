@@ -127,28 +127,23 @@ def post_fork(server, worker):
     except ImportError:
         pass
 
-    # Recompute the session-affinity WORKER_ID per worker. It is a module-level
-    # constant captured at import time; with --preload that import runs in the
-    # master, so every forked worker would otherwise inherit the master's id
-    # ({hostname}:1). A shared id makes all workers subscribe to the same
-    # pool_rpc/pool_http channel, so each forwarded request is broadcast to and
-    # executed by every worker in the container. Giving each worker a unique id
-    # restores per-worker affinity channels and single-executor forwarding.
+    # Recompute the session-affinity WORKER_ID per worker. Captured at import time,
+    # so under --preload every worker would otherwise inherit the master's id
+    # ({hostname}:1) and subscribe to the same Redis channel — collapsing point-to-point
+    # forwarding into a per-container broadcast that fans every request out to all
+    # workers and degrades throughput by an order of magnitude.
     try:
         import socket
 
         from mcpgateway.services import session_affinity
 
         session_affinity.WORKER_ID = f"{socket.gethostname()}:{worker.pid}"
-    except Exception as exc:  # noqa: BLE001 - fail loud, but never crash the worker
-        # If rebinding fails (import path shift, attribute renamed/removed, ...),
-        # workers silently fall back to the master's frozen WORKER_ID and the
-        # broadcast amplification (#4557) returns. Make the failure VISIBLE so it
-        # doesn't go unnoticed into production.
+    except Exception as exc:  # noqa: BLE001 - fail loud, never crash the worker
+        # Silent fallback would re-introduce the per-container broadcast amplification.
         server.log.warning(
-            "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID per worker "
-            "(%s: %s) - workers may share the master's WORKER_ID and #4557 "
-            "broadcast amplification can return. Investigate immediately.",
+            "post_fork(pid=%s): failed to rebind session_affinity.WORKER_ID (%s: %s) — "
+            "workers may share the master's WORKER_ID and session-affinity forwarding "
+            "may broadcast each request to every worker in the container.",
             worker.pid,
             type(exc).__name__,
             exc,
